@@ -82,6 +82,10 @@ void RHI::DestroyBuffer(BufferHandle b) {
   if (b.Valid()) glDeleteBuffers(1, &b.id);
 }
 
+void RHI::BindUniformBuffer(uint32_t slot, BufferHandle b) {
+  glBindBufferBase(GL_UNIFORM_BUFFER, slot, b.id);
+}
+
 // ---- Pipelines: program + vertex layout (VAO) + blend state ----
 PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
   GLuint vs = CompileStage(GL_VERTEX_SHADER, d.vertexSource, d.debugName);

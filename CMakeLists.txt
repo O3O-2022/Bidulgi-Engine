@@ -28,6 +28,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Log.h        Engine/Core/Log.cpp
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
+  Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
 target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad OpenGL::GL)

@@ -40,6 +40,7 @@ public:
   BufferHandle CreateBuffer(BufferUsage usage, const void* data, size_t size, bool dynamic = false);
   void         UpdateBuffer(BufferHandle buffer, const void* data, size_t size, size_t offset = 0);
   void         DestroyBuffer(BufferHandle buffer);
+  void         BindUniformBuffer(uint32_t slot, BufferHandle buffer); // GLSL: layout(std140, binding = slot)
 
   PipelineHandle CreatePipeline(const PipelineDesc& desc);
   void           DestroyPipeline(PipelineHandle pipeline);
