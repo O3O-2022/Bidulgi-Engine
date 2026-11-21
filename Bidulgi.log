@@ -1,7 +1,0 @@
-[info] Bidulgi Engine 0.0.1
-[info] platform: SDL 3.2.10
-[info] rhi: OpenGL 4.5.0 NVIDIA 617.14 | NVIDIA GeForce RTX 5070 Ti Laptop GPU/PCIe/SSE2
-[info] rhi: GL debug output on
-[error] gl [1280]: GL_INVALID_ENUM error generated. <cap> enum is invalid; expected GL_ALPHA_TEST, GL_BLEND, GL_COLOR_MATERIAL, GL_CULL_FACE, GL_DEPTH_TEST, GL_DITHER, GL_FOG, etc. (136 others).
-[info] frames: 30 in 0.04s
-[info] shutdown ok

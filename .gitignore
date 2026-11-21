@@ -5,3 +5,4 @@
 *.user
 build*.log
 /Bin/
+*.log
