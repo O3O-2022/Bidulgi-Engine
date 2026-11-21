@@ -6,111 +6,144 @@
 #include "RHI/RHI.h"
 #include "Render2D/Batch2D.h"
 #include "Text/Font.h"
+#include "UI/Theme.h"
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <new>
 
 namespace {
-constexpr bdg::Color Hex(uint32_t rgb, float a = 1.f) {
-  return {((rgb >> 16) & 0xFF) / 255.f, ((rgb >> 8) & 0xFF) / 255.f, (rgb & 0xFF) / 255.f, a};
-}
-// Design system tokens (hard-coded until queue item 0-6 reads tokens.json).
-constexpr bdg::Color kGround = Hex(0x16181d), kPanel = Hex(0x1d2026), kRaised = Hex(0x262a31),
-                     kLine = Hex(0x2f343c), kAccent = Hex(0x4ea1ff), kFg = Hex(0xe6e8eb), kFg2 = Hex(0xa3a9b3),
-                     kTeal = Hex(0x2bb3a3), kOrange = Hex(0xf08a3c);
-
-// First font found: project font folder (Pretendard later), then a Windows system font for development.
-std::string FindFont() {
-  const char* candidates[] = {"Assets/Fonts/Pretendard-Regular.otf", "../Assets/Fonts/Pretendard-Regular.otf",
-                              "C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/segoeui.ttf"};
-  if (const char* env = std::getenv("BDG_FONT")) return env;
-  for (const char* c : candidates) if (std::filesystem::exists(c)) return c;
+// Looks for a file relative to the working folder and up to three parent folders
+// (works from the repo root, Bin/ and build/<Config>/).
+std::string FindUp(const char* envName, std::initializer_list<const char*> relPaths) {
+  if (const char* env = std::getenv(envName)) return env;
+  for (const char* rel : relPaths) {
+    std::filesystem::path base = std::filesystem::current_path();
+    for (int up = 0; up < 4; ++up, base = base.parent_path())
+      if (std::filesystem::exists(base / rel)) return (base / rel).string();
+  }
   return {};
 }
 
-struct Ui { bdg::Batch2D& b; bdg::Font* f; };
-void Text(Ui& u, float x, float y, float size, bdg::Color c, std::string_view s) {
-  if (u.f) u.f->DrawText(u.b, x, y, size, c, s);
+std::string FindFont() {
+  std::string p = FindUp("BDG_FONT", {"Assets/Fonts/Pretendard-Regular.otf"});
+  if (!p.empty()) return p;
+  for (const char* sys : {"C:/Windows/Fonts/malgun.ttf", "C:/Windows/Fonts/segoeui.ttf"}) // development fallback
+    if (std::filesystem::exists(sys)) return sys;
+  return {};
 }
 
-void PanelHeader(Ui& u, float x, float y, float w, std::string_view title, std::string_view second = {}) {
-  u.b.Rect(x, y, w, 30, kRaised, 6);
-  u.b.Rect(x + 8, y + 27, 60, 2, kAccent);
-  Text(u, x + 12, y + 7, 13, kFg, title);
-  if (!second.empty()) Text(u, x + 90, y + 7, 13, kFg2, second);
+bdg::Color WithAlpha(bdg::Color c, float a) { c.a = a; return c; }
+
+struct Ui {
+  bdg::Batch2D& b;
+  bdg::Font* f;
+  const bdg::Theme& t;
+  void Text(float x, float y, float size, bdg::Color c, std::string_view s) { if (f) f->DrawText(b, x, y, size, c, s); }
+  float Measure(float size, std::string_view s) { return f ? f->Measure(size, s) : 40.f; }
+};
+
+// Panel = 1px seam (line) + body, header strip in "win" with the title; the active tab gets the accent top border.
+void Panel(Ui& u, float x, float y, float w, float h, std::string_view title, std::string_view second = {}) {
+  const bdg::Theme& t = u.t;
+  float hh = t.N("size-panel-header", 30), body = t.FontSize("body", 13);
+  u.b.Rect(x, y, w, h, t.C("panel"), t.N("radius-sm", 3), 1, t.C("line"));
+  u.b.Rect(x + 1, y + 1, w - 2, hh, t.C("win"));
+  float tw = u.Measure(body, title) + 20;
+  u.b.Rect(x + 6, y + 5, tw, hh - 8, t.C("raise"), t.N("radius-sm", 3));
+  u.b.Rect(x + 6, y + 5, tw, 2, t.C("accent"));
+  u.Text(x + 16, y + (hh - body) * 0.5f - 1, body, t.C("fg"), title);
+  if (!second.empty()) u.Text(x + tw + 20, y + (hh - body) * 0.5f - 1, body, t.C("fg-dim"), second);
 }
 
 void DrawEditorMock(Ui& u, float W, float H) {
+  const bdg::Theme& t = u.t;
   bdg::Batch2D& b = u.b;
-  const float menuH = 28, toolH = 36, leftW = 260, rightW = 320, bottomH = 220, gap = 4;
-  b.Rect(0, 0, W, menuH, kPanel);
-  const char* menus[] = {"File", "Edit", "Assets", "GameObject", "Window", "Help"};
-  float mx = 12;
-  for (const char* m : menus) { Text(u, mx, 6, 13, kFg2, m); mx += (u.f ? u.f->Measure(13, m) : 40) + 22; }
-  Text(u, W - 190, 6, 13, kFg2, "비둘기 엔진 0.0.1");
-  b.Rect(0, menuH, W, toolH, kGround);
-  for (int i = 0; i < 4; ++i) b.Rect(10 + i * 34.f, menuH + 5, 28, 26, kRaised, 6);
-  b.Rect(W * 0.5f - 46, menuH + 5, 28, 26, kAccent, 6);
-  b.Rect(W * 0.5f - 14, menuH + 5, 28, 26, kRaised, 6);
-  b.Rect(W * 0.5f + 18, menuH + 5, 28, 26, kRaised, 6);
-  Text(u, W - 150, menuH + 10, 12, kFg2, "중사양 · Windows");
+  const float body = t.FontSize("body", 13), label = t.FontSize("label", 12), caption = t.FontSize("caption", 10.5f);
+  const float menuH = 28, wsH = t.N("size-workspace-bar", 38), statusH = t.N("size-status-bar", 24);
+  const float row = t.N("size-row", 22), gap = 1, leftW = 260, rightW = 320, bottomH = 210;
 
-  float top = menuH + toolH, midH = H - top - bottomH - gap;
+  b.Rect(0, 0, W, H, t.C("win"));
+  float mx = 12;
+  for (const char* m : {"File", "Edit", "Assets", "GameObject", "Window", "Help"}) {
+    u.Text(mx, (menuH - body) * 0.5f - 1, body, t.C("fg-dim"), m);
+    mx += u.Measure(body, m) + 22;
+  }
+  u.Text(W - 150, (menuH - body) * 0.5f - 1, body, t.C("fg-faint"), "비둘기 엔진 0.0.1");
+  // Workspace bar
+  float wx = 10;
+  for (const char* ws : {"Level", "Graph", "Animation", "UI Designer", "Scripting"}) {
+    float w = u.Measure(label, ws) + 24;
+    bool on = wx == 10;
+    if (on) { b.Rect(wx, menuH + 6, w, wsH - 12, t.C("raise"), t.N("radius-sm", 3)); b.Rect(wx, menuH + 6, w, 2, t.C("accent")); }
+    u.Text(wx + 12, menuH + (wsH - label) * 0.5f - 1, label, on ? t.C("fg") : t.C("fg-dim"), ws);
+    wx += w + 4;
+  }
+  float ib = t.N("size-icon-button", 28);
+  b.Rect(W * 0.5f - ib * 1.5f - 2, menuH + (wsH - ib) * 0.5f, ib, ib, t.C("accent"), t.N("radius-md", 4));
+  b.Rect(W * 0.5f - ib * 0.5f, menuH + (wsH - ib) * 0.5f, ib, ib, t.C("raise"), t.N("radius-md", 4), 1, t.C("line-strong"));
+  b.Rect(W * 0.5f + ib * 0.5f + 2, menuH + (wsH - ib) * 0.5f, ib, ib, t.C("raise"), t.N("radius-md", 4), 1, t.C("line-strong"));
+
+  float top = menuH + wsH, midH = H - top - bottomH - statusH - gap * 2;
   // Hierarchy
-  b.Rect(gap, top, leftW, midH, kPanel, 6, 1, kLine);
-  PanelHeader(u, gap, top, leftW, "Hierarchy");
+  Panel(u, gap, top, leftW, midH, "Hierarchy");
   const char* items[] = {"Main", "  Main Camera", "  Sun", "  Sky", "  World Settings", "  Ground", "  Player", "    Weapon", "  Crystal"};
   for (int i = 0; i < 9; ++i) {
-    float y = top + 40 + i * 26.f;
-    if (i == 6) b.Rect(gap + 6, y - 4, leftW - 12, 24, Hex(0x4ea1ff, 0.22f), 4, 1, kAccent);
-    Text(u, gap + 14, y, 13, i == 0 ? kFg : kFg2, items[i]);
+    float y = top + t.N("size-panel-header", 30) + 6 + i * row;
+    if (i == 6) b.Rect(gap + 1, y, leftW - 2, row, t.C("selection"));
+    u.Text(gap + 12, y + (row - body) * 0.5f - 1, body, i == 0 ? t.C("fg") : (i == 6 ? t.C("fg") : t.C("fg-dim")), items[i]);
   }
   // Scene view
   float sx = gap * 2 + leftW, sw = W - leftW - rightW - gap * 4;
-  b.Rect(sx, top, sw, midH, Hex(0x101216), 6, 1, kLine);
-  for (float gx = sx + 40; gx < sx + sw; gx += 40) b.Line(gx, top + 1, gx, top + midH - 1, 1, Hex(0xffffff, 0.04f));
-  for (float gy = top + 40; gy < top + midH; gy += 40) b.Line(sx + 1, gy, sx + sw - 1, gy, 1, Hex(0xffffff, 0.04f));
-  Text(u, sx + 12, top + 10, 12, kFg2, "Scene  ·  Perspective");
-  float cx = sx + sw * 0.5f, cy = top + midH * 0.58f;
-  b.Rect(cx - 60, cy - 60, 120, 120, kTeal, 12, 3, Hex(0xffffff, 0.85f));
-  b.Line(cx, cy, cx + 100, cy, 3, Hex(0xe5484d));
-  b.Line(cx, cy, cx, cy - 100, 3, Hex(0x46c463));
-  b.Line(cx, cy, cx - 60, cy + 55, 3, kAccent);
-  b.Rect(cx + 120, cy - 20, 56, 56, kOrange, 28);
-  // SDF check: the same atlas drawn small and very large must both stay sharp.
-  Text(u, sx + 24, top + 40, 40, kFg, "비둘기 엔진 Hello 123");
-  Text(u, sx + 24, top + 92, 96, Hex(0xe6e8eb, 0.9f), "가나다 Ag");
+  Panel(u, sx, top, sw, midH, "Scene", "Game");
+  float vy = top + t.N("size-panel-header", 30) + 1, vh = midH - t.N("size-panel-header", 30) - 2;
+  b.Rect(sx + 1, vy, sw - 2, vh, t.C("sunk"));
+  for (float gx = sx + 40; gx < sx + sw; gx += 40) b.Line(gx, vy, gx, vy + vh, 1, WithAlpha(t.C("line"), 0.6f));
+  for (float gy = vy + 40; gy < vy + vh; gy += 40) b.Line(sx + 1, gy, sx + sw - 1, gy, 1, WithAlpha(t.C("line"), 0.6f));
+  u.Text(sx + 24, vy + 18, 40, t.C("fg"), "비둘기 엔진 Hello 123");
+  u.Text(sx + 24, vy + 66, 72, WithAlpha(t.C("fg"), 0.85f), "가나다 Ag");
+  float cx = sx + sw * 0.5f, cy = vy + vh * 0.68f;
+  b.Rect(cx - 50, cy - 50, 100, 100, t.C("prefab"), t.N("radius-lg", 5), 2, t.C("accent"));
+  b.Line(cx, cy, cx + 90, cy, 3, t.C("axis-x"));
+  b.Line(cx, cy, cx, cy - 90, 3, t.C("axis-y"));
+  b.Line(cx, cy, cx - 55, cy + 50, 3, t.C("axis-z"));
   // Inspector
   float ix = W - rightW - gap;
-  b.Rect(ix, top, rightW, midH, kPanel, 6, 1, kLine);
-  PanelHeader(u, ix, top, rightW, "Inspector");
-  Text(u, ix + 14, top + 40, 15, kFg, "Player");
+  Panel(u, ix, top, rightW, midH, "Inspector");
+  float iy = top + t.N("size-panel-header", 30) + 8;
+  b.Rect(ix + 1, iy, rightW - 2, row + 4, t.C("raise"));
+  u.Text(ix + 12, iy + (row + 4 - body) * 0.5f - 1, body, t.C("fg"), "Transform");
   const char* labels[] = {"Position", "Rotation", "Scale", "Speed", "Jump Height", "Max Health", "Team", "Tag"};
   const char* values[] = {"0, 1, 0", "0, 90, 0", "1, 1, 1", "5.0", "4.5", "100", "Blue", "Player"};
   for (int i = 0; i < 8; ++i) {
-    float y = top + 70 + i * 32.f;
-    Text(u, ix + 14, y + 3, 13, kFg2, labels[i]);
-    b.Rect(ix + 120, y, rightW - 136, 22, kGround, 4, 1, kLine);
-    Text(u, ix + 128, y + 3, 13, kFg, values[i]);
+    float y = iy + row + 12 + i * (row + 6);
+    u.Text(ix + 12, y + (row - label) * 0.5f - 1, label, t.C("fg-dim"), labels[i]);
+    b.Rect(ix + 120, y, rightW - 132, row, t.C("sunk"), t.N("radius-sm", 3), 1, t.C("line"));
+    u.Text(ix + 128, y + (row - label) * 0.5f - 1, label, t.C("fg"), values[i]);
   }
   // Project / Console
-  float by = H - bottomH;
-  b.Rect(gap, by, W - gap * 2, bottomH - gap, kPanel, 6, 1, kLine);
-  PanelHeader(u, gap, by, W - gap * 2, "Project", "Console");
+  float by = top + midH + gap;
+  Panel(u, gap, by, W - gap * 2, bottomH, "Project", "Console");
   const char* assets[] = {"Characters", "Weapon.cpp", "Player.cs", "quest.lua", "Door.graph", "Knight.prefab", "M_Gold.mat", "forest.scene", "hit.wav", "Attack.anim"};
   for (int i = 0; i < 10; ++i) {
-    float tx = gap + 16 + i * 96.f;
-    if (tx + 80 > W) break;
-    b.Rect(tx, by + 44, 80, 80, i == 5 ? kTeal : kRaised, 8);
-    Text(u, tx, by + 132, 11, kFg2, assets[i]);
+    float tx = gap + 14 + i * 92.f;
+    if (tx + 76 > W) break;
+    b.Rect(tx, by + 44, 76, 76, i == 5 ? t.C("prefab") : t.C("raise"), t.N("radius-lg", 5), 1, t.C("line-strong"));
+    u.Text(tx, by + 126, caption, t.C("fg-dim"), assets[i]);
   }
+  // Status bar
+  float sy = H - statusH;
+  b.Rect(0, sy, W, statusH, t.C("win"));
+  b.Rect(10, sy + statusH * 0.5f - 3, 6, 6, t.C("ok"), 3);
+  u.Text(22, sy + (statusH - caption) * 0.5f - 1, caption, t.C("fg-dim"), "Saved · tokens.json live");
+  u.Text(W - 170, sy + (statusH - caption) * 0.5f - 1, caption, t.C("fg-dim"), "중사양 · Windows · 60 fps");
 }
 
 void DrawStress(bdg::Batch2D& b, float W, float H) { // queue 0-4 exit check: 10k rects
   for (int i = 0; i < 10000; ++i) {
+    uint32_t rgb = 0x2040a0 + (i * 2654435761u >> 8 & 0x3f3f3f);
     float x = (i % 125) * (W / 125.f), y = (i / 125) * (H / 80.f);
-    b.Rect(x, y, W / 125.f - 2, H / 80.f - 2, Hex(0x2040a0 + (i * 2654435761u >> 8 & 0x3f3f3f)), 3);
+    b.Rect(x, y, W / 125.f - 2, H / 80.f - 2, {((rgb >> 16) & 255) / 255.f, ((rgb >> 8) & 255) / 255.f, (rgb & 255) / 255.f, 1}, 3);
   }
 }
 }
@@ -120,6 +153,7 @@ struct bdg_engine {
   bdg::RHI rhi;
   bdg::Batch2D batch;
   bdg::Font font;
+  bdg::Theme theme;
   bool hasFont = false;
   int32_t maxFrames = 0;
   bool stress = false;
@@ -143,6 +177,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->hasFont = !fontPath.empty() && e->font.Load(e->rhi, fontPath.c_str());
   if (e->hasFont) e->batch.SetTextAtlas(e->font.Atlas());
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
+  std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
+  if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
   *out = e;
   return BDG_OK;
 }
@@ -152,19 +188,22 @@ bdg_result bdg_engine_run(bdg_engine* e) {
   int32_t frames = 0;
   auto t0 = std::chrono::steady_clock::now();
   while (e->window.PumpEvents()) {
+    if (frames % 30 == 0) e->theme.ReloadIfChanged(); // live token edits
     int32_t w = 0, h = 0;
     e->window.GetDrawableSize(w, h);
-    e->rhi.BeginFrame(w, h, kGround);
+    e->rhi.BeginFrame(w, h, e->theme.C("ground"));
     e->batch.Begin(w, h);
     if (e->stress) DrawStress(e->batch, (float)w, (float)h);
-    else { Ui u{e->batch, e->hasFont ? &e->font : nullptr}; DrawEditorMock(u, (float)w, (float)h); }
+    else { Ui u{e->batch, e->hasFont ? &e->font : nullptr, e->theme}; DrawEditorMock(u, (float)w, (float)h); }
     e->batch.End();
     e->rhi.EndFrame();
     ++frames;
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
     if (last) {
-      bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={}", e->batch.QuadsThisFrame(),
-                   e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(), e->hasFont ? e->font.GlyphCount() : 0);
+      bdg::Color c = e->rhi.ReadPixel(4, h - 14); // menu bar area -> token "win"
+      bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={} | menubar rgb=({:.3f},{:.3f},{:.3f})",
+                   e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(),
+                   e->hasFont ? e->font.GlyphCount() : 0, e->theme.TokenCount(), c.r, c.g, c.b);
       if (const char* shot = std::getenv("BDG_SCREENSHOT")) {
         std::vector<uint8_t> px;
         e->rhi.ReadPixels(w, h, px);

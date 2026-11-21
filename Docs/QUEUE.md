@@ -34,7 +34,7 @@
 - [x] **0-5. 글자 렌더링** — 2026-11-21. FreeType SDF 렌더러로 글자를 아틀라스 하나에 그려 모든 크기에서 사용 (`Engine/Text/Font`). 13px부터 96px까지 한글·영문이 선명하게 나오는 것을 스크린샷으로 확인 (`BDG_SCREENSHOT=경로`). **남은 일:** Pretendard·JetBrains Mono 파일 넣기(지금은 개발용으로 Windows 맑은 고딕 사용), HarfBuzz 셰이핑(커닝·합자·다른 문자권), 작은 글자 선명도 조정
   - 내용: FreeType + HarfBuzz + MSDF, Pretendard·JetBrains Mono, 한글 조합형 출력
   - 완료 조건: "비둘기 엔진 Hello 123"이 선명하게 보임, 확대해도 깨지지 않음
-- [ ] **0-6. 디자인 토큰 읽기**
+- [x] **0-6. 디자인 토큰 읽기** — 2026-11-21. `Engine/UI/Theme`이 yyjson으로 `tokens.json`(색 34, 크기 18, 글자 스타일 12)을 읽고, 실행 중 파일이 바뀌면 바로 다시 읽음. `win` 토큰을 빨강으로 바꾸자 실행 중 메뉴 줄 픽셀이 (1,0,0)으로 바뀐 것을 확인. 에디터 시안 화면은 이제 하드코딩 색 대신 토큰으로 그림
   - 내용: `design-system/project/tokens.json`을 엔진이 읽어 색·간격·글꼴 크기로 사용
   - 완료 조건: 토큰 값을 바꾸면 화면 색이 바뀜
 - [ ] **0-7. 자체 UI 프레임워크 기초**

@@ -29,6 +29,13 @@ if(MSVC)
   target_compile_options(freetype PRIVATE /utf-8) # its sources contain UTF-8 comments
 endif()
 
+# ---- External: yyjson (MIT) — JSON / JSONL reading and writing ----
+set(YYJSON_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(yyjson
+  URL https://github.com/ibireme/yyjson/archive/refs/tags/0.10.0.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(yyjson)
+
 find_package(OpenGL REQUIRED)
 
 # ---- External: glad (generated GL 4.5 core loader, vendored) ----
@@ -45,9 +52,10 @@ add_library(BidulgiEngine STATIC
   Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp
+  Engine/UI/Theme.h        Engine/UI/Theme.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype OpenGL::GL)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype yyjson OpenGL::GL)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
