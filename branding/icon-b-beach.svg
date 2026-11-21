@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Bidulgi Engine icon B: Beach</title>
+  <defs>
+    <linearGradient id="b-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f7fd6"/>
+      <stop offset=".62" stop-color="#7cc6f2"/>
+    </linearGradient>
+    <linearGradient id="b-sand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6ecda"/>
+      <stop offset="1" stop-color="#e6d3b3"/>
+    </linearGradient>
+    <linearGradient id="b-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8f9db0"/>
+      <stop offset="1" stop-color="#5e6c80"/>
+    </linearGradient>
+    <linearGradient id="b-chest" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#23b7a5"/>
+      <stop offset=".55" stop-color="#3d7ccf"/>
+      <stop offset="1" stop-color="#8d55c8"/>
+    </linearGradient>
+    <linearGradient id="b-skin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3b293"/>
+      <stop offset="1" stop-color="#d9866a"/>
+    </linearGradient>
+    <clipPath id="b-clip"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#b-clip)">
+    <rect width="512" height="512" fill="url(#b-sky)"/>
+    <rect y="318" width="512" height="40" fill="#2fc4b4"/>
+    <path d="M0 352 Q64 340 128 352 T256 352 T384 352 T512 352 V372 H0 Z" fill="#e9f8f6" opacity=".85"/>
+    <rect y="366" width="512" height="146" fill="url(#b-sand)"/>
+    <!-- shadow -->
+    <ellipse cx="270" cy="470" rx="128" ry="18" fill="#b89f78" opacity=".45"/>
+    <!-- legs -->
+    <path d="M212 372 L206 432 L232 432 L236 372 Z" fill="url(#b-skin)"/>
+    <path d="M276 372 L280 432 L306 432 L300 372 Z" fill="url(#b-skin)"/>
+    <!-- body -->
+    <path d="M256 92 C300 92 318 128 316 168 C352 196 368 250 360 298 C352 352 310 388 256 388 C202 388 160 352 152 298 C144 250 160 196 196 168 C194 128 212 92 256 92 Z" fill="url(#b-body)"/>
+    <path d="M196 196 C214 178 298 178 316 196 C330 236 318 286 256 300 C194 286 182 236 196 196 Z" fill="url(#b-chest)" opacity=".9"/>
+    <!-- wings -->
+    <path d="M160 236 C140 280 146 336 182 366 C176 320 176 276 188 240 Z" fill="#4b586b"/>
+    <path d="M352 236 C372 280 366 336 330 366 C336 320 336 276 324 240 Z" fill="#4b586b"/>
+    <!-- face -->
+    <circle cx="232" cy="134" r="9" fill="#e8692c"/><circle cx="232" cy="134" r="4" fill="#111418"/>
+    <circle cx="280" cy="134" r="9" fill="#e8692c"/><circle cx="280" cy="134" r="4" fill="#111418"/>
+    <path d="M246 140 C246 132 266 132 266 140 C266 146 260 148 256 153 C252 148 246 146 246 140 Z" fill="#eef2f6"/>
+    <path d="M226 166 C236 154 250 155 256 160 C262 155 276 154 286 166 C276 179 236 179 226 166 Z" fill="#e57c5f"/>
+    <path d="M229 166 C243 169 269 169 283 166" stroke="#b24f3c" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <!-- feet -->
+    <g fill="url(#b-skin)" transform="translate(-26 0)">
+      <path d="M190 470 C186 446 200 428 230 428 C258 428 264 446 260 470 Z"/>
+      <circle cx="194" cy="470" r="9"/><circle cx="210" cy="474" r="8"/><circle cx="225" cy="475" r="7.5"/><circle cx="239" cy="474" r="7"/><circle cx="252" cy="471" r="6.5"/>
+    </g>
+    <g fill="url(#b-skin)" transform="translate(26 0)">
+      <path d="M252 470 C248 446 254 428 284 428 C314 428 328 446 324 470 Z"/>
+      <circle cx="320" cy="470" r="9"/><circle cx="304" cy="474" r="8"/><circle cx="289" cy="475" r="7.5"/><circle cx="275" cy="474" r="7"/><circle cx="262" cy="471" r="6.5"/>
+    </g>
+  </g>
+</svg>

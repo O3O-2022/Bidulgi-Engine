@@ -1,0 +1,40 @@
+/* bdg_api.h - Bidulgi Engine C API hub.
+ * Every language binding (C#, Lua, Python, Graph VM) sees only this header.
+ * Rules: C types only, opaque handles, bdg_ prefix. */
+#ifndef BDG_API_H
+#define BDG_API_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define BDG_VERSION_MAJOR 0
+#define BDG_VERSION_MINOR 0
+#define BDG_VERSION_PATCH 1
+
+typedef struct bdg_engine bdg_engine; /* opaque handle */
+
+typedef enum bdg_result {
+  BDG_OK = 0,
+  BDG_ERR_PLATFORM = 1,
+  BDG_ERR_GRAPHICS = 2,
+  BDG_ERR_INVALID_ARG = 3
+} bdg_result;
+
+typedef struct bdg_engine_desc {
+  const char* title;      /* UTF-8 */
+  int32_t     width;
+  int32_t     height;
+  int32_t     max_frames; /* 0 = until window closes, >0 = quit after N frames (smoke test) */
+} bdg_engine_desc;
+
+bdg_result  bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out);
+bdg_result  bdg_engine_run(bdg_engine* engine); /* main loop */
+void        bdg_engine_destroy(bdg_engine* engine);
+const char* bdg_result_string(bdg_result r);
+const char* bdg_version_string(void);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

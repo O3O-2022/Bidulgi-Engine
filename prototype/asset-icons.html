@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Asset Icons</title>
+<style>
+:root{--ground:#16181d;--panel:#1d2026;--raised:#262a31;--line:#2f343c;--fg:#e6e8eb;--fg2:#a3a9b3;--accent:#4ea1ff;
+--cpp:#3f7fd1;--cs:#9b5fd6;--py:#e3b93a;--lua:#2f4fc4;--graph:#2bb3a3;--anim:#f08a3c;--fold:#c9a35a}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--ground:#eef0f3;--panel:#fff;--raised:#f4f5f7;--line:#dde1e6;--fg:#1b1e23;--fg2:#5d6570}}
+*{box-sizing:border-box}body{margin:0;background:var(--ground);color:var(--fg);font:13px/1.45 Pretendard,"Segoe UI","Malgun Gothic",sans-serif;padding:24px 16px}
+h1{font-size:18px;margin:0 0 4px}p.s{color:var(--fg2);margin:0 0 20px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;max-width:980px;margin:0 auto 20px;overflow:hidden}
+.head{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--raised);font-weight:600}
+.head .crumb{color:var(--fg2);font-weight:400}.head .sp{flex:1}
+.head button{background:none;border:1px solid var(--line);color:var(--fg2);border-radius:4px;padding:2px 8px;font:inherit;cursor:pointer}
+.head button.on{color:var(--fg);border-color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--sz,104px),1fr));gap:10px;padding:14px}
+.it{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 4px;border-radius:6px;cursor:default}
+.it:hover{background:var(--raised)}.it.sel{background:color-mix(in srgb,var(--accent) 22%,transparent);outline:1px solid var(--accent)}
+.th{width:100%;aspect-ratio:1;position:relative;display:grid;place-items:center}
+.th svg{width:100%;height:100%}
+.badge{position:absolute;right:2px;bottom:2px;width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font:700 9px/1 "JetBrains Mono",Consolas,monospace;color:#fff;box-shadow:0 1px 3px #0006}
+.nm{font-size:12px;text-align:center;word-break:break-all;line-height:1.3}
+.kd{font-size:11px;color:var(--fg2)}
+.list .grid{grid-template-columns:1fr;gap:0;padding:6px}
+.list .it{flex-direction:row;padding:4px 8px;gap:10px}.list .th{width:22px}.list .badge{display:none}
+.list .nm{text-align:left;flex:1}
+.legend{max-width:980px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;color:var(--fg2);font-size:12px}
+.legend b{color:var(--fg)}
+</style></head><body>
+<h1>에셋 아이콘 · 썸네일 시안</h1>
+<p class="s">코드 파일은 종류 아이콘, 이미지·프리팹·머티리얼·씬·모델은 실제 미리보기 썸네일. 썸네일 위 작은 배지로 종류를 구분합니다.</p>
+
+<svg width="0" height="0" style="position:absolute">
+<defs>
+<symbol id="doc" viewBox="0 0 64 64"><path d="M14 6h26l12 12v40a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" fill="#2b3038" stroke="#4a515c"/><path d="M40 6v10a2 2 0 0 0 2 2h10" fill="#3a414b" stroke="#4a515c"/><g stroke="#59616d" stroke-width="2" stroke-linecap="round"><path d="M19 30h18M19 36h24M19 42h14"/></g></symbol>
+<symbol id="folder" viewBox="0 0 64 64"><path d="M6 16a3 3 0 0 1 3-3h15l5 5h26a3 3 0 0 1 3 3v29a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" fill="var(--fold)"/><path d="M6 24h52v26a3 3 0 0 1-3 3H9a3 3 0 0 1-3-3z" fill="#e0bd73"/></symbol>
+<radialGradient id="gold" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff6d0"/><stop offset=".25" stop-color="#f1c453"/><stop offset=".8" stop-color="#7a5310"/><stop offset="1" stop-color="#3a2706"/></radialGradient>
+<radialGradient id="glass" cx=".35" cy=".3" r=".8"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset=".3" stop-color="#7fd6ff" stop-opacity=".5"/><stop offset="1" stop-color="#0d4f78" stop-opacity=".8"/></radialGradient>
+<radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#b8f3ff"/><stop offset=".4" stop-color="#3fc7ff"/><stop offset="1" stop-color="#3fc7ff" stop-opacity="0"/></radialGradient>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6aa8e8"/><stop offset="1" stop-color="#cfe6f7"/></linearGradient>
+<pattern id="chk" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#555"/><rect width="4" height="4" fill="#777"/><rect x="4" y="4" width="4" height="4" fill="#777"/></pattern>
+</defs></svg>
+
+<div class="panel" id="proj">
+ <div class="head">Project <span class="crumb">› Assets › Game</span><span class="sp"></span>
+  <button data-v="big" class="on">큰 보기</button><button data-v="small">작은 보기</button><button data-v="list">목록</button></div>
+ <div class="grid" id="grid"></div>
+</div>
+
+<div class="legend">
+ <div><b>코드</b> — C++ 파랑, C# 보라, Python 노랑, Lua 남색. 약자와 색 띠로 구분</div>
+ <div><b>그래프</b> — Graph 청록, 애니메이션 그래프 주황. 노드 배치 축소 미리보기</div>
+ <div><b>폴더</b> — 일반 / 패키지(상자) / 읽기 전용(자물쇠)</div>
+ <div><b>썸네일</b> — 이미지·프리팹·모델·머티리얼·씬은 렌더 결과, 오디오는 파형, 클립은 대표 포즈</div>
+</div>
+
+<script>
+const code=(c,t,ext)=>`<svg viewBox="0 0 64 64"><use href="#doc"/><rect x="12" y="46" width="40" height="12" rx="2" fill="${c}"/><text x="32" y="55.5" text-anchor="middle" font-family="JetBrains Mono,Consolas,monospace" font-weight="700" font-size="9" fill="#fff">${t}</text></svg>`;
+const graph=(c)=>`<svg viewBox="0 0 64 64"><rect x="4" y="8" width="56" height="48" rx="5" fill="#1a1e24" stroke="${c}"/><g fill="#2a3039" stroke="${c}" stroke-width="1"><rect x="9" y="16" width="16" height="11" rx="2"/><rect x="9" y="34" width="16" height="11" rx="2"/><rect x="38" y="24" width="18" height="14" rx="2"/></g><g fill="${c}"><rect x="9" y="16" width="16" height="3" rx="1"/><rect x="9" y="34" width="16" height="3" rx="1"/><rect x="38" y="24" width="18" height="3" rx="1"/></g><path d="M25 22c8 0 6 9 13 9M25 40c8 0 6-7 13-7" stroke="#e6e8eb" stroke-width="1.4" fill="none"/></svg>`;
+const ITEMS=[
+ {n:'Characters',k:'폴더',s:`<svg viewBox="0 0 64 64"><use href="#folder"/></svg>`},
+ {n:'com.bdg.ui',k:'패키지',s:`<svg viewBox="0 0 64 64"><use href="#folder"/><path d="M26 30l8-4 8 4v9l-8 4-8-4z" fill="#8a6a2c"/><path d="M26 30l8 4 8-4M34 34v9" stroke="#f3dca8" fill="none"/></svg>`},
+ {n:'ThirdParty',k:'읽기 전용',s:`<svg viewBox="0 0 64 64"><use href="#folder"/><rect x="27" y="33" width="14" height="11" rx="2" fill="#6b5222"/><path d="M30 33v-3a4 4 0 0 1 8 0v3" stroke="#6b5222" stroke-width="2.5" fill="none"/></svg>`},
+ {n:'Weapon.cpp',k:'C++',s:code('var(--cpp)','C++')},
+ {n:'Weapon.h',k:'C++ 헤더',s:code('var(--cpp)','.H')},
+ {n:'PlayerCombat.cs',k:'C#',s:code('var(--cs)','C#')},
+ {n:'level_tools.py',k:'Python',s:code('var(--py)','PY')},
+ {n:'quest_01.lua',k:'Lua',s:code('var(--lua)','LUA')},
+ {n:'Door.graph',k:'Graph',s:graph('var(--graph)'),b:['var(--graph)','G']},
+ {n:'AG_Knight.animgraph',k:'애니메이션 그래프',s:graph('var(--anim)'),b:['var(--anim)','AG']},
+ {n:'knight.png',k:'텍스처',s:`<svg viewBox="0 0 64 64"><rect x="6" y="6" width="52" height="52" fill="url(#chk)"/><path d="M32 12l14 8v12c0 10-7 16-14 20-7-4-14-10-14-20V20z" fill="#7f8ea3" stroke="#d7dee8" stroke-width="2"/><path d="M32 18v30M22 28h20" stroke="#c0392b" stroke-width="4"/></svg>`,b:['#4b8f5a','IMG']},
+ {n:'Knight.prefab',k:'프리팹',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#2a3340"/><ellipse cx="32" cy="54" rx="14" ry="3" fill="#0006"/><path d="M24 30h16v20H24z" fill="#8795a8"/><path d="M40 30l4-2v20l-4 2z" fill="#5c697b"/><circle cx="32" cy="22" r="8" fill="#a9b6c7"/><path d="M26 20h12" stroke="#1c232c" stroke-width="2.5"/><path d="M44 18l6-6M46 22l8-2" stroke="#d8dde5" stroke-width="2"/></svg>`,b:['#3d7bd9','PF']},
+ {n:'Crystal.prefab',k:'프리팹',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#0f1720"/><circle cx="32" cy="32" r="26" fill="url(#glow)" opacity=".6"/><path d="M32 8l10 22-10 26-10-26z" fill="#5fd8ff"/><path d="M32 8l10 22-10 26z" fill="#2c9fd6"/><path d="M22 30h20" stroke="#d6f7ff" stroke-width="1"/></svg>`,b:['#3d7bd9','PF']},
+ {n:'M_Gold.mat',k:'머티리얼',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#23272e"/><circle cx="32" cy="32" r="22" fill="url(#gold)"/></svg>`,b:['#c9732f','MAT']},
+ {n:'M_Glass.mat',k:'머티리얼',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="url(#chk)"/><circle cx="32" cy="32" r="22" fill="url(#glass)"/><ellipse cx="25" cy="23" rx="6" ry="3" fill="#fff" opacity=".7" transform="rotate(-30 25 23)"/></svg>`,b:['#c9732f','MAT']},
+ {n:'Rock_A.glb',k:'모델',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#2a3340"/><path d="M12 46l8-18 14-8 14 6 6 20z" fill="#7b7468"/><path d="M20 28l14-8 4 14-18 12z" fill="#9a9284"/><path d="M38 34l10-8 6 20z" fill="#5d574e"/></svg>`,b:['#7a8797','3D']},
+ {n:'forest_01.scene',k:'씬',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="url(#sky)"/><path d="M0 44l14-10 12 6 14-12 24 16v20H0z" fill="#5d8a4e"/><path d="M0 52h64v12H0z" fill="#3f6b36"/><g fill="#2f5a2a"><path d="M10 50l5-14 5 14z"/><path d="M46 52l6-16 6 16z"/></g><circle cx="50" cy="14" r="5" fill="#fff4c2"/></svg>`,b:['#5a6b80','SC']},
+ {n:'sword_hit.wav',k:'오디오',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#1f2a33"/><g stroke="#55d0a0" stroke-width="2" stroke-linecap="round">${[6,14,26,40,30,22,34,18,12,20,10,6,8,4].map((h,i)=>`<path d="M${7+i*3.8} ${32-h/2}v${h}"/>`).join('')}</g></svg>`,b:['#2f9a72','♪']},
+ {n:'Attack_01.anim',k:'애니메이션 클립',s:`<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="4" fill="#2a2620"/><g stroke="#f0b27a" stroke-width="3" stroke-linecap="round" fill="none"><circle cx="30" cy="14" r="5" fill="#f0b27a"/><path d="M30 19l-2 16M28 35l-8 14M28 35l10 12M29 24l12-6M29 24l-10 6"/><path d="M41 18l10-10" stroke="#e8edf3"/></g></svg>`,b:['var(--anim)','▶']},
+];
+const grid=document.getElementById('grid');
+grid.innerHTML=ITEMS.map((it,i)=>`<div class="it${i==11?' sel':''}"><div class="th">${it.s}${it.b?`<span class="badge" style="background:${it.b[0]}">${it.b[1]}</span>`:''}</div><div class="nm">${it.n}</div><div class="kd">${it.k}</div></div>`).join('');
+const proj=document.getElementById('proj');
+proj.querySelectorAll('.head button').forEach(b=>b.onclick=()=>{
+ proj.querySelectorAll('.head button').forEach(x=>x.classList.toggle('on',x===b));
+ proj.classList.toggle('list',b.dataset.v==='list');
+ grid.style.setProperty('--sz',b.dataset.v==='small'?'72px':'104px');
+});
+</script>
+</body></html>

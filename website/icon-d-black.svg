@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Bidulgi Engine mark (black)</title>
+  <defs>
+    <mask id="dk-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <g fill="#000" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+        <!-- eyes -->
+        <circle cx="234" cy="82" r="8" stroke="none"/>
+        <circle cx="278" cy="82" r="8" stroke="none"/>
+        <!-- beak -->
+        <path d="M250 90 L262 90 L256 105 Z" stroke="none"/>
+        <!-- lips outline -->
+        <path d="M229 124 C240 112 251 113 256 118 C261 113 272 112 283 124 C272 138 240 138 229 124 Z" fill="none" stroke-width="5"/>
+        <path d="M234 124 C246 127 266 127 278 124" fill="none" stroke-width="4"/>
+        <!-- wing lines -->
+        <path d="M186 214 C168 262 170 330 198 384" fill="none" stroke-width="6"/>
+        <path d="M326 214 C344 262 342 330 314 384" fill="none" stroke-width="6"/>
+        <!-- toe gaps -->
+        <path d="M166 482 L166 494 M186 484 L186 495 M205 484 L205 495 M224 484 L224 493" fill="none" stroke-width="3"/>
+        <path d="M346 482 L346 494 M326 484 L326 495 M307 484 L307 495 M288 484 L288 493" fill="none" stroke-width="3"/>
+      </g>
+    </mask>
+  </defs>
+  <g fill="#12161c" mask="url(#dk-cut)">
+    <!-- head, neck and puffed chest -->
+    <path d="M256 34 C287 34 306 56 306 86 C306 112 298 132 292 150 C330 172 362 222 366 288 C370 352 336 398 256 402 C176 398 142 352 146 288 C150 222 182 172 220 150 C214 132 206 112 206 86 C206 56 225 34 256 34 Z"/>
+    <!-- wing tips -->
+    <path d="M154 326 C140 368 150 404 178 422 C170 396 170 364 178 338 Z"/>
+    <path d="M358 326 C372 368 362 404 334 422 C342 396 342 364 334 338 Z"/>
+    <!-- legs -->
+    <path d="M214 392 L207 446 L241 446 L242 392 Z"/>
+    <path d="M270 392 L271 446 L305 446 L298 392 Z"/>
+    <!-- left foot -->
+    <path d="M150 478 C146 454 170 436 210 436 C238 436 248 452 246 478 Z"/>
+    <circle cx="157" cy="480" r="12"/><circle cx="176" cy="484" r="10.5"/><circle cx="196" cy="485" r="9.5"/><circle cx="215" cy="484" r="9"/><circle cx="233" cy="481" r="8.5"/>
+    <!-- right foot -->
+    <path d="M266 478 C264 452 274 436 302 436 C342 436 366 454 362 478 Z"/>
+    <circle cx="355" cy="480" r="12"/><circle cx="336" cy="484" r="10.5"/><circle cx="316" cy="485" r="9.5"/><circle cx="297" cy="484" r="9"/><circle cx="279" cy="481" r="8.5"/>
+  </g>
+</svg>

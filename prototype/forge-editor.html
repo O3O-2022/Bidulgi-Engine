@@ -1,0 +1,1014 @@
+<title>Forge Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: Unity's default arrangement (Hierarchy | Scene | full-height Inspector, Project/Console below)
+   with Unreal-style tool density, drawn as a single dark editor window with 1px seams. */
+:root{
+  color-scheme: dark;
+  --ground:#0b0d10; --win:#14171b; --panel:#1a1d22; --raise:#22262c; --sunk:#111317;
+  --line:#2a2f36; --line2:#3a4049;
+  --fg:#d4d8de; --dim:#8b929c; --faint:#5f6670;
+  --accent:#e9a23b; --accent-soft:rgba(233,162,59,.14); --accent-ink:#1b1306;
+  --ax:#e0564e; --ay:#72c04e; --az:#4b8ee6;
+  --u:#8fb8ff; --ue:#c79df2;
+  --err:#ef6b62; --warn:#e6c057; --ok:#72c04e; --prefab:#7fb4ff;
+  --sans:'Inter',system-ui,-apple-system,'Segoe UI','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,Consolas,'D2Coding','Malgun Gothic',monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--ground);color:var(--fg);font:13px/1.45 var(--sans)}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+.shell{min-height:100%;display:flex;flex-direction:column;gap:12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px}
+.intro{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 24px}
+.intro h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+.intro h1 small{font-weight:500;color:var(--dim);font-size:13px;margin-left:8px}
+.intro p{margin:4px 0 0;color:var(--dim);max-width:70ch}
+.legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.legend .src{display:inline-flex}
+.btn{background:var(--raise);border:1px solid var(--line2);border-radius:4px;padding:4px 10px;font-size:12px}
+.btn:hover{border-color:var(--faint)}
+
+/* source badges */
+.src{display:none;align-items:center;gap:4px;font:600 10px/1 var(--sans);letter-spacing:.04em;padding:3px 6px;border-radius:3px;white-space:nowrap;border:1px solid}
+.src.u{color:var(--u);border-color:rgba(143,184,255,.35);background:rgba(143,184,255,.08)}
+.src.ue{color:var(--ue);border-color:rgba(199,157,242,.35);background:rgba(199,157,242,.08)}
+.src.f{color:var(--accent);border-color:rgba(233,162,59,.4);background:var(--accent-soft)}
+.show-src .src{display:inline-flex}
+
+/* editor window */
+.app{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;
+  grid-template-columns:240px minmax(0,1fr) 310px;
+  grid-template-rows:30px auto minmax(0,1fr) 240px 24px;
+  grid-template-areas:"menu menu menu" "tool tool tool" "hier view insp" "bot bot insp" "stat stat stat";
+  height:clamp(640px,calc(100vh - 130px),940px)}
+.menubar{grid-area:menu;background:var(--win);display:flex;align-items:center;gap:2px;padding:0 8px;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+.brand{font:700 11px/1 var(--mono);letter-spacing:.14em;color:var(--accent);margin-right:10px;display:flex;align-items:center;gap:6px}
+.brand i{width:10px;height:10px;background:var(--accent);clip-path:polygon(50% 0,100% 100%,0 100%);display:block}
+.menubar .m{background:none;border:0;padding:4px 8px;border-radius:3px;color:var(--fg);font-size:12px}
+.menubar .m:hover{background:var(--raise)}
+.menubar .proj{margin-left:auto;color:var(--dim);font-size:12px;padding-left:16px}
+
+.toolbar{grid-area:tool;background:var(--win);display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:6px 10px}
+.grp{display:flex;align-items:center;gap:2px;background:var(--sunk);border:1px solid var(--line);border-radius:5px;padding:2px}
+.ib{width:28px;height:24px;display:grid;place-items:center;border:0;background:none;border-radius:3px;color:var(--dim)}
+.ib:hover{background:var(--raise);color:var(--fg)}
+.ib.on{background:var(--accent-soft);color:var(--accent)}
+.ib svg{width:15px;height:15px}
+.chip{border:0;background:none;padding:3px 8px;border-radius:3px;font-size:12px;color:var(--dim)}
+.chip.on{background:var(--raise);color:var(--fg)}
+.play{margin-inline:auto}
+.play .ib.on{background:var(--accent);color:var(--accent-ink)}
+.sel{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.sel select{background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:3px 6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--fg)}
+.tgroup{display:flex;align-items:center;gap:8px}
+
+.panel{background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.hier{grid-area:hier}.view{grid-area:view}.insp{grid-area:insp}.bot{grid-area:bot}
+.ph{height:30px;flex:none;display:flex;align-items:stretch;background:var(--win);border-bottom:1px solid var(--line);padding-right:6px;gap:6px}
+.tabs{display:flex}
+.tab{border:0;background:none;padding:0 12px;font-size:12px;color:var(--dim);border-top:2px solid transparent}
+.tab.on{background:var(--panel);color:var(--fg);border-top-color:var(--accent)}
+.ph .src{align-self:center}
+.ph .sp{flex:1}
+.ph .ctl{display:flex;align-items:center;gap:6px}
+.ph select,.mini{background:var(--sunk);border:1px solid var(--line);border-radius:3px;font-size:11px;padding:2px 5px;color:var(--fg)}
+.mini.on{border-color:var(--accent);color:var(--accent)}
+
+.in{background:var(--sunk);border:1px solid var(--line);border-radius:3px;height:22px;padding:0 6px;font-size:12px;width:100%;min-width:0;color:var(--fg)}
+.in:focus{border-color:var(--accent);outline:none}
+select.in{padding:0 4px}
+.search{margin:6px;flex:none}
+
+/* hierarchy */
+.cols{display:grid;grid-template-columns:24px minmax(0,1fr) 64px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);padding:2px 6px;border-bottom:1px solid var(--line);flex:none}
+.tree{list-style:none;margin:0;padding:2px 0;overflow:auto;flex:1}
+.tree li{display:grid;grid-template-columns:24px minmax(0,1fr) 64px;align-items:center;height:22px;padding:0 6px;cursor:default;font-size:12.5px}
+.tree li:hover{background:var(--raise)}
+.tree li.on{background:#2c4a70}
+.tree li.off .nm{opacity:.45}
+.eye{border:0;background:none;color:var(--faint);width:20px;height:20px;display:grid;place-items:center;padding:0}
+.eye svg{width:13px;height:13px}
+.eye.hid{color:var(--line2)}
+.nmw{display:flex;align-items:center;gap:5px;min-width:0}
+.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm.pf{color:var(--prefab)}
+.car{width:10px;color:var(--faint);font-size:9px;flex:none}
+.ti{width:12px;height:12px;flex:none;border-radius:2px;border:1.5px solid var(--dim)}
+.ti.Camera{border-color:#9ab;border-radius:2px 5px 5px 2px}
+.ti.Light{border-color:var(--warn);border-radius:50%}
+.ti.Mesh{border-color:#8fa3b8;background:rgba(143,163,184,.25)}
+.ti.Empty{border-style:dashed}
+.ti.Prefab{border-color:var(--prefab);background:rgba(127,180,255,.3)}
+.ty{color:var(--faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* viewport */
+.vwrap{position:relative;flex:1;min-height:0;background:#1d2026}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.ov{position:absolute;pointer-events:none;font:11px/1.5 var(--mono);color:#c8ced6;text-shadow:0 1px 2px #000}
+.ov.tl{left:10px;top:8px}.ov.br{right:10px;bottom:8px;text-align:right;color:#9aa3ad}
+.playing .vwrap{box-shadow:inset 0 0 0 2px var(--accent)}
+.hint{position:absolute;left:10px;bottom:8px;font-size:11px;color:#8b939c;pointer-events:none}
+
+/* inspector */
+.ibody{flex:1;overflow:auto;padding-bottom:16px}
+.ihead{display:flex;align-items:center;gap:8px;padding:10px 10px 6px}
+.ihead input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px;margin:0}
+.ihead .in{height:26px;font-weight:600;font-size:13px}
+.row{display:grid;grid-template-columns:minmax(70px,38%) minmax(0,1fr);gap:8px;align-items:center;padding:2px 10px 2px 12px;min-height:26px;position:relative}
+.row label{color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row.ovr::before{content:"";position:absolute;left:3px;top:4px;bottom:4px;width:2px;background:var(--prefab);border-radius:2px}
+.row.ovr label{color:var(--fg);font-weight:600}
+.idchip{font:12px var(--mono);color:var(--accent);display:flex;gap:8px;align-items:baseline;min-width:0}
+.idchip span{font:11px var(--sans);color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prefabbar{margin:6px 10px;padding:6px 8px;background:rgba(127,180,255,.08);border:1px solid rgba(127,180,255,.25);border-radius:4px;font-size:12px;display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline}
+.prefabbar b{color:var(--prefab)}
+.prefabbar code{font:11px var(--mono);color:var(--fg)}
+.prefabbar em{font-style:normal;color:var(--dim);font-size:11px}
+.vec{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
+.ax{display:flex;align-items:center;min-width:0}
+.ax b{font:700 10px/22px var(--mono);width:14px;text-align:center;border-radius:3px 0 0 3px;flex:none;color:#111}
+.ax .in{border-radius:0 3px 3px 0}
+.ax.x b{background:var(--ax)}.ax.y b{background:var(--ay)}.ax.z b{background:var(--az)}
+details.comp{border-top:1px solid var(--line);margin-top:4px}
+details.comp>summary{list-style:none;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 10px;background:var(--raise);cursor:pointer;font-weight:600;font-size:12.5px}
+details.comp>summary::-webkit-details-marker{display:none}
+details.comp>summary::before{content:"";width:0;height:0;border-left:4px solid var(--dim);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s}
+details.comp[open]>summary::before{transform:rotate(90deg)}
+details.comp>summary .lang{font:600 10px/1 var(--mono);padding:3px 5px;border-radius:3px;background:var(--sunk);color:var(--dim);border:1px solid var(--line)}
+details.comp>summary .x{margin-left:auto;border:0;background:none;color:var(--faint);font-size:14px;line-height:1;padding:0 4px}
+details.comp>summary .x:hover{color:var(--err)}
+details.comp .rows{padding:4px 0}
+.chk{accent-color:var(--accent);width:14px;height:14px;margin:0}
+input[type=color].in{padding:1px 2px;width:56px}
+.addc{display:flex;justify-content:center;padding:14px 10px 4px}
+.addc select{width:70%;height:26px;background:var(--raise);border:1px solid var(--line2);border-radius:4px;text-align:center;color:var(--fg)}
+.empty{padding:24px 14px;color:var(--faint);text-align:center}
+
+/* text tab */
+.txt{padding:10px;display:flex;flex-direction:column;gap:10px}
+.cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);display:flex;justify-content:space-between;gap:8px}
+.cap span{text-transform:none;letter-spacing:0;color:var(--dim)}
+.code{background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:8px;font:11.5px/1.6 var(--mono);overflow-x:auto;white-space:pre;color:#c3c9d1}
+.code .ln{display:block;padding:0 4px;border-radius:2px}
+.code .ln.on{background:var(--accent-soft);box-shadow:inset 2px 0 var(--accent)}
+.code .k{color:#8fb8ff}.code .s{color:#c5e38f}.code .n{color:#f0b46a}.code .b{color:#d79df2}
+.note{font-size:12px;color:var(--dim);line-height:1.5}
+
+/* bottom */
+.bbody{flex:1;min-height:0;display:flex}
+.bbody>*{min-width:0}
+.projp{display:grid;grid-template-columns:170px minmax(0,1fr);flex:1;min-height:0}
+.folders{list-style:none;margin:0;padding:6px 0;border-right:1px solid var(--line);overflow:auto}
+.folders li{padding:3px 10px 3px calc(10px + var(--d,0)*14px);font-size:12px;color:var(--dim);cursor:pointer;display:flex;gap:6px;align-items:center}
+.folders li::before{content:"";width:12px;height:9px;border:1.5px solid currentColor;border-radius:1px 3px 2px 2px;flex:none;opacity:.7}
+.folders li.on{background:var(--raise);color:var(--fg)}
+.assets{display:flex;flex-direction:column;min-height:0}
+.abar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 8px;border-bottom:1px solid var(--line)}
+.abar .in{width:160px;margin-left:auto}
+.fchip{border:1px solid var(--line);background:none;border-radius:10px;padding:1px 8px;font-size:11px;color:var(--dim)}
+.fchip.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:6px;padding:8px;overflow:auto;align-content:start;flex:1}
+.tile{display:flex;flex-direction:column;align-items:center;gap:5px;padding:6px 4px;border-radius:4px;border:1px solid transparent;background:none;text-align:center}
+.tile:hover{background:var(--raise)}
+.tile .ic{width:46px;height:46px;border-radius:5px;display:grid;place-items:center;font:700 11px/1 var(--mono);color:rgba(255,255,255,.9)}
+.tile .tn{font-size:11px;color:var(--fg);line-height:1.25;word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .tk{font-size:10px;color:var(--faint)}
+.console{list-style:none;margin:0;padding:4px 0;overflow:auto;flex:1;font:12px/1.5 var(--mono)}
+.console li{padding:2px 10px;border-bottom:1px solid rgba(255,255,255,.03);display:flex;gap:8px}
+.console .lv{flex:none;width:44px;font-weight:700}
+.console .info .lv{color:var(--dim)}.console .warn .lv{color:var(--warn)}.console .err .lv{color:var(--err)}
+.agent{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);flex:1;min-height:0}
+.hist{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.hist ol{list-style:none;margin:0;padding:0;overflow:auto;flex:1}
+.hist li{display:flex;align-items:center;gap:8px;padding:4px 10px;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px}
+.hist code{font:11.5px var(--mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.who{font:600 10px/1 var(--sans);padding:3px 5px;border-radius:3px;flex:none;min-width:44px;text-align:center}
+.who.UI{background:rgba(143,184,255,.12);color:var(--u)}
+.who.에이전트{background:var(--accent-soft);color:var(--accent)}
+.who.터미널{background:rgba(114,192,78,.12);color:var(--ok)}
+.undo{border:1px solid var(--line2);background:var(--raise);border-radius:3px;font-size:11px;padding:1px 7px;flex:none}
+.hh{padding:6px 10px;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.term{display:flex;flex-direction:column;min-height:0}
+.tout{flex:1;overflow:auto;padding:6px 10px;font:12px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word}
+.tout .i{color:var(--ok)}.tout .e{color:var(--err)}.tout .o{color:#b9c0c9}
+.tin{display:flex;align-items:center;gap:6px;padding:6px 8px;border-top:1px solid var(--line)}
+.tin span{font:12px var(--mono);color:var(--ok)}
+.tin .in{font-family:var(--mono);height:26px}
+.ex{display:flex;flex-wrap:wrap;gap:4px;padding:0 8px 8px}
+.ex button{font:11px var(--mono);background:var(--sunk);border:1px solid var(--line);border-radius:3px;padding:2px 6px;color:var(--dim)}
+.ex button:hover{color:var(--fg);border-color:var(--faint)}
+
+.status{grid-area:stat;background:var(--win);display:flex;align-items:center;gap:16px;padding:0 10px;font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden}
+.status .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+.status .r{margin-left:auto;display:flex;gap:16px;align-items:center}
+.tn-num{font-variant-numeric:tabular-nums}
+
+@media (max-width:980px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto;
+    grid-template-areas:"menu" "tool" "view" "hier" "insp" "bot" "stat";height:auto}
+  .menubar{height:30px}
+  .view{height:380px}.hier{height:260px}.insp{max-height:560px}.bot{height:400px}
+  .status{height:auto;flex-wrap:wrap;padding:4px 10px;white-space:normal}
+  .status .r{margin-left:0;flex-wrap:wrap}
+  .play{margin-inline:0}
+}
+@media (max-width:620px){
+  .projp{grid-template-columns:minmax(0,1fr)}
+  .folders{display:none}
+  .agent{grid-template-columns:minmax(0,1fr);grid-template-rows:140px minmax(0,1fr)}
+  .hist{border-right:0;border-bottom:1px solid var(--line)}
+  .abar .in{width:100%;margin-left:0}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="shell">
+  <header class="intro">
+    <div>
+      <h1>Forge Editor <small>UI 시안 v0.1</small></h1>
+      <p>유니티의 화면 배치에 언리얼의 도구, 그리고 텍스트 기반 에이전트 기능을 더한 에디터입니다. 오브젝트 선택, 화살표를 끌어 이동, 인스펙터 편집, 명령 입력이 모두 실제로 동작합니다.</p>
+    </div>
+    <div class="legend">
+      <span class="src u">Unity식</span><span class="src ue">Unreal식</span><span class="src f">Forge 고유</span>
+      <button class="btn" id="srcToggle" type="button">출처 표시 끄기</button>
+    </div>
+  </header>
+
+  <div class="app show-src" id="app">
+    <nav class="menubar" aria-label="메뉴">
+      <span class="brand"><i></i>FORGE</span>
+      <button class="m" type="button">File</button><button class="m" type="button">Edit</button><button class="m" type="button">Assets</button><button class="m" type="button">GameObject</button><button class="m" type="button">Component</button><button class="m" type="button">Build</button><button class="m" type="button">Window</button><button class="m" type="button">Agent</button><button class="m" type="button">Help</button>
+      <span class="proj">MyGame · scenes/forest_01.scene</span>
+    </nav>
+
+    <div class="toolbar">
+      <div class="tgroup">
+        <div class="grp" role="group" aria-label="도구">
+          <button class="ib" data-tool="hand" title="Hand (Q)" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 8V3.5a1 1 0 0 1 2 0V7m0-4.5a1 1 0 0 1 2 0V7m0-3a1 1 0 0 1 2 0v4m0-2a1 1 0 0 1 2 0v4.5c0 2.5-2 4.5-4.5 4.5S4 13 3 11L1.8 8.6a1 1 0 0 1 1.7-1L5 9"/></svg></button>
+          <button class="ib on" data-tool="move" title="Move (W)" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1v14M1 8h14M8 1 6 3m2-2 2 2M8 15l-2-2m2 2 2-2M1 8l2-2M1 8l2 2m12-2-2-2m2 2-2 2"/></svg></button>
+          <button class="ib" data-tool="rotate" title="Rotate (E)" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 8A5.5 5.5 0 1 1 11 3.4"/><path d="M11 1v3h3"/></svg></button>
+          <button class="ib" data-tool="scale" title="Scale (R)" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="6" width="8" height="8"/><path d="M8 2h6v6M14 2 9 7"/></svg></button>
+        </div>
+        <div class="grp"><button class="chip on" type="button">Pivot</button><button class="chip" type="button">Global</button></div>
+        <span class="src u">Unity</span>
+      </div>
+      <div class="tgroup play">
+        <div class="grp" role="group" aria-label="플레이">
+          <button class="ib" id="bPlay" title="Play (Ctrl+P)" type="button"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg></button>
+          <button class="ib" id="bPause" title="Pause" type="button"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="3.5" y="3" width="3" height="10"/><rect x="9.5" y="3" width="3" height="10"/></svg></button>
+          <button class="ib" id="bStep" title="Step" type="button"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M3 3v10l7-5z"/><rect x="11" y="3" width="2" height="10"/></svg></button>
+        </div>
+      </div>
+      <div class="tgroup">
+        <label class="sel">Platform <select id="selPlat"><option>PC</option><option>Mobile</option><option>Console</option><option>Web</option></select></label>
+        <label class="sel">Scalability <select id="selScal"><option>Low</option><option>Medium</option><option selected>High</option><option>Epic</option></select></label>
+        <label class="sel">RHI <select id="selRhi"><option>OpenGL 4.5</option><option>Vulkan (예정)</option><option>Metal (예정)</option><option>D3D12 (예정)</option><option>GLES 3.0 (예정)</option></select></label>
+        <span class="src ue">Unreal</span>
+      </div>
+    </div>
+
+    <section class="panel hier" aria-label="Hierarchy">
+      <div class="ph">
+        <div class="tabs"><button class="tab on" type="button">Hierarchy</button></div>
+        <span class="src u">Unity</span><span class="src ue">열·눈</span>
+        <span class="sp"></span>
+        <div class="ctl">
+          <select id="createSel" aria-label="오브젝트 생성">
+            <option value="">+ 생성</option><option value="empty">Empty</option><option value="cube">Cube</option><option value="light">Point Light</option><option value="goblin">Goblin (Prefab)</option>
+          </select>
+        </div>
+      </div>
+      <input class="in search" id="hierSearch" placeholder="검색 (이름 또는 id)" autocomplete="off">
+      <div class="cols"><span></span><span>Name</span><span>Type</span></div>
+      <ul class="tree" id="tree"></ul>
+    </section>
+
+    <section class="panel view" aria-label="Viewport">
+      <div class="ph">
+        <div class="tabs"><button class="tab on" data-vtab="scene" type="button">Scene</button><button class="tab" data-vtab="game" type="button">Game</button></div>
+        <span class="sp"></span>
+        <div class="ctl">
+          <span class="src ue">Unreal</span>
+          <select id="shading" aria-label="셰이딩"><option>Lit</option><option>Unlit</option><option>Wireframe</option></select>
+          <span class="src u">Unity</span>
+          <button class="mini" id="b2d" type="button">2D</button>
+          <button class="mini on" id="bGiz" type="button">Gizmos</button>
+        </div>
+      </div>
+      <div class="vwrap">
+        <canvas id="cv" aria-label="씬 뷰포트"></canvas>
+        <div class="ov tl" id="ovTL"></div>
+        <div class="ov br" id="ovBR"></div>
+        <div class="hint" id="hint">드래그: 회전 · Shift+드래그: 이동 · 휠: 줌 · 화살표 드래그: 오브젝트 이동 · F: 포커스</div>
+      </div>
+    </section>
+
+    <section class="panel insp" aria-label="Inspector">
+      <div class="ph">
+        <div class="tabs"><button class="tab on" data-itab="insp" type="button">Inspector</button><button class="tab" data-itab="text" type="button">Text</button></div>
+        <span class="src u">Unity</span><span class="src f">Text</span>
+      </div>
+      <input class="in search" id="inspSearch" placeholder="속성 검색" autocomplete="off">
+      <div class="ibody" id="inspBody"></div>
+    </section>
+
+    <section class="panel bot" aria-label="Project, Console, Agent">
+      <div class="ph">
+        <div class="tabs"><button class="tab on" data-btab="project" type="button">Project</button><button class="tab" data-btab="console" type="button">Console</button><button class="tab" data-btab="agent" type="button">Agent</button></div>
+        <span class="src u">Unity</span><span class="src ue">필터</span><span class="src f">Agent</span>
+      </div>
+      <div class="bbody" id="bProject">
+        <div class="projp">
+          <ul class="folders" id="folders"></ul>
+          <div class="assets">
+            <div class="abar" id="abar"><input class="in" id="assetSearch" placeholder="에셋 검색" autocomplete="off"></div>
+            <div class="grid" id="grid"></div>
+          </div>
+        </div>
+      </div>
+      <div class="bbody" id="bConsole" hidden><ul class="console" id="console"></ul></div>
+      <div class="bbody" id="bAgent" hidden>
+        <div class="agent">
+          <div class="hist">
+            <div class="hh"><span>명령 기록 · Undo 스택</span><span id="histN"></span></div>
+            <ol id="hist"></ol>
+          </div>
+          <div class="term">
+            <div class="hh"><span>forge CLI · 에이전트와 같은 명령</span><span>help 입력</span></div>
+            <div class="tout" id="tout"></div>
+            <form class="tin" id="tform"><span>forge&gt;</span><input class="in" id="forgeIn" autocomplete="off" spellcheck="false" placeholder="set g2 pos=2,0,6"><button class="btn" type="submit">실행</button></form>
+            <div class="ex" id="ex"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="status">
+      <span><i class="dot"></i>저장됨</span>
+      <span id="stObjs" class="tn-num"></span>
+      <span id="stFile" class="tn-num"></span>
+      <div class="r"><span class="src f">토큰 표시</span><span id="stRhi">RHI: OpenGL 4.5</span><span>Forge 0.1 시안</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const clone = o => JSON.parse(JSON.stringify(o));
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const r2 = v => Math.round(v * 100) / 100;
+const D = Math.PI / 180;
+const add = (a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]], sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const dot = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross = (a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm = a => { const l = Math.hypot(a[0],a[1],a[2]) || 1; return mul(a, 1/l); };
+
+/* ---------- data model ---------- */
+const DEF_T = { pos:[0,0,0], rot:[0,0,0], scale:[1,1,1] };
+const COMP_DEF = {
+  Camera:{ fov:60, near:0.3, far:1000, projection:'Perspective' },
+  Light:{ kind:'Point', intensity:1, color:'#ffffff', shadows:'None' },
+  Mesh:{ model:'', material:'materials/default.mat' },
+  Rigidbody:{ mass:1, gravity:true, kinematic:false },
+  BoxCollider:{ size:[1,1,1] },
+  CapsuleCollider:{ height:2, radius:0.5 },
+  AudioSource:{ clip:'', volume:1, loop:false },
+  PlayerController:{ speed:5, jumpForce:8, cam:null },
+  Inventory:{ slots:10 },
+  Health:{ hp:100, max:100 },
+  Spawner:{ prefab:'prefabs/goblin.prefab', count:5, interval:2 },
+  Boids:{ count:50, radius:3 },
+};
+const SCRIPT = { PlayerController:'C#', Inventory:'Lua', Health:'C#', Spawner:'Python', Boids:'Rust' };
+const SCRIPT_FILE = { PlayerController:'scripts/PlayerController.cs', Inventory:'scripts/inventory.lua', Health:'scripts/Health.cs', Spawner:'scripts/spawner.py', Boids:'scripts/boids.rs' };
+const TYPE_COMPS = { Camera:['Camera'], Light:['Light'], Mesh:['Mesh'], Empty:[] };
+const ENUMS = { 'Light.kind':['Directional','Point','Spot'], 'Light.shadows':['None','Hard','Soft'], 'Camera.projection':['Perspective','Orthographic'] };
+const PREFABS = {
+  'prefabs/goblin.prefab': { name:'Goblin', type:'Mesh', comps:{ Mesh:{model:'models/goblin.glb', material:'materials/goblin.mat'}, CapsuleCollider:{height:1.2, radius:0.4}, Health:{hp:100, max:100} } },
+};
+const T0 = () => ({ pos:[0,0,0], rot:[0,0,0], scale:[1,1,1] });
+const goblin = (id, pos) => ({ id, name:'Goblin', type:'Mesh', parent:'Enemies', prefab:'prefabs/goblin.prefab', ...T0(), pos, comps: clone(PREFABS['prefabs/goblin.prefab'].comps) });
+
+let scene = [
+  { id:'cam', name:'Main Camera', type:'Camera', tag:'MainCamera', ...T0(), pos:[0,5,-10], rot:[20,0,0], comps:{ Camera:clone(COMP_DEF.Camera) } },
+  { id:'sun', name:'Sun', type:'Light', ...T0(), pos:[-4,8,-3], rot:[50,-30,0], comps:{ Light:{ kind:'Directional', intensity:1.2, color:'#fff4e0', shadows:'Soft' } } },
+  { id:'ground', name:'Ground', type:'Mesh', ...T0(), scale:[3,1,3], comps:{ Mesh:{ model:'builtin/plane', material:'materials/grass.mat' }, BoxCollider:{ size:[10,0.1,10] } } },
+  { id:'player', name:'Player', type:'Mesh', tag:'Player', ...T0(), rot:[0,30,0], comps:{ Mesh:{ model:'models/knight.glb', material:'materials/knight.mat' }, CapsuleCollider:{ height:2, radius:0.5 }, Rigidbody:{ mass:70, gravity:true, kinematic:false }, PlayerController:{ speed:5, jumpForce:8, cam:'@cam' }, Inventory:{ slots:20 } } },
+  { id:'crate', name:'Crate', type:'Mesh', ...T0(), pos:[-3,0,2], rot:[0,45,0], comps:{ Mesh:{ model:'builtin/cube', material:'materials/wood.mat' }, BoxCollider:{ size:[1,1,1] } } },
+  { id:'Enemies', type:'Empty', ...T0(), comps:{} },
+  goblin('g1', [6,0,1]),
+  goblin('g2', [8,0,3]),
+];
+let sel = 'player';
+let history = [];
+const hidden = new Set();      // editor-only state, never written to the scene file
+const collapsed = new Set();
+const termLines = [];
+const consoleLines = [];
+
+const byId = id => scene.find(o => o.id === id);
+const childrenOf = id => scene.filter(o => (o.parent || null) === id);
+function wpos(o){ let p = [...o.pos], par = o.parent && byId(o.parent); while (par){ p = add(p, par.pos); par = par.parent && byId(par.parent); } return p; }
+
+/* ---------- serialization: defaults are omitted ---------- */
+function toObj(o){
+  const r = { id:o.id };
+  const pf = o.prefab && PREFABS[o.prefab];
+  if (o.name && o.name !== o.id && !(pf && o.name === pf.name)) r.name = o.name;
+  if (!pf && o.type !== 'Empty') r.type = o.type;
+  if (o.tag && o.tag !== 'Untagged') r.tag = o.tag;
+  if (o.active === false) r.active = false;
+  if (o.parent) r.parent = '@' + o.parent;
+  if (pf) r.prefab = o.prefab;
+  for (const t of ['pos','rot','scale']) if (!eq(o[t], DEF_T[t])) r[t] = o[t].map(r2);
+  for (const c in o.comps){
+    const base = pf ? (pf.comps[c] || COMP_DEF[c]) : COMP_DEF[c];
+    const implied = pf ? !!pf.comps[c] : (TYPE_COMPS[o.type] || []).includes(c);
+    const d = {};
+    for (const k in o.comps[c]) if (!eq(o.comps[c][k], base ? base[k] : undefined)) d[k] = o.comps[c][k];
+    if (Object.keys(d).length || !implied) r[c] = d;
+  }
+  return r;
+}
+const lineOf = o => JSON.stringify(toObj(o)).replace(/,(?=")/g, ', ');
+function sceneFileLines(){
+  const head = '{"v":1, "scene":"forest_01", "mode":"3d", "settings":{"gravity":[0,-9.81,0], "skybox":"sky/day.hdr"},';
+  const lines = [{ t:head }, { t:' "objects":[' }];
+  scene.forEach((o, i) => lines.push({ t:'  ' + lineOf(o) + (i < scene.length - 1 ? ',' : ''), id:o.id }));
+  lines.push({ t:' ]}' });
+  return lines;
+}
+const fileText = () => sceneFileLines().map(l => l.t).join('\n');
+function hl(s){
+  return esc(s).replace(/(&quot;|")((?:(?!&quot;|").)*)(&quot;|")(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d+)?/g, (m, q1, body, q2, colon, b) => {
+    if (q1) return colon ? `<span class="k">"${body}"</span>:` : `<span class="s">"${body}"</span>`;
+    if (b) return `<span class="b">${m}</span>`;
+    return `<span class="n">${m}</span>`;
+  });
+}
+function treeOrder(){ const out = []; const walk = (pid, d) => childrenOf(pid).forEach(o => { out.push([o, d]); walk(o.id, d + 1); }); walk(null, 0); return out; }
+function viewText(){
+  return treeOrder().map(([o, d]) => {
+    const j = toObj(o); const pf = o.prefab;
+    let s = ('  '.repeat(d) + o.id).padEnd(10) + ' ' + (pf ? pf.split('/').pop() : o.type).padEnd(14);
+    const tf = ['pos','rot','scale'].filter(t => j[t]).map(t => `${t} ${j[t].join(',')}`).join('  ');
+    if (tf) s += tf + '  ';
+    const comps = Object.keys(o.comps).filter(c => j[c] && Object.keys(j[c]).length).map(c => c + ' ' + Object.entries(j[c]).map(([k,v]) => `${k}=${Array.isArray(v) ? v.join(',') : v}`).join(' '));
+    if (comps.length) s += '| ' + comps.join(' | ');
+    return s.trimEnd();
+  }).join('\n');
+}
+const tokens = s => Math.round(s.length / 4);
+
+/* ---------- command bus: UI, terminal and agent all go through run() ---------- */
+function tokenize(t){ return (t.match(/(?:[^\s"]+|"[^"]*")+/g) || []); }
+function parseVal(v){
+  v = v.replace(/^"|"$/g, '').replace(/="/, '=');
+  if (v === 'true') return true; if (v === 'false') return false;
+  if (/^-?[\d.]+(,-?[\d.]+)+$/.test(v)) return v.split(',').map(Number);
+  if (v !== '' && !isNaN(Number(v))) return Number(v);
+  return v;
+}
+function flags(t){ const o = {}; for (let i = 0; i < t.length; i++) if (t[i].startsWith('--')) { o[t[i].slice(2)] = t[i+1]; i++; } return o; }
+function vecOf(v, keep){ const a = Array.isArray(v) ? v : String(v).split(',').map(Number); if (a.length < 2 || a.some(isNaN)) throw new Error('벡터는 x,y,z 형식으로 쓰세요 (예: 1,0,2)'); return [a[0], a[1], a[2] ?? keep[2]]; }
+function need(id){ const o = byId(String(id || '').replace(/^@/, '')); if (!o) throw new Error(`"${id}" 오브젝트가 없습니다. view 로 id 목록을 확인하세요`); return o; }
+function uniqueId(base){ const stem = base.replace(/\d+$/, ''); let n = 1; while (byId(stem + n)) n++; return stem + n; }
+function setPath(o, path, raw){
+  const p = path.split('.'); const val = parseVal(raw);
+  if (['pos','rot','scale'].includes(p[0])){
+    if (p.length === 1) { o[p[0]] = vecOf(val, o[p[0]]); return; }
+    const i = 'xyz'.indexOf(p[1]); if (i < 0 || isNaN(Number(val))) throw new Error(`${p[0]}.${p[1]} 은(는) 잘못된 경로입니다. ${p[0]}.x / .y / .z 를 쓰세요`);
+    o[p[0]][i] = Number(val); return;
+  }
+  if (p[0] === 'name' && p.length === 1){ o.name = String(val); return; }
+  if (p[0] === 'tag' && p.length === 1){ o.tag = String(val); return; }
+  if (p[0] === 'active' && p.length === 1){ o.active = val === true; return; }
+  const c = o.comps[p[0]];
+  if (!c) throw new Error(`${o.id}에 ${p[0]} 컴포넌트가 없습니다. 있는 것: ${Object.keys(o.comps).join(', ') || '없음'}`);
+  if (p.length < 2) throw new Error(`필드를 지정하세요: ${p[0]}.<필드>`);
+  const f = p[1];
+  if (!(f in c)) throw new Error(`${p[0]}에 ${f} 필드가 없습니다. 가능한 필드: ${Object.keys(c).join(', ')}`);
+  const old = c[f];
+  if (Array.isArray(old)){
+    if (p[2]) { const i = 'xyz'.indexOf(p[2]); if (i < 0) throw new Error('축은 x, y, z 중 하나입니다'); old[i] = Number(val); }
+    else c[f] = vecOf(val, old);
+  } else if (old === null || (typeof old === 'string' && old.startsWith('@'))){
+    const s = String(val); c[f] = (s === '' || s === 'null') ? null : '@' + need(s).id;
+  } else if (typeof old === 'number'){ if (isNaN(Number(val))) throw new Error(`${p[0]}.${f} 는 숫자입니다`); c[f] = Number(val); }
+  else if (typeof old === 'boolean'){ c[f] = val === true; }
+  else {
+    const opts = ENUMS[`${p[0]}.${f}`]; const s = String(val);
+    if (opts && !opts.includes(s)) throw new Error(`${p[0]}.${f} 값은 ${opts.join(' | ')} 중 하나입니다`);
+    c[f] = s;
+  }
+}
+function schemaText(){
+  const ty = v => v === null ? 'ref' : Array.isArray(v) ? 'vec3' : typeof v === 'boolean' ? 'bool' : typeof v === 'number' ? (Number.isInteger(v) ? 'int' : 'float') : 'str';
+  return Object.entries(COMP_DEF).map(([c, f]) => {
+    const fields = Object.entries(f).map(([k, v]) => { const e = ENUMS[`${c}.${k}`]; return `${k}:${e ? e.join('|') : ty(v)}=${v === null ? '-' : Array.isArray(v) ? v.join(',') : v === '' ? '""' : v}`; });
+    return `${c.padEnd(17)}{ ${fields.join(', ')} }${SCRIPT[c] ? '  · ' + SCRIPT[c] : ''}`;
+  }).join('\n');
+}
+const HELP = [
+  'set <id> <경로>=<값> ...      예) set g1 Health.hp=20 pos=6,0,4',
+  'add <id> [--prefab goblin] [--type empty|cube|light] [--parent id] [--pos x,y,z]',
+  'dup <id>   del <id>   sel <id>',
+  'addcomp <id> <컴포넌트>   rmcomp <id> <컴포넌트>',
+  'view     압축 표기로 씬 보기',
+  'schema   컴포넌트 시그니처 보기',
+  'undo     마지막 명령 되돌리기',
+].join('\n');
+const CMDS = {
+  set(t){ const o = need(t.shift()); if (!t.length) throw new Error('사용법: set <id> <경로>=<값>'); for (const kv of t){ const i = kv.indexOf('='); if (i < 1) throw new Error(`"${kv}" → 경로=값 형식으로 쓰세요`); setPath(o, kv.slice(0, i), kv.slice(i + 1)); } return { mut:true, msg:`${o.id} 수정됨` }; },
+  add(t){
+    const id = t.shift(); if (!id || id.startsWith('--')) throw new Error('사용법: add <id> [--prefab goblin] [--type cube] [--parent id] [--pos x,y,z]');
+    if (byId(id)) throw new Error(`id "${id}" 가 이미 있습니다`);
+    const f = flags(t); const o = { id, type:'Empty', ...T0(), comps:{} };
+    if (f.prefab){ const key = f.prefab.includes('/') ? f.prefab : `prefabs/${f.prefab}.prefab`; const pf = PREFABS[key]; if (!pf) throw new Error(`프리팹 ${key} 이(가) 없습니다. 있는 것: ${Object.keys(PREFABS).join(', ')}`); Object.assign(o, { prefab:key, type:pf.type, name:pf.name, comps:clone(pf.comps) }); }
+    else if (f.type){
+      const T = f.type.toLowerCase();
+      if (T === 'cube') Object.assign(o, { type:'Mesh', name:'Cube', comps:{ Mesh:{ model:'builtin/cube', material:'materials/default.mat' }, BoxCollider:{ size:[1,1,1] } } });
+      else if (T === 'light') Object.assign(o, { type:'Light', name:'Point Light', comps:{ Light:clone(COMP_DEF.Light) } });
+      else if (T !== 'empty') throw new Error('--type 은 empty, cube, light 중 하나입니다');
+    }
+    if (f.parent) o.parent = need(f.parent).id;
+    if (f.pos) o.pos = vecOf(f.pos, [0,0,0]);
+    scene.push(o); sel = id; return { mut:true, msg:`${id} 추가됨` };
+  },
+  dup(t){ const o = need(t.shift()); const c = clone(o); c.id = uniqueId(o.id); c.pos[0] += 1.5; scene.splice(scene.indexOf(o) + 1, 0, c); sel = c.id; return { mut:true, msg:`${o.id} → ${c.id} 복제됨` }; },
+  del(t){ const o = need(t.shift()); const kill = new Set([o.id]); let grow = true; while (grow){ grow = false; for (const x of scene) if (x.parent && kill.has(x.parent) && !kill.has(x.id)){ kill.add(x.id); grow = true; } } scene = scene.filter(x => !kill.has(x.id)); if (kill.has(sel)) sel = null; return { mut:true, msg:`${[...kill].join(', ')} 삭제됨` }; },
+  addcomp(t){ const o = need(t.shift()); const c = t.shift(); if (!COMP_DEF[c]) throw new Error(`알 수 없는 컴포넌트 "${c}". 가능: ${Object.keys(COMP_DEF).join(', ')}`); if (o.comps[c]) throw new Error(`${o.id}에 ${c} 가 이미 있습니다`); o.comps[c] = clone(COMP_DEF[c]); return { mut:true, msg:`${o.id}에 ${c} 추가됨` }; },
+  rmcomp(t){ const o = need(t.shift()); const c = t.shift(); if (!o.comps[c]) throw new Error(`${o.id}에 ${c} 가 없습니다`); delete o.comps[c]; return { mut:true, msg:`${o.id}에서 ${c} 제거됨` }; },
+  sel(t){ sel = need(t.shift()).id; return { msg:`${sel} 선택됨` }; },
+  view(){ return { msg: viewText() }; },
+  schema(){ return { msg: schemaText() }; },
+  help(){ return { msg: HELP }; },
+  clear(){ termLines.length = 0; return {}; },
+};
+function run(text, src){
+  text = text.trim().replace(/^forge\s+/, ''); if (!text) return false;
+  const t = tokenize(text); const cmd = t.shift();
+  if (src === '터미널') termLines.push({ c:'i', t:'forge> ' + text });
+  if (cmd === 'undo'){ undo(src); return true; }
+  const before = JSON.stringify(scene), beforeSel = sel;
+  try {
+    if (!CMDS[cmd]) throw new Error(`알 수 없는 명령 "${cmd}". help 를 입력하세요`);
+    const r = CMDS[cmd](t) || {};
+    if (r.mut) history.push({ src, text, before, beforeSel });
+    if (src === '터미널' && r.msg) termLines.push({ c:'o', t:r.msg });
+    refresh(); return true;
+  } catch (e){
+    scene = JSON.parse(before); sel = beforeSel;
+    if (src === '터미널') termLines.push({ c:'e', t:'오류: ' + e.message });
+    else log('err', e.message);
+    refresh(); return false;
+  }
+}
+function undo(src){
+  const h = history.pop();
+  if (!h){ if (src === '터미널') termLines.push({ c:'e', t:'되돌릴 명령이 없습니다' }); refresh(); return; }
+  scene = JSON.parse(h.before); sel = h.beforeSel;
+  if (src === '터미널') termLines.push({ c:'o', t:'되돌림: ' + h.text });
+  log('info', '되돌림: ' + h.text); refresh();
+}
+function log(lv, msg){ consoleLines.push({ lv, msg }); }
+
+/* ---------- editor state ---------- */
+let tool = 'move', vtab = 'scene', itab = 'insp', btab = 'project', shading = 'Lit', mode2d = false, gizmos = true;
+let playing = false, paused = false, snapshot = null, stepOnce = false, simT = 0;
+const orbit = { target:[2,0.6,2], yaw:-2.45, pitch:0.45, dist:18 };
+const flat = { cx:2, cy:2, s:38 };
+
+/* ---------- hierarchy ---------- */
+const EYE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 2l12 12M6.5 3.3A7 7 0 0 1 8 3c4.5 0 7 5 7 5a12 12 0 0 1-2 2.6M4 4.9C2 6.3 1 8 1 8s2.5 5 7 5a7 7 0 0 0 3-.7"/></svg>';
+function renderTree(){
+  const q = $('#hierSearch').value.trim().toLowerCase();
+  let rows = treeOrder();
+  if (q) rows = rows.filter(([o]) => (o.id + ' ' + (o.name || '')).toLowerCase().includes(q)).map(([o]) => [o, 0]);
+  $('#tree').innerHTML = rows.map(([o, d]) => {
+    const kids = childrenOf(o.id).length;
+    const ty = o.prefab ? 'Prefab' : o.type;
+    return `<li data-id="${esc(o.id)}" class="${o.id === sel ? 'on' : ''} ${o.active === false ? 'off' : ''}">
+      <button class="eye ${hidden.has(o.id) ? 'hid' : ''}" data-eye="${esc(o.id)}" type="button" title="뷰포트에서 숨기기 (에디터 상태 · 씬 파일에는 저장 안 됨)">${hidden.has(o.id) ? EYE_OFF : EYE}</button>
+      <span class="nmw" style="padding-left:${d * 14}px"><span class="car">${kids ? '▾' : ''}</span><i class="ti ${ty}"></i><span class="nm ${o.prefab ? 'pf' : ''}">${esc(o.name || o.id)}</span></span>
+      <span class="ty">${ty}</span></li>`;
+  }).join('');
+}
+$('#tree').addEventListener('click', e => {
+  const eye = e.target.closest('[data-eye]');
+  if (eye){ const id = eye.dataset.eye; hidden.has(id) ? hidden.delete(id) : hidden.add(id); renderTree(); return; }
+  const li = e.target.closest('li'); if (li){ sel = li.dataset.id; refresh(); }
+});
+$('#tree').addEventListener('dblclick', e => { const li = e.target.closest('li'); if (li) focusSel(); });
+$('#hierSearch').addEventListener('input', renderTree);
+$('#createSel').addEventListener('change', e => {
+  const v = e.target.value; e.target.value = ''; if (!v) return;
+  if (v === 'goblin') run(`add ${uniqueId('g')} --prefab goblin --parent Enemies --pos ${r2(orbit.target[0])},0,${r2(orbit.target[2])}`, 'UI');
+  else run(`add ${uniqueId(v)} --type ${v} --pos ${r2(orbit.target[0])},${v === 'light' ? 3 : 0},${r2(orbit.target[2])}`, 'UI');
+});
+
+/* ---------- inspector ---------- */
+const human = k => k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase());
+const qv = v => (typeof v === 'string' && (/\s/.test(v) || v === '')) ? `"${v}"` : String(v);
+function vecRow(label, path, v, ovr){
+  return `<div class="row ${ovr ? 'ovr' : ''}"><label>${label}</label><div class="vec">${['x','y','z'].map((a, i) =>
+    `<span class="ax ${a}"><b>${a.toUpperCase()}</b><input class="in" id="f-${path}-${a}" data-path="${path}.${a}" data-num="1" value="${r2(v[i])}" inputmode="decimal"></span>`).join('')}</div></div>`;
+}
+function fieldRow(o, comp, k, v, ovr){
+  const path = `${comp}.${k}`, id = `f-${comp}-${k}`, en = ENUMS[path];
+  let ctl;
+  if (en) ctl = `<select class="in" id="${id}" data-path="${path}">${en.map(x => `<option ${x === v ? 'selected' : ''}>${x}</option>`).join('')}</select>`;
+  else if (Array.isArray(v)) return vecRow(human(k), path, v, ovr);
+  else if (typeof v === 'boolean') ctl = `<input type="checkbox" class="chk" id="${id}" data-path="${path}" ${v ? 'checked' : ''}>`;
+  else if (typeof v === 'number') ctl = `<input class="in" id="${id}" data-path="${path}" data-num="1" value="${v}" inputmode="decimal">`;
+  else if (v === null || (typeof v === 'string' && v.startsWith('@'))) ctl = `<select class="in" id="${id}" data-path="${path}"><option value="">None</option>${scene.map(x => `<option value="${esc(x.id)}" ${('@' + x.id) === v ? 'selected' : ''}>${esc(x.name || x.id)} (@${esc(x.id)})</option>`).join('')}</select>`;
+  else if (/^#[0-9a-f]{6}$/i.test(v)) ctl = `<input type="color" class="in" id="${id}" data-path="${path}" value="${v}">`;
+  else ctl = `<input class="in" id="${id}" data-path="${path}" value="${esc(v)}" spellcheck="false">`;
+  return `<div class="row ${ovr ? 'ovr' : ''}"><label for="${id}">${human(k)}</label>${ctl}</div>`;
+}
+function renderInspector(){
+  const body = $('#inspBody'); const o = sel && byId(sel);
+  $('#inspSearch').hidden = itab !== 'insp';
+  if (itab === 'text'){ renderText(); return; }
+  if (!o){ body.innerHTML = '<div class="empty">Hierarchy나 뷰포트에서 오브젝트를 선택하세요</div>'; return; }
+  const q = $('#inspSearch').value.trim().toLowerCase();
+  const pf = o.prefab && PREFABS[o.prefab];
+  const match = (...s) => !q || s.some(x => x.toLowerCase().includes(q));
+  let h = `<div class="ihead"><input type="checkbox" id="insActive" data-path="active" ${o.active !== false ? 'checked' : ''} aria-label="활성화"><input class="in" id="insName" data-path="name" value="${esc(o.name || o.id)}" aria-label="이름"></div>
+    <div class="row"><label>ID</label><div class="idchip">@${esc(o.id)}<span>참조 키 · 고정</span></div></div>
+    <div class="row"><label for="insTag">Tag</label><select class="in" id="insTag" data-path="tag">${['Untagged','Player','MainCamera','Enemy'].map(t => `<option ${t === (o.tag || 'Untagged') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>`;
+  if (pf) h += `<div class="prefabbar"><b>Prefab</b><code>${esc(o.prefab)}</code><em>파란 표시 = 이 인스턴스만 바꾼 값</em></div>`;
+  if (match('transform','position','rotation','scale')){
+    const op = !collapsed.has('Transform') ? 'open' : '';
+    h += `<details class="comp" data-c="Transform" ${op}><summary>Transform</summary><div class="rows">
+      ${vecRow('Position','pos',o.pos,false)}${vecRow('Rotation','rot',o.rot,false)}${vecRow('Scale','scale',o.scale,false)}</div></details>`;
+  }
+  for (const c in o.comps){
+    const fields = Object.entries(o.comps[c]).filter(([k]) => match(c, k, human(k)));
+    if (q && !fields.length) continue;
+    const lang = SCRIPT[c];
+    h += `<details class="comp" data-c="${c}" ${collapsed.has(c) ? '' : 'open'}><summary>${c}${lang ? `<span class="lang">${lang}</span>` : ''}<button class="x" type="button" data-rm="${c}" title="컴포넌트 제거" aria-label="${c} 제거">×</button></summary><div class="rows">`;
+    if (lang) h += `<div class="row"><label>Script</label><div class="idchip" style="color:var(--dim)">${SCRIPT_FILE[c]}</div></div>`;
+    for (const [k, v] of fields){ const ovr = pf && !eq(v, (pf.comps[c] || {})[k]); h += fieldRow(o, c, k, v, ovr); }
+    h += `</div></details>`;
+  }
+  const avail = Object.keys(COMP_DEF).filter(c => !o.comps[c] && !['Camera','Light','Mesh'].includes(c));
+  h += `<div class="addc"><select id="addComp" aria-label="컴포넌트 추가"><option value="">Add Component</option>${avail.map(c => `<option value="${c}">${c}${SCRIPT[c] ? ' (' + SCRIPT[c] + ')' : ''}</option>`).join('')}</select></div>`;
+  body.innerHTML = h;
+}
+function renderText(){
+  const lines = sceneFileLines(); const o = sel && byId(sel); const txt = fileText();
+  const cur = o ? lineOf(o) : '';
+  $('#inspBody').innerHTML = `<div class="txt">
+    ${o ? `<div class="cap">선택한 오브젝트의 한 줄 <span>${cur.length}자 · 약 ${tokens(cur)} 토큰</span></div>
+    <div class="code">${hl(cur)}</div>` : ''}
+    <div class="cap">scenes/forest_01.scene <span>${txt.length}자 · 약 ${tokens(txt)} 토큰</span></div>
+    <div class="code" id="fileCode">${lines.map(l => `<span class="ln ${l.id && l.id === sel ? 'on' : ''}">${hl(l.t)}</span>`).join('')}</div>
+    <div class="cap">forge view · 에이전트용 압축 표기 <span>약 ${tokens(viewText())} 토큰</span></div>
+    <div class="code">${esc(viewText())}</div>
+    <p class="note">기본값과 같은 값은 저장하지 않습니다. 인스펙터에서 값을 바꾸면 이 텍스트가 바로 바뀌고, 반대로 Agent 탭에서 명령으로 바꿔도 인스펙터에 바로 반영됩니다. 토큰 수는 글자 수 ÷ 4로 낸 추정치입니다.</p>
+  </div>`;
+  const on = $('#fileCode .ln.on'); if (on) on.scrollIntoView({ block:'nearest' });
+}
+$('#inspBody').addEventListener('change', e => {
+  const el = e.target;
+  if (el.id === 'addComp'){ if (el.value) run(`addcomp ${sel} ${el.value}`, 'UI'); return; }
+  const path = el.dataset.path; if (!path || !sel) return;
+  let v = el.type === 'checkbox' ? el.checked : el.value;
+  if (el.dataset.num){ if (v === '' || isNaN(Number(v))){ renderInspector(); return; } v = r2(Number(v)); }
+  run(`set ${sel} ${path}=${qv(v)}`, 'UI');
+});
+$('#inspBody').addEventListener('click', e => {
+  const rm = e.target.closest('[data-rm]'); if (rm){ e.preventDefault(); run(`rmcomp ${sel} ${rm.dataset.rm}`, 'UI'); }
+});
+$('#inspBody').addEventListener('toggle', e => { const d = e.target; if (d.matches && d.matches('details.comp')) d.open ? collapsed.delete(d.dataset.c) : collapsed.add(d.dataset.c); }, true);
+$('#inspSearch').addEventListener('input', renderInspector);
+
+/* ---------- project / console / agent ---------- */
+const FOLDERS = [['Assets',0,null],['scenes',1,'Scene'],['prefabs',1,'Prefab'],['scripts',1,'Script'],['models',1,'Model'],['materials',1,'Material'],['textures',1,'Texture'],['data',1,'Data'],['Packages',0,'Package']];
+const ASSETS = [
+  ['forest_01.scene','Scene','SC','#3d5f80'],['stage_1.scene','Scene','SC','#3d5f80'],
+  ['goblin.prefab','Prefab','PF','#2d6ea3'],['coin.prefab','Prefab','PF','#2d6ea3'],
+  ['PlayerController.cs','Script','C#','#5b4a9c'],['Health.cs','Script','C#','#5b4a9c'],['inventory.lua','Script','LUA','#303f94'],
+  ['spawner.py','Script','PY','#2f6a87'],['boids.rs','Script','RS','#8a4a2e'],['fast_noise.cpp','Script','C++','#3e5f8f'],
+  ['knight.glb','Model','GLB','#6b5836'],['goblin.glb','Model','GLB','#6b5836'],
+  ['knight.mat','Material','MAT','#7a3d5c'],['grass.mat','Material','MAT','#7a3d5c'],['wood.mat','Material','MAT','#7a3d5c'],
+  ['grass.png','Texture','PNG','#3c6a49'],['hero.png','Texture','PNG','#3c6a49'],
+  ['items.tsv','Data','TSV','#525962'],['quests.md','Data','MD','#525962'],
+  ['forge.physics','Package','PKG','#4a4f57'],['forge.ui','Package','PKG','#4a4f57'],
+];
+let afilter = '전체', folder = 'Assets';
+function renderProject(){
+  $('#folders').innerHTML = FOLDERS.map(([n, d]) => `<li style="--d:${d}" data-f="${n}" class="${n === folder ? 'on' : ''}">${n}</li>`).join('');
+  const kinds = ['전체','Scene','Prefab','Script','Model','Material','Texture','Data'];
+  $('#abar').querySelectorAll('.fchip').forEach(x => x.remove());
+  $('#assetSearch').insertAdjacentHTML('beforebegin', kinds.map(k => `<button class="fchip ${k === afilter ? 'on' : ''}" data-k="${k}" type="button">${k}</button>`).join(''));
+  const q = $('#assetSearch').value.trim().toLowerCase();
+  const fk = (FOLDERS.find(f => f[0] === folder) || [])[2];
+  const list = ASSETS.filter(([n, k]) => (afilter === '전체' || k === afilter) && (!fk || k === fk) && (folder === 'Packages' ? k === 'Package' : (fk || k !== 'Package')) && (!q || n.toLowerCase().includes(q)));
+  $('#grid').innerHTML = list.length ? list.map(([n, k, g, c]) => `<button class="tile" type="button" data-a="${n}" title="${k === 'Prefab' ? '더블클릭: 씬에 배치' : n}"><span class="ic" style="background:${c}">${g}</span><span class="tn">${n}</span><span class="tk">${k}</span></button>`).join('') : '<div class="empty">일치하는 에셋이 없습니다</div>';
+}
+$('#folders').addEventListener('click', e => { const li = e.target.closest('li'); if (li){ folder = li.dataset.f; renderProject(); } });
+$('#abar').addEventListener('click', e => { const b = e.target.closest('.fchip'); if (b){ afilter = b.dataset.k; renderProject(); } });
+$('#assetSearch').addEventListener('input', renderProject);
+$('#grid').addEventListener('dblclick', e => { const t = e.target.closest('.tile'); if (t && t.dataset.a === 'goblin.prefab') run(`add ${uniqueId('g')} --prefab goblin --parent Enemies --pos ${r2(orbit.target[0])},0,${r2(orbit.target[2])}`, 'UI'); });
+
+function renderConsole(){ $('#console').innerHTML = consoleLines.slice(-200).map(l => `<li class="${l.lv}"><span class="lv">${l.lv === 'err' ? 'ERROR' : l.lv.toUpperCase()}</span><span>${esc(l.msg)}</span></li>`).join(''); const c = $('#console'); c.scrollTop = c.scrollHeight; }
+function renderAgent(){
+  $('#histN').textContent = history.length + '개';
+  $('#hist').innerHTML = history.map((h, i) => ({ h, i })).reverse().map(({ h, i }) => `<li><span class="who ${h.src}">${h.src}</span><code title="${esc(h.text)}">${esc(h.text)}</code>${i === history.length - 1 ? '<button class="undo" type="button" data-undo>되돌리기</button>' : ''}</li>`).join('') || '<li><span class="note">아직 명령이 없습니다</span></li>';
+  const t = $('#tout'); t.innerHTML = termLines.slice(-300).map(l => `<div class="${l.c}">${esc(l.t)}</div>`).join(''); t.scrollTop = t.scrollHeight;
+}
+$('#hist').addEventListener('click', e => { if (e.target.closest('[data-undo]')) undo('UI'); });
+$('#tform').addEventListener('submit', e => { e.preventDefault(); const i = $('#forgeIn'); if (run(i.value, '터미널') !== undefined) i.value = ''; });
+const EXAMPLES = ['view', 'schema', 'set g2 pos=2,0,6', 'set g1 Health.hp=50', 'add g9 --prefab goblin --parent Enemies --pos 3,0,8', 'dup crate', 'addcomp crate Rigidbody', 'set sun Light.intensity=0.4', 'undo'];
+$('#ex').innerHTML = EXAMPLES.map(x => `<button type="button">${esc(x)}</button>`).join('');
+$('#ex').addEventListener('click', e => { const b = e.target.closest('button'); if (b) run(b.textContent, '터미널'); });
+
+/* ---------- tabs, toolbar ---------- */
+$$('[data-vtab]').forEach(b => b.addEventListener('click', () => setVtab(b.dataset.vtab)));
+function setVtab(t){ vtab = t; $$('[data-vtab]').forEach(x => x.classList.toggle('on', x.dataset.vtab === t)); $('#hint').hidden = t !== 'scene'; }
+$$('[data-itab]').forEach(b => b.addEventListener('click', () => { itab = b.dataset.itab; $$('[data-itab]').forEach(x => x.classList.toggle('on', x === b)); renderInspector(); }));
+$$('[data-btab]').forEach(b => b.addEventListener('click', () => { btab = b.dataset.btab; $$('[data-btab]').forEach(x => x.classList.toggle('on', x === b)); $('#bProject').hidden = btab !== 'project'; $('#bConsole').hidden = btab !== 'console'; $('#bAgent').hidden = btab !== 'agent'; if (btab === 'agent') renderAgent(); if (btab === 'console') renderConsole(); }));
+$$('[data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
+function setTool(t){ tool = t; $$('[data-tool]').forEach(x => x.classList.toggle('on', x.dataset.tool === t)); }
+$('#shading').addEventListener('change', e => shading = e.target.value);
+$('#b2d').addEventListener('click', e => { mode2d = !mode2d; e.currentTarget.classList.toggle('on', mode2d); });
+$('#bGiz').addEventListener('click', e => { gizmos = !gizmos; e.currentTarget.classList.toggle('on', gizmos); });
+$('#selRhi').addEventListener('change', e => { const v = e.target.value; if (v.includes('예정')){ log('warn', `${v.replace(' (예정)','')} 백엔드는 아직 구현 전입니다. RHI 인터페이스만 정의되어 있어 OpenGL 4.5로 유지합니다.`); e.target.value = 'OpenGL 4.5'; renderConsole(); flashTab('console'); } });
+$('#selScal').addEventListener('change', e => log('info', `Scalability: ${e.target.value} (그림자 ${e.target.value === 'Low' ? '끔' : '켬'})`));
+$('#selPlat').addEventListener('change', e => { const p = e.target.value; const m = { PC:'BC7 텍스처, Forward+ 경로', Mobile:'ASTC 텍스처, 모바일 Forward 경로, Scalability Medium 권장', Console:'플랫폼 SDK 계약 후 활성화', Web:'WebGL2, 텍스처 KTX2' }[p]; log('info', `대상 플랫폼 ${p}: ${m}`); if (p === 'Mobile'){ $('#selScal').value = 'Medium'; } });
+$('#srcToggle').addEventListener('click', e => { const on = $('#app').classList.toggle('show-src'); e.currentTarget.textContent = on ? '출처 표시 끄기' : '출처 표시 켜기'; });
+function flashTab(t){ const b = $(`[data-btab="${t}"]`); b.style.color = 'var(--warn)'; setTimeout(() => b.style.color = '', 1200); }
+
+$('#bPlay').addEventListener('click', togglePlay);
+$('#bPause').addEventListener('click', () => { if (!playing) return; paused = !paused; $('#bPause').classList.toggle('on', paused); });
+$('#bStep').addEventListener('click', () => { if (playing){ paused = true; $('#bPause').classList.add('on'); stepOnce = true; } });
+function togglePlay(){
+  playing = !playing; paused = false; $('#bPause').classList.remove('on');
+  $('#bPlay').classList.toggle('on', playing); $('#app').classList.toggle('playing', playing);
+  if (playing){ snapshot = JSON.stringify(scene); simT = 0; setVtab('game'); log('info', 'Play 모드 시작. 이 동안 바꾼 값은 정지하면 되돌아갑니다.'); }
+  else { scene = JSON.parse(snapshot); setVtab('scene'); log('info', 'Play 모드 종료. 씬을 원래 상태로 복원했습니다.'); refresh(); }
+  renderConsole();
+}
+
+function refresh(){
+  renderTree(); renderInspector(); renderAgent(); if (btab === 'console') renderConsole();
+  const txt = fileText();
+  $('#stObjs').textContent = `오브젝트 ${scene.length}개`;
+  $('#stFile').textContent = `씬 파일 ${(txt.length / 1024).toFixed(1)} KB · 약 ${tokens(txt)} 토큰`;
+  $('#stRhi').textContent = 'RHI: ' + $('#selRhi').value;
+}
+function focusSel(){ const o = sel && byId(sel); if (!o) return; const p = wpos(o); orbit.target = [p[0], p[1] + 0.6, p[2]]; orbit.dist = Math.max(6, Math.min(orbit.dist, 12)); flat.cx = p[0]; flat.cy = p[1] + 0.6; }
+
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input,select,textarea')) return;
+  const k = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && k === 'z'){ e.preventDefault(); undo('UI'); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'd'){ e.preventDefault(); if (sel) run(`dup ${sel}`, 'UI'); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'p'){ e.preventDefault(); togglePlay(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (k === 'q') setTool('hand'); else if (k === 'w') setTool('move'); else if (k === 'e') setTool('rotate'); else if (k === 'r') setTool('scale');
+  else if (k === 'f') focusSel();
+  else if (k === 'delete' && sel) run(`del ${sel}`, 'UI');
+});
+
+/* ---------- viewport renderer (canvas preview of what the GL renderer would show) ---------- */
+const cv = $('#cv'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, gizSegs = [], fps = 60, lastT = performance.now(), frameN = 0;
+function fit(){
+  const r = cv.parentElement.getBoundingClientRect(); DPR = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(1, Math.floor(r.width)), h = Math.max(1, Math.floor(r.height));
+  if (w !== W || h !== H || cv.width !== Math.floor(w * DPR)){ W = w; H = h; cv.width = Math.floor(w * DPR); cv.height = Math.floor(h * DPR); }
+}
+function persp(eye, f, fov){
+  const r = norm(cross([0,1,0], f)), u = cross(f, r), focal = H / 2 / Math.tan(fov * D / 2);
+  return { eye, f, ortho:false,
+    toCam: p => { const d = sub(p, eye); return [dot(d, r), dot(d, u), dot(d, f)]; },
+    proj: c => c[2] < 0.05 ? null : [W / 2 + c[0] * focal / c[2], H / 2 - c[1] * focal / c[2]],
+    depth: p => dot(sub(p, eye), f),
+    facing: (n, c) => dot(n, sub(eye, c)) > 0,
+    unit: p => focal / Math.max(0.1, dot(sub(p, eye), f)) };
+}
+function orthoView(){
+  return { ortho:true, f:[0,0,1],
+    toCam: p => [p[0] - flat.cx, p[1] - flat.cy, p[2] + 100],
+    proj: c => [W / 2 + c[0] * flat.s, H / 2 - c[1] * flat.s],
+    depth: p => p[2] + 100, facing: n => n[2] < -0.01, unit: () => flat.s };
+}
+function makeView(){
+  if (vtab === 'game'){
+    const cam = scene.find(o => o.comps.Camera && o.active !== false); if (!cam) return null;
+    const p = cam.rot[0] * D, y = cam.rot[1] * D;
+    return persp(wpos(cam), [Math.sin(y) * Math.cos(p), -Math.sin(p), Math.cos(y) * Math.cos(p)], cam.comps.Camera.fov);
+  }
+  if (mode2d) return orthoView();
+  const { target, yaw, pitch, dist } = orbit;
+  const eye = add(target, mul([Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch), Math.cos(pitch) * Math.cos(yaw)], dist));
+  return persp(eye, norm(sub(target, eye)), 55);
+}
+function seg(V, a, b){
+  let A = V.toCam(a), B = V.toCam(b); const n = 0.05;
+  if (A[2] < n && B[2] < n) return null;
+  if (A[2] < n){ const t = (n - A[2]) / (B[2] - A[2]); A = add(A, mul(sub(B, A), t)); }
+  else if (B[2] < n){ const t = (n - B[2]) / (A[2] - B[2]); B = add(B, mul(sub(A, B), t)); }
+  return [V.proj(A), V.proj(B)];
+}
+function line(V, a, b, color, w = 1){ const s = seg(V, a, b); if (!s) return null; ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.stroke(); return s; }
+const P = (V, p) => V.proj(V.toCam(p));
+function geom(o){
+  if (o.type === 'Camera') return { kind:'camera' };
+  if (o.type === 'Light') return { kind:'light' };
+  const m = o.comps.Mesh; if (!m) return null;
+  if (m.model.includes('plane')) return { kind:'plane' };
+  if (m.model.includes('knight')) return { kind:'box', size:[0.8,1.9,0.8], color:[86,136,214] };
+  if (m.model.includes('goblin')) return { kind:'box', size:[0.7,1.2,0.7], color:[104,160,84] };
+  if (m.model.includes('cube') && m.material.includes('wood')) return { kind:'box', size:[1,1,1], color:[168,124,80] };
+  return { kind:'box', size:[1,1,1], color:[150,156,166] };
+}
+const FACES = [[[0,2,6,4],[-1,0,0]],[[1,3,7,5],[1,0,0]],[[0,1,5,4],[0,-1,0]],[[2,3,7,6],[0,1,0]],[[0,1,3,2],[0,0,-1]],[[4,5,7,6],[0,0,1]]];
+function boxData(o, g){
+  const c0 = wpos(o), s = [g.size[0] * o.scale[0], g.size[1] * o.scale[1], g.size[2] * o.scale[2]];
+  const center = [c0[0], c0[1] + s[1] / 2, c0[2]];
+  const yaw = (o.rot[1] || 0) * D, cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const R = v => [v[0] * cs + v[2] * sn, v[1], -v[0] * sn + v[2] * cs];
+  const pts = []; for (let i = 0; i < 8; i++) pts.push(add(center, R([((i & 1) ? .5 : -.5) * s[0], ((i >> 1 & 1) ? .5 : -.5) * s[1], ((i >> 2 & 1) ? .5 : -.5) * s[2]])));
+  return { center, s, pts, R };
+}
+function poly(V, pts){ const sp = pts.map(p => P(V, p)); if (sp.some(x => !x)) return null; ctx.beginPath(); sp.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); return sp; }
+const LDIR = norm([-0.4, 0.85, -0.5]);
+
+function draw(now){
+  const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now; fps = fps * 0.95 + (1 / Math.max(dt, 0.001)) * 0.05; frameN++;
+  if (playing && (!paused || stepOnce)){ simulate(stepOnce ? 1 / 60 : dt); stepOnce = false; }
+  fit(); ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const V = makeView(); const wire = shading === 'Wireframe', unlit = shading === 'Unlit';
+  const scal = $('#selScal').value;
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  if (vtab === 'game' && !wire){ bg.addColorStop(0, '#5f7fa6'); bg.addColorStop(1, '#c7d3df'); }
+  else { bg.addColorStop(0, wire ? '#15171b' : '#2a2f37'); bg.addColorStop(1, wire ? '#15171b' : '#1c1f25'); }
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  gizSegs = [];
+  if (!V){ ctx.fillStyle = '#ccd'; ctx.font = '13px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('렌더링할 카메라가 없습니다', W / 2, H / 2); ctx.textAlign = 'left'; overlay(0, 0); requestAnimationFrame(draw); return; }
+
+  const visible = scene.filter(o => o.active !== false && !hidden.has(o.id));
+  // ground planes
+  for (const o of visible){ const g = geom(o); if (!g || g.kind !== 'plane' || wire) continue;
+    const c = wpos(o), hx = 5 * o.scale[0], hz = 5 * o.scale[2], N = 6;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++){
+      const x0 = c[0] - hx + 2 * hx * i / N, x1 = c[0] - hx + 2 * hx * (i + 1) / N, z0 = c[2] - hz + 2 * hz * j / N, z1 = c[2] - hz + 2 * hz * (j + 1) / N;
+      if (poly(V, [[x0,c[1],z0],[x1,c[1],z0],[x1,c[1],z1],[x0,c[1],z1]])){ ctx.fillStyle = vtab === 'game' ? '#56723f' : (unlit ? '#4a6138' : '#3d5233'); ctx.fill(); }
+    }
+  }
+  // grid
+  if (vtab === 'scene'){
+    if (mode2d){
+      for (let i = -20; i <= 20; i++){ const c = i === 0 ? null : (i % 5 ? 'rgba(255,255,255,.05)' : 'rgba(255,255,255,.12)'); if (c){ line(V, [i,-20,0], [i,20,0], c); line(V, [-20,i,0], [20,i,0], c); } }
+      line(V, [-20,0,0], [20,0,0], 'rgba(224,86,78,.7)'); line(V, [0,-20,0], [0,20,0], 'rgba(114,192,78,.7)');
+    } else {
+      for (let i = -15; i <= 15; i++){ const c = i % 5 ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.14)'; if (i){ line(V, [i,0.002,-15], [i,0.002,15], c); line(V, [-15,0.002,i], [15,0.002,i], c); } }
+      line(V, [-15,0.002,0], [15,0.002,0], 'rgba(224,86,78,.6)'); line(V, [0,0.002,-15], [0,0.002,15], 'rgba(75,142,230,.6)');
+    }
+  }
+  // shadows (Scalability Medium+)
+  const boxes = visible.map(o => ({ o, g:geom(o) })).filter(x => x.g && x.g.kind === 'box').map(x => ({ ...x, b:boxData(x.o, x.g) }));
+  if (scal !== 'Low' && !wire && !mode2d){
+    for (const { b } of boxes){
+      const off = [-LDIR[0] / LDIR[1] * b.s[1] * 0.5, 0, -LDIR[2] / LDIR[1] * b.s[1] * 0.5];
+      const base = b.center[1] - b.s[1] / 2;
+      const fp = [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].map(([x, z]) => add([b.center[0], base + 0.01, b.center[2]], add(b.R([x * b.s[0] * 1.1, 0, z * b.s[2] * 1.1]), off)));
+      if (poly(V, fp)){ ctx.fillStyle = scal === 'Epic' ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.3)'; ctx.fill(); }
+    }
+  }
+  // faces / wireframe
+  let tris = 0, calls = 0;
+  if (wire){
+    for (const { o, g, b } of boxes){ calls++; tris += 12; const col = `rgb(${g.color.map(v => Math.min(255, v + 60)).join(',')})`;
+      for (let i = 0; i < 8; i++) for (const bit of [1,2,4]) if (!(i & bit)) line(V, b.pts[i], b.pts[i | bit], col, 1); }
+  } else {
+    const faces = [];
+    for (const { g, b } of boxes){ calls++; tris += 12;
+      for (const [idx, n0] of FACES){ const n = b.R(n0); const pts = idx.map(i => b.pts[i]); const c = mul(pts.reduce((a, p) => add(a, p), [0,0,0]), 0.25);
+        if (!V.facing(n, c)) continue; faces.push({ pts, n, d:V.depth(c), col:g.color }); } }
+    faces.sort((a, b) => b.d - a.d);
+    for (const f of faces){ if (!poly(V, f.pts)) continue; const k = unlit ? 1 : 0.42 + 0.58 * Math.max(0, dot(f.n, LDIR));
+      ctx.fillStyle = `rgb(${f.col.map(v => Math.round(v * k)).join(',')})`; ctx.fill(); ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1; ctx.stroke(); }
+  }
+  if (visible.some(o => geom(o)?.kind === 'plane')){ calls++; tris += 2; }
+  // scene-only: icons, selection, gizmo
+  if (vtab === 'scene'){
+    for (const o of visible){ const g = geom(o); if (!g) continue; const p = P(V, wpos(o)); if (!p) continue;
+      if (g.kind === 'light'){ ctx.strokeStyle = ctx.fillStyle = '#f2c94c'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p[0], p[1], 6, 0, 7); ctx.fill();
+        for (let a = 0; a < 8; a++){ const an = a * Math.PI / 4; ctx.beginPath(); ctx.moveTo(p[0] + Math.cos(an) * 9, p[1] + Math.sin(an) * 9); ctx.lineTo(p[0] + Math.cos(an) * 13, p[1] + Math.sin(an) * 13); ctx.stroke(); } }
+      if (g.kind === 'camera'){ const pi = o.rot[0] * D, ya = o.rot[1] * D, f = [Math.sin(ya) * Math.cos(pi), -Math.sin(pi), Math.cos(ya) * Math.cos(pi)];
+        const r = norm(cross([0,1,0], f)), u = cross(f, r), e = wpos(o), L = 1.8;
+        const cs = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([a, b]) => add(e, add(mul(f, L), add(mul(r, a * L * .6), mul(u, b * L * .4)))));
+        cs.forEach((c, i) => { line(V, e, c, 'rgba(220,226,235,.7)'); line(V, c, cs[(i + 1) % 4], 'rgba(220,226,235,.7)'); });
+        ctx.fillStyle = '#dfe5ec'; ctx.fillRect(p[0] - 7, p[1] - 5, 10, 10); ctx.beginPath(); ctx.moveTo(p[0] + 3, p[1]); ctx.lineTo(p[0] + 9, p[1] - 5); ctx.lineTo(p[0] + 9, p[1] + 5); ctx.fill(); }
+    }
+    const so = sel && byId(sel);
+    if (so && so.active !== false && !hidden.has(so.id)){
+      const g = geom(so); const accent = '#e9a23b';
+      if (g && g.kind === 'box'){ const b = boxData(so, g); for (let i = 0; i < 8; i++) for (const bit of [1,2,4]) if (!(i & bit)) line(V, b.pts[i], b.pts[i | bit], accent, 2); }
+      else if (g && g.kind === 'plane'){ const c = wpos(so), hx = 5 * so.scale[0], hz = 5 * so.scale[2]; const q = [[c[0]-hx,c[1],c[2]-hz],[c[0]+hx,c[1],c[2]-hz],[c[0]+hx,c[1],c[2]+hz],[c[0]-hx,c[1],c[2]+hz]]; q.forEach((a, i) => line(V, a, q[(i + 1) % 4], accent, 2)); }
+      else { const p = P(V, wpos(so)); if (p){ ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(p[0], p[1], 16, 0, 7); ctx.stroke(); } }
+      if (gizmos && tool === 'move'){
+        const o = wpos(so), len = 70 / V.unit(o);
+        const axes = [[[1,0,0],'#e0564e','x'],[[0,1,0],'#72c04e','y'],[[0,0,1],'#4b8ee6','z']];
+        for (const [a, col, name] of axes){ if (mode2d && name === 'z') continue;
+          const s = line(V, o, add(o, mul(a, len)), col, 3); if (!s) continue;
+          const [p0, p1] = s; const dx = p1[0] - p0[0], dy = p1[1] - p0[1], l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
+          ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(p1[0] + ux * 10, p1[1] + uy * 10); ctx.lineTo(p1[0] - uy * 5, p1[1] + ux * 5); ctx.lineTo(p1[0] + uy * 5, p1[1] - ux * 5); ctx.fill();
+          gizSegs.push({ a, p0, p1, len, name });
+        }
+      }
+    }
+  }
+  overlay(calls, tris);
+  requestAnimationFrame(draw);
+}
+function overlay(calls, tris){
+  $('#ovTL').textContent = vtab === 'scene' ? `${mode2d ? '2D · Ortho Front' : 'Perspective'} · ${shading}` : `Game · Main Camera${playing ? (paused ? ' · 일시정지' : ' · 재생 중') : ''}`;
+  if (frameN % 10 === 0) $('#ovBR').textContent = `${Math.round(fps)} fps · Draw ${calls} · Tris ${tris}\n${$('#selRhi').value} · ${$('#selScal').value} · ${$('#selPlat').value}`;
+}
+function simulate(dt){
+  simT += dt; const pl = byId('player');
+  scene.filter(o => o.prefab === 'prefabs/goblin.prefab').forEach((g, i) => {
+    if (!pl) return; const d = sub(pl.pos, g.pos); d[1] = 0; const l = Math.hypot(d[0], d[2]);
+    if (l > 1.6){ g.pos[0] += d[0] / l * dt * 1.2; g.pos[2] += d[2] / l * dt * 1.2; g.rot[1] = Math.atan2(d[0], d[2]) / D; }
+    g.pos[1] = Math.abs(Math.sin(simT * 6 + i)) * 0.15;
+  });
+  if (pl){ pl.rot[1] = (pl.rot[1] + dt * 40) % 360; }
+  if (frameN % 15 === 0 && !document.activeElement.closest('#inspBody')) renderInspector();
+}
+
+/* viewport input */
+let drag = null;
+const local = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+function distSeg(p, a, b){ const dx = b[0] - a[0], dy = b[1] - a[1]; const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy); }
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId); const m = local(e);
+  if (vtab === 'scene' && sel){
+    const hit = gizSegs.map(g => ({ g, d:distSeg(m, g.p0, g.p1) })).filter(x => x.d < 9).sort((a, b) => a.d - b.d)[0];
+    if (hit){ const o = byId(sel); const ax = [hit.g.p1[0] - hit.g.p0[0], hit.g.p1[1] - hit.g.p0[1]]; drag = { type:'axis', g:hit.g, ax, start:[...o.pos], m0:m }; return; }
+  }
+  drag = { type:(e.shiftKey || e.button === 1 || e.button === 2 || tool === 'hand' || mode2d) ? 'pan' : 'orbit', m0:m, last:m, moved:false };
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return; const m = local(e);
+  if (drag.type === 'axis'){
+    const o = byId(sel); if (!o) return; const { ax, g } = drag; const l2 = ax[0] * ax[0] + ax[1] * ax[1] || 1;
+    const t = ((m[0] - drag.m0[0]) * ax[0] + (m[1] - drag.m0[1]) * ax[1]) / l2 * g.len;
+    o.pos = add(drag.start, mul(g.a, t)).map(r2); return;
+  }
+  const dx = m[0] - drag.last[0], dy = m[1] - drag.last[1]; drag.last = m;
+  if (Math.hypot(m[0] - drag.m0[0], m[1] - drag.m0[1]) > 3) drag.moved = true;
+  if (vtab !== 'scene') return;
+  if (drag.type === 'orbit'){ orbit.yaw -= dx * 0.008; orbit.pitch = Math.max(-1.45, Math.min(1.45, orbit.pitch + dy * 0.008)); }
+  else if (mode2d){ flat.cx -= dx / flat.s; flat.cy += dy / flat.s; }
+  else { const V = makeView(); const r = norm(cross([0,1,0], V.f)), u = cross(V.f, r), k = orbit.dist * 0.0018; orbit.target = add(orbit.target, add(mul(r, -dx * k), mul(u, dy * k))); }
+});
+cv.addEventListener('pointerup', e => {
+  if (!drag) return; const d = drag; drag = null;
+  if (d.type === 'axis'){ const o = byId(sel); if (!o) return; const end = o.pos; o.pos = d.start; if (!eq(end, d.start)) run(`set ${sel} pos=${end.join(',')}`, 'UI'); else refresh(); return; }
+  if (!d.moved && vtab === 'scene') pick(local(e));
+});
+cv.addEventListener('wheel', e => { e.preventDefault(); if (vtab !== 'scene') return; if (mode2d) flat.s = Math.max(8, Math.min(200, flat.s * Math.exp(-e.deltaY * 0.0015))); else orbit.dist = Math.max(3, Math.min(60, orbit.dist * Math.exp(e.deltaY * 0.0012))); }, { passive:false });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+cv.addEventListener('dblclick', focusSel);
+function pick(m){
+  const V = makeView(); if (!V) return; let best = null, bd = 1e9;
+  for (const o of scene){ if (o.active === false || hidden.has(o.id)) continue; const g = geom(o); if (!g || g.kind === 'plane') continue;
+    let c = wpos(o); if (g.kind === 'box') c = boxData(o, g).center; const p = P(V, c); if (!p) continue;
+    const d = Math.hypot(p[0] - m[0], p[1] - m[1]); const rad = g.kind === 'box' ? Math.max(18, V.unit(c) * 0.7) : 18;
+    if (d < rad && V.depth(c) < bd){ bd = V.depth(c); best = o; } }
+  sel = best ? best.id : null; refresh();
+}
+
+/* ---------- boot ---------- */
+log('info', 'OpenGL 4.5 core 컨텍스트 생성 (RHI 백엔드: GL)');
+log('info', '스크립트 런타임 로드: C# (.NET 8), Lua 5.4, Python 3.12, Rust (dylib), C++ (플러그인)');
+log('warn', 'textures/hero.png: 크기가 2의 거듭제곱이 아니어서 모바일(ASTC) 쿠킹 때 패딩됩니다');
+log('info', 'scenes/forest_01.scene 로드 완료');
+run('add g3 --prefab goblin --parent Enemies --pos 4,0,5', '에이전트');
+run('set g1 Health.hp=12', '에이전트');
+run('set player PlayerController.speed=6.5', 'UI');
+sel = 'player';
+termLines.push({ c:'o', t:'UI 버튼, 이 터미널, AI 에이전트가 모두 같은 명령 버스를 씁니다.\n기록의 "에이전트" 항목 두 개는 시연용 예시입니다. 아래 예시를 누르거나 help 를 입력해 보세요.' });
+renderProject(); refresh();
+requestAnimationFrame(draw);
+})();
+</script>

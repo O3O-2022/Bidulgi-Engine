@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Bidulgi Engine icon A: Portrait</title>
+  <defs>
+    <linearGradient id="a-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d4166"/>
+      <stop offset="1" stop-color="#0b1522"/>
+    </linearGradient>
+    <radialGradient id="a-glow" cx="0.5" cy="0.38" r="0.5">
+      <stop offset="0" stop-color="#3b8fc7" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#3b8fc7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="a-head" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a7b4c5"/>
+      <stop offset="1" stop-color="#6e7d92"/>
+    </linearGradient>
+    <linearGradient id="a-body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6e7d92"/>
+      <stop offset="1" stop-color="#4b586b"/>
+    </linearGradient>
+    <linearGradient id="a-neck" x1="0" y1="0" x2="1" y2="0.6">
+      <stop offset="0" stop-color="#22b8a6"/>
+      <stop offset=".5" stop-color="#3a7fd0"/>
+      <stop offset="1" stop-color="#9257d0"/>
+    </linearGradient>
+    <linearGradient id="a-lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7a585"/>
+      <stop offset="1" stop-color="#dc6a50"/>
+    </linearGradient>
+    <clipPath id="a-clip"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#a-clip)">
+    <rect width="512" height="512" fill="url(#a-bg)"/>
+    <rect width="512" height="512" fill="url(#a-glow)"/>
+    <!-- body -->
+    <path d="M150 512 C156 392 190 290 256 290 C322 290 356 392 362 512 Z" fill="url(#a-body)"/>
+    <!-- iridescent neck -->
+    <path d="M172 440 C182 352 212 292 256 292 C300 292 330 352 340 440 C304 418 208 418 172 440 Z" fill="url(#a-neck)" opacity=".92"/>
+    <!-- head -->
+    <circle cx="256" cy="196" r="106" fill="url(#a-head)"/>
+    <!-- eyes -->
+    <g>
+      <circle cx="212" cy="176" r="16" fill="#e8692c"/>
+      <circle cx="212" cy="176" r="7.5" fill="#111418"/>
+      <circle cx="216" cy="172" r="3" fill="#fff"/>
+      <circle cx="300" cy="176" r="16" fill="#e8692c"/>
+      <circle cx="300" cy="176" r="7.5" fill="#111418"/>
+      <circle cx="304" cy="172" r="3" fill="#fff"/>
+    </g>
+    <!-- cere and beak -->
+    <path d="M238 186 C238 172 274 172 274 186 C274 197 264 200 256 210 C248 200 238 197 238 186 Z" fill="#eef2f6"/>
+    <path d="M248 202 L264 202 L259 228 Q256 233 253 228 Z" fill="#3a4250"/>
+    <!-- lips -->
+    <path d="M204 252 C220 232 244 233 256 242 C268 233 292 232 308 252 C292 276 220 276 204 252 Z" fill="url(#a-lip)"/>
+    <path d="M208 252 C230 257 282 257 304 252" stroke="#b24f3c" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <ellipse cx="256" cy="263" rx="20" ry="4" fill="#fff" opacity=".28"/>
+  </g>
+</svg>

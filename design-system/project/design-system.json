@@ -1,0 +1,57 @@
+{
+  "v": 3,
+  "assetGroups": {
+    "Logos": {
+      "files": {
+        "icon-d-black.svg": {
+          "blob": "528d0ff7cc82c9347c6b672f62785337",
+          "name": "icon-d-black.svg",
+          "size": 2469,
+          "type": "image/svg+xml"
+        },
+        "icon-d-tile.svg": {
+          "blob": "651c25794babb141f6e15b5111b8dd05",
+          "name": "icon-d-tile.svg",
+          "size": 2773,
+          "type": "image/svg+xml"
+        },
+        "icon-d-white.svg": {
+          "blob": "d7671c1a085e0e3ae597edf5149c8972",
+          "name": "icon-d-white.svg",
+          "size": 2467,
+          "type": "image/svg+xml"
+        }
+      },
+      "name": "Logos",
+      "order": [
+        "icon-d-white.svg",
+        "icon-d-black.svg",
+        "icon-d-tile.svg"
+      ],
+      "tile": "l"
+    }
+  },
+  "blobs": {},
+  "createdOnFiles": {
+    "at": "2026-11-20T13:25:55Z",
+    "v": 1
+  },
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "groups": [
+    "Logos"
+  ],
+  "lastChange": {
+    "at": "2026-11-21T03:34:25Z",
+    "by": "Claude",
+    "note": "Renamed Blueprint to Graph in guidelines and previews.",
+    "via": "Claude Code"
+  },
+  "layout": "files",
+  "libraries": [],
+  "namespace": "Bidulgi",
+  "sections": {},
+  "title": "Bidulgi Editor"
+}
