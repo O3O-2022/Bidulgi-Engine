@@ -52,6 +52,7 @@ struct bdg_engine {
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bool showGallery = false, selfTest = false, stress = false, hasFont = false;
+  std::chrono::steady_clock::time_point createdAt;
   int clicks = 0;
   int32_t maxFrames = 0;
 };
@@ -94,6 +95,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
   auto* e = new (std::nothrow) bdg_engine();
   if (!e) return BDG_ERR_PLATFORM;
+  e->createdAt = std::chrono::steady_clock::now();
   e->maxFrames = desc->max_frames;
   e->stress = std::getenv("BDG_BATCH_STRESS") != nullptr;
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
@@ -168,10 +170,15 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
     }
     e->window.Present();
+    if (frames == 1) { // startup = engine create -> first frame on screen (target: < 1000 ms)
+      double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - e->createdAt).count();
+      bdg::LogInfo("perf: startup_to_first_frame_ms={:.0f} (target < 1000)", ms);
+    }
     if (last) break;
   }
   double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   bdg::LogInfo("frames: {} in {:.2f}s", frames, sec);
+  if (frames > 1) bdg::LogInfo("perf: avg_frame_ms={:.3f} (target < 16.7 at 60 fps; editor idle UI)", sec * 1000.0 / frames);
   return BDG_OK;
 }
 
