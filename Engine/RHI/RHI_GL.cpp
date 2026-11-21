@@ -86,6 +86,37 @@ void RHI::BindUniformBuffer(uint32_t slot, BufferHandle b) {
   glBindBufferBase(GL_UNIFORM_BUFFER, slot, b.id);
 }
 
+// ---- Textures (DSA) ----
+TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const void* pixels) {
+  GLuint t = 0;
+  glCreateTextures(GL_TEXTURE_2D, 1, &t);
+  glTextureStorage2D(t, 1, f == TextureFormat::R8 ? GL_R8 : GL_RGBA8, w, h);
+  glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(t, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  if (pixels) UpdateTexture2D({t}, 0, 0, w, h, f, pixels);
+  return {t};
+}
+
+void RHI::UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat f, const void* pixels) {
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTextureSubImage2D(t.id, 0, x, y, w, h, f == TextureFormat::R8 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+}
+
+void RHI::DestroyTexture(TextureHandle t) {
+  if (t.Valid()) glDeleteTextures(1, &t.id);
+}
+
+void RHI::BindTexture(uint32_t slot, TextureHandle t) { glBindTextureUnit(slot, t.id); }
+
+void RHI::ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba) {
+  rgba.resize((size_t)w * h * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glReadBuffer(GL_BACK);
+  glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+}
+
 // ---- Pipelines: program + vertex layout (VAO) + blend state ----
 PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
   GLuint vs = CompileStage(GL_VERTEX_SHADER, d.vertexSource, d.debugName);

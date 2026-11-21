@@ -15,6 +15,20 @@ FetchContent_Declare(SDL3
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(SDL3)
 
+# ---- External: FreeType (FreeType License, BSD-style) — SDF glyph rendering ----
+set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+FetchContent_Declare(freetype
+  URL https://github.com/freetype/freetype/archive/refs/tags/VER-2-13-3.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(freetype)
+if(MSVC)
+  target_compile_options(freetype PRIVATE /utf-8) # its sources contain UTF-8 comments
+endif()
+
 find_package(OpenGL REQUIRED)
 
 # ---- External: glad (generated GL 4.5 core loader, vendored) ----
@@ -29,9 +43,11 @@ add_library(BidulgiEngine STATIC
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
   Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
+  Engine/Text/Font.h       Engine/Text/Font.cpp
+  Engine/Core/Image.h      Engine/Core/Image.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad OpenGL::GL)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype OpenGL::GL)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

@@ -12,7 +12,10 @@ struct Color { float r, g, b, a; };
 struct BufferHandle   { uint32_t id = 0; bool Valid() const { return id != 0; } };
 struct PipelineHandle { uint32_t id = 0; bool Valid() const { return id != 0; } };
 
+struct TextureHandle  { uint32_t id = 0; bool Valid() const { return id != 0; } };
+
 enum class BufferUsage { Vertex, Index, Uniform };
+enum class TextureFormat { R8, RGBA8 };
 
 struct VertexAttr {
   uint32_t location;
@@ -42,6 +45,11 @@ public:
   void         DestroyBuffer(BufferHandle buffer);
   void         BindUniformBuffer(uint32_t slot, BufferHandle buffer); // GLSL: layout(std140, binding = slot)
 
+  TextureHandle CreateTexture2D(int32_t w, int32_t h, TextureFormat format, const void* pixels = nullptr);
+  void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
+  void          DestroyTexture(TextureHandle t);
+  void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D
+
   PipelineHandle CreatePipeline(const PipelineDesc& desc);
   void           DestroyPipeline(PipelineHandle pipeline);
 
@@ -49,6 +57,7 @@ public:
   void DrawIndexed(PipelineHandle pipeline, BufferHandle vertices, BufferHandle indices, uint32_t indexCount);
 
   Color ReadPixel(int32_t x, int32_t y); // test hook (slow): reads the back buffer
+  void  ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba); // whole back buffer, bottom-up rows
   void  DebugTriggerError();             // test hook: issues an invalid GL call to verify debug output
   uint32_t DrawCallsThisFrame() const { return drawCalls_; }
 
