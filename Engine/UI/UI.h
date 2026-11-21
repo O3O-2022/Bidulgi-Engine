@@ -41,6 +41,13 @@ struct Widget {
   std::vector<std::unique_ptr<Widget>> children;
   std::function<void(Widget&)> onClick;
 
+  // Text editing state (Field). Byte offsets into text2, always on UTF-8 boundaries.
+  size_t cursor = 0, anchor = 0;
+  std::string composing;                      // IME composition shown at the cursor, not yet committed
+  std::vector<std::string> undoStack, redoStack;
+  std::function<void(Widget&)> onCommit;      // Enter pressed or focus left after edits
+  bool edited = false;
+
   // Computed each frame.
   float x = 0, y = 0, w = 0, h = 0, prefW = 0, prefH = 0;
   bool hovered = false, pressed = false;
@@ -69,6 +76,7 @@ public:
   UIContext(Batch2D& batch, Font* font, const Theme& theme) : batch_(batch), font_(font), theme_(theme) {}
 
   void SetRoot(std::unique_ptr<Widget> root) { root_ = std::move(root); focused_ = nullptr; }
+  void SetWindow(Window* window) { window_ = window; } // clipboard + IME candidate window placement
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
   Widget* Focused() const { return focused_; }
@@ -88,6 +96,15 @@ private:
   float Text(float x, float y, float size, Color c, const std::string& s);
   float Measure(float size, const std::string& s) const;
 
+  // Field editing (one shared text input implementation for every text box in the editor).
+  void SetFocus(Widget* w);
+  bool FieldKey(Widget& f, const InputEvent& e);
+  void FieldInsert(Widget& f, const std::string& s);
+  void FieldPushUndo(Widget& f);
+  size_t FieldHit(const Widget& f, float mouseX) const;
+  void FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const;
+
+  Window* window_ = nullptr;
   Batch2D& batch_;
   Font* font_;
   const Theme& theme_;

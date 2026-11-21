@@ -68,7 +68,9 @@ bool Window::PumpEvents() {
         break;
       case SDL_EVENT_TEXT_INPUT:
         ev.type = InputEvent::Type::Text; ev.text = e.text.text;
-        LogInfo("text input: {}", e.text.text); // committed IME text
+        events_.push_back(ev); break;
+      case SDL_EVENT_TEXT_EDITING: // IME composition (e.g. Hangul jamo being combined)
+        ev.type = InputEvent::Type::TextEditing; ev.text = e.edit.text ? e.edit.text : "";
         events_.push_back(ev); break;
       default: break;
     }
@@ -79,4 +81,20 @@ bool Window::PumpEvents() {
 void Window::Present() { SDL_GL_SwapWindow(window_); }
 void Window::GetDrawableSize(int32_t& w, int32_t& h) const { SDL_GetWindowSizeInPixels(window_, &w, &h); }
 void* Window::GetGLProcAddress(const char* name) { return (void*)SDL_GL_GetProcAddress(name); }
+
+void Window::SetTextInputArea(float x, float y, float w, float h, int cursorOffsetPx) {
+  float density = SDL_GetWindowPixelDensity(window_);
+  if (density <= 0.f) density = 1.f;
+  SDL_Rect r{(int)(x / density), (int)(y / density), (int)(w / density), (int)(h / density)};
+  SDL_SetTextInputArea(window_, &r, (int)(cursorOffsetPx / density));
+}
+
+std::string Window::GetClipboardText() const {
+  char* t = SDL_GetClipboardText();
+  std::string s = t ? t : "";
+  SDL_free(t);
+  return s;
+}
+
+void Window::SetClipboardText(const std::string& text) { SDL_SetClipboardText(text.c_str()); }
 }

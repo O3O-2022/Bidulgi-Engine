@@ -238,6 +238,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
   e->ui = std::make_unique<bdg::UIContext>(e->batch, e->hasFont ? &e->font : nullptr, e->theme);
   e->ui->SetRoot(BuildGallery(&e->clicks));
+  e->ui->SetWindow(&e->window);
   const char* screen = std::getenv("BDG_SCREEN");
   e->gallery = screen && std::string(screen) == "gallery";
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
@@ -269,6 +270,21 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         for (int i = 0; i < 2; ++i) e->window.InjectEvent({T::KeyDown, 0, 0, 0, bdg::Key::Tab});
         e->window.InjectEvent({T::KeyDown, 0, 0, 0, bdg::Key::Enter});
       }
+      if (e->selfTest && frames == 4) { // text input: select all, type Korean, backspace, undo, IME composition
+        bdg::Widget* f = e->ui->Find("field.speed");
+        float fx = f->x + f->w - 20, fy = f->y + f->h * 0.5f;
+        using T = bdg::InputEvent::Type;
+        auto key = [&](bdg::Key k, bool ctrl = false) { bdg::InputEvent ev{T::KeyDown}; ev.key = k; ev.ctrl = ctrl; e->window.InjectEvent(ev); };
+        auto text = [&](T type, const char* s) { bdg::InputEvent ev{type}; ev.text = s; e->window.InjectEvent(ev); };
+        e->window.InjectEvent({T::MouseDown, fx, fy, 1});
+        e->window.InjectEvent({T::MouseUp, fx, fy, 1});
+        key(bdg::Key::A, true);
+        text(T::Text, "한글");
+        text(T::Text, " 입력");
+        key(bdg::Key::Backspace);
+        key(bdg::Key::Z, true);
+        text(T::TextEditing, "ㅋ");
+      }
       e->ui->HandleEvents(e->window.Events());
       e->ui->Layout((float)w, (float)h);
       e->ui->Draw();
@@ -284,8 +300,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
                    e->hasFont ? e->font.GlyphCount() : 0, e->theme.TokenCount(), c.r, c.g, c.b);
       if (e->gallery) {
         bdg::Widget* f = e->ui->Focused();
-        bdg::LogInfo("ui: clicks(Apply)={} focused={} tabs.view={}", e->clicks, f ? f->id : "-",
-                     e->ui->Find("tabs.view")->selectedIndex);
+        bdg::Widget* speed = e->ui->Find("field.speed");
+        bdg::LogInfo("ui: clicks(Apply)={} focused={} tabs.view={} field.speed=\"{}\" composing=\"{}\" cursor={}",
+                     e->clicks, f ? f->id : "-", e->ui->Find("tabs.view")->selectedIndex, speed->text2,
+                     speed->composing, speed->cursor);
       }
       if (const char* dump = std::getenv("BDG_DUMP_WIDGETS"))
         bdg::LogInfo("widget dump {}: {}", e->ui->DumpJSONL(dump) ? "saved" : "FAILED", dump);

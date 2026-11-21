@@ -3,6 +3,8 @@
 #include "Render2D/Batch2D.h"
 #include "Text/Font.h"
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 
 namespace bdg {
@@ -203,12 +205,33 @@ void UIContext::DrawWidget(Widget& w) {
       break;
     }
     case WidgetKind::Field: {
-      float fs = t.FontSize("label", 12), row = t.N("size-row", 22);
-      float labelW = std::max(80.f, w.w * 0.4f), ix = w.x + s6 + labelW + t.N("space-4", 8);
-      float iy = w.y + (w.h - row) * 0.5f, iw = w.x + w.w - s5 - ix;
+      float fs = t.FontSize("label", 12), ix, iy, iw, ih;
+      FieldInputBox(w, ix, iy, iw, ih);
+      bool focus = focused_ == &w;
       Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg-dim"), w.text);
-      b.Rect(ix, iy, iw, row, t.C("sunk"), rsm, 1, focused_ == &w ? t.C("accent") : t.C("line"));
-      Text(ix + s3, iy + (row - fs) * 0.5f - 1, fs, t.C("fg"), w.text2);
+      b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
+      float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
+      const std::string& v = w.text2;
+      if (focus && w.cursor != w.anchor) { // selection
+        size_t a = std::min(w.cursor, w.anchor), z = std::max(w.cursor, w.anchor);
+        float sx = tx + Measure(fs, v.substr(0, a)), ex = tx + Measure(fs, v.substr(0, z));
+        b.Rect(sx, iy + 3, ex - sx, ih - 6, t.C("accent-soft"));
+      }
+      std::string before = focus ? v.substr(0, w.cursor) : v, after = focus ? v.substr(w.cursor) : "";
+      float px = tx + Text(tx, ty, fs, t.C("fg"), before);
+      float caretX = px;
+      if (focus && !w.composing.empty()) { // IME composition: drawn inline with an underline
+        float cw = Text(px, ty, fs, t.C("fg"), w.composing);
+        b.Rect(px, iy + ih - 5, cw, 1.5f, t.C("accent"));
+        px += cw;
+        caretX = px;
+      }
+      Text(px, ty, fs, t.C("fg"), after);
+      if (focus) {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if ((ms / 530) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
+        if (window_) window_->SetTextInputArea(ix, iy, iw, ih, (int)(caretX - ix));
+      }
       break;
     }
     case WidgetKind::ListRow: {
@@ -318,7 +341,8 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         if (e.button != 1) break;
         pressed_ = HitTest(*root_, e.x, e.y);
         if (pressed_) pressed_->pressed = true;
-        focused_ = (pressed_ && pressed_->focusable) ? pressed_ : nullptr;
+        SetFocus((pressed_ && pressed_->focusable) ? pressed_ : nullptr);
+        if (focused_ && focused_->kind == WidgetKind::Field) focused_->cursor = focused_->anchor = FieldHit(*focused_, e.x);
         break;
       case InputEvent::Type::MouseUp: {
         if (e.button != 1) break;
@@ -331,6 +355,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         break;
       }
       case InputEvent::Type::KeyDown: {
+        if (focused_ && focused_->kind == WidgetKind::Field && FieldKey(*focused_, e)) break;
         if (e.key == Key::Tab) {
           std::vector<Widget*> list;
           CollectFocusable(*root_, list);
@@ -338,8 +363,8 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
           auto it = std::find(list.begin(), list.end(), focused_);
           int i = it == list.end() ? (e.shift ? (int)list.size() - 1 : 0)
                                    : ((int)(it - list.begin()) + (e.shift ? -1 : 1) + (int)list.size()) % (int)list.size();
-          focused_ = list[i];
-        } else if (focused_ && (e.key == Key::Enter || e.key == Key::Space)) {
+          SetFocus(list[i]);
+        } else if (focused_ && focused_->kind != WidgetKind::Field && (e.key == Key::Enter || e.key == Key::Space)) {
           Activate(*focused_, -1);
         } else if (focused_ && focused_->kind == WidgetKind::Tabs && (e.key == Key::Left || e.key == Key::Right)) {
           int n = (int)focused_->items.size();
@@ -347,8 +372,123 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         }
         break;
       }
-      case InputEvent::Type::Text: break; // text editing arrives with queue item 0-8
+      case InputEvent::Type::Text:
+        if (focused_ && focused_->kind == WidgetKind::Field) { focused_->composing.clear(); FieldInsert(*focused_, e.text); }
+        break;
+      case InputEvent::Type::TextEditing:
+        if (focused_ && focused_->kind == WidgetKind::Field) focused_->composing = e.text;
+        break;
     }
+  }
+}
+
+// ---- Text input (shared by every Field) -------------------------------------------------
+namespace {
+size_t PrevBoundary(const std::string& s, size_t i) {
+  if (i == 0) return 0;
+  do { --i; } while (i > 0 && ((unsigned char)s[i] & 0xC0) == 0x80);
+  return i;
+}
+size_t NextBoundary(const std::string& s, size_t i) {
+  if (i >= s.size()) return s.size();
+  do { ++i; } while (i < s.size() && ((unsigned char)s[i] & 0xC0) == 0x80);
+  return i;
+}
+}
+
+void UIContext::SetFocus(Widget* w) {
+  if (focused_ == w) return;
+  if (focused_ && focused_->kind == WidgetKind::Field) {
+    focused_->composing.clear();
+    if (focused_->edited && focused_->onCommit) focused_->onCommit(*focused_);
+    focused_->edited = false;
+  }
+  focused_ = w;
+  if (w && w->kind == WidgetKind::Field) { w->cursor = w->anchor = w->text2.size(); w->composing.clear(); }
+}
+
+void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {
+  const Theme& t = theme_;
+  float labelW = std::max(80.f, f.w * 0.4f);
+  h = t.N("size-row", 22);
+  x = f.x + t.N("space-6", 12) + labelW + t.N("space-4", 8);
+  y = f.y + (f.h - h) * 0.5f;
+  w = f.x + f.w - t.N("space-5", 10) - x;
+}
+
+size_t UIContext::FieldHit(const Widget& f, float mouseX) const {
+  float x, y, w, h, fs = theme_.FontSize("label", 12);
+  FieldInputBox(f, x, y, w, h);
+  float local = mouseX - (x + theme_.N("space-3", 6));
+  size_t best = 0;
+  float bestDist = 1e9f;
+  for (size_t i = 0;; i = NextBoundary(f.text2, i)) {
+    float d = std::abs(Measure(fs, f.text2.substr(0, i)) - local);
+    if (d < bestDist) { bestDist = d; best = i; }
+    if (i >= f.text2.size()) break;
+  }
+  return best;
+}
+
+void UIContext::FieldPushUndo(Widget& f) {
+  f.undoStack.push_back(f.text2);
+  if (f.undoStack.size() > 100) f.undoStack.erase(f.undoStack.begin());
+  f.redoStack.clear();
+}
+
+void UIContext::FieldInsert(Widget& f, const std::string& s) {
+  FieldPushUndo(f);
+  size_t a = std::min(f.cursor, f.anchor), z = std::max(f.cursor, f.anchor);
+  f.text2.replace(a, z - a, s);
+  f.cursor = f.anchor = a + s.size();
+  f.edited = true;
+}
+
+bool UIContext::FieldKey(Widget& f, const InputEvent& e) {
+  if (!f.composing.empty()) return true; // the IME owns keys while composing
+  std::string& v = f.text2;
+  size_t a = std::min(f.cursor, f.anchor), z = std::max(f.cursor, f.anchor);
+  auto move = [&](size_t to) { f.cursor = to; if (!e.shift) f.anchor = to; };
+  switch (e.key) {
+    case Key::Left:  move(f.cursor != f.anchor && !e.shift ? a : PrevBoundary(v, f.cursor)); return true;
+    case Key::Right: move(f.cursor != f.anchor && !e.shift ? z : NextBoundary(v, f.cursor)); return true;
+    case Key::Home:  move(0); return true;
+    case Key::End:   move(v.size()); return true;
+    case Key::Backspace:
+    case Key::Delete:
+      if (a == z) {
+        if (e.key == Key::Backspace && a == 0) return true;
+        if (e.key == Key::Delete && a == v.size()) return true;
+        if (e.key == Key::Backspace) a = PrevBoundary(v, a); else z = NextBoundary(v, z);
+      }
+      FieldPushUndo(f);
+      v.erase(a, z - a);
+      f.cursor = f.anchor = a;
+      f.edited = true;
+      return true;
+    case Key::Enter:
+      if (f.edited && f.onCommit) f.onCommit(f);
+      f.edited = false;
+      return true;
+    case Key::Escape: SetFocus(nullptr); return true;
+    case Key::Space: return true; // arrives as a Text event too
+    default: break;
+  }
+  if (!e.ctrl) return false;
+  switch (e.key) {
+    case Key::A: f.anchor = 0; f.cursor = v.size(); return true;
+    case Key::C: if (window_ && a != z) window_->SetClipboardText(v.substr(a, z - a)); return true;
+    case Key::X:
+      if (a != z) { if (window_) window_->SetClipboardText(v.substr(a, z - a)); FieldInsert(f, ""); }
+      return true;
+    case Key::V: if (window_) { std::string clip = window_->GetClipboardText(); if (!clip.empty()) FieldInsert(f, clip); } return true;
+    case Key::Z:
+      if (!f.undoStack.empty()) { f.redoStack.push_back(v); v = f.undoStack.back(); f.undoStack.pop_back(); f.cursor = f.anchor = v.size(); f.edited = true; }
+      return true;
+    case Key::Y:
+      if (!f.redoStack.empty()) { f.undoStack.push_back(v); v = f.redoStack.back(); f.redoStack.pop_back(); f.cursor = f.anchor = v.size(); f.edited = true; }
+      return true;
+    default: return false;
   }
 }
 
