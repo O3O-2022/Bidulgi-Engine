@@ -17,6 +17,11 @@ FetchContent_MakeAvailable(SDL3)
 
 find_package(OpenGL REQUIRED)
 
+# ---- External: glad (generated GL 4.5 core loader, vendored) ----
+add_library(glad STATIC ThirdParty/glad/src/gl.c)
+target_include_directories(glad PUBLIC ThirdParty/glad/include)
+set_target_properties(glad PROPERTIES FOLDER ThirdParty)
+
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
@@ -25,7 +30,8 @@ add_library(BidulgiEngine STATIC
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static OpenGL::GL)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad OpenGL::GL)
+target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
 add_executable(BidulgiEditor Editor/main.cpp)

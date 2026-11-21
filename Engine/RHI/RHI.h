@@ -12,5 +12,6 @@ public:
   bool Init(Window& window);
   void BeginFrame(int32_t width, int32_t height, Color clear);
   void EndFrame();
+  void DebugTriggerError(); // test hook: issues an invalid GL call to verify debug output
 };
 }

@@ -4,6 +4,7 @@
 #include "Platform/Window.h"
 #include "RHI/RHI.h"
 #include <chrono>
+#include <cstdlib>
 #include <new>
 
 struct bdg_engine {
@@ -23,6 +24,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->maxFrames = desc->max_frames;
   if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height)) { delete e; return BDG_ERR_PLATFORM; }
   if (!e->rhi.Init(e->window)) { e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
+  if (std::getenv("BDG_GL_ERROR_TEST")) e->rhi.DebugTriggerError(); // verifies GL debug output reaches the log
   *out = e;
   return BDG_OK;
 }

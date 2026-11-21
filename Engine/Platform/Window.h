@@ -12,6 +12,7 @@ public:
   bool PumpEvents(); // false = quit requested
   void Present();
   void GetDrawableSize(int32_t& w, int32_t& h) const;
+  static void* GetGLProcAddress(const char* name); // for the GL loader
 
 private:
   SDL_Window* window_ = nullptr;

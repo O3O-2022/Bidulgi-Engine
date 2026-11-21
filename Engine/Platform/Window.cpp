@@ -9,6 +9,9 @@ bool Window::Create(const char* title, int32_t w, int32_t h) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#ifdef BDG_DEBUG
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); // GL errors reported via KHR_debug
+#endif
   window_ = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   if (!window_) { LogError("window creation failed: {}", SDL_GetError()); return false; }
   glContext_ = SDL_GL_CreateContext(window_);
@@ -38,4 +41,5 @@ bool Window::PumpEvents() {
 
 void Window::Present() { SDL_GL_SwapWindow(window_); }
 void Window::GetDrawableSize(int32_t& w, int32_t& h) const { SDL_GetWindowSizeInPixels(window_, &w, &h); }
+void* Window::GetGLProcAddress(const char* name) { return (void*)SDL_GL_GetProcAddress(name); }
 }

@@ -19,10 +19,10 @@
 
 ## M0 — 기반 (지금 여기)
 
-- [ ] **0-1. git 저장소 시작**
+- [x] **0-1. git 저장소 시작** — 2026-11-21, 첫 커밋 `45f69ad`
   - 내용: `git init`, 첫 커밋, `.gitattributes`(줄바꿈, 바이너리 지정)
   - 완료 조건: 깨끗한 `git status`
-- [ ] **0-2. GL 4.5 함수 로더 (glad)**
+- [x] **0-2. GL 4.5 함수 로더 (glad)** — 2026-11-21, `ThirdParty/glad`(GL 4.5 core + KHR_debug). 디버그 빌드에서 잘못된 GL 호출이 `[error] gl [1280] GL_INVALID_ENUM`으로 로그에 찍힘 확인 (`BDG_GL_ERROR_TEST=1`)
   - 내용: GL 1.1 직접 호출을 glad로 교체, 디버그 출력(`glDebugMessageCallback`) 켜기
   - 완료 조건: 디버그 빌드에서 GL 오류가 로그에 찍힘
 - [ ] **0-3. RHI 기본 자원**
