@@ -14,6 +14,16 @@ bool Window::Create(const char* title, int32_t w, int32_t h) {
 #endif
   window_ = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   if (!window_) { LogError("window creation failed: {}", SDL_GetError()); return false; }
+  // Requested size is in UI units: grow it by the display scale, but keep it inside the usable screen area.
+  float scale = SDL_GetWindowDisplayScale(window_);
+  SDL_Rect usable{};
+  if (scale > 1.01f && SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window_), &usable)) {
+    int sw = (int)(w * scale), sh = (int)(h * scale);
+    if (sw > usable.w * 0.95f) sw = (int)(usable.w * 0.95f);
+    if (sh > usable.h * 0.9f) sh = (int)(usable.h * 0.9f);
+    SDL_SetWindowSize(window_, sw, sh);
+    SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+  }
   glContext_ = SDL_GL_CreateContext(window_);
   if (!glContext_) { LogError("OpenGL 4.5 context failed: {}", SDL_GetError()); return false; }
   SDL_GL_SetSwapInterval(1);
@@ -80,6 +90,11 @@ bool Window::PumpEvents() {
 
 void Window::Present() { SDL_GL_SwapWindow(window_); }
 void Window::GetDrawableSize(int32_t& w, int32_t& h) const { SDL_GetWindowSizeInPixels(window_, &w, &h); }
+float Window::GetDisplayScale() const {
+  float s = SDL_GetWindowDisplayScale(window_);
+  return s > 0.f ? s : 1.f;
+}
+
 void* Window::GetGLProcAddress(const char* name) { return (void*)SDL_GL_GetProcAddress(name); }
 
 void Window::SetTextInputArea(float x, float y, float w, float h, int cursorOffsetPx) {

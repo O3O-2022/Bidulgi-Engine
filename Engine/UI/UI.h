@@ -83,6 +83,7 @@ public:
 
   void SetRoot(std::unique_ptr<Widget> root) { root_ = std::move(root); focused_ = nullptr; }
   void SetWindow(Window* window) { window_ = window; } // clipboard + IME candidate window placement
+  void SetScale(float scale) { scale_ = scale; }       // UI units -> drawable pixels (display scale)
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
   Widget* Focused() const { return focused_; }
@@ -115,6 +116,7 @@ private:
   void FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const;
 
   Window* window_ = nullptr;
+  float scale_ = 1.f;
   Batch2D& batch_;
   Font* font_;
   const Theme& theme_;

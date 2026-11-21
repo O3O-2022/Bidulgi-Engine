@@ -257,7 +257,7 @@ void UIContext::DrawWidget(Widget& w) {
       if (focus) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         if ((ms / 530) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
-        if (window_) window_->SetTextInputArea(ix, iy, iw, ih, (int)(caretX - ix));
+        if (window_) window_->SetTextInputArea(ix * scale_, iy * scale_, iw * scale_, ih * scale_, (int)((caretX - ix) * scale_));
       }
       break;
     }

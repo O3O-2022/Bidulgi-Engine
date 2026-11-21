@@ -135,13 +135,21 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 
     int32_t w = 0, h = 0;
     e->window.GetDrawableSize(w, h);
+    // UI works in logical units: drawable pixels / display scale (150% Windows scaling -> 1.5).
+    float scale = e->window.GetDisplayScale();
+    if (const char* s = std::getenv("BDG_UI_SCALE")) scale = std::strtof(s, nullptr);
+    if (scale < 0.5f) scale = 1.f;
+    float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
-    e->batch.Begin(w, h);
+    e->batch.Begin((int32_t)lw, (int32_t)lh);
     bdg::UIContext& ui = e->showGallery ? *e->gallery : *e->editor;
-    if (e->stress) DrawStress(e->batch, (float)w, (float)h);
+    if (e->stress) DrawStress(e->batch, lw, lh);
     else {
-      ui.HandleEvents(e->window.Events());
-      ui.Layout((float)w, (float)h);
+      std::vector<bdg::InputEvent> events = e->window.Events();
+      for (bdg::InputEvent& ev : events) { ev.x /= scale; ev.y /= scale; }
+      ui.SetScale(scale);
+      ui.HandleEvents(events);
+      ui.Layout(lw, lh);
       ui.Draw();
     }
     e->batch.End();
@@ -150,9 +158,9 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
     if (last) {
-      bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={}", e->batch.QuadsThisFrame(),
-                   e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(), e->hasFont ? e->font.GlyphCount() : 0,
-                   e->theme.TokenCount());
+      bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={} ui_scale={:.2f} display_scale={:.2f} drawable={}x{}",
+                   e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(),
+                   e->hasFont ? e->font.GlyphCount() : 0, e->theme.TokenCount(), scale, e->window.GetDisplayScale(), w, h);
       if (e->showGallery) {
         bdg::Widget* f = e->gallery->Focused();
         bdg::Widget* speed = e->gallery->Find("field.speed");

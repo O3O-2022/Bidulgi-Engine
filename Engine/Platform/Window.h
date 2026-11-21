@@ -26,6 +26,7 @@ public:
   bool PumpEvents(); // false = quit requested
   void Present();
   void GetDrawableSize(int32_t& w, int32_t& h) const;
+  float GetDisplayScale() const; // OS UI scale for this window's monitor (1.0 = 100%, 1.5 = 150%)
   static void* GetGLProcAddress(const char* name); // for the GL loader
 
   const std::vector<InputEvent>& Events() const { return events_; } // events of the last PumpEvents
