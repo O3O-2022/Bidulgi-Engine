@@ -7,6 +7,7 @@
 #include "Render2D/Batch2D.h"
 #include "Text/Font.h"
 #include "UI/Theme.h"
+#include "UI/UI.h"
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -139,6 +140,59 @@ void DrawEditorMock(Ui& u, float W, float H) {
   u.Text(W - 170, sy + (statusH - caption) * 0.5f - 1, caption, t.C("fg-dim"), "중사양 · Windows · 60 fps");
 }
 
+// Component gallery built with the retained UI framework (queue item 0-7).
+std::unique_ptr<bdg::Widget> BuildGallery(int* clickCounter) {
+  using namespace bdg;
+  auto root = MakeBox(Axis::Column, 16);
+  root->Pad(16);
+  auto& cover = root->Add(MakeCover("비둘기 엔진 디자인 시스템", "부품 8개: Panel · Tabs · Button · Field · ListRow · Badge · Node · Cover"));
+  cover.height = Length::Px(112);
+
+  auto& row = root->Add(MakeBox(Axis::Row, 16));
+  row.height = Length::Fill();
+
+  auto& hier = row.Add(MakePanel("panel.hierarchy", "Hierarchy"));
+  hier.width = Length::Px(280);
+  hier.Add(MakeListRow("row.camera", "Main Camera", "Camera"));
+  hier.Add(MakeListRow("row.sun", "Sun", "Light"));
+  hier.Add(MakeListRow("row.sky", "Sky"));
+  hier.Add(MakeListRow("row.world", "World Settings"));
+  hier.Add(MakeListRow("row.player", "Player", "Prefab")).selected = true;
+  hier.Add(MakeListRow("row.weapon", "Weapon", "", 1));
+  hier.Add(MakeListRow("row.crystal", "Crystal", "Prefab"));
+
+  auto& insp = row.Add(MakePanel("panel.inspector", "Inspector"));
+  insp.width = Length::Fill();
+  insp.gap = 2;
+  insp.Add(MakeField("field.position", "Position", "0, 1, 0"));
+  insp.Add(MakeField("field.rotation", "Rotation", "0, 90, 0"));
+  insp.Add(MakeField("field.scale", "Scale", "1, 1, 1"));
+  insp.Add(MakeField("field.speed", "Speed", "5.0"));
+  auto& buttons = insp.Add(MakeBox(Axis::Row, 8));
+  buttons.padL = 12; buttons.padT = 10; buttons.padB = 6;
+  buttons.crossAlign = Align::Center;
+  auto& play = buttons.Add(MakeButton("btn.apply", "Apply", true));
+  play.onClick = [clickCounter](Widget&) { ++*clickCounter; };
+  buttons.Add(MakeButton("btn.revert", "Revert"));
+  buttons.Add(MakeButton("btn.select", "Select Prefab"));
+  auto& badges = insp.Add(MakeBox(Axis::Row, 6));
+  badges.padL = 12; badges.padT = 6;
+  badges.crossAlign = Align::Center;
+  badges.Add(MakeBadge("C#"));
+  badges.Add(MakeBadge("Saved", 1));
+  badges.Add(MakeBadge("Prefab"));
+
+  auto& side = row.Add(MakeBox(Axis::Column, 16));
+  side.width = Length::Px(440);
+  side.Add(MakeTabs("tabs.view", {"Scene", "Game", "Graph", "Animation"}, 2));
+  auto& nodes = side.Add(MakeBox(Axis::Row, 28));
+  nodes.crossAlign = Align::Start;
+  nodes.padT = 8; nodes.padL = 4;
+  nodes.Add(MakeNode("node.start", "Start", "Event", 1, {"out|exec|", "out|object|Self"}));
+  nodes.Add(MakeNode("node.rotate", "Rotate", "Transform", 2, {"in|exec|", "in|object|Target", "in|float|Speed", "out|exec|"}));
+  return root;
+}
+
 void DrawStress(bdg::Batch2D& b, float W, float H) { // queue 0-4 exit check: 10k rects
   for (int i = 0; i < 10000; ++i) {
     uint32_t rgb = 0x2040a0 + (i * 2654435761u >> 8 & 0x3f3f3f);
@@ -154,6 +208,9 @@ struct bdg_engine {
   bdg::Batch2D batch;
   bdg::Font font;
   bdg::Theme theme;
+  std::unique_ptr<bdg::UIContext> ui;
+  bool gallery = false, selfTest = false;
+  int clicks = 0;
   bool hasFont = false;
   int32_t maxFrames = 0;
   bool stress = false;
@@ -179,6 +236,11 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
   std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
   if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
+  e->ui = std::make_unique<bdg::UIContext>(e->batch, e->hasFont ? &e->font : nullptr, e->theme);
+  e->ui->SetRoot(BuildGallery(&e->clicks));
+  const char* screen = std::getenv("BDG_SCREEN");
+  e->gallery = screen && std::string(screen) == "gallery";
+  e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
   *out = e;
   return BDG_OK;
 }
@@ -193,8 +255,24 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     e->window.GetDrawableSize(w, h);
     e->rhi.BeginFrame(w, h, e->theme.C("ground"));
     e->batch.Begin(w, h);
+    for (const bdg::InputEvent& ev : e->window.Events())
+      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F1) e->gallery = !e->gallery; // F1: gallery <-> mock
     if (e->stress) DrawStress(e->batch, (float)w, (float)h);
-    else { Ui u{e->batch, e->hasFont ? &e->font : nullptr, e->theme}; DrawEditorMock(u, (float)w, (float)h); }
+    else if (e->gallery) {
+      if (e->selfTest && frames == 2) { // scripted input: click Apply, then Tab twice and Enter
+        bdg::Widget* btn = e->ui->Find("btn.apply");
+        float bx = btn->x + btn->w * 0.5f, by = btn->y + btn->h * 0.5f;
+        using T = bdg::InputEvent::Type;
+        e->window.InjectEvent({T::MouseMove, bx, by});
+        e->window.InjectEvent({T::MouseDown, bx, by, 1});
+        e->window.InjectEvent({T::MouseUp, bx, by, 1});
+        for (int i = 0; i < 2; ++i) e->window.InjectEvent({T::KeyDown, 0, 0, 0, bdg::Key::Tab});
+        e->window.InjectEvent({T::KeyDown, 0, 0, 0, bdg::Key::Enter});
+      }
+      e->ui->HandleEvents(e->window.Events());
+      e->ui->Layout((float)w, (float)h);
+      e->ui->Draw();
+    } else { Ui u{e->batch, e->hasFont ? &e->font : nullptr, e->theme}; DrawEditorMock(u, (float)w, (float)h); }
     e->batch.End();
     e->rhi.EndFrame();
     ++frames;
@@ -204,6 +282,13 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={} | menubar rgb=({:.3f},{:.3f},{:.3f})",
                    e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(),
                    e->hasFont ? e->font.GlyphCount() : 0, e->theme.TokenCount(), c.r, c.g, c.b);
+      if (e->gallery) {
+        bdg::Widget* f = e->ui->Focused();
+        bdg::LogInfo("ui: clicks(Apply)={} focused={} tabs.view={}", e->clicks, f ? f->id : "-",
+                     e->ui->Find("tabs.view")->selectedIndex);
+      }
+      if (const char* dump = std::getenv("BDG_DUMP_WIDGETS"))
+        bdg::LogInfo("widget dump {}: {}", e->ui->DumpJSONL(dump) ? "saved" : "FAILED", dump);
       if (const char* shot = std::getenv("BDG_SCREENSHOT")) {
         std::vector<uint8_t> px;
         e->rhi.ReadPixels(w, h, px);

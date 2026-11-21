@@ -1,0 +1,99 @@
+#pragma once
+#include "Platform/Window.h"
+#include "RHI/RHI.h"
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace bdg {
+class Batch2D;
+class Font;
+class Theme;
+
+// ---- Retained widget tree ------------------------------------------------------------------
+// Widgets persist between frames; only layout/draw run each frame. Components follow the
+// design system (design-system/project/components) and read every size and color from tokens.
+enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover };
+enum class Axis { Row, Column };
+enum class Align { Start, Center, End, Stretch };
+
+struct Length {
+  enum class Mode { Auto, Px, Fill } mode = Mode::Auto;
+  float value = 0; // px, or fill weight
+  static Length Auto() { return {}; }
+  static Length Px(float v) { return {Mode::Px, v}; }
+  static Length Fill(float weight = 1) { return {Mode::Fill, weight}; }
+};
+
+struct Widget {
+  WidgetKind kind = WidgetKind::Box;
+  std::string id, text, text2;        // text2: secondary text (type column, node subtitle, cover subtitle)
+  std::vector<std::string> items;     // Tabs: tab names; Node: pins "in|exec|Exec" / "out|float|Value"
+  int selectedIndex = 0, indent = 0, variant = 0;
+  bool primary = false, selected = false, focusable = false;
+
+  Axis axis = Axis::Column;
+  Align crossAlign = Align::Stretch;
+  float gap = 0, padL = 0, padT = 0, padR = 0, padB = 0;
+  Length width, height;
+
+  std::vector<std::unique_ptr<Widget>> children;
+  std::function<void(Widget&)> onClick;
+
+  // Computed each frame.
+  float x = 0, y = 0, w = 0, h = 0, prefW = 0, prefH = 0;
+  bool hovered = false, pressed = false;
+  std::vector<float> itemX; // Tabs: tab right edges for hit testing
+
+  Widget& Add(std::unique_ptr<Widget> child) { children.push_back(std::move(child)); return *children.back(); }
+  Widget& Pad(float all) { padL = padT = padR = padB = all; return *this; }
+};
+
+// Builders (return owning pointers to pass to Widget::Add).
+std::unique_ptr<Widget> MakeBox(Axis axis, float gap = 0);
+std::unique_ptr<Widget> MakeLabel(std::string text);
+std::unique_ptr<Widget> MakePanel(std::string id, std::string title);
+std::unique_ptr<Widget> MakeTabs(std::string id, std::vector<std::string> tabs, int selected = 0);
+std::unique_ptr<Widget> MakeButton(std::string id, std::string text, bool primary = false);
+std::unique_ptr<Widget> MakeField(std::string id, std::string label, std::string value);
+std::unique_ptr<Widget> MakeListRow(std::string id, std::string text, std::string type = {}, int indent = 0);
+std::unique_ptr<Widget> MakeBadge(std::string text, int variant = 0); // 1 = ok
+std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string subtitle, int variant,
+                                 std::vector<std::string> pins); // variant: 0 flow, 1 event, 2 function, 3 pure
+std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle);
+
+// ---- Context: layout, drawing, input, focus ----------------------------------------------
+class UIContext {
+public:
+  UIContext(Batch2D& batch, Font* font, const Theme& theme) : batch_(batch), font_(font), theme_(theme) {}
+
+  void SetRoot(std::unique_ptr<Widget> root) { root_ = std::move(root); focused_ = nullptr; }
+  Widget* Root() { return root_.get(); }
+  Widget* Find(const std::string& id);
+  Widget* Focused() const { return focused_; }
+
+  void Layout(float width, float height);
+  void HandleEvents(const std::vector<InputEvent>& events);
+  void Draw();
+  bool DumpJSONL(const char* path) const; // widget boxes for the design parity test
+
+private:
+  void Measure(Widget& w);
+  void Arrange(Widget& w, float x, float y, float width, float height);
+  void DrawWidget(Widget& w);
+  Widget* HitTest(Widget& w, float x, float y);
+  void CollectFocusable(Widget& w, std::vector<Widget*>& out);
+  void Activate(Widget& w, float mouseX);
+  float Text(float x, float y, float size, Color c, const std::string& s);
+  float Measure(float size, const std::string& s) const;
+
+  Batch2D& batch_;
+  Font* font_;
+  const Theme& theme_;
+  std::unique_ptr<Widget> root_;
+  Widget* hovered_ = nullptr;
+  Widget* pressed_ = nullptr;
+  Widget* focused_ = nullptr;
+};
+}

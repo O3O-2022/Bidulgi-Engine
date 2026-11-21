@@ -30,11 +30,48 @@ void Window::Destroy() {
   SDL_Quit();
 }
 
+namespace {
+Key MapKey(SDL_Keycode k) {
+  switch (k) {
+    case SDLK_TAB: return Key::Tab;       case SDLK_RETURN: return Key::Enter;  case SDLK_SPACE: return Key::Space;
+    case SDLK_ESCAPE: return Key::Escape; case SDLK_BACKSPACE: return Key::Backspace; case SDLK_DELETE: return Key::Delete;
+    case SDLK_LEFT: return Key::Left;     case SDLK_RIGHT: return Key::Right;   case SDLK_UP: return Key::Up;
+    case SDLK_DOWN: return Key::Down;     case SDLK_HOME: return Key::Home;     case SDLK_END: return Key::End;
+    case SDLK_F1: return Key::F1;         case SDLK_A: return Key::A;           case SDLK_C: return Key::C;
+    case SDLK_V: return Key::V;           case SDLK_X: return Key::X;           case SDLK_Z: return Key::Z;
+    case SDLK_Y: return Key::Y;           default: return Key::None;
+  }
+}
+}
+
 bool Window::PumpEvents() {
+  events_.clear();
+  float density = SDL_GetWindowPixelDensity(window_);
+  if (density <= 0.f) density = 1.f;
   SDL_Event e;
   while (SDL_PollEvent(&e)) {
-    if (e.type == SDL_EVENT_QUIT) return false;
-    if (e.type == SDL_EVENT_TEXT_INPUT) LogInfo("text input: {}", e.text.text); // committed IME text
+    InputEvent ev;
+    switch (e.type) {
+      case SDL_EVENT_QUIT: return false;
+      case SDL_EVENT_MOUSE_MOTION:
+        ev.type = InputEvent::Type::MouseMove; ev.x = e.motion.x * density; ev.y = e.motion.y * density;
+        events_.push_back(ev); break;
+      case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      case SDL_EVENT_MOUSE_BUTTON_UP:
+        ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? InputEvent::Type::MouseDown : InputEvent::Type::MouseUp;
+        ev.x = e.button.x * density; ev.y = e.button.y * density; ev.button = e.button.button;
+        events_.push_back(ev); break;
+      case SDL_EVENT_KEY_DOWN:
+        ev.type = InputEvent::Type::KeyDown; ev.key = MapKey(e.key.key);
+        ev.shift = (e.key.mod & SDL_KMOD_SHIFT) != 0; ev.ctrl = (e.key.mod & SDL_KMOD_CTRL) != 0;
+        if (ev.key != Key::None) events_.push_back(ev);
+        break;
+      case SDL_EVENT_TEXT_INPUT:
+        ev.type = InputEvent::Type::Text; ev.text = e.text.text;
+        LogInfo("text input: {}", e.text.text); // committed IME text
+        events_.push_back(ev); break;
+      default: break;
+    }
   }
   return true;
 }
