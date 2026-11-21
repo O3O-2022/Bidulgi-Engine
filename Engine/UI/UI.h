@@ -14,7 +14,8 @@ class Theme;
 // ---- Retained widget tree ------------------------------------------------------------------
 // Widgets persist between frames; only layout/draw run each frame. Components follow the
 // design system (design-system/project/components) and read every size and color from tokens.
-enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover };
+enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom };
+class UIContext;
 enum class Axis { Row, Column };
 enum class Align { Start, Center, End, Stretch };
 
@@ -29,8 +30,11 @@ struct Length {
 struct Widget {
   WidgetKind kind = WidgetKind::Box;
   std::string id, text, text2;        // text2: secondary text (type column, node subtitle, cover subtitle)
-  std::vector<std::string> items;     // Tabs: tab names; Node: pins "in|exec|Exec" / "out|float|Value"
-  int selectedIndex = 0, indent = 0, variant = 0;
+  std::vector<std::string> items;     // Tabs / Panel header tabs; Node: pins "in|exec|Exec" / "out|float|Value"
+  int selectedIndex = 0, indent = 0;
+  int variant = 0;                    // Label: 1 = dim; Tabs: 1 = workspace bar style; Badge: 1 = ok; Node: stripe kind
+  float fontSize = 0;                 // Label: 0 = body style
+  std::function<void(Widget&, UIContext&)> onDraw; // Custom: draws inside its rect (viewports, previews)
   bool primary = false, selected = false, focusable = false;
 
   Axis axis = Axis::Column;
@@ -69,6 +73,8 @@ std::unique_ptr<Widget> MakeBadge(std::string text, int variant = 0); // 1 = ok
 std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string subtitle, int variant,
                                  std::vector<std::string> pins); // variant: 0 flow, 1 event, 2 function, 3 pure
 std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle);
+std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> tabs, int selected = 0);
+std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw);
 
 // ---- Context: layout, drawing, input, focus ----------------------------------------------
 class UIContext {
@@ -86,15 +92,19 @@ public:
   void Draw();
   bool DumpJSONL(const char* path) const; // widget boxes for the design parity test
 
+  // For Custom widgets.
+  Batch2D& Batch() { return batch_; }
+  const Theme& Tokens() const { return theme_; }
+  float Text(float x, float y, float size, Color c, const std::string& s);
+  float Measure(float size, const std::string& s) const;
+
 private:
   void Measure(Widget& w);
   void Arrange(Widget& w, float x, float y, float width, float height);
   void DrawWidget(Widget& w);
   Widget* HitTest(Widget& w, float x, float y);
   void CollectFocusable(Widget& w, std::vector<Widget*>& out);
-  void Activate(Widget& w, float mouseX);
-  float Text(float x, float y, float size, Color c, const std::string& s);
-  float Measure(float size, const std::string& s) const;
+  void Activate(Widget& w, float mouseX, float mouseY);
 
   // Field editing (one shared text input implementation for every text box in the editor).
   void SetFocus(Widget* w);

@@ -16,7 +16,7 @@ std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text
   return w;
 }
 const char* KindName(WidgetKind k) {
-  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover"};
+  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom"};
   return names[(int)k];
 }
 Color Alpha(Color c, float a) { c.a = a; return c; }
@@ -43,6 +43,13 @@ std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string 
   w->items = std::move(pins); w->focusable = true; return w;
 }
 std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle) { auto w = Make(WidgetKind::Cover, {}, std::move(title)); w->text2 = std::move(subtitle); return w; }
+std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> tabs, int selected) {
+  auto w = Make(WidgetKind::Panel, std::move(id), tabs.empty() ? std::string() : tabs[selected]);
+  w->items = std::move(tabs); w->selectedIndex = selected; return w;
+}
+std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw) {
+  auto w = Make(WidgetKind::Custom, std::move(id)); w->onDraw = std::move(draw); return w;
+}
 
 // ---- Helpers -------------------------------------------------------------------------------
 float UIContext::Text(float x, float y, float size, Color c, const std::string& s) { return font_ ? font_->DrawText(batch_, x, y, size, c, s) : 0.f; }
@@ -74,7 +81,11 @@ void UIContext::Measure(Widget& w) {
   for (auto& c : w.children) Measure(*c);
   float s3 = t.N("space-3", 6), s5 = t.N("space-5", 10), s6 = t.N("space-6", 12);
   switch (w.kind) {
-    case WidgetKind::Label:   w.prefW = Measure(t.FontSize("body", 13), w.text); w.prefH = t.FontSize("body", 13) * 1.45f; break;
+    case WidgetKind::Label: {
+      float fs = w.fontSize > 0 ? w.fontSize : t.FontSize("body", 13);
+      w.prefW = Measure(fs, w.text); w.prefH = fs * 1.45f; break;
+    }
+    case WidgetKind::Custom: w.prefW = 0; w.prefH = 0; break;
     case WidgetKind::Button:  w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2; w.prefH = 24; break;
     case WidgetKind::Field:   w.prefW = 240; w.prefH = std::max(26.f, t.N("size-row", 22) + 4); break;
     case WidgetKind::Badge:   w.prefW = Measure(t.FontSize("badge", 10), w.text) + s3 * 2 + 2; w.prefH = 18; break;
@@ -85,8 +96,9 @@ void UIContext::Measure(Widget& w) {
       break;
     case WidgetKind::Tabs: {
       float sum = 0;
-      for (auto& it : w.items) sum += Measure(t.FontSize("label", 12), it) + s6 * 2;
-      w.prefW = sum; w.prefH = t.N("size-panel-header", 30);
+      float fs = w.variant == 1 ? t.FontSize("control", 12.5f) : t.FontSize("label", 12);
+      for (auto& it : w.items) sum += Measure(fs, it) + s6 * 2 + (w.variant == 1 ? t.N("space-1", 2) : 0);
+      w.prefW = sum; w.prefH = w.variant == 1 ? fs + s3 * 2 + 4 : t.N("size-panel-header", 30);
       break;
     }
     case WidgetKind::Node: {
@@ -169,28 +181,43 @@ void UIContext::DrawWidget(Widget& w) {
   const float s3 = t.N("space-3", 6), s5 = t.N("space-5", 10), s6 = t.N("space-6", 12);
   switch (w.kind) {
     case WidgetKind::Box: break;
-    case WidgetKind::Label: Text(w.x, w.y + 2, t.FontSize("body", 13), t.C("fg"), w.text); break;
+    case WidgetKind::Label: {
+      float fs = w.fontSize > 0 ? w.fontSize : t.FontSize("body", 13);
+      Text(w.x, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-dim") : t.C("fg"), w.text);
+      break;
+    }
+    case WidgetKind::Custom: if (w.onDraw) w.onDraw(w, *this); break;
     case WidgetKind::Panel: {
       float hh = t.N("size-panel-header", 30), fs = t.FontSize("label", 12);
       b.Rect(w.x, w.y, w.w, w.h, t.C("panel"), rsm, 1, t.C("line"));
       b.Rect(w.x + 1, w.y + 1, w.w - 2, hh - 1, t.C("win"));
       b.Rect(w.x + 1, w.y + hh - 1, w.w - 2, 1, t.C("line"));
-      float tw = Measure(fs, w.text) + s6 * 2;
-      b.Rect(w.x + 1, w.y + 1, tw, hh - 1, t.C("panel"));
-      b.Rect(w.x + 1, w.y + 1, tw, 2, t.C("accent"));
-      Text(w.x + 1 + s6, w.y + (hh - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
+      std::vector<std::string> one{w.text};
+      const auto& tabs = w.items.empty() ? one : w.items;
+      float px = w.x + 1;
+      w.itemX.clear();
+      for (size_t i = 0; i < tabs.size(); ++i) {
+        float tw = Measure(fs, tabs[i]) + s6 * 2;
+        bool on = w.items.empty() || (int)i == w.selectedIndex;
+        if (on) { b.Rect(px, w.y + 1, tw, hh - 1, t.C("panel")); b.Rect(px, w.y + 1, tw, 2, t.C("accent")); }
+        Text(px + s6, w.y + (hh - fs) * 0.5f - 1, fs, on ? t.C("fg") : t.C("fg-dim"), tabs[i]);
+        px += tw;
+        w.itemX.push_back(px);
+      }
       break;
     }
     case WidgetKind::Tabs: {
-      float fs = t.FontSize("label", 12), px = w.x;
-      b.Rect(w.x, w.y, w.w, w.h, t.C("win"), rsm);
+      bool ws = w.variant == 1;
+      float fs = ws ? t.FontSize("control", 12.5f) : t.FontSize("label", 12), px = w.x;
+      if (!ws) b.Rect(w.x, w.y, w.w, w.h, t.C("win"), rsm);
       w.itemX.clear();
       for (size_t i = 0; i < w.items.size(); ++i) {
         float tw = Measure(fs, w.items[i]) + s6 * 2;
         bool on = (int)i == w.selectedIndex;
-        if (on) { b.Rect(px, w.y, tw, w.h, t.C("panel")); b.Rect(px, w.y, tw, 2, t.C("accent")); }
+        if (on && ws) { b.Rect(px, w.y, tw, w.h, t.C("raise"), t.N("radius-lg", 5)); b.Rect(px + 2, w.y + w.h - 2, tw - 4, 2, t.C("accent")); }
+        else if (on) { b.Rect(px, w.y, tw, w.h, t.C("panel")); b.Rect(px, w.y, tw, 2, t.C("accent")); }
         Text(px + s6, w.y + (w.h - fs) * 0.5f - 1, fs, on ? t.C("fg") : t.C("fg-dim"), w.items[i]);
-        px += tw;
+        px += tw + (ws ? t.N("space-1", 2) : 0);
         w.itemX.push_back(px);
       }
       break;
@@ -297,7 +324,8 @@ Widget* UIContext::HitTest(Widget& w, float x, float y) {
   if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
   for (auto it = w.children.rbegin(); it != w.children.rend(); ++it)
     if (Widget* hit = HitTest(**it, x, y)) return hit;
-  return (w.focusable || w.onClick) ? &w : nullptr;
+  bool headerTabs = w.kind == WidgetKind::Panel && !w.items.empty() && y < w.y + theme_.N("size-panel-header", 30);
+  return (w.focusable || w.onClick || headerTabs) ? &w : nullptr;
 }
 
 void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
@@ -305,10 +333,12 @@ void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
   for (auto& c : w.children) CollectFocusable(*c, out);
 }
 
-void UIContext::Activate(Widget& w, float mouseX) {
-  if (w.kind == WidgetKind::Tabs && mouseX >= 0) {
+void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
+  (void)mouseY;
+  if ((w.kind == WidgetKind::Tabs || w.kind == WidgetKind::Panel) && mouseX >= 0 && !w.itemX.empty()) {
     for (size_t i = 0; i < w.itemX.size(); ++i)
       if (mouseX < w.itemX[i]) { w.selectedIndex = (int)i; break; }
+    if (w.kind == WidgetKind::Panel) w.text = w.items[w.selectedIndex];
   }
   if (w.kind == WidgetKind::ListRow || w.kind == WidgetKind::Node) {
     // Single selection among siblings of the same kind.
@@ -349,7 +379,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         Widget* hit = HitTest(*root_, e.x, e.y);
         if (pressed_) {
           pressed_->pressed = false;
-          if (hit == pressed_) Activate(*hit, e.x);
+          if (hit == pressed_) Activate(*hit, e.x, e.y);
         }
         pressed_ = nullptr;
         break;
@@ -365,7 +395,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
                                    : ((int)(it - list.begin()) + (e.shift ? -1 : 1) + (int)list.size()) % (int)list.size();
           SetFocus(list[i]);
         } else if (focused_ && focused_->kind != WidgetKind::Field && (e.key == Key::Enter || e.key == Key::Space)) {
-          Activate(*focused_, -1);
+          Activate(*focused_, -1, -1);
         } else if (focused_ && focused_->kind == WidgetKind::Tabs && (e.key == Key::Left || e.key == Key::Right)) {
           int n = (int)focused_->items.size();
           if (n) focused_->selectedIndex = (focused_->selectedIndex + (e.key == Key::Right ? 1 : n - 1)) % n;
