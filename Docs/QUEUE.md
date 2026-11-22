@@ -236,6 +236,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M7 — 애니메이션·UI 디자이너·빌드
 
 - [ ] **7-1. 애니메이션 그래프** — Graph 상위호환 ([animation](features/animation.md)): 포즈 그래프, 상태 머신, 노티파이, 워커 스레드 평가.
+- [ ] **7-1b. IK·래그돌·스프링 본** — Two-Bone IK, Look-At/Aim Offset, 발 IK(경사·계단), FABRIK/CCD, 래그돌 자동 생성·편집·죽을 때 전환, 머리카락·옷자락 스프링 본, 디버그 겹쳐 보기 [animation](features/animation.md#ik와-물리-애니메이션-2026-11-23-보강)
 - [ ] **7-2. 타임라인 (블렌더식)** — 키프레임·커브 편집.
 - [ ] **7-3. UI 위젯 디자이너** — 런타임 게임 UI(월드·카메라 공간) ([ui-widgets](features/ui-widgets.md)).
 - [ ] **7-3b. 실행 중 상태 디버거·메모리 프로파일러** [convenience-features](planning/convenience-features.md)
@@ -248,6 +249,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **템플릿**: 빈, 기본 3D·2D, 1인칭 슈팅, 3인칭, 2D 플랫포머
 - [ ] **Android·Web** (GLES 3.0 / WebGL2 백엔드, Emscripten)
 - [ ] **Halo GI Tier 0** — 라이트맵 + 프로브 + 반사 프로브 ([global-illumination](features/global-illumination.md))
+- [ ] **애니메이션 보강** — 손 IK·IK 리그 편집기, 부분 래그돌·히트 리액션 블렌드 [animation](features/animation.md#ik와-물리-애니메이션-2026-11-23-보강)
 - [ ] **패키지 시스템** — `bdgpkg.json`, `Packages/manifest.json`·`lock.json`, git 출처
 - [ ] **디자인 일치 검사 CI**, 성능 회귀 CI
 - [ ] **게임 기본 기능** — 설정 메뉴(품질·해상도·키 재설정·음량·언어·자막), 게임 접근성(자막·색각 필터·글자 크기), 원클릭 빌드 프로필, CI 템플릿 [convenience-features](planning/convenience-features.md)
@@ -269,4 +271,5 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 - [-] Graph AOT (1.0 이후, 차분 테스트가 생긴 뒤)
 - [-] 대형 게임 트랙 L1~L7 ([large-game-track](planning/large-game-track.md)): 오픈월드, GPU 물리·복셀 파괴, Halo GI Tier 1~3
+- [-] 전신 IK, 물리 애니메이션(Active Ragdoll)·일어나기, 천·머리카락 시뮬레이션, 모션 매칭 (1.0 이후 / L 트랙) [animation](features/animation.md#ik와-물리-애니메이션-2026-11-23-보강)
 - [-] 원클릭 클라우드 호스팅 (엔진 범위 밖, 선택형 서비스로 나중에 검토)
