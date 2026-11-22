@@ -153,6 +153,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
   - **안정 ID**: 씬 파일·명령·네트워크용으로 핸들과 별개인 영구 ID(문자열 `"g1"` 또는 64비트 UUID)를 둔다. 핸들은 실행 중 전용.
   - 완료 조건: 생성·파괴·재사용 시 이전 핸들이 무효가 되는 단위 테스트.
 - [ ] **1-4b. 크래시 보고** — crashpad(Apache-2.0)로 튕길 때 `BugReports/`에 덤프·로그 저장, 다음 실행 때 제보 제안 [convenience-features](planning/convenience-features.md)
+- [ ] **1-4c. 잘 죽지 않는 엔진 기초** — 엔진 API의 널·무효 핸들 안전 반환(경고 로그), 에디터에서 `check` 실패를 복구 가능한 오류로, C++ 모듈 호출 SEH 가드 + 자동 저장, CI에 ASan 빌드와 로더 퍼징, 오류 주입 테스트 모음 [pain-points](planning/pain-points.md)
 - [ ] **1-5. 단축키 시스템 + 프리셋**
   - 구현: `Engine/UI/Shortcuts.*`. 동작 이름 ↔ 키 조합 매핑 파일 `ProjectSettings/Shortcuts.jsonl`, 프리셋 `unity`(기본)·`unreal`. 첫 실행 때 선택 화면. 충돌 검사.
   - 완료 조건: 프리셋 전환 시 같은 동작(예: 이동 기즈모)이 다른 키로 실행.
@@ -205,6 +206,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **4-3. `[Edit]` 노출** — C# 리플렉션 → 엔진 리플렉션 등록 → Inspector 자동 표시 ([code-syntax](features/code-syntax.md) 속성 표).
 - [ ] **4-4. 핫 리로드** — 수집 가능한 AssemblyLoadContext, 상태 직렬화 후 재적용. 목표: 변경 → 반영 2초.
 - [ ] **4-6. 빠른 C++ 반복** — 엔진 SDK(헤더+라이브러리) 배포 형태, 얇은 게임용 헤더, 헤더 도구 증분, 작은 모듈·PCH·유니티 빌드 자동, 모듈 DLL 라이브 리로드(실패 시 이전 DLL 복귀), sccache 옵션. 목표: `.cpp` 수정 반영 5초, 클린 빌드 60초, CI 측정 [pain-points](planning/pain-points.md)
+- [ ] **4-6b. 기다리기(코루틴) — C++20 `BTask`·C# `async`·Lua `wait`** — `Wait`/`WaitUntil`/`NextFrame`/`WaitForEvent`/`RunOnWorker`, 오브젝트·씬·플레이 모드에 묶여 자동 취소, 시간 배율 반영. 완료 조건: 오브젝트를 지운 뒤 대기 중 코루틴이 크래시 없이 취소되는 테스트 [pain-points](planning/pain-points.md)
 - [ ] **4-4b. 디버그 그리기 API + 콘솔 개선** — `Debug.Draw*`(모든 언어), 오류 클릭 → 코드 줄·Graph 노드로 이동, 같은 메시지 묶기, 필터·검색 [convenience-features](planning/convenience-features.md)
 - [ ] **4-4c. 쉬운 API (C#)** — `Get`/`Find`/`Spawn`/`Destroy`/`After`/`Every`/`await Wait`/`Tween`/`Random`, `[Auto]`, 태그·액션·씬 상수 자동 생성 [easy-api](features/easy-api.md)
 - [ ] **4-4d. 데이터 테이블** — `.table.jsonl`, 스프레드시트 편집, CSV, `Data.Get<T>` [convenience-features](planning/convenience-features.md)
