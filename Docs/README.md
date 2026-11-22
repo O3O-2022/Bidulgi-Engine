@@ -55,6 +55,7 @@ AI 에이전트와 사람이 같은 방식으로 다루는 범용 게임 엔진�
 - [AI 에이전트 연동](features/agent-integration.md)
 - [입력 (입력 액션)](features/input.md)
 - [언어별 코드 문법 예제](features/code-syntax.md)
+- [쉬운 엔진 API (언어별 자주 쓰는 함수)](features/easy-api.md)
 - [프로젝트 생성·열기·엔진 버전·템플릿](features/projects-and-templates.md)
 - [에디터 디자인 시스템 (색·글꼴·간격·부품 규칙)](../design-system/project/README.md) — 새 화면은 모두 이 규칙을 따릅니다
 

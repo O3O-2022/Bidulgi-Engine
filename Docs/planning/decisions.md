@@ -60,6 +60,8 @@
 | 2026-11-22 | 엔진 이름 **비둘기 엔진 (Bidulgi Engine)으로 최종 확정**. U로 시작하는 새 이름 검토는 종료. CLI `bdg`, C++ 접두어 `B`, Python 모듈 `bidulgi` 유지 | 사용자 결정 |
 | 2026-11-22 | 그래픽 테스트는 화려한 씬 대신 기준점 씬: 검증된 공개 에셋(glTF Sample Assets, Sponza 등, 저장소에 넣지 않고 받아 씀), 목적별 구역, 카메라 북마크, 렌더 패스 뷰어, 이미지 비교. M3 시작 시 좌표계·와인딩·감마부터 확정 | [graphics-test-scenes](../features/graphics-test-scenes.md) |
 | 2026-11-23 | 편의 기능 추가 채택: Undo 기록 패널, 참조·안 쓰는 에셋 찾기, 여러 오브젝트 편집, 값 복사·프리셋, 스냅·정렬, 콘솔 개선, 플레이 모드 도구, 디버그 그리기, 찾아 바꾸기, git 상태, 기기 미리보기, 녹화, AI 패널, 상태 점검, 테마 편집기, 튜토리얼. 버그 제보 보완(단축키·개인 정보·에디터 전용·크래시). 각 기능은 바탕 시스템 단계에 배치 | [convenience-features](convenience-features.md) |
+| 2026-11-23 | 2차 편의 기능 채택: 그레이박스 도구, 데이터 테이블, 스플라인, 끌어다 놓기·자동 재임포트, 대화·퀘스트 그래프, 상태 디버거, 게임 설정 메뉴, 세이브·로드, 게임 접근성, 플랫폼 서비스, 빌드 프로필, CI 템플릿, 에셋 규칙 검사, 메모리 프로파일러 | [convenience-features](convenience-features.md) |
+| 2026-11-23 | 쉬운 엔진 API: 다섯 언어 같은 함수 이름(`Get`/`Find`/`Spawn`/`After`/`Every`/`Wait`/`Tween`/`Raycast`…), 기다리기는 await·코루틴, `[Auto]` 컴포넌트 자동 연결, 태그·액션·씬 상수 자동 생성, 언어 간 이름 일치 CI | [easy-api](../features/easy-api.md) |
 
 ## 미결 사항
 
