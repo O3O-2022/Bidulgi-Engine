@@ -176,6 +176,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **2-5. Project 패널** — 실제 폴더 목록, 파일 종류 아이콘(시안: `prototype/asset-icons.html`), 썸네일 캐시 `.cache/thumbnails/`. **C++ `.h`+`.cpp` 묶음 표시**(타일은 시안 완료, 목록 보기 중첩·짝 열기·함께 이름 바꾸기는 여기서) — [editor-ui](features/editor-ui.md#c-헤더소스-묶음-표시-2026-11-22)
 - [ ] **2-5b. 참조 찾기·안 쓰는 에셋 찾기·찾아 바꾸기** — `bdg refs`, `bdg unused`, 지우기 전 경고, 참조 일괄 교체, 일괄 이름 바꾸기 [convenience-features](planning/convenience-features.md)
 - [ ] **2-5c. 테마 편집기** — 토큰 색상 선택기, 실시간 반영, 프로젝트별 테마 [convenience-features](planning/convenience-features.md)
+- [ ] **2-5d. 끌어다 놓기 임포트·자동 다시 가져오기·에셋 규칙 검사** (`.blend` 직접 가져오기는 M3) [convenience-features](planning/convenience-features.md)
 - [ ] **2-6. 새 프로젝트 기본 3D 씬** — Main Camera, Sun, Sky, World Settings, Ground ([projects-and-templates](features/projects-and-templates.md)).
 - [ ] **2-7. CLI `bdg` 1차** — `bdg view/query/set/add/del/validate` 를 같은 명령 버스로 (에디터 없이 헤드리스 실행). AI가 쓰는 첫 경로.
 
@@ -186,6 +187,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
 - [ ] **3-3b. 스냅·정렬·측정** — 그리드·꼭짓점·표면 스냅, 정렬·간격 맞추기, 거리 측정 [convenience-features](planning/convenience-features.md)
+- [ ] **3-3c. 그레이박스(블록아웃) 도구** — 상자·계단·경사로, 면 밀고 당기기, 메시+충돌체 [convenience-features](planning/convenience-features.md)
 - [ ] **3-4. 조명·그림자** — 방향광 그림자 맵(CSM은 고사양), 점·스폿광, 하늘·환경광.
 - [ ] **3-5. 품질 단계 감자~중사양** — [rendering-and-platforms](architecture/rendering-and-platforms.md)의 표대로 설정 묶음, 프로젝트 최소·최대 단계.
 - [ ] **3-6. 플레이 모드** — 복사본 월드에서 실행, 정지 시 원래대로, "이 변경 유지" 선택 반영(명령으로).
@@ -201,6 +203,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **4-3. `[Edit]` 노출** — C# 리플렉션 → 엔진 리플렉션 등록 → Inspector 자동 표시 ([code-syntax](features/code-syntax.md) 속성 표).
 - [ ] **4-4. 핫 리로드** — 수집 가능한 AssemblyLoadContext, 상태 직렬화 후 재적용. 목표: 변경 → 반영 2초.
 - [ ] **4-4b. 디버그 그리기 API + 콘솔 개선** — `Debug.Draw*`(모든 언어), 오류 클릭 → 코드 줄·Graph 노드로 이동, 같은 메시지 묶기, 필터·검색 [convenience-features](planning/convenience-features.md)
+- [ ] **4-4c. 쉬운 API (C#)** — `Get`/`Find`/`Spawn`/`Destroy`/`After`/`Every`/`await Wait`/`Tween`/`Random`, `[Auto]`, 태그·액션·씬 상수 자동 생성 [easy-api](features/easy-api.md)
+- [ ] **4-4d. 데이터 테이블** — `.table.jsonl`, 스프레드시트 편집, CSV, `Data.Get<T>` [convenience-features](planning/convenience-features.md)
 - [ ] **4-5. 디버깅** — DAP 연결 문서화 (VS Code / Rider).
 
 ## M5 — Graph·Lua·Python
@@ -209,6 +213,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **5-2b. 머티리얼 그래프 에디터** — 그래프 에디터 공통 화면 재사용, 출력 노드·파라미터 노드·미리보기, 셰이더 캐시, 순열 수 표시
 - [ ] **5-2. 그래프 에디터** — 노드 그래프 위젯(줌·팬·박스 선택·와이어·미니맵), 목표: 노드 5천 개 60fps.
 - [ ] **5-3. Lua(Luau)** — 샌드박스, `Behaviour{}` 선언, 핫 리로드, 타입 정의 자동 생성.
+- [ ] **5-3b. 쉬운 API를 Lua·Graph·Python에 노출** — 생성 코드, 언어 간 이름 일치 검사 CI [easy-api](features/easy-api.md)
 - [ ] **5-4. Python 에디터 도구** — CPython 임베드, `@bdg.menu`, `@bdg.validator`, `bdg.undo()`가 명령 버스와 연결.
 
 ## M6 — 게임 기능
@@ -218,6 +223,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **6-3. 오디오** — miniaudio, 3D 소리, 믹서.
 - [ ] **6-4. 입력 액션** — [input](features/input.md): `Input/Actions.jsonl`, 매핑 컨텍스트, 패드.
 - [ ] **6-5. MCP 서버 + AGENTS.md 자동 생성** — [agent-integration](features/agent-integration.md).
+- [ ] **6-5b. 세이브·로드, 이벤트, Raycast·Overlap·Audio·Vfx 쉬운 API** [easy-api](features/easy-api.md)
+- [ ] **6-5c. 스플라인 도구** [convenience-features](planning/convenience-features.md)
 - [ ] **6-6. 에디터 안 AI 패널** — 요청 → diff 미리 보기 → 승인 시 명령 버스로 적용, 콘솔 오류 "AI에게 설명", AI 끄기·사용 기록 [convenience-features](planning/convenience-features.md)
 
 ## M7 — 애니메이션·UI 디자이너·빌드
@@ -225,6 +232,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **7-1. 애니메이션 그래프** — Graph 상위호환 ([animation](features/animation.md)): 포즈 그래프, 상태 머신, 노티파이, 워커 스레드 평가.
 - [ ] **7-2. 타임라인 (블렌더식)** — 키프레임·커브 편집.
 - [ ] **7-3. UI 위젯 디자이너** — 런타임 게임 UI(월드·카메라 공간) ([ui-widgets](features/ui-widgets.md)).
+- [ ] **7-3b. 실행 중 상태 디버거·메모리 프로파일러** [convenience-features](planning/convenience-features.md)
 - [ ] **7-4. 빌드·패키징** — `bdg build`, 쿠킹, `.bpak`, `build-report.txt` ([libraries-and-packaging](architecture/libraries-and-packaging.md)).
 
 ## 1.0 준비
@@ -235,6 +243,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **Halo GI Tier 0** — 라이트맵 + 프로브 + 반사 프로브 ([global-illumination](features/global-illumination.md))
 - [ ] **패키지 시스템** — `bdgpkg.json`, `Packages/manifest.json`·`lock.json`, git 출처
 - [ ] **디자인 일치 검사 CI**, 성능 회귀 CI
+- [ ] **게임 기본 기능** — 설정 메뉴(품질·해상도·키 재설정·음량·언어·자막), 게임 접근성(자막·색각 필터·글자 크기), 원클릭 빌드 프로필, CI 템플릿 [convenience-features](planning/convenience-features.md)
 - [ ] **편의 도구 묶음** — git 상태 표시, 모바일 기기 미리보기, 녹화·캡처(필름크래프트 내보내기), `bdg doctor` 상태 점검 화면, 첫 실행 튜토리얼·"?" 문서 버튼 [convenience-features](planning/convenience-features.md)
 
 ## 1.0 이후 — 멀티플레이와 공동 편집 (로블록스 스튜디오식)
