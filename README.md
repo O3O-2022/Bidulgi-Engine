@@ -111,6 +111,3 @@ cmake --build build --config Release --target BidulgiEditor
 ## 라이선스
 
 [MIT](LICENSE) © Bidulgi Engine contributors. 외부 라이브러리(SDL3, FreeType, yyjson, glad)의 라이선스는 각 프로젝트를 따릅니다.
-엔진 이름은 아직 가칭입니다.
-
-<sub>README 미디어는 PhotoCraft(배너)와 FilmCraft(영상, [filmcraft-gpu](https://github.com/O3O-2022/filmcraft-gpu)로 GPU 내보내기)로 만들었습니다. 다시 만들기: `python tools/media/make_media.py`</sub>

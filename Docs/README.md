@@ -3,7 +3,7 @@
 AI 에이전트와 사람이 같은 방식으로 다루는 범용 게임 엔진의 기획 문서입니다.
 겉모습과 사용법은 유니티, 엔진 내부 설계는 언리얼, 모든 데이터는 텍스트로 저장합니다.
 
-> 엔진 이름: **비둘기 엔진** (영문 Bidulgi Engine). CLI는 `bdg`, C++ 매크로 접두어는 `B`(`BCLASS`), Python 모듈은 `bidulgi`입니다. UI 시안(`prototype/forge-editor.html`)은 v0.2에서 이름을 바꿀 예정이라 아직 "Forge"로 표시됩니다.
+> 엔진 이름: **비둘기 엔진** (영문 Bidulgi Engine, 2026-11-22 최종 확정). CLI는 `bdg`, C++ 매크로 접두어는 `B`(`BCLASS`), Python 모듈은 `bidulgi`입니다. UI 시안(`prototype/forge-editor.html`)은 v0.2에서 이름을 바꿀 예정이라 아직 "Forge"로 표시됩니다.
 
 > **다음에 할 일은 [QUEUE.md](QUEUE.md)** (만들 순서대로 정리한 작업 대기열). 새 대화는 이 파일부터 읽습니다.
 
