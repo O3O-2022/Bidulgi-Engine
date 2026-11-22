@@ -172,6 +172,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **2-2. JSONL 씬 저장/열기** — 형식은 [data-formats](features/data-formats.md): 머리 줄 `{"scene":..,"defaults":"1.0"}` + 한 줄에 오브젝트 하나, 기본값 생략, id 순 정렬(git diff 안정). yyjson으로 쓰기/읽기. 분할 저장(셀·오브젝트별)은 형식만 지원하고 UI는 나중.
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
 - [ ] **2-3. 에셋 데이터베이스** — 파일 감시, `.meta`(GUID, 임포트 설정, 출처·라이선스), GUID ↔ 경로 표. 이름 바꾸기·이동해도 참조 유지.
+- [ ] **2-3b. 빨리 열리는 에디터** — 에셋 DB 색인 캐시(`.cache/assetdb`)와 수정 시각 비교 증분 스캔, 패키지 지연 로드, 씬 점진 로드, 시작 단계별 시간 로그, CI에서 시작 시간 측정. 목표: 템플릿 프로젝트 3초, 에셋 1만 개 10초 [pain-points](planning/pain-points.md)
 - [ ] **2-4. Hierarchy·Inspector 실제 동작** — Hierarchy는 씬 트리 표시·선택·드래그로 부모 변경·이름 바꾸기. Inspector는 리플렉션으로 필드 자동 생성(`[Edit]` 메타: Range는 슬라이더, ShowIf, Header, Button). 편집은 전부 명령.
 - [ ] **2-4b. 여러 오브젝트 동시 편집 + 컴포넌트 값 복사·붙여넣기·프리셋(`.preset`)** [convenience-features](planning/convenience-features.md)
 - [ ] **2-5. Project 패널** — 실제 폴더 목록, 파일 종류 아이콘(시안: `prototype/asset-icons.html`), 썸네일 캐시 `.cache/thumbnails/`. **C++ `.h`+`.cpp` 묶음 표시**(타일은 시안 완료, 목록 보기 중첩·짝 열기·함께 이름 바꾸기는 여기서) — [editor-ui](features/editor-ui.md#c-헤더소스-묶음-표시-2026-11-22)
@@ -203,6 +204,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **4-2. `Behaviour` 기본 클래스 + 생명주기** — `Awake/Start/Update/FixedUpdate/LateUpdate/OnEnable/OnDisable/OnDestroy`, 프레임 순서는 [interop](architecture/interop.md).
 - [ ] **4-3. `[Edit]` 노출** — C# 리플렉션 → 엔진 리플렉션 등록 → Inspector 자동 표시 ([code-syntax](features/code-syntax.md) 속성 표).
 - [ ] **4-4. 핫 리로드** — 수집 가능한 AssemblyLoadContext, 상태 직렬화 후 재적용. 목표: 변경 → 반영 2초.
+- [ ] **4-6. 빠른 C++ 반복** — 엔진 SDK(헤더+라이브러리) 배포 형태, 얇은 게임용 헤더, 헤더 도구 증분, 작은 모듈·PCH·유니티 빌드 자동, 모듈 DLL 라이브 리로드(실패 시 이전 DLL 복귀), sccache 옵션. 목표: `.cpp` 수정 반영 5초, 클린 빌드 60초, CI 측정 [pain-points](planning/pain-points.md)
 - [ ] **4-4b. 디버그 그리기 API + 콘솔 개선** — `Debug.Draw*`(모든 언어), 오류 클릭 → 코드 줄·Graph 노드로 이동, 같은 메시지 묶기, 필터·검색 [convenience-features](planning/convenience-features.md)
 - [ ] **4-4c. 쉬운 API (C#)** — `Get`/`Find`/`Spawn`/`Destroy`/`After`/`Every`/`await Wait`/`Tween`/`Random`, `[Auto]`, 태그·액션·씬 상수 자동 생성 [easy-api](features/easy-api.md)
 - [ ] **4-4d. 데이터 테이블** — `.table.jsonl`, 스프레드시트 편집, CSV, `Data.Get<T>` [convenience-features](planning/convenience-features.md)
