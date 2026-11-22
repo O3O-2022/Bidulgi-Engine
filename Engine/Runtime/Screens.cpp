@@ -349,7 +349,9 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto& perf = status.Add(DimLabel("— fps", 10.5f));
   perf.id = "status.perf";
   status.Add(Spacer());
-  status.Add(DimLabel("main  ·  UTF-8  ·  tokens.json live  ·  F1 갤러리", 10.5f));
+  status.Add(DimLabel("main  ·  UTF-8  ·  F1 갤러리", 10.5f));
+  auto& bug = status.Add(MakeButton("status.bug", "버그 제보 (F12)"));
+  bug.height = Length::Px(20);
   return root;
 }
 

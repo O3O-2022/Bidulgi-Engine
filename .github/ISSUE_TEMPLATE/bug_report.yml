@@ -1,0 +1,78 @@
+name: 🐞 버그 제보 / Bug report
+description: 엔진이 이상하게 동작할 때 알려 주세요. 에디터에서 F12(또는 상태 줄의 "버그 제보")를 누르면 아래 정보가 자동으로 채워집니다.
+title: "[Bug] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        제보해 주셔서 고맙습니다! **에디터에서 F12**를 누르면 시스템 정보가 채워진 이 양식이 열리고,
+        로그·스크린샷이 담긴 `BugReports/<날짜>/` 폴더도 함께 열립니다. 그 폴더의 파일을 아래에 끌어다 놓아 주세요.
+        Thanks for reporting! Press **F12 in the editor** to open this form with system info prefilled.
+  - type: textarea
+    id: summary
+    attributes:
+      label: 무슨 일이 있었나요? / What happened?
+      placeholder: 예) Inspector에서 한글을 입력하면 마지막 글자가 두 번 들어갑니다.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 방법 / Steps to reproduce
+      placeholder: |
+        1. 에디터 실행
+        2. Inspector의 Speed 칸 클릭
+        3. 한/영 전환 후 "가나다" 입력
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 결과 / Expected
+    validations:
+      required: true
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: 얼마나 자주 생기나요? / How often?
+      options:
+        - 항상 / Always
+        - 가끔 / Sometimes
+        - 한 번만 / Once
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 분야 / Area
+      options:
+        - 에디터 UI
+        - 텍스트 입력·한글 IME
+        - 렌더링·그래픽
+        - 성능
+        - 빌드·설치
+        - 스크립팅
+        - 문서
+        - 기타
+  - type: textarea
+    id: system
+    attributes:
+      label: 시스템 정보 / System info
+      description: F12로 열었다면 자동으로 채워집니다. Bidulgi.log의 `rhi:` 줄을 붙여 넣어도 됩니다.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 로그·스크린샷 / Log & screenshot
+      description: "`BugReports/<날짜>/` 폴더의 `Bidulgi.log`, `screenshot.png`를 끌어다 놓아 주세요."
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 확인 / Checks
+      options:
+        - label: 같은 버그가 이미 제보되지 않았는지 검색해 봤습니다.
+          required: true
+        - label: 로그·스크린샷에 개인 정보(경로의 사용자 이름 등)가 있으면 지웠습니다.

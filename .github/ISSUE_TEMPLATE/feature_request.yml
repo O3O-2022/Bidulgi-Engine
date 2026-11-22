@@ -1,0 +1,24 @@
+name: 💡 기능 제안 / Feature request
+description: 있으면 좋겠는 기능이나 개선점을 알려 주세요.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 어떤 점이 불편한가요? / Problem
+      placeholder: 예) .h와 .cpp가 따로 보여서 짝을 찾기 어렵습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 원하는 모습 / Proposal
+      description: 다른 엔진(유니티·언리얼·고도·블렌더)의 비슷한 기능이 있으면 알려 주세요.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 분야 / Area
+      options: [에디터 UI, 렌더링·그래픽, 스크립팅, 애니메이션, 물리, 빌드·패키징, AI 연동, 기타]

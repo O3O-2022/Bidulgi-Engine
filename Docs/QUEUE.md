@@ -95,6 +95,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-9 에디터 화면 | 위젯으로 만든 고정 레이아웃 에디터 | `79f9292` |
 | 0-11 성능 기준 | 시작 585ms, 프레임 1.46ms (Release, RTX 5070 Ti) | `fb35682` |
 | 고해상도 | Windows 화면 배율 자동 적용 | `2cc724f` |
+| 버그 제보 | GitHub 이슈 양식(버그·기능 제안) + 에디터 F12·버튼: 스크린샷·로그·시스템 정보 폴더 + 미리 채운 이슈 양식 | (이 커밋) |
 | 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
 
 ---

@@ -108,6 +108,12 @@ cmake --build build --config Release --target BidulgiEditor
 - 구조: [전체 구조](Docs/architecture/overview.md) · [렌더링과 품질 단계](Docs/architecture/rendering-and-platforms.md) · [스크립팅](Docs/architecture/scripting.md) · [물리](Docs/architecture/physics.md)
 - 기능: [데이터 형식](Docs/features/data-formats.md) · [에디터 UI](Docs/features/editor-ui.md) · [AI 에이전트 연동](Docs/features/agent-integration.md) · [전역 조명](Docs/features/global-illumination.md)
 
+## 버그 제보
+
+- **에디터에서 `F12`** (또는 상태 줄의 **버그 제보** 버튼)를 누르면, 스크린샷·로그·시스템 정보가 `BugReports/<날짜>/` 폴더에 모이고 시스템 정보가 채워진 [GitHub 이슈 양식](https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml)이 열립니다. 폴더의 파일을 끌어다 놓기만 하면 됩니다.
+- 자동으로 업로드되는 것은 없습니다. 올리기 전에 파일 내용을 확인할 수 있습니다.
+- 기능 제안은 [여기](https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=feature_request.yml)로 보내 주세요.
+
 ## 라이선스
 
 [MIT](LICENSE) © Bidulgi Engine contributors. 외부 라이브러리(SDL3, FreeType, yyjson, glad)의 라이선스는 각 프로젝트를 따릅니다.

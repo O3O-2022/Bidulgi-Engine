@@ -40,7 +40,9 @@ bool RHI::Init(Window&) {
     LogError("OpenGL 4.5 required, got {}.{}", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
     return false;
   }
-  LogInfo("rhi: OpenGL {} | {}", (const char*)glGetString(GL_VERSION), (const char*)glGetString(GL_RENDERER));
+  glVersion = (const char*)glGetString(GL_VERSION);
+  gpuName = (const char*)glGetString(GL_RENDERER);
+  LogInfo("rhi: OpenGL {} | {}", glVersion, gpuName);
 
   GLint flags = 0;
   glGetIntegerv(GL_CONTEXT_FLAGS, &flags);

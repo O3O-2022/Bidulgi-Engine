@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace bdg {
@@ -60,6 +61,7 @@ public:
   void  ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba); // whole back buffer, bottom-up rows
   void  DebugTriggerError();             // test hook: issues an invalid GL call to verify debug output
   uint32_t DrawCallsThisFrame() const { return drawCalls_; }
+  std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
   struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false; };

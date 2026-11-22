@@ -17,6 +17,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <psapi.h>
+#include <SDL3/SDL_platform.h>
+#include <cctype>
+#include <ctime>
 #undef DrawText // windows.h macro would rename bdg::Font::DrawText in this file
 #include <filesystem>
 #include <new>
@@ -61,6 +64,7 @@ struct bdg_engine {
   bool showGallery = false, selfTest = false, stress = false, hasFont = false;
   std::chrono::steady_clock::time_point createdAt, lastFrame, fpsWindow;
   int clicks = 0;
+  bool bugRequested = false;
   int32_t maxFrames = 0;
 };
 
@@ -92,6 +96,62 @@ void InjectSelfTest(bdg_engine* e, int frame) {
     text(T::TextEditing, "ㅋ");
   }
 }
+}
+
+
+// ---- Bug report (F12 or the status bar button) -------------------------------------------
+// Collects screenshot + log + system info into BugReports/<time>/ and opens a prefilled GitHub issue form.
+// Nothing is uploaded automatically: the user reviews the files and attaches them.
+std::string UrlEncode(const std::string& s) {
+  static const char* hex = "0123456789ABCDEF";
+  std::string out;
+  for (unsigned char c : s) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') out += (char)c;
+    else { out += '%'; out += hex[c >> 4]; out += hex[c & 15]; }
+  }
+  return out;
+}
+
+void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openBrowser);
+
+void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openBrowser) {
+  namespace fs = std::filesystem;
+  std::time_t now = std::time(nullptr);
+  std::tm tm{};
+  localtime_s(&tm, &now);
+  char stamp[32];
+  std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+  fs::path dir = fs::current_path() / "BugReports" / stamp;
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+
+  std::vector<uint8_t> px;
+  e->rhi.ReadPixels(w, h, px);
+  // Half resolution (2x2 box filter) keeps the uncompressed PNG small enough to attach to an issue.
+  int32_t hw = w / 2, hh = h / 2;
+  std::vector<uint8_t> half((size_t)hw * hh * 4);
+  for (int32_t y = 0; y < hh; ++y)
+    for (int32_t x = 0; x < hw; ++x)
+      for (int c = 0; c < 4; ++c) {
+        auto at = [&](int32_t sx, int32_t sy) { return (int)px[((size_t)sy * w + sx) * 4 + c]; };
+        half[((size_t)y * hw + x) * 4 + c] = (uint8_t)((at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1)) / 4);
+      }
+  bdg::WritePNG((dir / "screenshot.png").string().c_str(), hw, hh, half.data(), true);
+  fs::copy_file("Bidulgi.log", dir / "Bidulgi.log", fs::copy_options::overwrite_existing, ec);
+
+  PROCESS_MEMORY_COUNTERS pmc{};
+  GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
+  std::string sys = std::format(
+      "engine: Bidulgi Engine {}\nos: {}\ngpu: {}\nopengl: {}\ndrawable: {}x{}  ui_scale: {:.2f}\nram: {:.0f} MB\nscreen: {}\n",
+      bdg_version_string(), SDL_GetPlatform(), e->rhi.gpuName, e->rhi.glVersion, w, h, scale,
+      pmc.WorkingSetSize / (1024.0 * 1024.0), e->showGallery ? "gallery" : "editor");
+  if (std::FILE* f = std::fopen((dir / "system.txt").string().c_str(), "w")) { std::fputs(sys.c_str(), f); std::fclose(f); }
+  bdg::LogInfo("bug report: {}", dir.string());
+
+  if (!openBrowser) return;
+  e->window.OpenURL("file:///" + dir.generic_string());
+  e->window.OpenURL("https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml&title=" +
+                    UrlEncode("[Bug] ") + "&system=" + UrlEncode(sys));
 }
 
 extern "C" {
@@ -127,6 +187,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->editor = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->editor->SetRoot(bdg::BuildEditorScreen());
   e->editor->SetWindow(&e->window);
+  if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
   if (const char* tab = std::getenv("BDG_DOCK_TAB")) // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
     if (bdg::Widget* dock = e->editor->Find("panel.bottom")) dock->selectedIndex = std::atoi(tab);
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
@@ -143,7 +204,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
   while (e->window.PumpEvents()) {
     if (frames % 30 == 0) e->theme.ReloadIfChanged(); // live token edits
     for (const bdg::InputEvent& ev : e->window.Events())
+    {
       if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F1) e->showGallery = !e->showGallery;
+      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F12) e->bugRequested = true;
+    }
     if (e->selfTest && e->showGallery) InjectSelfTest(e, frames);
 
     int32_t w = 0, h = 0;
@@ -170,6 +234,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     ++frames;
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
+    if (last && std::getenv("BDG_BUG_TEST")) e->bugRequested = true; // automated check (no browser)
+    if (e->bugRequested) {
+      e->bugRequested = false;
+      WriteBugReport(e, w, h, scale, std::getenv("BDG_BUG_TEST") == nullptr);
+    }
     if (last) {
       bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={} ui_scale={:.2f} display_scale={:.2f} drawable={}x{}",
                    e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(),
