@@ -25,7 +25,8 @@ jobs:
           key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+        # No -G: CMake picks the newest Visual Studio on the runner (2022 locally, newer on hosted images).
+        run: cmake -S . -B build -A x64
 
       - name: Build Debug + Release (zero warnings in engine code)
         shell: pwsh
