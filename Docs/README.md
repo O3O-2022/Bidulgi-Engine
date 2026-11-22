@@ -44,7 +44,7 @@ AI 에이전트와 사람이 같은 방식으로 다루는 범용 게임 엔진�
 ### features — 기능
 - [데이터 형식 (씬, 프리팹, 에셋)](features/data-formats.md)
 - [2D / 3D 통합](features/2d-3d.md)
-- [에디터 UI](features/editor-ui.md)
+- [에디터 UI](features/editor-ui.md) — 전체 창 시안 v0.3: [prototype/v0.3/all-windows.html](../prototype/v0.3/all-windows.html) (19개 화면)
 - [프로젝트 설정](features/project-settings.md)
 - [UI 위젯 시스템](features/ui-widgets.md)
 - [애니메이션 (애니메이션 그래프 + 타임라인)](features/animation.md)

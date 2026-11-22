@@ -57,6 +57,12 @@
 - 상태 줄: 빌드 상태, 실시간 FPS·프레임 시간·메모리
 - 기준 성능: 실행부터 첫 화면까지 **585ms**, 에디터 프레임 **1.46ms** (Release, RTX 5070 Ti 노트북)
 
+## 전체 창 시안 (v0.3)
+
+<img src="docs-media/windows-v0.3.png" width="900" alt="Hub, Graph, Material editor, dialogs">
+
+허브, 새 프로젝트, 에디터(Level·Graph·Animation·UI Designer·Scripting), 머티리얼·텍스처·데이터 테이블, 프로젝트 설정, 환경설정·테마, 빌드, 프로파일러, 패키지, AI 패널, 대화상자까지 19개 화면: [prototype/v0.3/all-windows.html](prototype/v0.3/all-windows.html)
+
 ## 코드 모양 (계획)
 
 ```csharp

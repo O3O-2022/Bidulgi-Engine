@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bidulgi Windows</title>
+<style>
+:root{--ground:#0c0f13;--win:#11151b;--panel:#1c222b;--raise:#262e39;--sunk:#0f1318;--line:#2a323d;--line2:#3a4452;
+--fg:#e4e8ee;--dim:#aab3c0;--faint:#6c7583;--accent:#f59e32;--onacc:#1f1305;--blue:#3996b9;--sel:#1d4a5f;--ok:#72c04e;--warn:#e5b84b;--err:#e0564e;
+--cpp:#4b8ee6;--cs:#a172e0;--lua:#3c5ad1;--py:#e3c03a;--graph:#2bb3a3;--anim:#f08a3c;--ax:#e0564e;--ay:#72c04e;--az:#3996b9;
+--pexec:#e4e8ee;--pfloat:#72c04e;--pvec:#e5b84b;--pbool:#e0564e;--pobj:#3996b9;--evt:#e0564e;--fn:#4b8ee6;--pure:#72c04e;
+--sans:"Pretendard","Malgun Gothic","Segoe UI",system-ui,sans-serif;--mono:Consolas,"JetBrains Mono","D2Coding",monospace}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--ground);color:var(--fg);font:13px/1.4 var(--sans)}
+body{display:flex;overflow:hidden}
+/* page shell */
+.nav{width:232px;flex:none;background:var(--win);border-right:1px solid var(--line);overflow:auto;padding:14px 0}
+.brand{display:flex;gap:10px;align-items:center;padding:0 16px 14px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.brand img{width:40px;height:40px}.brand b{display:block;font-size:14px}.brand small{color:var(--faint)}
+.nav h4{margin:12px 16px 4px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.nav a{display:flex;gap:8px;align-items:center;padding:5px 16px;color:var(--dim);text-decoration:none;font-size:12.5px}
+.nav a:hover{background:var(--raise);color:var(--fg)}.nav a.on{background:var(--sel);color:var(--fg);box-shadow:inset 3px 0 var(--accent)}
+.nav a i{width:7px;height:7px;border-radius:2px;background:var(--line2);flex:none}.nav a.on i{background:var(--accent)}
+.stage{flex:1;display:flex;flex-direction:column;min-width:0}
+.cap{display:flex;align-items:baseline;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line)}
+.cap h2{margin:0;font-size:16px}.cap p{margin:0;color:var(--dim);font-size:12px}
+.view{flex:1;display:grid;place-items:center;overflow:hidden;padding:16px}
+.fit{width:1280px;height:760px;transform-origin:center center;flex:none}
+.scr{display:none;width:1280px;height:760px}.scr.on{display:flex}
+/* window frame */
+.win{width:100%;height:100%;display:flex;flex-direction:column;background:var(--win);border:1px solid var(--line2);border-radius:8px;overflow:hidden;box-shadow:0 20px 60px #0009}
+.tb{height:30px;display:flex;align-items:center;gap:16px;padding:0 0 0 10px;font-size:12.5px;color:var(--dim);flex:none}
+.tb .mark{width:18px;height:18px;border-radius:5px;background:var(--accent);color:var(--onacc);font:800 12px/18px var(--sans);text-align:center}
+.tb .sp{flex:1}.tb .wc{display:flex}.tb .wc span{width:40px;text-align:center;color:var(--faint)}
+.tool{height:40px;display:flex;align-items:center;gap:8px;padding:0 8px;flex:none}
+.body{flex:1;display:flex;gap:1px;min-height:0;background:var(--win)}
+.col{display:flex;flex-direction:column;gap:1px;min-width:0;min-height:0}
+.status{height:24px;display:flex;align-items:center;gap:10px;padding:0 10px;font-size:10.5px;color:var(--dim);flex:none}
+.status .sp{flex:1}
+/* components */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:3px;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.ph{height:30px;display:flex;align-items:stretch;background:var(--win);border-bottom:1px solid var(--line);flex:none}
+.ph b,.ph span{display:flex;align-items:center;padding:0 12px;font-size:12px;font-weight:400;color:var(--dim)}
+.ph b{background:var(--panel);color:var(--fg);box-shadow:inset 0 2px var(--accent)}
+.ph .sp{flex:1}.ph .ic{color:var(--faint);padding:0 8px}
+.pb{flex:1;overflow:hidden;padding:4px 0;min-height:0}
+.wst{display:flex;gap:2px}.wst span{padding:6px 12px;border-radius:5px;color:var(--dim);font-size:12.5px}
+.wst span.on{background:var(--raise);color:var(--fg);box-shadow:inset 0 -2px var(--accent)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;background:var(--raise);color:var(--fg);border:1px solid var(--line2);border-radius:4px;font-size:12px;white-space:nowrap}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}.btn.g{background:none;border-color:transparent;color:var(--dim)}
+.btn.lg{height:32px;padding:0 16px;font-size:13px}
+.pill{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:9px;background:var(--sunk);border:1px solid var(--line);color:var(--dim);font:600 10px var(--sans)}
+.pill.ok{color:var(--ok)}.pill.a{color:var(--accent);border-color:#f59e3266;background:#f59e3214}.pill.b{color:var(--blue);border-color:#3996b966;background:#3996b914}
+.lang{font:700 9.5px var(--mono);padding:1px 6px;border-radius:8px;border:1px solid currentColor}
+.cs{color:var(--cs)}.cpp{color:var(--cpp)}.lua{color:var(--lua)}.py{color:var(--py)}.gr{color:var(--graph)}.an{color:var(--anim)}
+.row{display:grid;grid-template-columns:40% 1fr;gap:8px;align-items:center;padding:2px 10px 2px 12px;min-height:26px;font-size:12px}
+.row label{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.in{height:22px;background:var(--sunk);border:1px solid var(--line);border-radius:3px;padding:0 6px;display:flex;align-items:center;font-size:12px;color:var(--fg);min-width:0;overflow:hidden;white-space:nowrap}
+.in.f{border-color:var(--accent)}
+.vec{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}.vec .in{padding-left:0}.vec .in b{width:14px;height:100%;display:grid;place-items:center;font:700 10px var(--mono);color:var(--ground);margin-right:5px}
+.x b{background:var(--ax)}.y b{background:var(--ay)}.z b{background:var(--az)}
+.card{margin:4px 6px;border:1px solid var(--line2);border-radius:5px;background:var(--panel)}
+.card>h5{margin:0;display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;background:var(--raise);border-radius:5px 5px 0 0;font-size:12.5px;font-weight:600}
+.card>h5 .sp{flex:1}.card>h5 em{font-style:normal;color:var(--faint)}
+.card.c>h5{border-radius:5px}
+.li{display:flex;align-items:center;gap:7px;height:22px;padding:0 10px;font-size:12.5px;white-space:nowrap}
+.li.s{background:var(--sel)}.li .t{margin-left:auto;color:var(--faint);font-size:11px}
+.k{width:11px;height:11px;border:1.5px solid var(--dim);border-radius:2px;flex:none}
+.k.cam{border-radius:2px 5px 5px 2px}.k.light{border-color:var(--warn);border-radius:50%}.k.pf{border-color:var(--blue);background:#3996b94d}.k.mesh{transform:rotate(45deg) scale(.85)}
+.cap2{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:10px 12px 4px}
+.mono{font-family:var(--mono)}
+.grid-bg{background-color:var(--sunk);background-image:linear-gradient(#2a323d66 1px,transparent 1px),linear-gradient(90deg,#2a323d66 1px,transparent 1px),linear-gradient(#3a445299 1px,transparent 1px),linear-gradient(90deg,#3a445299 1px,transparent 1px);background-size:24px 24px,24px 24px,120px 120px,120px 120px}
+.node{position:absolute;min-width:150px;background:var(--panel);border:1px solid var(--line2);border-radius:4px;box-shadow:0 4px 12px #0007;font-size:12px}
+.node>h6{margin:0;display:flex;gap:6px;align-items:baseline;padding:5px 10px;background:var(--win);border-top:3px solid var(--fn);border-bottom:1px solid var(--line);border-radius:4px 4px 0 0;font-size:12px}
+.node>h6 small{color:var(--dim);font-weight:400;font-size:10.5px}.node.ev>h6{border-top-color:var(--evt)}.node.pu>h6{border-top-color:var(--pure)}.node.fl>h6{border-top-color:var(--faint)}
+.node.sel{outline:2px solid var(--accent)}
+.pins{display:flex;justify-content:space-between;gap:14px;padding:6px 0}.pins>div{display:flex;flex-direction:column;gap:5px}
+.pin{display:flex;align-items:center;gap:6px;padding:0 9px;font-size:11.5px;white-space:nowrap}.o .pin{flex-direction:row-reverse}
+.pin i{width:10px;height:10px;border-radius:50%;border:2px solid var(--c,var(--dim));flex:none}.pin i.ex{border-radius:0;clip-path:polygon(0 0,100% 50%,0 100%);background:var(--pexec);border:0}
+svg.wires{position:absolute;inset:0;pointer-events:none}
+.tile{display:flex;flex-direction:column;align-items:center;gap:4px;width:84px;font-size:10.5px;color:var(--dim);text-align:center}
+.th{width:64px;height:64px;border-radius:6px;background:var(--raise);border:1px solid var(--line2);position:relative;display:grid;place-items:center}
+.doc{width:42px;height:54px;border-radius:4px;background:var(--raise);border:1px solid var(--line2);position:relative}
+.doc:after{content:attr(data-t);position:absolute;left:0;right:0;bottom:6px;height:13px;background:var(--c);color:#fff;font:700 9px/13px var(--mono);text-align:center}
+.pair{display:flex;gap:10px;align-items:center;padding:6px 8px;border:1px solid #4b8ee68c;background:#4b8ee61f;border-radius:8px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}.tbl th,.tbl td{border-bottom:1px solid var(--line);padding:5px 10px;text-align:left;white-space:nowrap}
+.tbl th{color:var(--dim);font-weight:500;background:var(--win);position:sticky;top:0}.tbl td.n{text-align:right;font-family:var(--mono)}
+.tbl tr.s td{background:var(--sel)}.tbl td.e{outline:2px solid var(--accent);outline-offset:-2px;background:var(--sunk)}
+.code{font:12.5px/20px var(--mono);white-space:pre;padding:6px 0;counter-reset:l}
+.code div{padding-left:52px;position:relative}.code div:before{counter-increment:l;content:counter(l);position:absolute;left:0;width:38px;text-align:right;color:var(--faint)}
+.code div.hl{background:#f59e3214}.code div.err{background:#e0564e1a}
+.kw{color:#c792ea}.ty{color:#4ec9b0}.st{color:#ce9178}.cm{color:#6a9955}.nu{color:#b5cea8}.at{color:#e5b84b}.fnn{color:#dcdcaa}
+.chip{display:inline-flex;height:22px;align-items:center;padding:0 9px;border-radius:11px;background:#11151bd9;border:1px solid var(--line);color:var(--dim);font-size:11px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.sep{height:1px;background:var(--line);margin:6px 0}
+.modal-bg{position:absolute;inset:0;background:#0009;display:grid;place-items:center}
+.modal{width:560px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 20px 50px #000a;overflow:hidden}
+.modal>h3{margin:0;padding:12px 16px;font-size:14px;background:var(--win);border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+.mb{padding:14px 16px;display:flex;flex-direction:column;gap:10px}.mf{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--line);background:var(--win)}
+.bar{height:6px;border-radius:3px;background:var(--sunk);overflow:hidden}.bar i{display:block;height:100%;background:var(--blue)}
+.tmpl{border:1px solid var(--line2);border-radius:8px;background:var(--panel);overflow:hidden}
+.tmpl .pv{height:92px;display:grid;place-items:center;background:linear-gradient(135deg,#1c222b,#262e39);color:var(--faint);font-size:28px}
+.tmpl b{display:block;padding:8px 10px 2px;font-size:12.5px}.tmpl small{display:block;padding:0 10px 10px;color:var(--faint);font-size:11px}
+.tmpl.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.diff{font:12px/19px var(--mono);white-space:pre;background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:6px 0}
+.diff div{padding:0 10px}.diff .a{background:#72c04e1f;color:#b6e39a}.diff .d{background:#e0564e1f;color:#f2a39d}.diff .h{color:var(--faint)}
+.msg{max-width:88%;padding:8px 11px;border-radius:8px;font-size:12.5px}.msg.u{align-self:flex-end;background:var(--sel)}.msg.ai{background:var(--raise)}
+.hint{position:absolute;right:16px;bottom:12px;color:var(--faint);font-size:11px}
+</style></head>
+<body>
+<nav class="nav" id="nav">
+  <div class="brand"><img src="../../branding/bidulgi-logo-256.png" alt=""><div><b>비둘기 엔진</b><small>UI 시안 v0.3 · 19개 화면</small></div></div>
+</nav>
+<main class="stage">
+  <div class="cap"><h2 id="ttl"></h2><p id="dsc"></p></div>
+  <div class="view" id="view"><div class="fit" id="fit">
+
+<!-- 1 HUB -->
+<section class="scr" data-g="시작" data-t="허브 (런처)" data-d="엔진 버전 관리, 최근 프로젝트, 템플릿. 로그인 없음">
+<div class="win"><div class="tb"><span class="mark">B</span><b style="color:var(--fg)">Bidulgi Hub</b><span class="sp"></span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="body" style="padding:0">
+  <div style="width:220px;background:var(--win);padding:12px 8px;display:flex;flex-direction:column;gap:2px">
+    <img src="../../branding/bidulgi-logo-256.png" style="width:120px;margin:4px auto 14px" alt="">
+    <div class="li s" style="border-radius:4px">프로젝트</div><div class="li" style="color:var(--dim)">설치된 엔진</div><div class="li" style="color:var(--dim)">템플릿</div><div class="li" style="color:var(--dim)">패키지</div><div class="li" style="color:var(--dim)">학습</div>
+    <div style="flex:1"></div><div class="li" style="color:var(--faint)">설정 · 로그인 필요 없음</div></div>
+  <div style="flex:1;background:var(--panel);padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:18px">프로젝트</h3><span class="sp" style="flex:1"></span><div class="in" style="width:240px;color:var(--faint)">🔍 프로젝트 검색</div><span class="btn">열기…</span><span class="btn p lg">+ 새 프로젝트</span></div>
+    <table class="tbl"><tr><th>이름</th><th>위치</th><th>엔진</th><th>템플릿</th><th>마지막 수정</th></tr>
+      <tr class="s"><td><b>SampleProject</b></td><td style="color:var(--dim)">C:\GameProjects\SampleProject</td><td><span class="pill">0.0.1</span></td><td>3인칭</td><td style="color:var(--dim)">방금 전</td></tr>
+      <tr><td><b>PixelPuzzle</b></td><td style="color:var(--dim)">D:\Games\PixelPuzzle</td><td><span class="pill">0.0.1</span></td><td>2D 플랫포머</td><td style="color:var(--dim)">어제</td></tr>
+      <tr><td><b>RangeTest</b></td><td style="color:var(--dim)">C:\GameProjects\RangeTest</td><td><span class="pill" style="color:var(--warn)">0.0.0 ⚠ 설치 안 됨</span></td><td>1인칭 슈팅</td><td style="color:var(--dim)">3일 전</td></tr>
+      <tr><td><b>VoxelSandbox</b></td><td style="color:var(--dim)">D:\Games\VoxelSandbox</td><td><span class="pill">0.0.1</span></td><td>빈 프로젝트</td><td style="color:var(--dim)">지난주</td></tr></table>
+    <div class="cap2" style="padding-left:0">설치된 엔진</div>
+    <div style="display:flex;gap:10px">
+      <div class="card c" style="margin:0;padding:10px 12px;width:260px"><b>0.0.1</b> <span class="pill ok">최신</span><div style="color:var(--faint);font-size:11px;margin-top:4px">%LOCALAPPDATA%\Bidulgi\Engines\0.0.1</div></div>
+      <div class="card c" style="margin:0;padding:10px 12px;width:260px"><b>main (소스 빌드)</b> <span class="pill b">로컬</span><div style="color:var(--faint);font-size:11px;margin-top:4px">C:\GameProjects\BidulgiEngine\Bin</div></div>
+      <div class="card c" style="margin:0;padding:10px 12px;width:200px;display:grid;place-items:center;color:var(--dim)">+ 엔진 추가 / 설치</div></div>
+  </div></div></div></section>
+
+<!-- 2 NEW PROJECT -->
+<section class="scr" data-g="시작" data-t="새 프로젝트" data-d="언리얼식 템플릿 + 주 언어·품질 단계·플랫폼 선택">
+<div class="win"><div class="tb"><span class="mark">B</span><b style="color:var(--fg)">새 프로젝트</b><span class="sp"></span><div class="wc"><span>✕</span></div></div>
+<div class="body" style="background:var(--panel);padding:18px 22px;gap:22px">
+  <div style="flex:1;display:flex;flex-direction:column;gap:10px">
+    <div class="wst"><span class="on">게임</span><span>빈 프로젝트</span><span>내 템플릿</span><span>패키지 템플릿</span></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+      <div class="tmpl"><div class="pv">▢</div><b>빈 프로젝트</b><small>카메라만</small></div>
+      <div class="tmpl"><div class="pv">◭</div><b>기본 3D</b><small>카메라·태양·하늘·바닥</small></div>
+      <div class="tmpl"><div class="pv">▦</div><b>기본 2D</b><small>직교 카메라</small></div>
+      <div class="tmpl on"><div class="pv">⌖</div><b>1인칭 슈팅</b><small>총기·조준·HUD·연습장</small></div>
+      <div class="tmpl"><div class="pv">♙</div><b>3인칭</b><small>스프링암·애니메이션 그래프</small></div>
+      <div class="tmpl"><div class="pv">⌗</div><b>탑다운</b><small>클릭 이동·길찾기</small></div>
+      <div class="tmpl"><div class="pv">⛐</div><b>차량</b><small>Jolt 물리 차량</small></div>
+      <div class="tmpl"><div class="pv">⤴</div><b>2D 플랫포머</b><small>코요테 타임·타일맵</small></div></div></div>
+  <div style="width:340px;display:flex;flex-direction:column;gap:2px">
+    <div class="th" style="width:100%;height:150px;border-radius:8px;font-size:40px;color:var(--faint)">⌖</div>
+    <h3 style="margin:10px 0 4px">1인칭 슈팅</h3><p style="margin:0 0 8px;color:var(--dim);font-size:12px">이동·달리기·앉기, 히트스캔·투사체 총기, 반동·탄 퍼짐, 조준(ADS), 체력, 연습장 맵. 무기 수치는 데이터 파일.</p>
+    <div class="row" style="padding:2px 0"><label>이름</label><div class="in f">MyShooter</div></div>
+    <div class="row" style="padding:2px 0"><label>위치</label><div class="in">C:\GameProjects\</div></div>
+    <div class="row" style="padding:2px 0"><label>주 언어</label><div style="display:flex;gap:4px"><span class="btn p">C#</span><span class="btn">Graph</span><span class="btn g">C++</span></div></div>
+    <div class="row" style="padding:2px 0"><label>품질 단계</label><div class="in">저사양 ~ 고사양 ▾</div></div>
+    <div class="row" style="padding:2px 0"><label>플랫폼</label><div style="display:flex;gap:4px"><span class="pill a">Windows</span><span class="pill a">Android</span><span class="pill">Web</span></div></div>
+    <div class="row" style="padding:2px 0"><label>시작 콘텐츠</label><div>☑ 예제 에셋 포함</div></div>
+    <div class="row" style="padding:2px 0"><label>버전 관리</label><div>☑ git 초기화 · AGENTS.md</div></div>
+    <div style="flex:1"></div><div style="display:flex;gap:8px;justify-content:flex-end"><span class="btn lg">취소</span><span class="btn p lg">만들기</span></div></div>
+</div></div></section>
+
+<!-- 3 START SCREEN -->
+<section class="scr" data-g="시작" data-t="시작 화면 (엔진 단독 실행)" data-d="허브 없이 엔진을 직접 실행했을 때 — 고도식 만들기/열기">
+<div class="win" style="background:var(--ground)"><div class="body" style="background:var(--ground);display:grid;place-items:center">
+  <div style="width:720px;display:flex;gap:28px;align-items:center">
+    <img src="../../branding/bidulgi-logo.png" style="width:260px" alt="">
+    <div style="flex:1;display:flex;flex-direction:column;gap:10px">
+      <div style="color:var(--faint)">비둘기 엔진 0.0.1</div>
+      <span class="btn p lg" style="justify-content:center">+ 새 프로젝트</span><span class="btn lg" style="justify-content:center">프로젝트 열기…</span>
+      <div class="cap2" style="padding-left:0">최근</div>
+      <div class="li s" style="border-radius:4px">SampleProject <span class="t">0.0.1</span></div>
+      <div class="li">PixelPuzzle <span class="t">0.0.1</span></div>
+      <div class="li" style="color:var(--warn)">RangeTest <span class="t" style="color:var(--warn)">0.0.0 → 다른 버전으로 다시 열기</span></div>
+    </div></div></div></div></section>
+
+<!-- 4 EDITOR LEVEL -->
+<section class="scr" data-g="에디터" data-t="에디터 — Level" data-d="메인 작업 공간: Hierarchy · Scene · Inspector(컴포넌트 카드) · 하단 도크">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Assets</span><span>GameObject</span><span>Component</span><span>Build</span><span>Window</span><span>Help</span><span class="sp"></span><span>SampleProject · Main.scene</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span class="on">Level</span><span>Graph</span><span>Animation</span><span>UI Designer</span><span>Scripting</span></div><span style="flex:1"></span><span class="btn p">▶ Play</span><span class="btn">||</span><span class="btn">▶|</span><span style="flex:1"></span><span class="pill">중사양</span><span class="pill">Windows</span><span class="btn">Build</span></div>
+<div class="body">
+  <div class="panel" style="width:240px"><div class="ph"><b>Hierarchy</b><span class="sp"></span><span class="ic">＋</span></div><div class="pb">
+    <div class="li"><span class="k" style="border-color:var(--accent)"></span>Main<span class="t">Scene</span></div>
+    <div class="li" style="padding-left:24px"><span class="k cam"></span>Main Camera<span class="t">Camera</span></div>
+    <div class="li" style="padding-left:24px"><span class="k light"></span>Sun<span class="t">Light</span></div>
+    <div class="li" style="padding-left:24px"><span class="k"></span>Sky</div>
+    <div class="li" style="padding-left:24px"><span class="k"></span>World Settings</div>
+    <div class="li" style="padding-left:24px"><span class="k mesh"></span>Ground</div>
+    <div class="li s" style="padding-left:24px"><span class="k pf"></span><span style="color:#9fd6ea">Player</span><span class="t">Prefab</span></div>
+    <div class="li" style="padding-left:38px"><span class="k mesh"></span>Weapon</div>
+    <div class="li" style="padding-left:24px"><span class="k pf"></span><span style="color:#9fd6ea">Crystal</span><span class="t">Prefab</span></div>
+    <div class="li" style="padding-left:24px"><span class="k light"></span>Lantern Light<span class="t">Light</span></div></div></div>
+  <div class="col" style="flex:1">
+    <div class="panel" style="flex:1"><div class="ph"><b>Scene</b><span>Game</span><span class="sp"></span><span class="ic">⋮</span></div>
+      <div class="grid-bg" style="flex:1;position:relative">
+        <div style="position:absolute;left:10px;top:8px;display:flex;gap:6px"><span class="chip">Perspective</span><span class="chip">Lit</span><span class="chip">Show</span><span class="chip">중사양</span></div>
+        <div style="position:absolute;right:10px;top:12px;color:var(--dim);font-size:11px">Draw 182 / 200 · Tris 1.1M · 6.2 ms</div>
+        <div style="position:absolute;left:0;right:0;top:62%;height:2px;background:#e0564ecc"></div><div style="position:absolute;top:0;bottom:0;left:50%;width:2px;background:#3996b9cc"></div>
+        <div style="position:absolute;left:calc(50% - 48px);top:calc(62% - 120px);width:96px;height:96px;background:#3996b9d9;border:2px solid var(--accent);border-radius:5px"></div>
+        <div style="position:absolute;left:50%;top:calc(62% - 72px);width:90px;height:3px;background:var(--ax)"></div><div style="position:absolute;left:50%;top:calc(62% - 160px);width:3px;height:88px;background:var(--ay)"></div>
+        <div style="position:absolute;left:16px;bottom:14px;width:52px;height:52px;border-radius:50%;background:#11151b99;display:grid;place-items:center;color:var(--faint);font-size:10px">XYZ</div></div></div>
+    <div class="panel" style="height:200px"><div class="ph"><b>Project</b><span>Console</span><span>Build Log</span><span>Profiler</span><span class="sp"></span><span class="ic">🔍</span></div>
+      <div style="flex:1;display:flex;min-height:0"><div style="width:160px;background:var(--win);padding:6px 0;font-size:12px">
+        <div class="li" style="color:var(--dim)">★ Favorites</div><div class="li">▼ Assets</div><div class="li" style="padding-left:22px;color:var(--dim)">▶ Characters</div><div class="li s" style="padding-left:22px">▶ Scripts</div><div class="li" style="padding-left:22px;color:var(--dim)">▶ Materials</div><div class="li" style="color:var(--dim)">▶ Packages</div></div>
+        <div style="flex:1;display:flex;gap:14px;padding:12px;align-items:flex-start;flex-wrap:wrap">
+          <div class="tile"><div class="th" style="background:none;border:0"><div style="width:58px;height:42px;background:#e0bd73;border-radius:4px"></div></div>Characters</div>
+          <div class="tile" style="width:160px"><div class="pair"><div class="doc" style="--c:var(--cpp)" data-t=".H"></div><span style="width:12px;height:2px;background:var(--cpp)"></span><div class="doc" style="--c:var(--cpp)" data-t=".CPP"></div></div><span style="color:var(--fg)">Weapon · C++ class</span></div>
+          <div class="tile"><div class="th" style="background:none;border:0"><div class="doc" style="--c:var(--cs)" data-t="C#"></div></div>PlayerMove.cs</div>
+          <div class="tile"><div class="th" style="background:none;border:0"><div class="doc" style="--c:var(--lua)" data-t="LUA"></div></div>quest.lua</div>
+          <div class="tile"><div class="th" style="background:none;border:0"><div class="doc" style="--c:var(--graph)" data-t="G"></div></div>Door.graph</div>
+          <div class="tile"><div class="th" style="border-color:#3996b9;background:#3996b930"><div style="width:26px;height:26px;background:var(--blue);border-radius:4px"></div></div>Knight.prefab</div>
+          <div class="tile"><div class="th"><div style="width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff3c4,#f59e32 40%,#5a3203)"></div></div>M_Gold.mat</div></div></div></div></div>
+  <div class="panel" style="width:320px"><div class="ph"><b>Inspector</b><span>Project Settings</span><span class="sp"></span><span class="ic">🔒</span></div><div class="pb" style="overflow:auto">
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 10px 6px"><span class="k pf"></span><b style="font-size:15px">Player</b><span style="flex:1"></span><span class="pill b">Prefab</span></div>
+    <div class="card"><h5>⌄ <span class="k pf"></span>Transform<span class="sp"></span><em>⋮</em></h5>
+      <div class="row"><label>Position</label><div class="vec"><div class="in x"><b>X</b>0</div><div class="in y"><b>Y</b>1</div><div class="in z"><b>Z</b>0</div></div></div>
+      <div class="row"><label>Rotation</label><div class="vec"><div class="in x"><b>X</b>0</div><div class="in y"><b>Y</b>90</div><div class="in z"><b>Z</b>0</div></div></div>
+      <div class="row"><label>Scale</label><div class="vec"><div class="in x"><b>X</b>1</div><div class="in y"><b>Y</b>1</div><div class="in z"><b>Z</b>1</div></div></div></div>
+    <div class="card"><h5>⌄ <span class="k mesh"></span>Mesh Renderer<span class="sp"></span><em>⋮</em></h5><div class="row"><label>Mesh</label><div class="in">◇ Knight.glb</div></div><div class="row"><label>Material</label><div class="in">● M_Knight</div></div></div>
+    <div class="card"><h5>⌄ <span class="k"></span>PlayerMove<span class="sp"></span><span class="lang cs">C#</span></h5><div class="row"><label style="color:var(--fg);font-weight:600;box-shadow:-9px 0 0 -7px var(--blue)">Speed</label><div class="in f">5.5</div></div><div class="row"><label>Jump Height</label><div class="in">4.5</div></div></div>
+    <div class="card"><h5>⌄ <span class="k"></span>Health<span class="sp"></span><span class="lang cpp">C++</span></h5><div class="row"><label>Max Health</label><div class="in">100</div></div></div>
+    <div class="card c"><h5>› <span class="k"></span>QuestLogic<span class="sp"></span><span class="lang lua">Lua</span></h5></div>
+    <div style="padding:6px 8px"><span class="btn" style="width:100%;justify-content:center">+ Add Component</span></div></div></div>
+</div>
+<div class="status"><span class="pill ok">Build OK</span><span>60 fps · 1.46 ms · RAM 78 MB</span><span class="sp"></span><span>main · UTF-8 · F1 갤러리</span><span class="btn" style="height:18px">버그 제보 (Ctrl+Shift+B)</span></div></div></section>
+
+<!-- 5 GRAPH -->
+<section class="scr" data-g="에디터" data-t="Graph 작업 공간" data-d="비주얼 스크립팅: 노드 + 변수 + 세부 정보, 식 노드, 실행 흐름 강조">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Graph</span><span>Debug</span><span>Window</span><span class="sp"></span><span>Door.graph</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span>Level</span><span class="on">Graph</span><span>Animation</span><span>UI Designer</span><span>Scripting</span></div><span style="flex:1"></span><span class="btn">컴파일 ✓</span><span class="btn">C#으로 내보내기</span><span class="btn p">▶ Play</span></div>
+<div class="body">
+  <div class="panel" style="width:230px"><div class="ph"><b>내 그래프</b></div><div class="pb">
+    <div class="cap2">이벤트</div><div class="li">◆ Start</div><div class="li s">◆ OnTriggerEnter</div><div class="li">◆ Update</div>
+    <div class="cap2">함수</div><div class="li">ƒ OpenDoor</div><div class="li">ƒ PlaySound</div>
+    <div class="cap2">변수</div><div class="li"><span class="dot" style="background:var(--pfloat)"></span>openAngle <span class="t">float 90</span></div><div class="li"><span class="dot" style="background:var(--pbool)"></span>isLocked <span class="t">bool</span></div><div class="li"><span class="dot" style="background:var(--pobj)"></span>key <span class="t">Item</span></div></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>Event Graph</b><span>OpenDoor</span><span class="sp"></span><span class="ic">100% ⤢</span></div>
+    <div class="grid-bg" style="flex:1;position:relative;overflow:hidden">
+      <svg class="wires" viewBox="0 0 700 560" preserveAspectRatio="none"><g fill="none" stroke-width="2.4">
+        <path d="M186 96 C 240 96, 230 120, 286 120" stroke="#e4e8ee"/><path d="M466 120 C 520 120, 510 230, 566 230" stroke="#e4e8ee"/>
+        <path d="M186 118 C 240 118, 230 150, 286 150" stroke="#3996b9"/><path d="M200 330 C 250 330, 240 262, 566 262" stroke="#72c04e"/></g></svg>
+      <div class="node ev" style="left:30px;top:60px"><h6>OnTriggerEnter <small>Event</small></h6><div class="pins"><div></div><div class="o"><div class="pin"><i class="ex"></i></div><div class="pin" style="--c:var(--pobj)"><i></i>Other</div></div></div></div>
+      <div class="node fl" style="left:286px;top:84px"><h6>Branch</h6><div class="pins"><div><div class="pin"><i class="ex"></i></div><div class="pin" style="--c:var(--pbool)"><i></i>other.HasTag("Player") &amp;&amp; !isLocked</div></div><div class="o"><div class="pin"><i class="ex"></i>True</div><div class="pin"><i class="ex"></i>False</div></div></div></div>
+      <div class="node sel" style="left:566px;top:196px"><h6>Tween <small>Transform</small></h6><div class="pins"><div><div class="pin"><i class="ex"></i></div><div class="pin" style="--c:var(--pvec)"><i></i>Rotation</div><div class="pin" style="--c:var(--pfloat)"><i></i>Seconds 0.6</div></div><div class="o"><div class="pin"><i class="ex"></i></div></div></div></div>
+      <div class="node pu" style="left:40px;top:300px"><h6>openAngle <small>get</small></h6><div class="pins"><div></div><div class="o"><div class="pin" style="--c:var(--pfloat)"><i></i>float</div></div></div></div>
+      <div style="position:absolute;right:12px;bottom:12px;width:150px;height:96px;background:#11151bcc;border:1px solid var(--line2);border-radius:4px"></div>
+      <span class="hint" style="bottom:116px">미니맵 · 우클릭: 노드 검색</span></div></div>
+  <div class="panel" style="width:280px"><div class="ph"><b>세부 정보</b></div><div class="pb">
+    <div class="card"><h5>Tween</h5><div class="row"><label>Target</label><div class="in">self.transform</div></div><div class="row"><label>Rotation</label><div class="in mono">(0, openAngle, 0)</div></div><div class="row"><label>Seconds</label><div class="in">0.6</div></div><div class="row"><label>Ease</label><div class="in">OutBack ▾</div></div></div>
+    <div class="card"><h5>텍스트 (JSONL)</h5><div class="mono" style="font-size:10.5px;color:var(--dim);padding:6px 10px;white-space:pre-wrap">{"id":"tw","node":"Tween","after":"b.true",
+ "in":{"rotation":"(0,openAngle,0)","seconds":0.6}}</div></div></div></div>
+</div>
+<div class="status"><span class="pill ok">컴파일 OK</span><span>노드 4 · VM 0.02 ms</span><span class="sp"></span><span>F9 중단점 · F10 다음</span></div></div></section>
+
+<!-- 6 ANIMATION -->
+<section class="scr" data-g="에디터" data-t="Animation 작업 공간" data-d="애니메이션 그래프(상태 머신) + 미리보기 + 블렌더식 타임라인">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Animation</span><span>Window</span><span class="sp"></span><span>AG_Knight.animgraph</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span>Level</span><span>Graph</span><span class="on">Animation</span><span>UI Designer</span><span>Scripting</span></div><span style="flex:1"></span><span class="btn">이벤트 그래프</span><span class="btn p">포즈 그래프</span></div>
+<div class="body">
+  <div class="col" style="flex:1">
+    <div style="flex:1;display:flex;gap:1px;min-height:0">
+      <div class="panel" style="width:360px"><div class="ph"><b>미리보기</b><span class="sp"></span><span class="ic">1.0x</span></div><div style="flex:1;background:radial-gradient(circle at 50% 70%,#262e39,#0f1318);display:grid;place-items:center;position:relative">
+        <svg width="140" height="220" viewBox="0 0 140 220"><g stroke="#aab3c0" stroke-width="6" stroke-linecap="round" fill="none"><circle cx="70" cy="30" r="16" fill="#aab3c0"/><path d="M70 48 L66 120 L40 180 M66 120 L96 176 M68 70 L104 96 M68 70 L36 104"/><path d="M104 96 L128 70" stroke="#f59e32"/></g></svg>
+        <div style="position:absolute;left:10px;bottom:10px;display:flex;gap:6px"><span class="chip">Locomotion › Run</span><span class="chip">Speed 5.5</span></div></div></div>
+      <div class="panel" style="flex:1"><div class="ph"><b>Locomotion (상태 머신)</b><span>AnimGraph</span></div>
+        <div class="grid-bg" style="flex:1;position:relative">
+          <svg class="wires" viewBox="0 0 600 330" preserveAspectRatio="none"><g fill="none" stroke="#aab3c0" stroke-width="2"><path d="M150 90 L250 90"/><path d="M370 90 L470 90"/><path d="M310 120 L310 200"/></g></svg>
+          <div class="node" style="left:40px;top:70px;min-width:110px;border-radius:14px"><h6 style="border-radius:14px 14px 0 0;border-top-color:var(--faint)">Idle</h6><div style="padding:4px 10px;font-size:11px;color:var(--dim)">idle_01</div></div>
+          <div class="node sel" style="left:250px;top:70px;min-width:120px;border-radius:14px"><h6 style="border-radius:14px 14px 0 0;border-top-color:var(--anim)">Walk / Run</h6><div style="padding:4px 10px;font-size:11px;color:var(--dim)">BlendSpace1D (Speed)</div><div class="bar" style="margin:2px 10px 8px"><i style="width:70%;background:var(--anim)"></i></div></div>
+          <div class="node" style="left:470px;top:70px;min-width:100px;border-radius:14px"><h6 style="border-radius:14px 14px 0 0;border-top-color:var(--faint)">Jump</h6></div>
+          <div class="node" style="left:250px;top:200px;min-width:120px;border-radius:14px"><h6 style="border-radius:14px 14px 0 0;border-top-color:var(--faint)">Attack</h6><div style="padding:4px 10px;font-size:11px;color:var(--dim)">Notify: HitStart 0.38s</div></div>
+          <span class="chip" style="position:absolute;left:170px;top:62px">Speed &gt; 0.1</span><span class="chip" style="position:absolute;left:385px;top:62px">IsJumping</span></div></div></div>
+    <div class="panel" style="height:210px"><div class="ph"><b>타임라인</b><span>커브</span><span>도프시트</span><span class="sp"></span><span class="ic">⏮ ◀ ▶ ⏭ · 48 / 120</span></div>
+      <div style="flex:1;display:flex;min-height:0"><div style="width:200px;background:var(--win);font-size:12px;padding-top:24px">
+        <div class="li">▼ Knight</div><div class="li" style="padding-left:24px">Hips · Position</div><div class="li" style="padding-left:24px">Spine · Rotation</div><div class="li s" style="padding-left:24px">RightHand · Rotation</div><div class="li" style="padding-left:24px">Notify</div></div>
+        <div style="flex:1;position:relative;background:var(--sunk)">
+          <div style="height:24px;border-bottom:1px solid var(--line);display:flex;font:10px var(--mono);color:var(--faint)"><span style="width:10%">0</span><span style="width:10%">12</span><span style="width:10%">24</span><span style="width:10%">36</span><span style="width:10%">48</span><span style="width:10%">60</span><span style="width:10%">72</span><span style="width:10%">84</span><span style="width:10%">96</span><span>108</span></div>
+          <svg style="position:absolute;left:0;top:24px;width:100%;height:calc(100% - 24px)" viewBox="0 0 800 150" preserveAspectRatio="none"><path d="M0 120 C 100 120, 150 30, 300 40 S 500 120, 800 60" stroke="#f59e32" stroke-width="2" fill="none"/><path d="M0 80 C 200 70, 300 110, 500 90 S 700 40, 800 50" stroke="#3996b9" stroke-width="2" fill="none"/><g fill="#e4e8ee"><rect x="296" y="36" width="8" height="8" transform="rotate(45 300 40)"/><rect x="496" y="86" width="8" height="8" transform="rotate(45 500 90)"/></g><rect x="300" y="128" width="10" height="16" fill="#e0564e"/></svg>
+          <div style="position:absolute;top:0;bottom:0;left:40%;width:2px;background:var(--accent)"></div></div></div></div></div>
+  <div class="panel" style="width:260px"><div class="ph"><b>세부 정보</b></div><div class="pb">
+    <div class="card"><h5>Walk / Run</h5><div class="row"><label>블렌드 스페이스</label><div class="in">BS_Locomotion</div></div><div class="row"><label>Sync Group</label><div class="in">Feet</div></div><div class="row"><label>Root Motion</label><div class="in">끔</div></div></div>
+    <div class="card"><h5>전이: Walk → Jump</h5><div class="row"><label>조건</label><div class="in mono">IsJumping</div></div><div class="row"><label>블렌드</label><div class="in">0.15 s</div></div></div>
+    <div class="cap2">변수 (이벤트 그래프)</div><div class="li"><span class="dot" style="background:var(--pfloat)"></span>Speed<span class="t">5.5</span></div><div class="li"><span class="dot" style="background:var(--pbool)"></span>IsJumping<span class="t">false</span></div></div></div>
+</div><div class="status"><span class="pill ok">워커 스레드 평가</span><span>포즈 0.11 ms</span><span class="sp"></span><span>[ThreadSafe] 검사 통과</span></div></div></section>
+
+<!-- 7 UI DESIGNER -->
+<section class="scr" data-g="에디터" data-t="UI Designer 작업 공간" data-d="게임 UI 위젯(월드·카메라 공간) + 블렌더식 UI 애니메이션">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Widget</span><span>Window</span><span class="sp"></span><span>HUD.widget</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span>Level</span><span>Graph</span><span>Animation</span><span class="on">UI Designer</span><span>Scripting</span></div><span style="flex:1"></span><span class="btn">1920×1080 ▾</span><span class="btn">안전 영역</span><span class="btn p">미리보기</span></div>
+<div class="body">
+  <div class="col" style="width:220px"><div class="panel" style="flex:1"><div class="ph"><b>팔레트</b></div><div class="pb">
+    <div class="cap2">기본</div><div class="li">▭ Panel</div><div class="li">T Text</div><div class="li">▣ Image</div><div class="li">⏺ Button</div><div class="li">▤ Progress Bar</div><div class="li">☐ Toggle</div><div class="li">⇆ Slider</div><div class="cap2">레이아웃</div><div class="li">⫴ Horizontal</div><div class="li">☰ Vertical</div><div class="li">▦ Grid</div><div class="li">⇕ Scroll</div></div></div>
+    <div class="panel" style="flex:1"><div class="ph"><b>계층</b></div><div class="pb"><div class="li">▼ HUD (Canvas)</div><div class="li" style="padding-left:24px">▼ TopLeft</div><div class="li s" style="padding-left:38px">HealthBar</div><div class="li" style="padding-left:38px">AmmoText</div><div class="li" style="padding-left:24px">Crosshair</div><div class="li" style="padding-left:24px">KillFeed</div></div></div></div>
+  <div class="col" style="flex:1"><div class="panel" style="flex:1"><div class="ph"><b>캔버스</b><span>월드 공간 미리보기</span></div>
+    <div style="flex:1;display:grid;place-items:center;background:var(--sunk)"><div style="width:620px;height:349px;background:linear-gradient(160deg,#2a3a4a,#1a2028);border:1px solid var(--line2);position:relative">
+      <div style="position:absolute;inset:18px;border:1px dashed #f59e3266"></div>
+      <div style="position:absolute;left:30px;top:28px;width:200px;outline:2px solid var(--accent);padding:4px"><div style="font-size:11px;color:#fff">HP 76 / 100</div><div class="bar" style="height:10px;margin-top:4px"><i style="width:76%;background:var(--ok)"></i></div></div>
+      <div style="position:absolute;left:30px;top:78px;color:#fff;font:700 20px var(--mono)">24 <span style="font-size:12px;color:#ffffffaa">/ 90</span></div>
+      <div style="position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px;border:2px solid #fff;border-radius:50%"></div>
+      <div style="position:absolute;right:30px;top:28px;font-size:11px;color:#fff;text-align:right">Player ⌖ Bot_02<br><span style="color:#ffffffaa">Bot_05 ⌖ Bot_01</span></div></div></div></div>
+    <div class="panel" style="height:150px"><div class="ph"><b>UI 애니메이션</b><span class="sp"></span><span class="ic">HealthBar_Hit · 0.4 s</span></div><div style="flex:1;position:relative;background:var(--sunk)">
+      <div class="li" style="background:var(--win);width:180px">Fill · Color</div><div class="li" style="background:var(--win);width:180px">Scale</div><div class="li" style="background:var(--win);width:180px">Shake · Position</div>
+      <div style="position:absolute;left:200px;top:5px;right:20px;display:flex;flex-direction:column;gap:12px"><div style="display:flex;gap:120px"><b style="color:var(--accent)">◆</b><b style="color:var(--accent)">◆</b><b style="color:var(--accent)">◆</b></div><div style="display:flex;gap:60px"><b style="color:var(--blue)">◆</b><b style="color:var(--blue)">◆</b></div><div style="display:flex;gap:30px"><b>◆</b><b>◆</b><b>◆</b><b>◆</b></div></div></div></div></div>
+  <div class="panel" style="width:280px"><div class="ph"><b>속성</b></div><div class="pb">
+    <div class="card"><h5>HealthBar</h5><div class="row"><label>앵커</label><div class="in">좌상단 ▾</div></div><div class="row"><label>위치</label><div class="in mono">30, 28</div></div><div class="row"><label>크기</label><div class="in mono">200, 32</div></div></div>
+    <div class="card"><h5>바인딩</h5><div class="row"><label>값</label><div class="in mono">Player.Health.ratio</div></div><div class="row"><label>색</label><div class="in">그라데이션 (빨강→초록)</div></div></div>
+    <div class="card"><h5>공간</h5><div class="row"><label>배치</label><div style="display:flex;gap:4px"><span class="btn p">화면</span><span class="btn">카메라</span><span class="btn">월드</span></div></div></div></div></div>
+</div><div class="status"><span class="pill ok">UI 0.18 ms</span><span class="sp"></span><span>Ctrl+드래그: 스냅 끄기</span></div></div></section>
+
+<!-- 8 SCRIPTING -->
+<section class="scr" data-g="에디터" data-t="Scripting 작업 공간" data-d="Rider식 코드 편집: 언어별 구문 강조, C++ 짝 파일, 문제 목록, AI 제안">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Code</span><span>Debug</span><span>Window</span><span class="sp"></span><span>PlayerMove.cs</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span>Level</span><span>Graph</span><span>Animation</span><span>UI Designer</span><span class="on">Scripting</span></div><span style="flex:1"></span><span class="pill ok">핫 리로드 0.4 s</span><span class="btn">외부 편집기로 열기 (VS Code · Rider)</span></div>
+<div class="body">
+  <div class="panel" style="width:240px"><div class="ph"><b>스크립트</b><span class="sp"></span><span class="ic">＋</span></div><div class="pb" style="font-size:12px">
+    <div class="li">▼ Scripts</div>
+    <div class="li" style="padding-left:22px">▼ <span class="lang cpp" style="margin-right:2px">C++</span>Weapon</div><div class="li" style="padding-left:44px;color:var(--dim)">Weapon.h</div><div class="li" style="padding-left:44px;color:var(--dim)">Weapon.cpp</div>
+    <div class="li s" style="padding-left:22px"><span class="lang cs" style="margin-right:2px">C#</span>PlayerMove.cs</div>
+    <div class="li" style="padding-left:22px"><span class="lang cs" style="margin-right:2px">C#</span>Health.cs</div>
+    <div class="li" style="padding-left:22px"><span class="lang lua" style="margin-right:2px">Lua</span>quest.lua</div>
+    <div class="li" style="padding-left:22px"><span class="lang py" style="margin-right:2px">Py</span>level_tools.py</div>
+    <div class="li" style="padding-left:22px"><span class="lang gr" style="margin-right:2px">G</span>Door.graph</div></div></div>
+  <div class="col" style="flex:1">
+    <div class="panel" style="flex:1"><div class="ph"><b>PlayerMove.cs</b><span>Weapon.h</span><span>Weapon.cpp</span><span>quest.lua</span><span class="sp"></span><span class="ic">⚠ 1 · ✕ 0</span></div>
+      <div class="pb" style="background:var(--sunk);overflow:hidden"><div class="code">
+<div><span class="kw">using</span> Bidulgi;</div>
+<div></div>
+<div><span class="kw">public class</span> <span class="ty">PlayerMove</span> : <span class="ty">Behaviour</span></div>
+<div>{</div>
+<div>    [<span class="at">Edit</span>, <span class="at">Range</span>(<span class="nu">0</span>, <span class="nu">20</span>)] <span class="kw">public float</span> speed = <span class="nu">5.5f</span>;</div>
+<div>    [<span class="at">Auto</span>] <span class="ty">CharacterBody</span> body;              <span class="cm">// Get&lt;CharacterBody&gt;() 자동</span></div>
+<div></div>
+<div class="hl">    <span class="kw">void</span> <span class="fnn">Update</span>(<span class="kw">float</span> dt)</div>
+<div>    {</div>
+<div>        <span class="ty">Vector2</span> move = Input.<span class="fnn">Value</span>&lt;<span class="ty">Vector2</span>&gt;(Actions.Move);</div>
+<div>        body.<span class="fnn">Move</span>(<span class="kw">new</span> <span class="ty">Vector3</span>(move.x, <span class="nu">0</span>, move.y) * speed);</div>
+<div>        <span class="kw">if</span> (Input.<span class="fnn">Pressed</span>(Actions.Jump)) body.<span class="fnn">Jump</span>(<span class="nu">4.5f</span>);</div>
+<div>    }</div>
+<div></div>
+<div>    <span class="kw">async void</span> <span class="fnn">OnLanded</span>()</div>
+<div class="err">    {   Vfx.<span class="fnn">Play</span>(Effects.Dust, transform.position)<span style="text-decoration:wavy underline var(--warn)">;</span></div>
+<div>        <span class="kw">await</span> transform.<span class="fnn">Tween</span>(scale: <span class="nu">0.9f</span>, seconds: <span class="nu">0.06f</span>, pingPong: <span class="kw">true</span>);</div>
+<div>    }</div>
+<div>}</div></div></div></div>
+    <div class="panel" style="height:150px"><div class="ph"><b>문제</b><span>출력</span><span>테스트</span><span>Git</span></div><div class="pb mono" style="font-size:12px">
+      <div class="li"><span class="dot" style="background:var(--warn)"></span>PlayerMove.cs(16,51)  CS4014: 대기하지 않은 비동기 호출 <span class="t">AI에게 설명 · 빠른 수정</span></div>
+      <div class="li"><span class="dot" style="background:var(--ok)"></span>테스트 12개 통과 (0.8 s)</div>
+      <div class="li" style="color:var(--dim)"><span class="dot" style="background:var(--faint)"></span>Weapon.cpp 모듈 라이브 리로드 대기</div></div></div></div>
+  <div class="panel" style="width:250px"><div class="ph"><b>구조</b><span>AI</span></div><div class="pb">
+    <div class="li">▼ <span class="ty" style="color:#4ec9b0">PlayerMove</span></div><div class="li" style="padding-left:24px;color:var(--dim)">speed : float</div><div class="li" style="padding-left:24px;color:var(--dim)">body : CharacterBody</div><div class="li s" style="padding-left:24px">Update(float)</div><div class="li" style="padding-left:24px;color:var(--dim)">OnLanded()</div>
+    <div class="sep"></div><div class="cap2">Inspector 노출</div><div class="row"><label>speed</label><div class="in">5.5 (0~20)</div></div></div></div>
+</div><div class="status"><span class="pill ok">C# OK</span><span>Ln 8, Col 21</span><span class="sp"></span><span>UTF-8 · LF · 4 spaces · Consolas</span></div></div></section>
+
+<!-- 9 MATERIAL -->
+<section class="scr" data-g="에셋 편집기" data-t="머티리얼 에디터" data-d="언리얼식 마스터 머티리얼(노드) + 미리보기 + 파라미터, 순열·비용 표시">
+<div class="win">
+<div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Material</span><span>Window</span><span class="sp"></span><span>M_Rock.material</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><span class="btn p">적용</span><span class="btn">저장</span><span class="btn">인스턴스 만들기</span><span style="flex:1"></span><span class="pill">순열 4</span><span class="pill">명령어 112</span><span class="pill">샘플 3</span><span class="pill ok">캐시됨</span></div>
+<div class="body">
+  <div class="col" style="width:300px">
+    <div class="panel" style="height:300px"><div class="ph"><b>미리보기</b><span class="sp"></span><span class="ic">● ■ ▲</span></div><div style="flex:1;display:grid;place-items:center;background:radial-gradient(circle at 50% 40%,#2a323d,#0f1318)"><div style="width:180px;height:180px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#d8d2c6,#8a8478 45%,#2f2b26 85%);box-shadow:0 20px 40px #0008"></div></div></div>
+    <div class="panel" style="flex:1"><div class="ph"><b>파라미터</b></div><div class="pb">
+      <div class="cap2">Color</div><div class="row"><label>BaseTint</label><div class="in"><span style="width:14px;height:14px;background:#b8b2a6;border-radius:2px;margin-right:6px"></span>#B8B2A6</div></div>
+      <div class="cap2">Surface</div><div class="row"><label>Roughness</label><div class="in">0.80</div></div><div class="row"><label>Wetness</label><div class="in">0.00</div></div>
+      <div class="cap2">Textures</div><div class="row"><label>Albedo</label><div class="in">T_Rock_D</div></div><div class="row"><label>Normal</label><div class="in">T_Rock_N</div></div><div class="row"><label>ORM</label><div class="in">T_Rock_ORM</div></div></div></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>M_Rock</b><span class="sp"></span><span class="ic">Lit · Opaque</span></div>
+    <div class="grid-bg" style="flex:1;position:relative">
+      <svg class="wires" viewBox="0 0 700 600" preserveAspectRatio="none"><g fill="none" stroke-width="2.2"><path d="M200 110 C 280 110, 280 170, 360 170" stroke="#e4e8ee"/><path d="M200 300 C 300 300, 420 120, 520 130" stroke="#3996b9"/><path d="M500 180 C 520 180, 500 150, 520 152" stroke="#e5b84b"/><path d="M200 430 C 300 430, 420 180, 520 175" stroke="#72c04e"/></g></svg>
+      <div class="node" style="left:30px;top:60px"><h6>T_Rock_D <small>Texture</small></h6><div style="display:flex;gap:8px;padding:6px 10px"><div style="width:44px;height:44px;border-radius:3px;background:repeating-linear-gradient(45deg,#8a8478,#8a8478 6px,#6f6a61 6px,#6f6a61 12px)"></div><div class="o" style="display:flex;flex-direction:column;gap:4px;margin-left:auto"><div class="pin" style="--c:var(--pvec)"><i></i>RGB</div><div class="pin" style="--c:var(--pfloat)"><i></i>A</div></div></div></div>
+      <div class="node" style="left:360px;top:140px"><h6>Multiply</h6><div class="pins"><div><div class="pin" style="--c:var(--pvec)"><i></i>A</div><div class="pin" style="--c:var(--pvec)"><i></i>BaseTint</div></div><div class="o"><div class="pin" style="--c:var(--pvec)"><i></i></div></div></div></div>
+      <div class="node" style="left:30px;top:260px"><h6>T_Rock_N <small>Normal</small></h6><div class="pins"><div></div><div class="o"><div class="pin" style="--c:var(--pvec)"><i></i>XYZ</div></div></div></div>
+      <div class="node pu" style="left:30px;top:390px"><h6>Roughness <small>Param</small></h6><div class="pins"><div></div><div class="o"><div class="pin" style="--c:var(--pfloat)"><i></i>0.8</div></div></div></div>
+      <div class="node ev" style="left:520px;top:100px;min-width:170px"><h6>M_Rock <small>Output</small></h6><div class="pins"><div><div class="pin" style="--c:var(--pvec)"><i></i>Base Color</div><div class="pin" style="--c:var(--pvec)"><i></i>Normal</div><div class="pin" style="--c:var(--pfloat)"><i></i>Roughness</div><div class="pin" style="--c:var(--pfloat)"><i></i>Metallic</div><div class="pin" style="--c:var(--pvec)"><i></i>Emissive</div><div class="pin" style="--c:var(--pfloat)"><i></i>AO</div><div class="pin" style="--c:var(--pvec)"><i></i>World Offset</div></div><div></div></div></div></div></div>
+  <div class="panel" style="width:250px"><div class="ph"><b>세부 정보</b></div><div class="pb">
+    <div class="card"><h5>머티리얼</h5><div class="row"><label>셰이딩</label><div class="in">Default Lit ▾</div></div><div class="row"><label>블렌드</label><div class="in">Opaque ▾</div></div><div class="row"><label>양면</label><div class="in">끔</div></div></div>
+    <div class="card"><h5>품질 단계</h5><div class="row"><label>감자</label><div class="in">Unlit 대체</div></div><div class="row"><label>저사양</label><div class="in">노멀 생략</div></div><div class="row"><label>중사양+</label><div class="in">전체</div></div></div>
+    <div class="card"><h5>비용 (bdg mat stats)</h5><div style="padding:6px 10px;font-size:11.5px;color:var(--dim)" class="mono">VS 38 · PS 112<br>텍스처 샘플 3<br>순열 4 (제한 16)</div></div></div></div>
+</div><div class="status"><span class="pill ok">셰이더 컴파일 0.3 s (캐시)</span><span class="sp"></span><span>인스턴스 6개가 이 머티리얼 사용</span></div></div></section>
+
+<!-- 10 TEXTURE -->
+<section class="scr" data-g="에셋 편집기" data-t="텍스처 에디터" data-d="언리얼식 용도 프리셋·텍스처 그룹·단계별 최대 크기, 채널·밉 보기">
+<div class="win"><div class="tb"><span class="mark">B</span><span>T_Rock_N.png</span><span class="sp"></span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><span class="btn p">적용</span><span class="btn">다시 가져오기</span><span style="flex:1"></span><span class="btn g">RGBA</span><span class="btn">R</span><span class="btn">G</span><span class="btn">B</span><span class="btn">A</span><span class="btn">밉 2 ▾</span><span class="btn">압축 전/후 비교</span></div>
+<div class="body">
+  <div class="panel" style="flex:1"><div class="ph"><b>미리보기</b><span class="sp"></span><span class="ic">2048×2048 · BC5 · 5.3 MB</span></div><div style="flex:1;display:grid;place-items:center;background:repeating-conic-gradient(#1c222b 0 25%,#151a21 0 50%) 0 0/24px 24px">
+    <div style="width:420px;height:420px;background:radial-gradient(circle at 30% 30%,#9d9dff,#8080ff 30%,#7a86f0 60%,#8a7aff);border:1px solid var(--line2);position:relative;overflow:hidden"><div style="position:absolute;inset:0;background:repeating-linear-gradient(115deg,#ffffff10 0 14px,#00000014 14px 30px)"></div><div style="position:absolute;right:0;top:0;bottom:0;width:50%;border-left:2px solid var(--accent);background:#00000010"></div><span class="chip" style="position:absolute;left:8px;top:8px">원본</span><span class="chip" style="position:absolute;right:8px;top:8px">BC5 압축</span></div></div></div>
+  <div class="panel" style="width:330px"><div class="ph"><b>설정 (.meta)</b></div><div class="pb">
+    <div class="card"><h5>압축</h5><div class="row"><label>프리셋</label><div class="in f">Normal Map ▾ (이름 _N 자동)</div></div><div class="row"><label>sRGB</label><div class="in">끔</div></div><div class="row"><label>PC / 모바일 / 웹</label><div class="in mono">BC5 / ASTC5x5 / KTX2</div></div></div>
+    <div class="card"><h5>텍스처 그룹</h5><div class="row"><label>그룹</label><div class="in">World ▾</div></div>
+      <table class="tbl" style="font-size:11px"><tr><th>단계</th><th>최대</th></tr><tr><td>감자</td><td class="n">256</td></tr><tr><td>저사양</td><td class="n">512</td></tr><tr><td>중사양</td><td class="n">1024</td></tr><tr><td>고사양</td><td class="n">2048</td></tr><tr><td>초고사양</td><td class="n">4096</td></tr></table></div>
+    <div class="card"><h5>기타</h5><div class="row"><label>밉맵</label><div class="in">켬</div></div><div class="row"><label>래핑</label><div class="in">Repeat</div></div><div class="row"><label>스트리밍</label><div class="in">켬</div></div><div class="row"><label>출처·라이선스</label><div class="in">CC0 · ambientCG</div></div></div></div></div>
+</div><div class="status"><span>메모리 5.3 MB (중사양 1.3 MB)</span><span class="sp"></span><span>사용처 3: M_Rock, M_Cliff, MI_Rock_Wet</span></div></div></section>
+
+<!-- 11 DATA TABLE -->
+<section class="scr" data-g="에셋 편집기" data-t="데이터 테이블" data-d="언리얼 DataTable식 스프레드시트, 텍스트(JSONL) 저장, CSV 가져오기">
+<div class="win"><div class="tb"><span class="mark">B</span><span>Weapons.table.jsonl</span><span class="sp"></span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><span class="btn">+ 행</span><span class="btn">CSV 가져오기</span><span class="btn">CSV 내보내기</span><span style="flex:1"></span><div class="in" style="width:220px;color:var(--faint)">🔍 필터: damage &gt; 20</div><span class="pill">행 구조: FWeapon (C++)</span></div>
+<div class="body"><div class="panel" style="flex:1"><div class="pb" style="padding:0;overflow:auto">
+  <table class="tbl"><tr><th>id</th><th>이름</th><th>종류</th><th>damage</th><th>fireRate</th><th>magazine</th><th>reload (s)</th><th>recoil</th><th>spread</th><th>프리팹</th><th>아이콘</th></tr>
+  <tr><td class="mono">rifle</td><td>돌격 소총</td><td>Hitscan</td><td class="n">24</td><td class="n">10.0</td><td class="n">30</td><td class="n">2.1</td><td class="n">0.35</td><td class="n">1.2</td><td>Rifle.prefab</td><td>■</td></tr>
+  <tr class="s"><td class="mono">pistol</td><td>권총</td><td>Hitscan</td><td class="n e">18</td><td class="n">4.0</td><td class="n">12</td><td class="n">1.4</td><td class="n">0.20</td><td class="n">0.8</td><td>Pistol.prefab</td><td>■</td></tr>
+  <tr><td class="mono">shotgun</td><td>산탄총</td><td>Pellets ×8</td><td class="n">9</td><td class="n">1.2</td><td class="n">6</td><td class="n">3.0</td><td class="n">0.90</td><td class="n">6.0</td><td>Shotgun.prefab</td><td>■</td></tr>
+  <tr><td class="mono">sniper</td><td>저격총</td><td>Hitscan</td><td class="n">95</td><td class="n">0.8</td><td class="n">5</td><td class="n">3.4</td><td class="n">1.40</td><td class="n">0.1</td><td>Sniper.prefab</td><td>■</td></tr>
+  <tr><td class="mono">rocket</td><td>로켓 발사기</td><td>Projectile</td><td class="n">120</td><td class="n">0.5</td><td class="n">1</td><td class="n">4.0</td><td class="n">2.00</td><td class="n">0.0</td><td>Rocket.prefab</td><td>■</td></tr></table>
+  <div style="padding:10px 14px;color:var(--faint);font-size:11.5px" class="mono">{"id":"pistol","name":"권총","kind":"hitscan","damage":18,"fireRate":4.0,"magazine":12,...}   ← 한 줄 = 한 행 (git diff에서 바뀐 칸만 보임)</div></div></div>
+  <div class="panel" style="width:300px"><div class="ph"><b>행 세부 정보</b><span>AI</span></div><div class="pb">
+    <div class="card"><h5>pistol</h5><div class="row"><label>damage</label><div class="in f">18</div></div><div class="row"><label>fireRate</label><div class="in">4.0</div></div><div class="row"><label>recoil 커브</label><div class="in">C_PistolRecoil</div></div></div>
+    <div class="card"><h5>밸런스 미리보기</h5><div style="padding:8px 10px;font-size:11.5px;color:var(--dim)">초당 피해 (DPS)<div style="display:flex;flex-direction:column;gap:5px;margin-top:6px"><div>rifle <div class="bar"><i style="width:80%"></i></div></div><div>pistol <div class="bar"><i style="width:24%;background:var(--accent)"></i></div></div><div>shotgun <div class="bar"><i style="width:29%"></i></div></div><div>sniper <div class="bar"><i style="width:25%"></i></div></div></div></div></div></div></div></div>
+<div class="status"><span>5행 · 11열</span><span class="sp"></span><span>스크립트: Data.Get&lt;Weapon&gt;("pistol").damage</span></div></div></section>
+
+<!-- 12 PROJECT SETTINGS -->
+<section class="scr" data-g="설정" data-t="프로젝트 설정" data-d="언리얼식 분류 + 품질 단계(감자~초고사양) 표, 플랫폼별 최소·최대 단계">
+<div class="win"><div class="tb"><span class="mark">B</span><span>프로젝트 설정</span><span class="sp"></span><div class="wc"><span>✕</span></div></div>
+<div class="body">
+  <div class="panel" style="width:230px"><div class="ph"><b>분류</b></div><div class="pb"><div class="in" style="margin:4px 8px 8px;color:var(--faint)">🔍 설정 검색</div>
+    <div class="cap2">프로젝트</div><div class="li">일반 · 이름·버전</div><div class="li">맵과 모드</div><div class="li">패키지</div>
+    <div class="cap2">엔진</div><div class="li s">렌더링 · 품질 단계</div><div class="li">물리</div><div class="li">입력 (액션)</div><div class="li">오디오</div><div class="li">네트워크</div><div class="li">AI 연동</div>
+    <div class="cap2">플랫폼</div><div class="li">Windows</div><div class="li">Android</div><div class="li">Web</div></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>렌더링 · 품질 단계</b><span class="sp"></span><span class="ic">ProjectSettings/Rendering.json</span></div><div class="pb" style="overflow:auto;padding:10px 0">
+    <div class="row" style="grid-template-columns:200px 1fr"><label>최소 단계</label><div style="display:flex;gap:4px"><span class="btn">감자</span><span class="btn p">저사양</span><span class="btn">중사양</span><span class="btn">고사양</span><span class="btn">초고사양</span></div></div>
+    <div class="row" style="grid-template-columns:200px 1fr"><label>최대 단계</label><div style="display:flex;gap:4px"><span class="btn">감자</span><span class="btn">저사양</span><span class="btn">중사양</span><span class="btn p">고사양</span><span class="btn">초고사양</span></div></div>
+    <div class="row" style="grid-template-columns:200px 1fr"><label>자동 단계 조정</label><div>☑ 프레임이 계속 떨어지면 한 단계 낮춤 (모바일 발열)</div></div>
+    <div class="cap2">단계별 설정</div>
+    <table class="tbl"><tr><th></th><th>감자</th><th>저사양</th><th style="color:var(--accent)">중사양 (기본)</th><th>고사양</th><th>초고사양</th></tr>
+    <tr><td>렌더 경로</td><td>Unlit 2D</td><td>Forward 정점</td><td>Forward</td><td>Forward+</td><td>Forward+/Deferred</td></tr>
+    <tr><td>GI</td><td>없음</td><td>라이트맵</td><td>Halo Tier 0</td><td>Tier 1</td><td>Tier 2~3</td></tr>
+    <tr><td>그림자</td><td>없음</td><td>블롭</td><td>1단계</td><td>CSM 3 소프트</td><td>CSM 4 + 접촉</td></tr>
+    <tr><td>텍스처</td><td>512</td><td>1/4</td><td>1/2</td><td>원본</td><td>원본 + 16x</td></tr>
+    <tr><td>포스트</td><td>—</td><td>—</td><td>톤매핑·FXAA</td><td>+Bloom·SSAO</td><td>+TAA·볼류메트릭·SSR</td></tr>
+    <tr><td>뷰 거리</td><td>—</td><td>0.5</td><td>0.75</td><td>1.0</td><td>1.25</td></tr></table>
+    <div class="cap2">플랫폼 기본 단계</div>
+    <div class="row" style="grid-template-columns:200px 1fr"><label>Windows</label><div class="in" style="width:200px">중사양 (자동 감지)</div></div><div class="row" style="grid-template-columns:200px 1fr"><label>Android</label><div class="in" style="width:200px">저사양 (기기 프로필)</div></div><div class="row" style="grid-template-columns:200px 1fr"><label>Web</label><div class="in" style="width:200px">저사양</div></div></div></div>
+</div><div class="status"><span>변경 사항은 명령으로 기록 (Undo 가능)</span><span class="sp"></span><span>bdg set settings.rendering.minTier low</span></div></div></section>
+
+<!-- 13 PREFERENCES -->
+<section class="scr" data-g="설정" data-t="환경설정 · 테마 편집기" data-d="에디터 개인 설정: 테마(토큰), 단축키 프리셋, 언어, 글꼴, UI 배율, AI">
+<div class="win"><div class="tb"><span class="mark">B</span><span>환경설정</span><span class="sp"></span><div class="wc"><span>✕</span></div></div>
+<div class="body">
+  <div class="panel" style="width:200px"><div class="ph"><b>환경설정</b></div><div class="pb"><div class="li s">테마</div><div class="li">단축키</div><div class="li">언어</div><div class="li">글꼴 · 배율</div><div class="li">외부 도구</div><div class="li">AI</div><div class="li">버그 제보</div></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>테마</b><span class="sp"></span><span class="ic">tokens.json · 실시간 반영</span></div><div class="pb" style="padding:12px;overflow:auto">
+    <div style="display:flex;gap:10px;margin-bottom:12px"><div class="tmpl on" style="width:150px"><div class="pv" style="height:60px;background:#11151b"><span class="dot" style="background:#f59e32;width:20px;height:20px"></span></div><b>Obsidian Dark</b><small>기본</small></div><div class="tmpl" style="width:150px"><div class="pv" style="height:60px;background:#eef0f3"><span class="dot" style="background:#d97f12;width:20px;height:20px"></span></div><b>Light</b><small>밝은 테마</small></div><div class="tmpl" style="width:150px"><div class="pv" style="height:60px;background:#000"><span class="dot" style="background:#ffd000;width:20px;height:20px"></span></div><b>High Contrast</b><small>고대비</small></div><div class="tmpl" style="width:150px"><div class="pv" style="height:60px;font-size:13px">＋</div><b>프로젝트 테마</b><small>ProjectSettings/Theme.json</small></div></div>
+    <table class="tbl"><tr><th>토큰</th><th>값</th><th>용도</th></tr>
+    <tr><td class="mono">win</td><td><span class="dot" style="background:#11151b;border:1px solid var(--line2)"></span> #11151B</td><td style="color:var(--dim)">메인 배경 (Obsidian)</td></tr>
+    <tr><td class="mono">panel</td><td><span class="dot" style="background:#1c222b;border:1px solid var(--line2)"></span> #1C222B</td><td style="color:var(--dim)">패널·작업 영역 (Slate)</td></tr>
+    <tr class="s"><td class="mono">accent</td><td><span class="dot" style="background:#f59e32"></span> #F59E32 <span class="pill a">브랜드 고정</span></td><td style="color:var(--dim)">선택·강조·실행 버튼 (부리 색)</td></tr>
+    <tr><td class="mono">prefab</td><td><span class="dot" style="background:#3996b9"></span> #3996B9</td><td style="color:var(--dim)">오브젝트·컴포넌트·링크 (Engine Blue)</td></tr>
+    <tr><td class="mono">fg-dim</td><td><span class="dot" style="background:#aab3c0"></span> #AAB3C0</td><td style="color:var(--dim)">보조 글자 (Soft Silver)</td></tr>
+    <tr><td class="mono">lang-cs</td><td><span class="dot" style="background:#a172e0"></span> #A172E0</td><td style="color:var(--dim)">C# 배지·파일 아이콘</td></tr></table></div></div>
+  <div class="panel" style="width:300px"><div class="ph"><b>일반</b></div><div class="pb">
+    <div class="row"><label>언어</label><div class="in">한국어 ▾</div></div><div class="row"><label>단축키 프리셋</label><div class="in">Unity (기본) ▾</div></div><div class="row"><label>UI 글꼴</label><div class="in">Pretendard</div></div><div class="row"><label>코드 글꼴</label><div class="in">Consolas</div></div><div class="row"><label>UI 배율</label><div class="in">자동 (150%)</div></div>
+    <div class="sep"></div><div class="row"><label>AI 기능</label><div class="in">켬 · 사용 기록 남김</div></div><div class="row"><label>외부 편집기</label><div class="in">Rider ▾</div></div><div class="row"><label>버그 제보 단축키</label><div class="in">Ctrl+Shift+B</div></div></div></div>
+</div><div class="status"><span>개인 설정은 .cache/user/ (git 제외)</span></div></div></section>
+
+<!-- 14 BUILD -->
+<section class="scr" data-g="도구" data-t="빌드 창" data-d="플랫폼·프로필·씬 목록, 원클릭 다중 빌드, 텍스트 빌드 보고서">
+<div class="win"><div class="tb"><span class="mark">B</span><span>빌드</span><span class="sp"></span><div class="wc"><span>✕</span></div></div>
+<div class="body">
+  <div class="panel" style="width:260px"><div class="ph"><b>플랫폼</b></div><div class="pb">
+    <div class="li s">☑ Windows <span class="t">x64</span></div><div class="li">☑ Android <span class="t">AAB</span></div><div class="li">☐ Web <span class="t">WASM</span></div><div class="li" style="color:var(--faint)">☐ 전용 서버 (Linux)</div><div class="li" style="color:var(--faint)">🔒 콘솔 (계약 후)</div>
+    <div class="cap2">프로필</div><div class="li s">Development</div><div class="li">Shipping</div><div class="li">Profiling</div></div></div>
+  <div class="col" style="flex:1">
+    <div class="panel" style="height:250px"><div class="ph"><b>빌드할 씬</b></div><div class="pb">
+      <div class="li">☑ 0  Scenes/Boot.scene</div><div class="li">☑ 1  Scenes/MainMenu.scene</div><div class="li s">☑ 2  Scenes/Range.scene</div><div class="li">☐ 3  Tests/RenderReference.scene</div>
+      <div class="sep"></div><div class="row"><label>출력</label><div class="in">Builds/Windows/MyShooter</div></div><div class="row"><label>버전</label><div class="in">0.3.1 (자동 증가)</div></div><div class="row"><label>품질 단계 범위</label><div class="in">저사양 ~ 고사양</div></div></div></div>
+    <div class="panel" style="flex:1"><div class="ph"><b>빌드 로그</b><span>보고서</span></div><div class="pb mono" style="font-size:12px;background:var(--sunk)">
+      <div class="li" style="color:var(--dim)">&gt; bdg build --platform windows,android --profile development</div>
+      <div class="li">[1/5] collect   38 assets (unused 4 → 보고서)</div><div class="li">[2/5] cook      BC7 / ASTC · binary scenes (cache 92%)</div><div class="li">[3/5] scripts   C# 3 · Lua 2 · Graph 4</div><div class="li">[4/5] pack      base.bpak 12.4 MB</div>
+      <div class="li" style="color:var(--ok)">[5/5] done      Builds/Windows/MyShooter.exe  (6.8 s)</div><div class="li" style="color:var(--warn)">Android: [2/5] cook  ASTC 31 / 38 …</div>
+      <div style="padding:6px 10px"><div class="bar"><i style="width:72%;background:var(--accent)"></i></div></div></div></div></div>
+  <div class="panel" style="width:280px"><div class="ph"><b>요약</b></div><div class="pb">
+    <div class="card"><h5>Windows ✓</h5><div style="padding:6px 10px;font-size:12px;color:var(--dim)">12.4 MB · 6.8 s<br>가장 큰 에셋: T_Range_D (2.1 MB)</div></div>
+    <div class="card"><h5>Android …</h5><div style="padding:6px 10px;font-size:12px;color:var(--dim)">쿠킹 중 72%<br>서명 키: release.keystore</div></div>
+    <div style="padding:8px;display:flex;flex-direction:column;gap:6px"><span class="btn p lg" style="justify-content:center">빌드 (2 플랫폼)</span><span class="btn" style="justify-content:center">빌드 후 실행</span><span class="btn" style="justify-content:center">CI 템플릿 만들기</span></div></div></div>
+</div><div class="status"><span>build-report.txt 생성됨</span><span class="sp"></span><span>THIRD-PARTY-NOTICES.txt 자동 포함</span></div></div></section>
+
+<!-- 15 PROFILER -->
+<section class="scr" data-g="도구" data-t="프로파일러" data-d="프레임 그래프·시스템별 시간·GPU 패스·메모리, 기록과 비교">
+<div class="win"><div class="tb"><span class="mark">B</span><span>프로파일러</span><span class="sp"></span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="tool"><span class="btn p">● 기록</span><span class="btn">기록 비교</span><span class="btn">내보내기 (.json)</span><span style="flex:1"></span><div class="wst"><span class="on">CPU</span><span>GPU</span><span>메모리</span><span>렌더 패스</span><span>네트워크</span></div></div>
+<div class="body"><div class="col" style="flex:1">
+  <div class="panel" style="height:220px"><div class="ph"><b>프레임 시간</b><span class="sp"></span><span class="ic">평균 6.2 ms · 최대 18.4 ms</span></div><div style="flex:1;position:relative;background:var(--sunk);display:flex;align-items:flex-end;gap:2px;padding:10px 10px 6px">
+    <script>document.write(Array.from({length:150},(_,i)=>{const v=4+Math.abs(Math.sin(i*0.37))*3+(i%47==0?11:0)+(i%13==0?2:0);return `<span style="flex:1;height:${v*8}px;background:${v>16.7?'#e0564e':i==96?'#f59e32':'#3996b9'}"></span>`}).join(''))</script>
+    <div style="position:absolute;left:0;right:0;bottom:140px;border-top:1px dashed #e5b84bbb"></div><span style="position:absolute;left:10px;bottom:144px;color:var(--warn);font-size:10px">16.7 ms</span></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>프레임 #96 · 시스템별</b><span>타임라인 (스레드)</span></div><div class="pb" style="overflow:auto;padding:0">
+    <table class="tbl"><tr><th>항목</th><th>시간 (ms)</th><th>%</th><th>호출</th><th></th></tr>
+    <tr><td>▼ Frame</td><td class="n">6.21</td><td class="n">100</td><td class="n">1</td><td style="width:200px"><div class="bar"><i style="width:100%"></i></div></td></tr>
+    <tr><td style="padding-left:24px">Scripts (C# Update)</td><td class="n">1.84</td><td class="n">30</td><td class="n">212</td><td><div class="bar"><i style="width:30%;background:var(--cs)"></i></div></td></tr>
+    <tr class="s"><td style="padding-left:24px">Physics (Jolt)</td><td class="n">1.22</td><td class="n">20</td><td class="n">2</td><td><div class="bar"><i style="width:20%;background:var(--accent)"></i></div></td></tr>
+    <tr><td style="padding-left:24px">Animation (워커)</td><td class="n">0.71</td><td class="n">11</td><td class="n">18</td><td><div class="bar"><i style="width:11%;background:var(--anim)"></i></div></td></tr>
+    <tr><td style="padding-left:24px">Render submit</td><td class="n">1.90</td><td class="n">31</td><td class="n">182</td><td><div class="bar"><i style="width:31%"></i></div></td></tr>
+    <tr><td style="padding-left:24px">UI</td><td class="n">0.18</td><td class="n">3</td><td class="n">1</td><td><div class="bar"><i style="width:3%;background:var(--ok)"></i></div></td></tr></table></div></div></div>
+  <div class="panel" style="width:270px"><div class="ph"><b>요약</b><span>AI</span></div><div class="pb">
+    <div class="card"><h5>예산 (Android · 중사양)</h5><div style="padding:6px 10px;display:flex;flex-direction:column;gap:6px;font-size:11.5px"><div>Draw 182 / 200<div class="bar"><i style="width:91%;background:var(--warn)"></i></div></div><div>Tris 1.18M / 1.0M ⚠<div class="bar"><i style="width:100%;background:var(--err)"></i></div></div><div>텍스처 310 / 512 MB<div class="bar"><i style="width:60%"></i></div></div></div></div>
+    <div class="card"><h5>스파이크 #47</h5><div style="padding:6px 10px;font-size:11.5px;color:var(--dim)">GC 수집 9.8 ms<br>원인 후보: Bullet 생성 (풀링 권장)<br><span style="color:var(--accent)">AI에게 원인 분석 요청 →</span></div></div></div></div>
+</div><div class="status"><span>Tracy 연결 가능 (localhost:8086)</span><span class="sp"></span><span>bdg profile --frames 600</span></div></div></section>
+
+<!-- 16 PACKAGES -->
+<section class="scr" data-g="도구" data-t="패키지 관리자" data-d="UPM식: 내장·git·로컬·레지스트리, 권한 표시, lock 파일">
+<div class="win"><div class="tb"><span class="mark">B</span><span>패키지</span><span class="sp"></span><div class="wc"><span>✕</span></div></div>
+<div class="tool"><div class="wst"><span class="on">프로젝트에 있음</span><span>내장</span><span>레지스트리</span><span>업데이트 2</span></div><span style="flex:1"></span><span class="btn">+ git URL로 추가</span><span class="btn">로컬 폴더</span></div>
+<div class="body">
+  <div class="panel" style="width:360px"><div class="pb">
+    <div class="li s" style="height:46px"><div><b>com.bdg.physics.jolt</b><div style="color:var(--dim);font-size:11px">Jolt 3D 물리 · 내장</div></div><span class="t">1.0.0</span></div>
+    <div class="li" style="height:46px"><div><b>com.bdg.ui</b><div style="color:var(--dim);font-size:11px">게임 UI 위젯 · 내장</div></div><span class="t">1.0.0</span></div>
+    <div class="li" style="height:46px"><div><b>com.bdg.template.fps</b><div style="color:var(--dim);font-size:11px">1인칭 슈팅 템플릿</div></div><span class="t" style="color:var(--accent)">1.1.0 ↑</span></div>
+    <div class="li" style="height:46px"><div><b>com.studio.inventory</b><div style="color:var(--dim);font-size:11px">git · github.com/studio/inventory</div></div><span class="t">1.2.0</span></div>
+    <div class="li" style="height:46px"><div><b>com.bdg.steamworks</b><div style="color:var(--dim);font-size:11px">Steam 업적·클라우드 저장</div></div><span class="t" style="color:var(--accent)">0.9.0 ↑</span></div></div></div>
+  <div class="panel" style="flex:1"><div class="ph"><b>com.bdg.physics.jolt</b></div><div class="pb" style="padding:14px 16px">
+    <h3 style="margin:0 0 4px">Jolt Physics</h3><div style="color:var(--dim)">3D 강체·캐릭터·차량·래그돌. 결정론 옵션, 배정밀도 좌표.</div>
+    <div style="display:flex;gap:6px;margin:10px 0"><span class="pill">1.0.0</span><span class="pill">MIT</span><span class="pill">Windows · Android · Web</span><span class="pill b">C++ 네이티브</span></div>
+    <div class="cap2" style="padding-left:0">권한</div><div style="color:var(--dim);font-size:12px">없음 (에디터 스크립트 실행 안 함, 네트워크 접근 안 함)</div>
+    <div class="cap2" style="padding-left:0">의존성</div><div class="mono" style="color:var(--dim);font-size:12px">jolt (vcpkg) 5.2.0 · com.bdg.core ^1.0</div>
+    <div class="cap2" style="padding-left:0">lock.json</div><div class="mono" style="color:var(--faint);font-size:11px">"com.bdg.physics.jolt": {"version":"1.0.0","source":"builtin","hash":"sha256:9c1f…"}</div>
+    <div style="margin-top:16px;display:flex;gap:8px"><span class="btn">제거</span><span class="btn">프로젝트에 넣기 (embed)</span><span class="btn">왜 설치됐나 (bdg pkg why)</span></div></div></div>
+</div><div class="status"><span>Packages/manifest.json · lock.json</span></div></div></section>
+
+<!-- 17 AI PANEL -->
+<section class="scr" data-g="도구" data-t="AI 패널" data-d="요청 → 바뀔 내용 diff 미리 보기 → 승인 시 명령 버스로 적용 (Undo 한 번)">
+<div class="win"><div class="tb"><span class="mark">B</span><span>File</span><span>Edit</span><span>Window</span><span class="sp"></span><span>SampleProject</span><div class="wc"><span>—</span><span>▢</span><span>✕</span></div></div>
+<div class="body">
+  <div class="panel" style="flex:1"><div class="ph"><b>Scene</b></div><div class="grid-bg" style="flex:1;position:relative"><div style="position:absolute;left:30%;top:30%;display:grid;grid-template-columns:repeat(5,40px);gap:22px">
+    <script>document.write(Array.from({length:15},(_,i)=>`<div style="width:40px;height:40px;border-radius:50%;background:${i<5?'#3996b9':'#3996b955'};border:2px solid ${i<5?'#f59e32':'transparent'}"></div>`).join(''))</script></div>
+    <span class="chip" style="position:absolute;left:10px;top:8px">AI 미리보기: 노란 테두리 = 바뀔 오브젝트</span></div></div>
+  <div class="panel" style="width:430px"><div class="ph"><b>AI</b><span>Undo 기록</span><span class="sp"></span><span class="ic">Claude · 사용 기록 켬</span></div>
+    <div class="pb" style="display:flex;flex-direction:column;gap:10px;padding:12px;overflow:auto">
+      <div class="msg u">코인 15개 중 첫 줄 5개만 값 5로 바꾸고 금색으로</div>
+      <div class="msg ai">5개 오브젝트, 명령 10개를 준비했어요. 적용 전에 확인해 주세요.</div>
+      <div class="diff"><div class="h">Scenes/Main.scene  (5 objects)</div><div class="d">-{"id":"coin1",…,"c":{"Coin":{"value":1},"MeshRenderer":{"mat":"M_Coin"}}}</div><div class="a">+{"id":"coin1",…,"c":{"Coin":{"value":5},"MeshRenderer":{"mat":"M_Gold"}}}</div><div class="h">… coin2 ~ coin5 동일</div></div>
+      <div style="display:flex;gap:8px"><span class="btn p">승인 · 적용 (Undo 1번)</span><span class="btn">드라이런만</span><span class="btn g">취소</span></div>
+      <div class="sep"></div><div class="cap2" style="padding:0">Undo 기록</div>
+      <div class="li"><span class="dot" style="background:var(--faint)"></span>사람 · Player.Speed 5 → 5.5<span class="t">2분 전</span></div>
+      <div class="li"><span class="dot" style="background:var(--cs)"></span>스크립트 · Spawn ×15 (level_tools.py)<span class="t">5분 전</span></div>
+      <div class="li s"><span class="dot" style="background:var(--accent)"></span>AI · ▸ 묶음 10개 (대기 중)<span class="t">지금</span></div>
+      <div style="flex:1"></div><div class="in" style="height:60px;align-items:flex-start;padding-top:6px;color:var(--faint)">요청을 입력하세요 (예: 이 오류 설명해 줘)</div></div></div>
+</div><div class="status"><span>AI 끄기: 환경설정 › AI</span><span class="sp"></span><span>모든 AI 편집은 명령 버스 · git에 사람이 커밋</span></div></div></section>
+
+<!-- 18 GALLERY -->
+<section class="scr" data-g="도구" data-t="부품 갤러리 (F1)" data-d="디자인 시스템 부품 8개 — 엔진에 실제로 구현된 화면과 같은 구성">
+<div class="win"><div class="body" style="padding:16px;flex-direction:column;gap:16px;background:var(--win)">
+  <div style="height:110px;background:var(--raise);border:1px solid var(--line2);border-radius:8px;padding:20px 22px;flex:none;display:flex;gap:18px;align-items:center"><img src="../../branding/bidulgi-logo-256.png" style="height:80px" alt=""><div><div style="width:36px;height:4px;background:var(--accent);border-radius:2px;margin-bottom:10px"></div><div style="font-size:20px">비둘기 엔진 디자인 시스템</div><div style="color:var(--dim)">Panel · Tabs · Button · Field · ListRow · Badge · Node · Cover</div></div></div>
+  <div style="flex:1;display:flex;gap:16px;min-height:0">
+    <div class="panel" style="width:280px"><div class="ph"><b>Hierarchy</b></div><div class="pb"><div class="li"><span class="k cam"></span>Main Camera<span class="t">Camera</span></div><div class="li"><span class="k light"></span>Sun<span class="t">Light</span></div><div class="li s"><span class="k pf"></span>Player<span class="t">Prefab</span></div><div class="li" style="padding-left:24px"><span class="k mesh"></span>Weapon</div></div></div>
+    <div class="panel" style="flex:1"><div class="ph"><b>Inspector</b></div><div class="pb"><div class="row"><label>Position</label><div class="in">0, 1, 0</div></div><div class="row"><label>Speed</label><div class="in f">한글 입력<u style="text-decoration-color:var(--accent)">ㅋ</u>|</div></div>
+      <div style="display:flex;gap:8px;padding:10px 12px"><span class="btn p">Apply</span><span class="btn">Revert</span><span class="btn" style="outline:2px solid var(--accent);outline-offset:1px">Select Prefab</span></div><div style="display:flex;gap:6px;padding:0 12px"><span class="pill">C#</span><span class="pill ok">Saved</span><span class="pill b">Prefab</span></div></div></div>
+    <div style="width:440px;position:relative"><div class="ph" style="border-radius:3px"><span>Scene</span><span>Game</span><b>Graph</b><span>Animation</span></div>
+      <div class="node ev" style="left:4px;top:60px"><h6>Start <small>Event</small></h6><div class="pins"><div></div><div class="o"><div class="pin"><i class="ex"></i></div><div class="pin" style="--c:var(--pobj)"><i></i>Self</div></div></div></div>
+      <div class="node" style="left:220px;top:60px"><h6>Rotate <small>Transform</small></h6><div class="pins"><div><div class="pin"><i class="ex"></i></div><div class="pin" style="--c:var(--pobj)"><i></i>Target</div><div class="pin" style="--c:var(--pfloat)"><i></i>Speed</div></div><div class="o"><div class="pin"><i class="ex"></i></div></div></div></div></div></div></div></div></section>
+
+<!-- 19 DIALOGS -->
+<section class="scr" data-g="대화상자" data-t="버그 제보 · 업그레이드 · 크래시 복구" data-d="자주 뜨는 대화상자 3종 (배경은 에디터)">
+<div class="win" style="position:relative"><div class="body" style="background:var(--win)"><div class="panel" style="flex:1;opacity:.35"></div></div>
+  <div class="modal-bg" style="grid-template-columns:repeat(3,auto);gap:20px">
+    <div class="modal" style="width:380px"><h3>🐞 버그 제보</h3><div class="mb">
+      <div style="color:var(--dim);font-size:12px">BugReports/20261123-101522/ 에 저장했어요. 올리기 전에 확인하세요.</div>
+      <div class="li">☑ screenshot.png <span class="t">480 KB</span></div><div class="li">☑ Bidulgi.log <span class="t">사용자 경로 숨김</span></div><div class="li">☑ system.txt <span class="t">GPU·OS·버전</span></div><div class="li">☐ 최근 명령 50개 <span class="t">재현 단계</span></div>
+      <div class="in" style="height:54px;align-items:flex-start;padding-top:5px;color:var(--faint)">무슨 일이 있었나요? (선택)</div></div><div class="mf"><span class="btn">폴더 열기</span><span class="btn p">GitHub 이슈 열기</span></div></div>
+    <div class="modal" style="width:360px"><h3>⬆ 엔진 업그레이드</h3><div class="mb">
+      <div><b>0.0.1 → 0.1.0</b> <span class="pill a">마이너</span></div><div style="color:var(--dim);font-size:12px">변환할 내용 (dry-run):</div>
+      <div class="diff" style="font-size:11px"><div class="a">+ 씬 형식 1.0 → 1.1: 2개 파일</div><div class="a">+ API 이름 변경 자동 수정: 3곳</div><div class="h">  에셋 GUID 변경 없음</div></div>
+      <div class="li">☑ 먼저 git 커밋으로 백업</div></div><div class="mf"><span class="btn">나중에</span><span class="btn p">백업 후 변환</span></div></div>
+    <div class="modal" style="width:340px"><h3>⟲ 복구할 작업이 있어요</h3><div class="mb">
+      <div style="color:var(--dim);font-size:12px">에디터가 정상적으로 종료되지 않았어요. 자동 저장된 상태가 있습니다.</div>
+      <div class="li s">Main.scene <span class="t">2분 전 자동 저장</span></div><div class="li">HUD.widget <span class="t">5분 전</span></div>
+      <div class="li">☑ 크래시 보고서도 함께 만들기</div></div><div class="mf"><span class="btn">버리기</span><span class="btn p">복구</span></div></div>
+  </div></div></section>
+
+  </div></div>
+</main>
+<script>
+const scr=[...document.querySelectorAll('.scr')], nav=document.getElementById('nav'), fit=document.getElementById('fit'), view=document.getElementById('view');
+let g='';scr.forEach((s,i)=>{if(s.dataset.g!==g){g=s.dataset.g;const h=document.createElement('h4');h.textContent=g;nav.appendChild(h)}
+ const a=document.createElement('a');a.href='#'+(i+1);a.innerHTML='<i></i>'+s.dataset.t;a.onclick=e=>{e.preventDefault();show(i)};nav.appendChild(a)});
+function show(i){scr.forEach((s,j)=>s.classList.toggle('on',j===i));[...nav.querySelectorAll('a')].forEach((a,j)=>a.classList.toggle('on',j===i));
+ document.getElementById('ttl').textContent=(i+1)+'. '+scr[i].dataset.t;document.getElementById('dsc').textContent=scr[i].dataset.d;history.replaceState(null,'','#'+(i+1));resize()}
+function resize(){const r=view.getBoundingClientRect();const k=Math.min((r.width-32)/1280,(r.height-32)/760,1.25);fit.style.transform='scale('+k+')'}
+addEventListener('resize',resize);addEventListener('keydown',e=>{const i=scr.findIndex(s=>s.classList.contains('on'));if(e.key==='ArrowDown'||e.key==='ArrowRight')show(Math.min(i+1,scr.length-1));if(e.key==='ArrowUp'||e.key==='ArrowLeft')show(Math.max(i-1,0))});
+show(Math.max(0,Math.min(scr.length-1,(parseInt(location.hash.slice(1))||1)-1)));
+</script>
+</body></html>
