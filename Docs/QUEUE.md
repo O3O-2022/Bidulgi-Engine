@@ -111,6 +111,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
     5. 보고서는 텍스트: `tokens ✓ 64/64`, `layout max error 0.6px` 형식. 기준 초과 시 종료 코드 1.
   - 완료 조건: 부품 8개에 대해 토큰 전부 일치, 레이아웃 오차 1px 이하 보고서가 나옴.
 - [ ] **0-13. 대기 중 다시 그리기 멈추기 (최우선 최적화)** — 지금 수직 동기화가 안 걸려 대기 중에도 초당 수천 프레임을 그림(상태 줄 4000+ fps). `SDL_GL_SetSwapInterval` 결과 확인(실패 시 적응형 -1 → 1 → 프레임 제한), 입력·애니메이션·파일 변경이 없으면 `SDL_WaitEventTimeout`으로 잠들기. 완료 조건: 대기 중 CPU·GPU 사용률이 거의 0, 입력 반응 지연 없음
+- [ ] **0-14. 버그 제보 보완** — 단축키 F12 → `Ctrl+Shift+B`(Windows 디버거 키 충돌), 보고서의 사용자 경로를 `%USERPROFILE%`로 치환 + 첨부 전 미리보기, 30일 지난 보고서 삭제, PNG 압축(stb_image_write, 퍼블릭 도메인). 완료 조건: 보고서 파일에 사용자 이름이 없음, 스크린샷 500KB 이하 [convenience-features](planning/convenience-features.md)
 - [ ] **0-12. M0 마무리 손질**
   - Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) 추가 → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. (파일 내려받기는 사용자 허락 후)
   - Inspector 컴포넌트 헤더(`ComponentHeader`)에 `raise` 배경 + 위쪽 `line` 1px (`bundle.css`의 `.bdg-comp-head`).
@@ -145,10 +146,12 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
   - **직렬화 가능**: 명령을 JSON 한 줄로 저장·재생 (`--replay 파일.jsonl`) → 테스트·네트워크·공동 편집에 그대로 사용.
   - Field 위젯의 `onCommit`을 `set` 명령으로 연결. Ctrl+Z/Y가 전역 Undo(필드 내부 Undo는 편집 중에만).
   - 완료 조건: Inspector에서 값 변경 → Ctrl+Z로 되돌아감 → Ctrl+Y로 다시. 명령 로그를 재생하면 같은 결과(자동 테스트).
+- [ ] **1-3b. Undo 기록 패널** — 명령 기록 목록, 클릭으로 그 시점 이동, AI·스크립트·사람 편집 구분, AI 묶음 접기 [convenience-features](planning/convenience-features.md)
 - [ ] **1-4. 핸들 기반 오브젝트 수명**
   - 구현: `Handle<T>{index:24, generation:8}` 또는 64비트(`index32 + gen32`). 오브젝트 풀은 세대 번호 비교로 `IsValid()`. 파괴된 대상 접근은 언어와 무관하게 같은 오류 메시지.
   - **안정 ID**: 씬 파일·명령·네트워크용으로 핸들과 별개인 영구 ID(문자열 `"g1"` 또는 64비트 UUID)를 둔다. 핸들은 실행 중 전용.
   - 완료 조건: 생성·파괴·재사용 시 이전 핸들이 무효가 되는 단위 테스트.
+- [ ] **1-4b. 크래시 보고** — crashpad(Apache-2.0)로 튕길 때 `BugReports/`에 덤프·로그 저장, 다음 실행 때 제보 제안 [convenience-features](planning/convenience-features.md)
 - [ ] **1-5. 단축키 시스템 + 프리셋**
   - 구현: `Engine/UI/Shortcuts.*`. 동작 이름 ↔ 키 조합 매핑 파일 `ProjectSettings/Shortcuts.jsonl`, 프리셋 `unity`(기본)·`unreal`. 첫 실행 때 선택 화면. 충돌 검사.
   - 완료 조건: 프리셋 전환 시 같은 동작(예: 이동 기즈모)이 다른 키로 실행.
@@ -169,7 +172,10 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
 - [ ] **2-3. 에셋 데이터베이스** — 파일 감시, `.meta`(GUID, 임포트 설정, 출처·라이선스), GUID ↔ 경로 표. 이름 바꾸기·이동해도 참조 유지.
 - [ ] **2-4. Hierarchy·Inspector 실제 동작** — Hierarchy는 씬 트리 표시·선택·드래그로 부모 변경·이름 바꾸기. Inspector는 리플렉션으로 필드 자동 생성(`[Edit]` 메타: Range는 슬라이더, ShowIf, Header, Button). 편집은 전부 명령.
+- [ ] **2-4b. 여러 오브젝트 동시 편집 + 컴포넌트 값 복사·붙여넣기·프리셋(`.preset`)** [convenience-features](planning/convenience-features.md)
 - [ ] **2-5. Project 패널** — 실제 폴더 목록, 파일 종류 아이콘(시안: `prototype/asset-icons.html`), 썸네일 캐시 `.cache/thumbnails/`. **C++ `.h`+`.cpp` 묶음 표시**(타일은 시안 완료, 목록 보기 중첩·짝 열기·함께 이름 바꾸기는 여기서) — [editor-ui](features/editor-ui.md#c-헤더소스-묶음-표시-2026-11-22)
+- [ ] **2-5b. 참조 찾기·안 쓰는 에셋 찾기·찾아 바꾸기** — `bdg refs`, `bdg unused`, 지우기 전 경고, 참조 일괄 교체, 일괄 이름 바꾸기 [convenience-features](planning/convenience-features.md)
+- [ ] **2-5c. 테마 편집기** — 토큰 색상 선택기, 실시간 반영, 프로젝트별 테마 [convenience-features](planning/convenience-features.md)
 - [ ] **2-6. 새 프로젝트 기본 3D 씬** — Main Camera, Sun, Sky, World Settings, Ground ([projects-and-templates](features/projects-and-templates.md)).
 - [ ] **2-7. CLI `bdg` 1차** — `bdg view/query/set/add/del/validate` 를 같은 명령 버스로 (에디터 없이 헤드리스 실행). AI가 쓰는 첫 경로.
 
@@ -179,9 +185,11 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))
 - [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
+- [ ] **3-3b. 스냅·정렬·측정** — 그리드·꼭짓점·표면 스냅, 정렬·간격 맞추기, 거리 측정 [convenience-features](planning/convenience-features.md)
 - [ ] **3-4. 조명·그림자** — 방향광 그림자 맵(CSM은 고사양), 점·스폿광, 하늘·환경광.
 - [ ] **3-5. 품질 단계 감자~중사양** — [rendering-and-platforms](architecture/rendering-and-platforms.md)의 표대로 설정 묶음, 프로젝트 최소·최대 단계.
 - [ ] **3-6. 플레이 모드** — 복사본 월드에서 실행, 정지 시 원래대로, "이 변경 유지" 선택 반영(명령으로).
+- [ ] **3-6b. 플레이 모드 도구** — 실행 중 테두리 색, 시간 배율, 한 프레임 진행 [convenience-features](planning/convenience-features.md)
 - [ ] **3-7. 편집 중 플랫폼 예산 표시** — Draw·삼각형·텍스처·라이트 막대.
 - [ ] **3-8. 렌더 기준 씬 + 디버그 도구** — `Tests/Scenes/RenderReference.scene`(재질 매트릭스·조명/그림자·투명·컬링·포스트·좌표·품질 비교 구역), Sponza, 카메라 북마크 1~9, 렌더 패스 뷰어(Albedo/Normal/Depth/Shadow 등), 와이어프레임·바운딩·LOD 오버레이, `bdg render passes/stats`
 - [ ] **3-9. 스트레스·이미지 비교** — 메시 1만 개 인스턴싱, 4K 텍스처 다수로 드로우콜·VRAM 측정, `bdg render compare`(북마크별 FLIP 오차·차이 이미지). 1.0에서 회귀 CI로
@@ -192,6 +200,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **4-2. `Behaviour` 기본 클래스 + 생명주기** — `Awake/Start/Update/FixedUpdate/LateUpdate/OnEnable/OnDisable/OnDestroy`, 프레임 순서는 [interop](architecture/interop.md).
 - [ ] **4-3. `[Edit]` 노출** — C# 리플렉션 → 엔진 리플렉션 등록 → Inspector 자동 표시 ([code-syntax](features/code-syntax.md) 속성 표).
 - [ ] **4-4. 핫 리로드** — 수집 가능한 AssemblyLoadContext, 상태 직렬화 후 재적용. 목표: 변경 → 반영 2초.
+- [ ] **4-4b. 디버그 그리기 API + 콘솔 개선** — `Debug.Draw*`(모든 언어), 오류 클릭 → 코드 줄·Graph 노드로 이동, 같은 메시지 묶기, 필터·검색 [convenience-features](planning/convenience-features.md)
 - [ ] **4-5. 디버깅** — DAP 연결 문서화 (VS Code / Rider).
 
 ## M5 — Graph·Lua·Python
@@ -209,6 +218,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **6-3. 오디오** — miniaudio, 3D 소리, 믹서.
 - [ ] **6-4. 입력 액션** — [input](features/input.md): `Input/Actions.jsonl`, 매핑 컨텍스트, 패드.
 - [ ] **6-5. MCP 서버 + AGENTS.md 자동 생성** — [agent-integration](features/agent-integration.md).
+- [ ] **6-6. 에디터 안 AI 패널** — 요청 → diff 미리 보기 → 승인 시 명령 버스로 적용, 콘솔 오류 "AI에게 설명", AI 끄기·사용 기록 [convenience-features](planning/convenience-features.md)
 
 ## M7 — 애니메이션·UI 디자이너·빌드
 
@@ -225,6 +235,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **Halo GI Tier 0** — 라이트맵 + 프로브 + 반사 프로브 ([global-illumination](features/global-illumination.md))
 - [ ] **패키지 시스템** — `bdgpkg.json`, `Packages/manifest.json`·`lock.json`, git 출처
 - [ ] **디자인 일치 검사 CI**, 성능 회귀 CI
+- [ ] **편의 도구 묶음** — git 상태 표시, 모바일 기기 미리보기, 녹화·캡처(필름크래프트 내보내기), `bdg doctor` 상태 점검 화면, 첫 실행 튜토리얼·"?" 문서 버튼 [convenience-features](planning/convenience-features.md)
 
 ## 1.0 이후 — 멀티플레이와 공동 편집 (로블록스 스튜디오식)
 

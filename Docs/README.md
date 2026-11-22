@@ -29,6 +29,7 @@ AI 에이전트와 사람이 같은 방식으로 다루는 범용 게임 엔진�
 - [위험과 약점 대응 (1.0 범위 확정)](planning/risk-response.md)
 - [유니티 + 언리얼 혼합 문제와 정답](planning/unity-unreal-merge.md)
 - [디자인 일치 검사 (HTML 시안 ↔ 엔진)](planning/design-parity-test.md)
+- [추가 편의 기능 (2026-11-23)](planning/convenience-features.md)
 - [대형 게임 트랙 (오픈월드·대형 FPS, 1.0 이후)](planning/large-game-track.md)
 
 ### architecture — 구조
