@@ -174,6 +174,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ## M3 — 3D 렌더링과 플레이 모드
 
+- [ ] **3-0. 렌더링 기준판 1단계** — 단색 평면 + 방향광 + MetalRoughSpheres + 좌표·색 기준판(축, 글자 판, 18% 회색, 컬러 체커)으로 좌표계·와인딩(CW/CCW)·sRGB↔Linear 감마를 먼저 확정. `bdg testassets fetch`(라이선스 기록, `.cache/testassets/`) ([graphics-test-scenes](features/graphics-test-scenes.md))
 - [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))
 - [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
@@ -181,6 +182,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **3-5. 품질 단계 감자~중사양** — [rendering-and-platforms](architecture/rendering-and-platforms.md)의 표대로 설정 묶음, 프로젝트 최소·최대 단계.
 - [ ] **3-6. 플레이 모드** — 복사본 월드에서 실행, 정지 시 원래대로, "이 변경 유지" 선택 반영(명령으로).
 - [ ] **3-7. 편집 중 플랫폼 예산 표시** — Draw·삼각형·텍스처·라이트 막대.
+- [ ] **3-8. 렌더 기준 씬 + 디버그 도구** — `Tests/Scenes/RenderReference.scene`(재질 매트릭스·조명/그림자·투명·컬링·포스트·좌표·품질 비교 구역), Sponza, 카메라 북마크 1~9, 렌더 패스 뷰어(Albedo/Normal/Depth/Shadow 등), 와이어프레임·바운딩·LOD 오버레이, `bdg render passes/stats`
+- [ ] **3-9. 스트레스·이미지 비교** — 메시 1만 개 인스턴싱, 4K 텍스처 다수로 드로우콜·VRAM 측정, `bdg render compare`(북마크별 FLIP 오차·차이 이미지). 1.0에서 회귀 CI로
 
 ## M4 — C# 스크립팅
 

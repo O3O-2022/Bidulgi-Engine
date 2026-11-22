@@ -50,6 +50,7 @@ AI 에이전트와 사람이 같은 방식으로 다루는 범용 게임 엔진�
 - [비주얼 스크립팅 (그래프)](features/visual-scripting.md)
 - [전역 조명 (Halo GI)](features/global-illumination.md)
 - [머티리얼과 텍스처 (언리얼식)](features/materials-and-textures.md)
+- [그래픽 테스트 씬 (렌더링 기준점)](features/graphics-test-scenes.md)
 - [AI 에이전트 연동](features/agent-integration.md)
 - [입력 (입력 액션)](features/input.md)
 - [언어별 코드 문법 예제](features/code-syntax.md)

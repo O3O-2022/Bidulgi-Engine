@@ -58,6 +58,7 @@
 | 2026-11-22 | 코드·로그용 글꼴은 Consolas(시스템 글꼴, 배포 안 함; 없으면 Courier). 배포용은 JetBrains Mono(OFL)로 교체 예정 | [QUEUE](../QUEUE.md) |
 | 2026-11-22 | 머티리얼·텍스처는 언리얼식: 마스터 머티리얼(노드 그래프) → 머티리얼 인스턴스(파라미터만, 컴파일 없음), 텍스처 용도별 프리셋·텍스처 그룹. 셰이더 캐시·순열 제한·텍스트 저장으로 언리얼의 불편함 해결 | [materials-and-textures](../features/materials-and-textures.md) |
 | 2026-11-22 | 엔진 이름 **비둘기 엔진 (Bidulgi Engine)으로 최종 확정**. U로 시작하는 새 이름 검토는 종료. CLI `bdg`, C++ 접두어 `B`, Python 모듈 `bidulgi` 유지 | 사용자 결정 |
+| 2026-11-22 | 그래픽 테스트는 화려한 씬 대신 기준점 씬: 검증된 공개 에셋(glTF Sample Assets, Sponza 등, 저장소에 넣지 않고 받아 씀), 목적별 구역, 카메라 북마크, 렌더 패스 뷰어, 이미지 비교. M3 시작 시 좌표계·와인딩·감마부터 확정 | [graphics-test-scenes](../features/graphics-test-scenes.md) |
 
 ## 미결 사항
 
