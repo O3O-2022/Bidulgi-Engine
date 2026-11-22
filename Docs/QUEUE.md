@@ -168,7 +168,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
 - [ ] **2-3. 에셋 데이터베이스** — 파일 감시, `.meta`(GUID, 임포트 설정, 출처·라이선스), GUID ↔ 경로 표. 이름 바꾸기·이동해도 참조 유지.
 - [ ] **2-4. Hierarchy·Inspector 실제 동작** — Hierarchy는 씬 트리 표시·선택·드래그로 부모 변경·이름 바꾸기. Inspector는 리플렉션으로 필드 자동 생성(`[Edit]` 메타: Range는 슬라이더, ShowIf, Header, Button). 편집은 전부 명령.
-- [ ] **2-5. Project 패널** — 실제 폴더 목록, 파일 종류 아이콘(시안: `prototype/asset-icons.html`), 썸네일 캐시 `.cache/thumbnails/`.
+- [ ] **2-5. Project 패널** — 실제 폴더 목록, 파일 종류 아이콘(시안: `prototype/asset-icons.html`), 썸네일 캐시 `.cache/thumbnails/`. **C++ `.h`+`.cpp` 묶음 표시**(타일은 시안 완료, 목록 보기 중첩·짝 열기·함께 이름 바꾸기는 여기서) — [editor-ui](features/editor-ui.md#c-헤더소스-묶음-표시-2026-11-22)
 - [ ] **2-6. 새 프로젝트 기본 3D 씬** — Main Camera, Sun, Sky, World Settings, Ground ([projects-and-templates](features/projects-and-templates.md)).
 - [ ] **2-7. CLI `bdg` 1차** — `bdg view/query/set/add/del/validate` 를 같은 명령 버스로 (에디터 없이 헤드리스 실행). AI가 쓰는 첫 경로.
 

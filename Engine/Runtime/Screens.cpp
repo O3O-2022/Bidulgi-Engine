@@ -128,7 +128,7 @@ void DrawFileIcon(UIContext& ui, float x, float y, float s, const std::string& n
   Batch2D& b = ui.Batch();
   std::string ext = name.substr(name.find_last_of('.') == std::string::npos ? name.size() : name.find_last_of('.') + 1);
   struct Kind { const char* ext; const char* token; const char* tag; };
-  static const Kind code[] = {{"cpp", "lang-cpp", "C++"}, {"h", "lang-cpp", ".H"}, {"cs", "lang-cs", "C#"},
+  static const Kind code[] = {{"cpp", "lang-cpp", ".CPP"}, {"h", "lang-cpp", ".H"}, {"cs", "lang-cs", "C#"},
                               {"lua", "lang-lua", "LUA"}, {"py", "lang-py", "PY"}, {"graph", "lang-graph", "G"},
                               {"animgraph", "lang-anim", "AG"}};
   for (const Kind& k : code) {
@@ -166,17 +166,50 @@ void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
       if (i == 6) b.Rect(w.x, w.y + 6 + i * 20.f, tw, 20, t.C("selection"));
       ui.Text(w.x + 10, w.y + 9 + i * 20.f, body, i == 6 ? t.C("fg") : t.C("fg-dim"), tree[i]);
     }
-    const char* files[] = {"Characters", "Weapon.cpp", "Weapon.h", "PlayerMove.cs", "quest.lua", "level_tools.py", "Door.graph",
-                           "AG_Knight.animgraph", "Knight.prefab", "M_Gold.mat", "forest.scene", "hit.wav", "Rock_A.glb"};
+    // C++ header + source with the same name are shown as ONE linked "C++ class" tile (like Rider / Visual Studio).
+    std::vector<std::string> files = {"Characters", "Weapon.cpp", "Weapon.h", "Health.h", "Health.cpp", "PlayerMove.cs",
+                                      "quest.lua", "level_tools.py", "Door.graph", "AG_Knight.animgraph", "Knight.prefab",
+                                      "M_Gold.mat", "forest.scene", "hit.wav", "Utils.h"};
+    auto stem = [](const std::string& f) { size_t d = f.find_last_of('.'); return d == std::string::npos ? f : f.substr(0, d); };
+    auto extOf = [](const std::string& f) { size_t d = f.find_last_of('.'); return d == std::string::npos ? std::string() : f.substr(d + 1); };
+    struct Entry { std::string name; bool pair; };
+    std::vector<Entry> entries;
+    for (const std::string& f : files) {
+      std::string e = extOf(f);
+      if (e == "h" || e == "cpp") {
+        std::string other = stem(f) + (e == "h" ? ".cpp" : ".h");
+        bool hasOther = std::find(files.begin(), files.end(), other) != files.end();
+        if (hasOther) {
+          bool seen = false;
+          for (auto& en : entries) seen |= en.pair && en.name == stem(f);
+          if (!seen) entries.push_back({stem(f), true});
+          continue;
+        }
+      }
+      entries.push_back({f, false});
+    }
     float x = w.x + tw + 14, y = w.y + 10, s = 64;
-    for (const char* f : files) {
-      if (x + s > w.x + w.w) { x = w.x + tw + 14; y += s + 28; }
+    for (const Entry& en : entries) {
+      float tileW = en.pair ? s * 2 + 10 : s;
+      if (x + tileW > w.x + w.w) { x = w.x + tw + 14; y += s + 28; }
       if (y + s > w.y + w.h) break;
-      DrawFileIcon(ui, x, y, s, f);
-      std::string label = f;
-      while (ui.Measure(cap, label) > s + 14 && label.size() > 4) label = label.substr(0, label.size() - 4) + "…";
-      ui.Text(x + s * 0.5f - ui.Measure(cap, label) * 0.5f, y + s + 4, cap, t.C("fg-dim"), label);
-      x += s + 22;
+      std::string label = en.name;
+      if (en.pair) {
+        Color cpp = t.C("lang-cpp"), soft = cpp;
+        soft.a = 0.12f;
+        b.Rect(x - 4, y - 2, tileW + 8, s + 4, soft, 8, 1, Alpha(cpp, 0.55f));     // shared frame = one class
+        DrawFileIcon(ui, x, y, s, en.name + ".h");
+        DrawFileIcon(ui, x + s + 10, y, s, en.name + ".cpp");
+        float ly = y + s * 0.42f;                                               // link between the two files
+        b.Line(x + s * 0.82f, ly, x + s + 10 + s * 0.18f, ly, 2, cpp);
+        b.Rect(x + s + 5 - 4, ly - 4, 8, 8, cpp, 4);
+        label = en.name + "  · C++ class";
+      } else {
+        DrawFileIcon(ui, x, y, s, en.name);
+      }
+      while (ui.Measure(cap, label) > tileW + 14 && label.size() > 4) label = label.substr(0, label.size() - 4) + "…";
+      ui.Text(x + tileW * 0.5f - ui.Measure(cap, label) * 0.5f, y + s + 4, cap, en.pair ? t.C("fg") : t.C("fg-dim"), label);
+      x += tileW + 22;
     }
   } else if (tab == 1 || tab == 2) { // Console / Build Log
     struct Line { const char* lvl; const char* text; };
