@@ -211,6 +211,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M5 — Graph·Lua·Python
 
 - [ ] **5-1. Graph 텍스트 형식 + VM** — [visual-scripting](features/visual-scripting.md), JSONL 저장, 식 노드(`"in":{"y":"speed*dt"}`).
+- [ ] **5-1b. 열다가 튕기지 않는 Graph** — 불러오기 전 구조 검사(깨진 노드는 빨갛게 표시하고 나머지는 열기), VM 명령 수·호출 깊이·메모리 제한, `bdg validate --fix`, 에셋을 열다 크래시 나면 다음 실행에서 그 에셋 격리(안전 모드). 완료 조건: 무한 루프·재귀·순환 참조·깨진 연결 그래프를 열어도 에디터가 살아 있음 [pain-points](planning/pain-points.md)
 - [ ] **5-2b. 머티리얼 그래프 에디터** — 그래프 에디터 공통 화면 재사용, 출력 노드·파라미터 노드·미리보기, 셰이더 캐시, 순열 수 표시
 - [ ] **5-2. 그래프 에디터** — 노드 그래프 위젯(줌·팬·박스 선택·와이어·미니맵), 목표: 노드 5천 개 60fps.
 - [ ] **5-3. Lua(Luau)** — 샌드박스, `Behaviour{}` 선언, 핫 리로드, 타입 정의 자동 생성.
@@ -234,6 +235,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **7-2. 타임라인 (블렌더식)** — 키프레임·커브 편집.
 - [ ] **7-3. UI 위젯 디자이너** — 런타임 게임 UI(월드·카메라 공간) ([ui-widgets](features/ui-widgets.md)).
 - [ ] **7-3b. 실행 중 상태 디버거·메모리 프로파일러** [convenience-features](planning/convenience-features.md)
+- [ ] **7-4b. 빌드 실패를 설명하는 빌드** — `bdg build --check` 사전 검사, 단계·에셋·원인·고치는 법을 한 줄로, 오류를 끝까지 모아 한 번에 표시. 완료 조건: 일부러 깨뜨린 에셋 10종이 모두 원인과 함께 보고됨 [pain-points](planning/pain-points.md)
 - [ ] **7-4. 빌드·패키징** — `bdg build`, 쿠킹, `.bpak`, `build-report.txt` ([libraries-and-packaging](architecture/libraries-and-packaging.md)).
 
 ## 1.0 준비
