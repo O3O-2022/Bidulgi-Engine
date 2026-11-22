@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="branding/icon-d-tile.svg" width="96" alt="Bidulgi Engine icon">
+<img src="docs-media/banner.png" width="100%" alt="Bidulgi Engine banner">
 
 # Bidulgi Engine (비둘기 엔진)
 
@@ -12,7 +12,9 @@
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-4b8ee6.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android%20%7C%20Web%20(planned)-72c04e.svg)
 
-<img src="docs-media/editor.png" width="900" alt="Bidulgi Editor (M0)">
+<img src="docs-media/bidulgi-intro.gif" width="900" alt="Bidulgi Editor (M0) — editor, gallery, Korean IME, live tokens, 10k rects">
+
+🎬 [소개 영상 (MP4, 24초)](docs-media/bidulgi-intro.mp4)
 
 </div>
 
@@ -33,7 +35,11 @@
 
 ## 지금 동작하는 것 (M0)
 
-<img src="docs-media/gallery.png" width="760" alt="Design system component gallery">
+| 에디터 | 부품 갤러리 + 한글 입력 |
+|---|---|
+| <img src="docs-media/shots/editor.png" alt="Editor"> | <img src="docs-media/shots/ime.png" alt="Gallery with Korean IME"> |
+| **토큰 실시간 반영** (강조색 변경) | **사각형 1만 개 = 드로우콜 1번** |
+| <img src="docs-media/shots/theme.png" alt="Live design tokens"> | <img src="docs-media/shots/stress.png" alt="10k rect stress test"> |
 
 - SDL3 창 + OpenGL 4.5(DSA) RHI, GL 디버그 출력
 - 2D 일괄 렌더러: SDF 둥근 사각형·테두리·선·글자를 **드로우콜 1번**에
@@ -100,3 +106,5 @@ cmake --build build --config Release --target BidulgiEditor
 
 [MIT](LICENSE) © Bidulgi Engine contributors. 외부 라이브러리(SDL3, FreeType, yyjson, glad)의 라이선스는 각 프로젝트를 따릅니다.
 엔진 이름은 아직 가칭입니다.
+
+<sub>README 미디어는 PhotoCraft(배너)와 FilmCraft(영상, [filmcraft-gpu](https://github.com/O3O-2022/filmcraft-gpu)로 GPU 내보내기)로 만들었습니다. 다시 만들기: `python tools/media/make_media.py`</sub>
