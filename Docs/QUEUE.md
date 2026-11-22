@@ -174,7 +174,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ## M3 — 3D 렌더링과 플레이 모드
 
-- [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 머티리얼(텍스처: stb_image).
+- [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))
 - [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
 - [ ] **3-4. 조명·그림자** — 방향광 그림자 맵(CSM은 고사양), 점·스폿광, 하늘·환경광.
@@ -193,6 +193,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M5 — Graph·Lua·Python
 
 - [ ] **5-1. Graph 텍스트 형식 + VM** — [visual-scripting](features/visual-scripting.md), JSONL 저장, 식 노드(`"in":{"y":"speed*dt"}`).
+- [ ] **5-2b. 머티리얼 그래프 에디터** — 그래프 에디터 공통 화면 재사용, 출력 노드·파라미터 노드·미리보기, 셰이더 캐시, 순열 수 표시
 - [ ] **5-2. 그래프 에디터** — 노드 그래프 위젯(줌·팬·박스 선택·와이어·미니맵), 목표: 노드 5천 개 60fps.
 - [ ] **5-3. Lua(Luau)** — 샌드박스, `Behaviour{}` 선언, 핫 리로드, 타입 정의 자동 생성.
 - [ ] **5-4. Python 에디터 도구** — CPython 임베드, `@bdg.menu`, `@bdg.validator`, `bdg.undo()`가 명령 버스와 연결.
