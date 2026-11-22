@@ -7,7 +7,8 @@
 **AI 친화적인 텍스트 기반 범용 게임 엔진**
 겉은 유니티처럼 쉽게, 속은 언리얼처럼 단단하게, 도구는 블렌더처럼.
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-e9a23b.svg)](LICENSE)
+[![CI](https://github.com/O3O-2022/Bidulgi-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/O3O-2022/Bidulgi-Engine/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-f59e32.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/status-pre--alpha%20(M0)-5f6670.svg)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-4b8ee6.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android%20%7C%20Web%20(planned)-72c04e.svg)

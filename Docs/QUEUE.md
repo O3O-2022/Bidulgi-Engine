@@ -23,7 +23,7 @@ cmake --build build --config Release --target BidulgiEditor
 # 실행: 빌드가 끝나면 Bin/BidulgiEditor.exe로 자동 복사됨
 .\Bin\BidulgiEditor.exe
 ```
-- 경고 0개를 유지합니다 (`/W4`). 외부 라이브러리 경고는 해당 타깃에서만 끕니다.
+- 경고 0개를 유지합니다 (`/W4`). 외부 라이브러리 경고는 해당 타깃에서만 끕니다. **CI(`.github/workflows/ci.yml`)가 매 푸시·PR마다 빌드와 자동 테스트를 돌립니다** — 새 자동 테스트를 만들면 CI의 Smoke tests 단계에도 추가하세요.
 - glad 로더를 다시 만들 때: `python -m pip install --user glad2` 후 `ThirdParty/glad/README.md`의 명령.
 
 ### 검증 방법 (자동 테스트용 환경 변수)
@@ -95,6 +95,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-9 에디터 화면 | 위젯으로 만든 고정 레이아웃 에디터 | `79f9292` |
 | 0-11 성능 기준 | 시작 585ms, 프레임 1.46ms (Release, RTX 5070 Ti) | `fb35682` |
 | 고해상도 | Windows 화면 배율 자동 적용 | `2cc724f` |
+| 엔진 CI | GitHub Actions: Windows Debug·Release 빌드, 엔진 코드 경고 0개 검사, Mesa 소프트웨어 GL 4.5로 자동 테스트 4종(에디터 화면·UI/한글 입력·1만 개 배칭·버그 제보), 스크린샷·로그 아티팩트. README에 배지 | (이 커밋) |
 | 버그 제보 | GitHub 이슈 양식(버그·기능 제안) + 에디터 F12·버튼: 스크린샷·로그·시스템 정보 폴더 + 미리 채운 이슈 양식 | (이 커밋) |
 | 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
 
