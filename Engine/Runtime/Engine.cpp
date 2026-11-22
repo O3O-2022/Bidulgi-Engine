@@ -9,8 +9,15 @@
 #include "Text/Font.h"
 #include "UI/Theme.h"
 #include "UI/UI.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <format>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <psapi.h>
+#undef DrawText // windows.h macro would rename bdg::Font::DrawText in this file
 #include <filesystem>
 #include <new>
 
@@ -52,7 +59,7 @@ struct bdg_engine {
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bool showGallery = false, selfTest = false, stress = false, hasFont = false;
-  std::chrono::steady_clock::time_point createdAt;
+  std::chrono::steady_clock::time_point createdAt, lastFrame, fpsWindow;
   int clicks = 0;
   int32_t maxFrames = 0;
 };
@@ -95,7 +102,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
   auto* e = new (std::nothrow) bdg_engine();
   if (!e) return BDG_ERR_PLATFORM;
-  e->createdAt = std::chrono::steady_clock::now();
+  e->createdAt = e->lastFrame = e->fpsWindow = std::chrono::steady_clock::now();
   e->maxFrames = desc->max_frames;
   e->stress = std::getenv("BDG_BATCH_STRESS") != nullptr;
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
@@ -107,7 +114,11 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   if (!e->batch.Init(e->rhi)) { e->rhi.Shutdown(); e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
   std::string fontPath = FindFont();
   e->hasFont = !fontPath.empty() && e->font.Load(e->rhi, fontPath.c_str());
-  if (e->hasFont) e->batch.SetTextAtlas(e->font.Atlas());
+  if (e->hasFont) {
+    e->batch.SetTextAtlas(e->font.Atlas());
+    for (const char* mono : {"C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/cour.ttf"}) // code font (system, not redistributed)
+      if (std::filesystem::exists(mono) && e->font.LoadMono(mono)) break;
+  }
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
   std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
   if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
@@ -116,6 +127,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->editor = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->editor->SetRoot(bdg::BuildEditorScreen());
   e->editor->SetWindow(&e->window);
+  if (const char* tab = std::getenv("BDG_DOCK_TAB")) // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
+    if (bdg::Widget* dock = e->editor->Find("panel.bottom")) dock->selectedIndex = std::atoi(tab);
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
@@ -178,6 +191,21 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
     }
     e->window.Present();
+    { // live status bar + profiler feed
+      auto now = std::chrono::steady_clock::now();
+      float ms = std::chrono::duration<float, std::milli>(now - e->lastFrame).count();
+      e->lastFrame = now;
+      if (frames > 1) bdg::PushFrameTime(ms);
+      if (frames % 30 == 0) {
+        float sec = std::chrono::duration<float>(now - e->fpsWindow).count();
+        e->fpsWindow = now;
+        PROCESS_MEMORY_COUNTERS pmc{};
+        GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
+        if (bdg::Widget* perf = e->editor->Find("status.perf"))
+          perf->text = std::format("{:.0f} fps  ·  {:.2f} ms  ·  RAM {:.0f} MB", 30.f / std::max(sec, 1e-4f), sec * 1000.f / 30.f,
+                                   pmc.WorkingSetSize / (1024.0 * 1024.0));
+      }
+    }
     if (frames == 1) { // startup = engine create -> first frame on screen (target: < 1000 ms)
       double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - e->createdAt).count();
       bdg::LogInfo("perf: startup_to_first_frame_ms={:.0f} (target < 1000)", ms);

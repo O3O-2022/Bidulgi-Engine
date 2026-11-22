@@ -95,6 +95,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-9 에디터 화면 | 위젯으로 만든 고정 레이아웃 에디터 | `79f9292` |
 | 0-11 성능 기준 | 시작 585ms, 프레임 1.46ms (Release, RTX 5070 Ti) | `fb35682` |
 | 고해상도 | Windows 화면 배율 자동 적용 | `2cc724f` |
+| 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
 
 ---
 
@@ -108,6 +109,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
     4. 토큰 비교: 엔진에 `--dump-tokens 경로` 추가 (Theme의 모든 값을 JSON으로) → `tokens.json`과 값 비교.
     5. 보고서는 텍스트: `tokens ✓ 64/64`, `layout max error 0.6px` 형식. 기준 초과 시 종료 코드 1.
   - 완료 조건: 부품 8개에 대해 토큰 전부 일치, 레이아웃 오차 1px 이하 보고서가 나옴.
+- [ ] **0-13. 대기 중 다시 그리기 멈추기 (최우선 최적화)** — 지금 수직 동기화가 안 걸려 대기 중에도 초당 수천 프레임을 그림(상태 줄 4000+ fps). `SDL_GL_SetSwapInterval` 결과 확인(실패 시 적응형 -1 → 1 → 프레임 제한), 입력·애니메이션·파일 변경이 없으면 `SDL_WaitEventTimeout`으로 잠들기. 완료 조건: 대기 중 CPU·GPU 사용률이 거의 0, 입력 반응 지연 없음
 - [ ] **0-12. M0 마무리 손질**
   - Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) 추가 → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. (파일 내려받기는 사용자 허락 후)
   - Inspector 컴포넌트 헤더(`ComponentHeader`)에 `raise` 배경 + 위쪽 `line` 1px (`bundle.css`의 `.bdg-comp-head`).

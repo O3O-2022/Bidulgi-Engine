@@ -4,6 +4,8 @@
 
 namespace bdg {
 bool Window::Create(const char* title, int32_t w, int32_t h) {
+  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");       // window/taskbar icon from the exe resource
+  SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { LogError("SDL_Init failed: {}", SDL_GetError()); return false; }
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);

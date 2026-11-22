@@ -57,11 +57,12 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype yyjson OpenGL::GL)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
-add_executable(BidulgiEditor Editor/main.cpp)
+configure_file(Editor/app.rc.in ${CMAKE_BINARY_DIR}/app.rc @ONLY)
+add_executable(BidulgiEditor Editor/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
 target_link_libraries(BidulgiEditor PRIVATE BidulgiEngine)
 
 if(MSVC)

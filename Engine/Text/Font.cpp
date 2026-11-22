@@ -47,7 +47,18 @@ bool Font::Load(RHI& rhi, const char* path, int basePixelSize) {
   return true;
 }
 
+bool Font::LoadMono(const char* path) {
+  FT_Face face = nullptr;
+  if (!library_ || FT_New_Face((FT_Library)library_, path, 0, &face)) { LogWarn("mono font load failed: {}", path); return false; }
+  FT_Set_Pixel_Sizes(face, 0, (FT_UInt)basePx_);
+  monoFace_ = face;
+  LogInfo("font (mono): {} ({})", path, face->family_name ? face->family_name : "?");
+  return true;
+}
+
 void Font::Shutdown() {
+  if (monoFace_) FT_Done_Face((FT_Face)monoFace_);
+  monoFace_ = nullptr;
   if (face_) FT_Done_Face((FT_Face)face_);
   if (library_) FT_Done_FreeType((FT_Library)library_);
   if (rhi_) rhi_->DestroyTexture(atlas_);
@@ -56,11 +67,14 @@ void Font::Shutdown() {
   glyphs_.clear();
 }
 
-const Font::Glyph& Font::Get(uint32_t cp) {
-  auto it = glyphs_.find(cp);
+const Font::Glyph& Font::Get(uint32_t cp, bool mono) {
+  FT_Face face = (FT_Face)face_;
+  if (mono && monoFace_ && FT_Get_Char_Index((FT_Face)monoFace_, cp)) face = (FT_Face)monoFace_;
+  else mono = false;
+  uint32_t key = cp | (mono ? 0x80000000u : 0u);
+  auto it = glyphs_.find(key);
   if (it != glyphs_.end()) return it->second;
   Glyph g;
-  FT_Face face = (FT_Face)face_;
   if (face && !FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) {
     g.advance = face->glyph->advance.x / 64.f;
     if (face->glyph->outline.n_points > 0 && !FT_Render_Glyph(face->glyph, FT_RENDER_MODE_SDF)) {
@@ -85,13 +99,13 @@ const Font::Glyph& Font::Get(uint32_t cp) {
       }
     }
   }
-  return glyphs_.emplace(cp, g).first->second;
+  return glyphs_.emplace(key, g).first->second;
 }
 
-float Font::DrawText(Batch2D& batch, float x, float y, float sizePx, Color color, std::string_view s) {
+float Font::DrawText(Batch2D& batch, float x, float y, float sizePx, Color color, std::string_view s, bool mono) {
   float scale = sizePx / (float)basePx_, pen = x, baseline = y + ascender_ * scale;
   for (size_t i = 0; i < s.size();) {
-    const Glyph& g = Get(NextCodepoint(s, i));
+    const Glyph& g = Get(NextCodepoint(s, i), mono);
     if (g.w > 0)
       batch.Glyph(pen + g.left * scale, baseline - g.top * scale, g.w * scale, g.h * scale,
                   g.u0, g.v0, g.u1, g.v1, color);
@@ -100,9 +114,9 @@ float Font::DrawText(Batch2D& batch, float x, float y, float sizePx, Color color
   return pen - x;
 }
 
-float Font::Measure(float sizePx, std::string_view s) {
+float Font::Measure(float sizePx, std::string_view s, bool mono) {
   float scale = sizePx / (float)basePx_, w = 0;
-  for (size_t i = 0; i < s.size();) w += Get(NextCodepoint(s, i)).advance * scale;
+  for (size_t i = 0; i < s.size();) w += Get(NextCodepoint(s, i), mono).advance * scale;
   return w;
 }
 }

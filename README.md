@@ -40,6 +40,8 @@
 | <img src="docs-media/shots/editor.png" alt="Editor"> | <img src="docs-media/shots/ime.png" alt="Gallery with Korean IME"> |
 | **토큰 실시간 반영** (강조색 변경) | **사각형 1만 개 = 드로우콜 1번** |
 | <img src="docs-media/shots/theme.png" alt="Live design tokens"> | <img src="docs-media/shots/stress.png" alt="10k rect stress test"> |
+| **하단 도크: Console (Consolas)** | **브랜드 로고** |
+| <img src="docs-media/shots/console.png" alt="Console tab"> | <img src="branding/bidulgi-logo-256.png" width="200" alt="Bidulgi Engine logo"> |
 
 - SDL3 창 + OpenGL 4.5(DSA) RHI, GL 디버그 출력
 - 2D 일괄 렌더러: SDF 둥근 사각형·테두리·선·글자를 **드로우콜 1번**에
@@ -48,6 +50,10 @@
 - 자체 UI 프레임워크: 유지형 위젯 트리, 플렉스 레이아웃, 포커스, 디자인 시스템 부품 8개
 - 텍스트 입력: 커서·선택·클립보드·Undo·**한글 IME**
 - 고해상도 화면 배율 자동 적용
+- **Obsidian Dark** 테마 + 브랜드 색 **Bidulgi Amber `#F59E32`** (로고의 부리 색)
+- Inspector 컴포넌트 카드 (접기/펼치기, 언어 배지 C#·C++·Lua), Hierarchy 오브젝트 타입 아이콘
+- 하단 도크: Project(파일 타입 아이콘) · Console · Build Log · Profiler(실제 프레임 시간), 코드 글꼴 Consolas
+- 상태 줄: 빌드 상태, 실시간 FPS·프레임 시간·메모리
 - 기준 성능: 실행부터 첫 화면까지 **585ms**, 에디터 프레임 **1.46ms** (Release, RTX 5070 Ti 노트북)
 
 ## 코드 모양 (계획)

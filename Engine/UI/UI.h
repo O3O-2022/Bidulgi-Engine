@@ -14,7 +14,7 @@ class Theme;
 // ---- Retained widget tree ------------------------------------------------------------------
 // Widgets persist between frames; only layout/draw run each frame. Components follow the
 // design system (design-system/project/components) and read every size and color from tokens.
-enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom };
+enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom, Card };
 class UIContext;
 enum class Axis { Row, Column };
 enum class Align { Start, Center, End, Stretch };
@@ -36,6 +36,7 @@ struct Widget {
   float fontSize = 0;                 // Label: 0 = body style
   std::function<void(Widget&, UIContext&)> onDraw; // Custom: draws inside its rect (viewports, previews)
   bool primary = false, selected = false, focusable = false;
+  bool collapsed = false;             // Card: body hidden, header still shown
 
   Axis axis = Axis::Column;
   Align crossAlign = Align::Stretch;
@@ -75,6 +76,8 @@ std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string 
 std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle);
 std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> tabs, int selected = 0);
 std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw);
+// Collapsible component card (Inspector). badge: language tag such as "C#", "C++", "Lua"; empty = built-in.
+std::unique_ptr<Widget> MakeCard(std::string id, std::string title, std::string badge = {});
 
 // ---- Context: layout, drawing, input, focus ----------------------------------------------
 class UIContext {
@@ -96,8 +99,8 @@ public:
   // For Custom widgets.
   Batch2D& Batch() { return batch_; }
   const Theme& Tokens() const { return theme_; }
-  float Text(float x, float y, float size, Color c, const std::string& s);
-  float Measure(float size, const std::string& s) const;
+  float Text(float x, float y, float size, Color c, const std::string& s, bool mono = false);
+  float Measure(float size, const std::string& s, bool mono = false) const;
 
 private:
   void Measure(Widget& w);

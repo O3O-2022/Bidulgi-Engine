@@ -16,7 +16,7 @@ std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text
   return w;
 }
 const char* KindName(WidgetKind k) {
-  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom"};
+  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom", "Card"};
   return names[(int)k];
 }
 Color Alpha(Color c, float a) { c.a = a; return c; }
@@ -47,13 +47,16 @@ std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> t
   auto w = Make(WidgetKind::Panel, std::move(id), tabs.empty() ? std::string() : tabs[selected]);
   w->items = std::move(tabs); w->selectedIndex = selected; return w;
 }
+std::unique_ptr<Widget> MakeCard(std::string id, std::string title, std::string badge) {
+  auto w = Make(WidgetKind::Card, std::move(id), std::move(title)); w->text2 = std::move(badge); w->gap = 1; return w;
+}
 std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw) {
   auto w = Make(WidgetKind::Custom, std::move(id)); w->onDraw = std::move(draw); return w;
 }
 
 // ---- Helpers -------------------------------------------------------------------------------
-float UIContext::Text(float x, float y, float size, Color c, const std::string& s) { return font_ ? font_->DrawText(batch_, x, y, size, c, s) : 0.f; }
-float UIContext::Measure(float size, const std::string& s) const { return font_ ? font_->Measure(size, s) : s.size() * size * 0.55f; }
+float UIContext::Text(float x, float y, float size, Color c, const std::string& s, bool mono) { return font_ ? font_->DrawText(batch_, x, y, size, c, s, mono) : 0.f; }
+float UIContext::Measure(float size, const std::string& s, bool mono) const { return font_ ? font_->Measure(size, s, mono) : s.size() * size * 0.55f; }
 
 Widget* UIContext::Find(const std::string& id) {
   std::vector<Widget*> stack{root_.get()};
@@ -110,7 +113,12 @@ void UIContext::Measure(Widget& w) {
     }
     case WidgetKind::Cover: w.prefW = 320; w.prefH = 112; break;
     case WidgetKind::Box:
+    case WidgetKind::Card:
     case WidgetKind::Panel: {
+      if (w.kind == WidgetKind::Card) {
+        w.axis = Axis::Column; w.padT = 30; w.padB = w.collapsed ? 0.f : 6.f; w.padL = w.padR = 4.f;
+        if (w.collapsed) { w.prefW = 200; w.prefH = 30; break; }
+      }
       if (w.kind == WidgetKind::Panel) { // header + body padding come from tokens
         w.padT = t.N("size-panel-header", 30) + t.N("space-2", 4);
         w.padB = t.N("space-2", 4);
@@ -139,7 +147,7 @@ void UIContext::Measure(Widget& w) {
 
 void UIContext::Arrange(Widget& w, float x, float y, float width, float height) {
   w.x = x; w.y = y; w.w = width; w.h = height;
-  if (w.children.empty()) return;
+  if (w.children.empty() || w.collapsed) return;
   bool row = w.axis == Axis::Row;
   float cx = x + w.padL, cy = y + w.padT;
   float cw = std::max(0.f, width - w.padL - w.padR), ch = std::max(0.f, height - w.padT - w.padB);
@@ -187,6 +195,26 @@ void UIContext::DrawWidget(Widget& w) {
       break;
     }
     case WidgetKind::Custom: if (w.onDraw) w.onDraw(w, *this); break;
+    case WidgetKind::Card: {
+      float fs = t.FontSize("control", 12.5f);
+      b.Rect(w.x + 4, w.y + 2, w.w - 8, w.h - 4, t.C("panel"), t.N("radius-lg", 5), 1, t.C("line-strong"));
+      b.Rect(w.x + 5, w.y + 3, w.w - 10, 26, w.hovered ? t.C("line-strong") : t.C("raise"), t.N("radius-lg", 5));
+      float cx = w.x + 16, cy = w.y + 16;
+      if (w.collapsed) { b.Line(cx - 2, cy - 4, cx + 2, cy, 1.5f, t.C("fg-dim")); b.Line(cx + 2, cy, cx - 2, cy + 4, 1.5f, t.C("fg-dim")); }
+      else { b.Line(cx - 4, cy - 2, cx, cy + 2, 1.5f, t.C("fg-dim")); b.Line(cx, cy + 2, cx + 4, cy - 2, 1.5f, t.C("fg-dim")); }
+      b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
+      Text(w.x + 44, w.y + (32 - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
+      if (!w.text2.empty()) {
+        std::string key = w.text2 == "C#" ? "lang-cs" : w.text2 == "C++" ? "lang-cpp" : w.text2 == "Lua" ? "lang-lua"
+                        : w.text2 == "Python" ? "lang-py" : "lang-graph";
+        float bw = Measure(10, w.text2) + 12, bx = w.x + w.w - 14 - bw;
+        Color c = t.C(key), soft = c;
+        soft.a = 0.16f;
+        b.Rect(bx, w.y + 8, bw, 16, soft, 8, 1, c);
+        Text(bx + 6, w.y + 10, 10, c, w.text2);
+      }
+      break;
+    }
     case WidgetKind::Panel: {
       float hh = t.N("size-panel-header", 30), fs = t.FontSize("label", 12);
       b.Rect(w.x, w.y, w.w, w.h, t.C("panel"), rsm, 1, t.C("line"));
@@ -266,9 +294,29 @@ void UIContext::DrawWidget(Widget& w) {
       if (w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("selection"));
       else if (w.hovered) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"));
       float kx = w.x + s5 + w.indent * 12.f;
-      b.Rect(kx, w.y + (w.h - 11) * 0.5f, 11, 11, {0, 0, 0, 0}, 2, 1.5f, t.C("fg-dim"));
+      float ky = w.y + (w.h - 11) * 0.5f;
+      Color dim = t.C("fg-dim");
+      if (w.text2 == "Camera") {
+        b.Rect(kx, ky + 2, 8, 7, {0, 0, 0, 0}, 1.5f, 1.5f, dim);
+        b.Line(kx + 8, ky + 5.5f, kx + 11, ky + 3, 1.5f, dim); b.Line(kx + 8, ky + 5.5f, kx + 11, ky + 8, 1.5f, dim);
+      } else if (w.text2 == "Light") {
+        b.Rect(kx + 1, ky + 1, 9, 9, {0, 0, 0, 0}, 4.5f, 1.5f, t.C("warn")); b.Rect(kx + 4, ky + 4, 3, 3, t.C("warn"), 1.5f);
+      } else if (w.text2 == "Prefab") {
+        Color pc = t.C("prefab"), soft = pc; soft.a = 0.3f; b.Rect(kx, ky, 11, 11, soft, 2, 1.5f, pc);
+      } else if (w.text2 == "Scene") {
+        Color a = t.C("accent");
+        b.Rect(kx, ky, 11, 11, {0, 0, 0, 0}, 2, 1.5f, a);
+        b.Line(kx + 2, ky + 8, kx + 5, ky + 4, 1.2f, a); b.Line(kx + 5, ky + 4, kx + 9, ky + 8, 1.2f, a);
+      } else if (w.text2 == "Mesh") {
+        const float P[6][2] = {{5.5f, 0}, {11, 3}, {11, 8}, {5.5f, 11}, {0, 8}, {0, 3}};
+        for (int i = 0; i < 6; ++i) b.Line(kx + P[i][0], ky + P[i][1], kx + P[(i + 1) % 6][0], ky + P[(i + 1) % 6][1], 1.3f, dim);
+        b.Line(kx, ky + 3, kx + 5.5f, ky + 6, 1.3f, dim); b.Line(kx + 11, ky + 3, kx + 5.5f, ky + 6, 1.3f, dim);
+        b.Line(kx + 5.5f, ky + 6, kx + 5.5f, ky + 11, 1.3f, dim);
+      } else {
+        b.Rect(kx, ky, 11, 11, {0, 0, 0, 0}, 2, 1.5f, dim);
+      }
       Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
-      if (!w.text2.empty()) Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, t.C("fg-faint"), w.text2);
+      if (!w.text2.empty() && w.text2 != "Mesh") Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, t.C("fg-faint"), w.text2);
       break;
     }
     case WidgetKind::Badge: {
@@ -314,7 +362,7 @@ void UIContext::DrawWidget(Widget& w) {
   }
   if (focused_ == &w && w.kind != WidgetKind::Field)
     b.Rect(w.x - 3, w.y - 3, w.w + 6, w.h + 6, {0, 0, 0, 0}, rmd + 3, 2, t.C("accent")); // focus-visible ring
-  for (auto& c : w.children) DrawWidget(*c);
+  if (!w.collapsed) for (auto& c : w.children) DrawWidget(*c);
 }
 
 void UIContext::Draw() { if (root_) DrawWidget(*root_); }
@@ -322,8 +370,10 @@ void UIContext::Draw() { if (root_) DrawWidget(*root_); }
 // ---- Input ----------------------------------------------------------------------------------
 Widget* UIContext::HitTest(Widget& w, float x, float y) {
   if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
-  for (auto it = w.children.rbegin(); it != w.children.rend(); ++it)
-    if (Widget* hit = HitTest(**it, x, y)) return hit;
+  if (w.kind == WidgetKind::Card && y < w.y + 30) return &w;
+  if (!w.collapsed)
+    for (auto it = w.children.rbegin(); it != w.children.rend(); ++it)
+      if (Widget* hit = HitTest(**it, x, y)) return hit;
   bool headerTabs = w.kind == WidgetKind::Panel && !w.items.empty() && y < w.y + theme_.N("size-panel-header", 30);
   return (w.focusable || w.onClick || headerTabs) ? &w : nullptr;
 }
@@ -335,6 +385,7 @@ void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
 
 void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
   (void)mouseY;
+  if (w.kind == WidgetKind::Card) { w.collapsed = !w.collapsed; return; }
   if ((w.kind == WidgetKind::Tabs || w.kind == WidgetKind::Panel) && mouseX >= 0 && !w.itemX.empty()) {
     for (size_t i = 0; i < w.itemX.size(); ++i)
       if (mouseX < w.itemX[i]) { w.selectedIndex = (int)i; break; }

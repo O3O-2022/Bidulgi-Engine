@@ -41,7 +41,7 @@ def shots():
     capture('stress', BDG_BATCH_STRESS='1')
     tokens = os.path.join(tempfile.gettempdir(), 'bdg_tokens_blue.json')
     src = open(os.path.join(ROOT, 'design-system', 'project', 'tokens.json'), encoding='utf-8').read()
-    open(tokens, 'w', encoding='utf-8').write(src.replace('#e9a23b', '#4ea1ff').replace('#2c4a70', '#5a3d1e'))
+    open(tokens, 'w', encoding='utf-8').write(src.replace('#f59e32', '#4ea1ff').replace('#2c4a70', '#5a3d1e'))
     capture('theme', BDG_TOKENS=tokens)
 
 
@@ -50,13 +50,14 @@ def banner():
     out = os.path.join(OUT, 'banner.png')
     cmds = [
         ('gradient.fill.create', {'from': [0, 0], 'to': [1600, 520], 'style': 'linear',
-                                  'stops': [[0, '#0b0d10'], [0.6, '#14171b'], [1, '#2a1d0b']]}),
-        ('file.placeEmbedded', {'path': os.path.join(SHOTS, 'editor.png'), 'scale': 44, 'center': [1150, 270]}),
+                                  'stops': [[0, '#0c0f13'], [0.6, '#11151b'], [1, '#2b1c08']]}),
+        ('file.placeEmbedded', {'path': os.path.join(SHOTS, 'editor.png'), 'scale': 40, 'center': [1210, 270]}),
         ('layer.layerStyle.dropShadow', {'color': '#000000', 'opacity': 70, 'distance': 14, 'size': 40, 'angle': 120}),
-        ('type.create', {'x': 80, 'y': 215, 'text': 'Bidulgi Engine', 'font': FONT, 'size': 68, 'color': '#d6dae0'}),
-        ('type.create', {'x': 84, 'y': 275, 'text': '비둘기 엔진', 'font': FONT, 'size': 30, 'color': '#e9a23b'}),
-        ('type.create', {'x': 84, 'y': 340, 'text': 'AI 친화적 · 텍스트 기반 범용 게임 엔진', 'font': FONT, 'size': 22, 'color': '#8b929c'}),
-        ('type.create', {'x': 84, 'y': 380, 'text': 'C# · C++ · Graph · Lua · Python   |   MIT', 'font': FONT, 'size': 18, 'color': '#5f6670'}),
+        ('file.placeEmbedded', {'path': os.path.join(ROOT, 'branding', 'bidulgi-logo.png'), 'scale': 62, 'center': [180, 260]}),
+        ('type.create', {'x': 340, 'y': 215, 'text': 'Bidulgi Engine', 'font': FONT, 'size': 58, 'color': '#e4e8ee'}),
+        ('type.create', {'x': 344, 'y': 268, 'text': '비둘기 엔진', 'font': FONT, 'size': 28, 'color': '#f59e32'}),
+        ('type.create', {'x': 344, 'y': 328, 'text': 'AI 친화적 · 텍스트 기반 범용 게임 엔진', 'font': FONT, 'size': 20, 'color': '#aab3c0'}),
+        ('type.create', {'x': 344, 'y': 366, 'text': 'C# · C++ · Graph · Lua · Python   |   MIT', 'font': FONT, 'size': 16, 'color': '#6c7583'}),
     ]
     args = [PHOTOCRAFT, 'run', '--new', json.dumps({'width': 1600, 'height': 520, 'background': '#0b0d10', 'name': 'banner'})]
     for cid, params in cmds:
@@ -164,7 +165,7 @@ def video():
 
         # Intro card
         text(0.3, intro - 0.3, 'Bidulgi Engine', (W / 2, H / 2 - 50), 120, '#d6dae0', 2)
-        text(0.6, intro - 0.6, 'AI 친화적 · 텍스트 기반 범용 게임 엔진', (W / 2, H / 2 + 70), 44, '#e9a23b', 3, 'Regular')
+        text(0.6, intro - 0.6, 'AI 친화적 · 텍스트 기반 범용 게임 엔진', (W / 2, H / 2 + 70), 44, '#f59e32', 3, 'Regular')
 
         t = intro
         for name, dur, caption in SCENES:
@@ -179,7 +180,7 @@ def video():
             t += dur
 
         # Outro card
-        text(t + 0.2, outro - 0.2, '비둘기 엔진', (W / 2, H / 2 - 40), 96, '#e9a23b', 2)
+        text(t + 0.2, outro - 0.2, '비둘기 엔진', (W / 2, H / 2 - 40), 96, '#f59e32', 2)
         text(t + 0.4, outro - 0.4, 'MIT License · pre-alpha (M0)', (W / 2, H / 2 + 70), 40, '#8b929c', 3, 'Regular')
 
         proj = os.path.join(OUT, 'bidulgi-intro.fcproj')

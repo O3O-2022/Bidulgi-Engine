@@ -54,6 +54,8 @@
 | 2026-11-21 | 프로젝트는 유니티식 허브로 만들고 열며, 엔진 단독 실행 시 고도식 시작 화면. 엔진 버전은 `.bdgproject`에 고정. 언리얼식 템플릿(1인칭 슈팅, 3인칭, 2D 플랫포머 등)을 패키지로 제공 | [projects-and-templates](../features/projects-and-templates.md) |
 | 2026-11-21 | 분할 저장: 작은 씬은 파일 하나, 큰 씬·오픈월드는 오브젝트별 또는 셀별 파일, 큰 숫자 데이터는 바이너리 옆 파일(텍스트에는 GUID만) | [data-formats](../features/data-formats.md#분할-저장-2026-11-21) |
 | 2026-11-21 | 작업 순서는 `Docs/QUEUE.md` 대기열로 관리. 새 대화는 대기열 맨 위 항목부터 | [QUEUE](../QUEUE.md) |
+| 2026-11-22 | 공식 로고 확정 (`branding/bidulgi-logo.png`, 비둘기 + 궤도 링). 색상 테마 **Obsidian Dark** (`#11151B` 배경, `#1C222B` 패널, `#AAB3C0` 보조 글자), **Bidulgi Amber `#F59E32`를 브랜드 색으로 고정**(로고 부리 색), Engine Blue `#3996B9`는 오브젝트·컴포넌트·링크. 언어 색 토큰 `lang-*` 추가 | [tokens.json](../../design-system/project/tokens.json) |
+| 2026-11-22 | 코드·로그용 글꼴은 Consolas(시스템 글꼴, 배포 안 함; 없으면 Courier). 배포용은 JetBrains Mono(OFL)로 교체 예정 | [QUEUE](../QUEUE.md) |
 
 ## 미결 사항
 
