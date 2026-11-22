@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies (SDL3, FreeType, yyjson)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build Debug + Release (zero warnings in engine code)
+        shell: pwsh
+        run: |
+          $fail = $false
+          foreach ($cfg in 'Debug', 'Release') {
+            cmake --build build --config $cfg --target BidulgiEditor -- /m /v:minimal 2>&1 | Tee-Object -FilePath "build-$cfg.log"
+            if ($LASTEXITCODE -ne 0) { Write-Error "$cfg build failed"; exit 1 }
+            # Warnings from our own sources only (third-party code under build/_deps is excluded).
+            $warn = Select-String -Path "build-$cfg.log" -Pattern 'warning C\d+' | Where-Object { $_.Line -notmatch '_deps' }
+            if ($warn) { $warn | ForEach-Object { Write-Host "::warning::$($_.Line)" }; $fail = $true }
+          }
+          if ($fail) { Write-Error "Engine code must build with zero warnings (/W4)"; exit 1 }
+
+      # Hosted runners have no GPU: use Mesa's software OpenGL (llvmpipe, GL 4.5) next to the exe.
+      - name: Install Mesa software OpenGL
+        shell: pwsh
+        run: |
+          $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' -Headers @{ 'User-Agent' = 'ci' }
+          $asset = $rel.assets | Where-Object { $_.name -match 'release-msvc\.7z$' } | Select-Object -First 1
+          Write-Host "Mesa: $($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mesa.7z
+          7z x mesa.7z -omesa -y | Out-Null
+          foreach ($cfg in 'Debug', 'Release') { Copy-Item mesa/x64/*.dll "build/$cfg/" -Force }
+
+      - name: Smoke tests
+        shell: pwsh
+        env:
+          MESA_GL_VERSION_OVERRIDE: '4.5'
+          MESA_GLSL_VERSION_OVERRIDE: '450'
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          function Invoke-Editor([string]$cfg, [hashtable]$envs, [int]$frames) {
+            foreach ($k in $envs.Keys) { Set-Item "Env:$k" $envs[$k] }
+            $p = Start-Process "build/$cfg/BidulgiEditor.exe" -ArgumentList '--frames', $frames -WorkingDirectory $PWD -PassThru -Wait
+            foreach ($k in $envs.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+            $log = Get-Content Bidulgi.log -Raw -Encoding utf8
+            Write-Host "----- $cfg $($envs.Keys -join ',') (exit $($p.ExitCode))"; Write-Host $log
+            if ($p.ExitCode -ne 0) { throw "editor exited with $($p.ExitCode)" }
+            return $log
+          }
+          $errors = @()
+
+          # 1) Editor screen renders, tokens and font load, UI draws in one call
+          $log = Invoke-Editor 'Release' @{ BDG_SCREENSHOT = 'ci-editor.png' } 30
+          if ($log -notmatch 'tokens: \d+ colors') { $errors += 'design tokens not loaded' }
+          if ($log -notmatch 'frame stats: .*draws=1') { $errors += 'editor frame is not a single draw call' }
+          if ($log -match '\[error\]') { $errors += 'errors in editor log' }
+
+          # 2) UI self-test: click, focus, Korean text input, IME composition
+          $log = Invoke-Editor 'Debug' @{ BDG_SCREEN = 'gallery'; BDG_UI_SELFTEST = '1' } 20
+          if ($log -notmatch 'clicks\(Apply\)=1') { $errors += 'button click failed' }
+          if ($log -notmatch 'field\.speed="한글 입력" composing="ㅋ"') { $errors += 'text input / IME self-test failed' }
+
+          # 3) 10k rects in one draw call
+          $log = Invoke-Editor 'Release' @{ BDG_BATCH_STRESS = '1' } 10
+          if ($log -notmatch 'quads=10000 flushes=1 draws=1') { $errors += 'batch stress test failed' }
+
+          # 4) Bug report folder is created (no browser in CI)
+          $log = Invoke-Editor 'Release' @{ BDG_BUG_TEST = '1' } 10
+          if ($log -notmatch 'bug report: ') { $errors += 'bug report not written' }
+
+          if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+          Write-Host 'All smoke tests passed.'
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-output
+          path: |
+            ci-editor.png
+            Bidulgi.log
+            build-*.log
+            BugReports/
+          if-no-files-found: ignore
