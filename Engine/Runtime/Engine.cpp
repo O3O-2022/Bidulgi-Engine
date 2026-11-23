@@ -10,6 +10,9 @@
 #include "UI/Theme.h"
 #include "UI/UI.h"
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <thread>
 #include <chrono>
 #include <cstdlib>
 #include <format>
@@ -45,6 +48,19 @@ std::string FindFont() {
   return {};
 }
 
+double ProcessCpuMs() { // user + kernel time of this process (idle check)
+  FILETIME c{}, x{}, k{}, u{};
+  if (!GetProcessTimes(GetCurrentProcess(), &c, &x, &k, &u)) return 0;
+  auto ms = [](FILETIME f) { return (double)(((uint64_t)f.dwHighDateTime << 32) | f.dwLowDateTime) / 10000.0; };
+  return ms(k) + ms(u);
+}
+
+double RamMB() {
+  PROCESS_MEMORY_COUNTERS pmc{};
+  GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
+  return pmc.WorkingSetSize / (1024.0 * 1024.0);
+}
+
 void DrawStress(bdg::Batch2D& b, float W, float H) { // queue 0-4 exit check: 10k rects in one draw call
   for (int i = 0; i < 10000; ++i) {
     uint32_t rgb = 0x2040a0 + (i * 2654435761u >> 8 & 0x3f3f3f);
@@ -62,7 +78,7 @@ struct bdg_engine {
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bool showGallery = false, selfTest = false, stress = false, hasFont = false;
-  std::chrono::steady_clock::time_point createdAt, lastFrame, fpsWindow;
+  std::chrono::steady_clock::time_point createdAt;
   int clicks = 0;
   bool bugRequested = false;
   int32_t maxFrames = 0;
@@ -70,12 +86,13 @@ struct bdg_engine {
 
 namespace {
 // Scripted input for automated checks (BDG_UI_SELFTEST=1 with BDG_SCREEN=gallery).
-void InjectSelfTest(bdg_engine* e, int frame) {
+void InjectSelfTest(bdg_engine* e, int frame, float scale) { // scale: UI units -> drawable pixels
   using T = bdg::InputEvent::Type;
   bdg::UIContext& ui = *e->gallery;
   auto key = [&](bdg::Key k, bool ctrl = false) { bdg::InputEvent ev{T::KeyDown}; ev.key = k; ev.ctrl = ctrl; e->window.InjectEvent(ev); };
   auto text = [&](T type, const char* s) { bdg::InputEvent ev{type}; ev.text = s; e->window.InjectEvent(ev); };
   auto click = [&](float x, float y) {
+    x *= scale; y *= scale; // injected like real input (drawable pixels)
     e->window.InjectEvent({T::MouseMove, x, y});
     e->window.InjectEvent({T::MouseDown, x, y, 1});
     e->window.InjectEvent({T::MouseUp, x, y, 1});
@@ -162,7 +179,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
   auto* e = new (std::nothrow) bdg_engine();
   if (!e) return BDG_ERR_PLATFORM;
-  e->createdAt = e->lastFrame = e->fpsWindow = std::chrono::steady_clock::now();
+  e->createdAt = std::chrono::steady_clock::now();
   e->maxFrames = desc->max_frames;
   e->stress = std::getenv("BDG_BATCH_STRESS") != nullptr;
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
@@ -199,23 +216,98 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
 
 bdg_result bdg_engine_run(bdg_engine* e) {
   if (!e) return BDG_ERR_INVALID_ARG;
+  using clock = std::chrono::steady_clock;
+  using msd = std::chrono::duration<double, std::milli>;
+  // Interactive runs draw only when something changed (input, window event, Wake, token file edit, caret blink)
+  // and otherwise sleep in the OS event wait. Automated runs (--frames N) draw every frame at full speed with
+  // vsync off, so frame-indexed tests stay deterministic and perf numbers measure work, not the display.
+  // BDG_IDLE_TEST=<seconds> runs the interactive loop for that long and logs idle CPU use and wake-up latency.
+  const char* idleEnv = std::getenv("BDG_IDLE_TEST");
+  const double idleTestSec = idleEnv ? std::max(0.5, std::atof(idleEnv)) : 0.0;
+  const bool onDemand = e->maxFrames == 0 || idleTestSec > 0;
+  if (!onDemand) e->window.SetSwapInterval(0);
+  const double period = 1000.0 / e->window.RefreshRate();
+  bool limiter = onDemand && e->window.SwapInterval() == 0; // no vsync: cap frames to the display rate by timer
+  if (limiter) bdg::LogInfo("frame limiter: {:.0f} Hz", 1000.0 / period);
+  int fastFrames = 0;     // consecutive frames much faster than the display: vsync is being ignored
+  int pending = 2;        // frames still to draw (start-up, and after every change: 2 lets layout settle)
+  bool idleShown = false; // status bar already says "idle"
+  clock::time_point nextThemePoll = clock::now(), caretDue{};
+  // Status bar statistics (only frames actually drawn while active; idle sleep is not counted).
+  clock::time_point statStart = clock::now();
+  int statFrames = 0;
+  double statWorkMs = 0, lastWorkMs = 0;
+  // Idle self-test state.
+  clock::time_point idleEnd{}, idleStart{};
+  double idleCpu0 = 0, wakeLatencyMs = -1;
+  int idleFrames = 0;
+  bool idleMeasuring = false;
+  std::atomic<long long> wakeSentNs{0};
+  std::thread waker;
+
   int32_t frames = 0;
-  auto t0 = std::chrono::steady_clock::now();
-  while (e->window.PumpEvents()) {
-    if (frames % 30 == 0) e->theme.ReloadIfChanged(); // live token edits
+  auto t0 = clock::now();
+  if (idleTestSec > 0) idleEnd = t0 + std::chrono::microseconds((long long)(idleTestSec * 1e6));
+  for (;;) {
+    bdg::UIContext& active = e->showGallery ? *e->gallery : *e->editor;
+    int32_t waitMs = 0;
+    caretDue = {};
+    if (onDemand && pending == 0 && !idleShown) { // about to sleep: say so once (one more frame)
+      idleShown = true;
+      pending = 1;
+      if (bdg::Widget* perf = e->editor->Find("status.perf"))
+        perf->text = std::format("idle  ·  {:.2f} ms  ·  RAM {:.0f} MB", lastWorkMs, RamMB());
+    }
+    if (onDemand && pending == 0) {
+      auto now = clock::now();
+      double wait = msd(nextThemePoll - now).count();
+      if (int blink = active.NextBlinkMs(); blink >= 0 && blink < wait) {
+        wait = blink;
+        caretDue = now + std::chrono::milliseconds(blink);
+      }
+      if (idleTestSec > 0) wait = std::min(wait, msd(idleEnd - now).count());
+      waitMs = (int32_t)std::clamp(std::ceil(wait), 1.0, 500.0);
+      if (idleTestSec > 0 && !idleMeasuring) { // first sleep: start measuring, schedule a wake-up halfway
+        idleMeasuring = true;
+        idleStart = now;
+        idleCpu0 = ProcessCpuMs();
+        double half = msd(idleEnd - now).count() * 0.5;
+        waker = std::thread([e, half, &wakeSentNs] {
+          std::this_thread::sleep_for(std::chrono::microseconds((long long)(half * 1000)));
+          wakeSentNs = clock::now().time_since_epoch().count();
+          e->window.Wake();
+        });
+      }
+    }
+    if (!e->window.PumpEvents(waitMs)) break;
+    auto now = clock::now();
+    if (long long sent = wakeSentNs.load(); sent && wakeLatencyMs < 0)
+      wakeLatencyMs = msd(now.time_since_epoch() - clock::duration(sent)).count();
+    if (idleTestSec > 0 && now >= idleEnd) break;
+    if (e->window.HadEvents()) {
+      pending = std::max(pending, 2);
+      if (idleShown) { idleShown = false; statStart = now; statFrames = 0; statWorkMs = 0; } // waking up
+    }
+    if (now >= nextThemePoll) {
+      nextThemePoll = now + std::chrono::milliseconds(500);
+      if (e->theme.ReloadIfChanged()) pending = std::max(pending, 2); // live token edits
+    }
+    if (caretDue != clock::time_point{} && now >= caretDue) pending = std::max(pending, 1);
+    if (onDemand && pending == 0) continue; // timer wake-up with nothing to redraw
+    if (pending > 0) --pending;
+
     for (const bdg::InputEvent& ev : e->window.Events())
     {
       if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F1) e->showGallery = !e->showGallery;
       if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F12) e->bugRequested = true;
     }
-    if (e->selfTest && e->showGallery) InjectSelfTest(e, frames);
-
     int32_t w = 0, h = 0;
     e->window.GetDrawableSize(w, h);
     // UI works in logical units: drawable pixels / display scale (150% Windows scaling -> 1.5).
     float scale = e->window.GetDisplayScale();
     if (const char* s = std::getenv("BDG_UI_SCALE")) scale = std::strtof(s, nullptr);
     if (scale < 0.5f) scale = 1.f;
+    if (e->selfTest && e->showGallery) InjectSelfTest(e, frames, scale);
     float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
     e->batch.Begin((int32_t)lw, (int32_t)lh);
@@ -232,6 +324,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     e->batch.End();
     e->rhi.EndFrame();
     ++frames;
+    if (idleMeasuring) ++idleFrames;
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
     if (last && std::getenv("BDG_BUG_TEST")) e->bugRequested = true; // automated check (no browser)
@@ -259,31 +352,47 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("screenshot {}: {}", ok ? "saved" : "FAILED", shot);
       }
     }
+    double workMs = msd(clock::now() - now).count(); // CPU cost of the frame, without the vsync wait
     e->window.Present();
-    { // live status bar + profiler feed
-      auto now = std::chrono::steady_clock::now();
-      float ms = std::chrono::duration<float, std::milli>(now - e->lastFrame).count();
-      e->lastFrame = now;
-      if (frames > 1) bdg::PushFrameTime(ms);
-      if (frames % 30 == 0) {
-        float sec = std::chrono::duration<float>(now - e->fpsWindow).count();
-        e->fpsWindow = now;
-        PROCESS_MEMORY_COUNTERS pmc{};
-        GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
-        if (bdg::Widget* perf = e->editor->Find("status.perf"))
-          perf->text = std::format("{:.0f} fps  ·  {:.2f} ms  ·  RAM {:.0f} MB", 30.f / std::max(sec, 1e-4f), sec * 1000.f / 30.f,
-                                   pmc.WorkingSetSize / (1024.0 * 1024.0));
+    double frameMs = msd(clock::now() - now).count();
+    if (onDemand && !limiter && frameMs < period * 0.5) { // driver forces vsync off (e.g. a control panel setting)
+      if (++fastFrames >= 30) {
+        limiter = true;
+        bdg::LogWarn("vsync: swap interval {} is ignored by the driver, frame limiter at {:.0f} Hz",
+                     e->window.SwapInterval(), 1000.0 / period);
       }
+    } else fastFrames = 0;
+    if (limiter && frameMs < period) bdg::Window::SleepPrecise(period - frameMs);
+
+    // Live status bar + profiler feed.
+    lastWorkMs = workMs;
+    if (frames > 1) bdg::PushFrameTime((float)workMs);
+    ++statFrames;
+    statWorkMs += workMs;
+    if (double sec = std::chrono::duration<double>(clock::now() - statStart).count(); sec >= 0.5) {
+      if (bdg::Widget* perf = e->editor->Find("status.perf"))
+        perf->text = std::format("{:.0f} fps  ·  {:.2f} ms  ·  RAM {:.0f} MB", statFrames / sec, statWorkMs / statFrames, RamMB());
+      statStart = clock::now();
+      statFrames = 0;
+      statWorkMs = 0;
     }
     if (frames == 1) { // startup = engine create -> first frame on screen (target: < 1000 ms)
-      double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - e->createdAt).count();
+      double ms = msd(clock::now() - e->createdAt).count();
       bdg::LogInfo("perf: startup_to_first_frame_ms={:.0f} (target < 1000)", ms);
     }
     if (last) break;
   }
-  double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  if (waker.joinable()) waker.join();
+  double sec = std::chrono::duration<double>(clock::now() - t0).count();
   bdg::LogInfo("frames: {} in {:.2f}s", frames, sec);
-  if (frames > 1) bdg::LogInfo("perf: avg_frame_ms={:.3f} (target < 16.7 at 60 fps; editor idle UI)", sec * 1000.0 / frames);
+  if (!onDemand && frames > 1)
+    bdg::LogInfo("perf: avg_frame_ms={:.3f} (target < 16.7 at 60 fps; editor idle UI)", sec * 1000.0 / frames);
+  if (idleMeasuring) {
+    double idleSec = std::chrono::duration<double>(clock::now() - idleStart).count();
+    double cpu = ProcessCpuMs() - idleCpu0;
+    bdg::LogInfo("idle: seconds={:.2f} frames={} cpu_ms={:.0f} cpu_pct={:.2f} wake_latency_ms={:.2f} vsync={} limiter={}",
+                 idleSec, idleFrames, cpu, cpu / (idleSec * 10.0), wakeLatencyMs, e->window.SwapInterval(), limiter ? 1 : 0);
+  }
   return BDG_OK;
 }
 

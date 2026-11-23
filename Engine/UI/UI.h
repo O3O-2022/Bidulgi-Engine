@@ -90,6 +90,7 @@ public:
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
   Widget* Focused() const { return focused_; }
+  int NextBlinkMs() const; // ms until the text caret toggles (-1 = no focused text field): idle wake-up timer
 
   void Layout(float width, float height);
   void HandleEvents(const std::vector<InputEvent>& events);

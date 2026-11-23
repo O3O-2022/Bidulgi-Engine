@@ -8,6 +8,7 @@
 #include <cstdio>
 
 namespace bdg {
+constexpr long long kCaretBlinkMs = 530; // text caret on/off period
 // ---- Builders ------------------------------------------------------------------------------
 namespace {
 std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text = {}) {
@@ -57,6 +58,12 @@ std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, U
 // ---- Helpers -------------------------------------------------------------------------------
 float UIContext::Text(float x, float y, float size, Color c, const std::string& s, bool mono) { return font_ ? font_->DrawText(batch_, x, y, size, c, s, mono) : 0.f; }
 float UIContext::Measure(float size, const std::string& s, bool mono) const { return font_ ? font_->Measure(size, s, mono) : s.size() * size * 0.55f; }
+
+int UIContext::NextBlinkMs() const {
+  if (!focused_ || focused_->kind != WidgetKind::Field) return -1;
+  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  return (int)(kCaretBlinkMs - ms % kCaretBlinkMs);
+}
 
 Widget* UIContext::Find(const std::string& id) {
   std::vector<Widget*> stack{root_.get()};
@@ -284,7 +291,7 @@ void UIContext::DrawWidget(Widget& w) {
       Text(px, ty, fs, t.C("fg"), after);
       if (focus) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-        if ((ms / 530) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
+        if ((ms / kCaretBlinkMs) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
         if (window_) window_->SetTextInputArea(ix * scale_, iy * scale_, iw * scale_, ih * scale_, (int)((caretX - ix) * scale_));
       }
       break;

@@ -38,6 +38,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
 | `BDG_BATCH_STRESS=1` | 사각형 1만 개 부하 테스트 |
 | `BDG_GL_ERROR_TEST=1` | 일부러 GL 오류를 내서 디버그 출력 경로 확인 (Debug 빌드) |
+| `BDG_IDLE_TEST=초` | 대기 상태로 N초 실행 후 `idle: frames= cpu_ms= wake_latency_ms=` 기록 (중간에 Wake 1회) |
 | `BDG_UI_SCALE=1.5` | 화면 배율 강제 |
 | `BDG_FONT`, `BDG_TOKENS` | 글꼴·토큰 파일 경로 강제 |
 
@@ -98,12 +99,12 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 엔진 CI | GitHub Actions: Windows Debug·Release 빌드, 엔진 코드 경고 0개 검사, Mesa 소프트웨어 GL 4.5로 자동 테스트 4종(에디터 화면·UI/한글 입력·1만 개 배칭·버그 제보), 스크린샷·로그 아티팩트. README에 배지 | (이 커밋) |
 | 버그 제보 | GitHub 이슈 양식(버그·기능 제안) + 에디터 F12·버튼: 스크린샷·로그·시스템 정보 폴더 + 미리 채운 이슈 양식 | (이 커밋) |
 | 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
+| 0-13 대기 중 다시 그리기 멈추기 | 바뀔 때만 그림(OS 이벤트 대기), vsync 확인 + 무시 감지 시 주사율 타이머 제한, `Window::Wake()`. 대기 CPU 96% → 0ms/5초(스레드별 측정), `BDG_IDLE_TEST=3`: frames=3, wake_latency 0.1~0.6ms. CI 테스트 5번 추가. 셀프테스트 클릭이 화면 배율 1.5에서 빗나가던 버그도 수정 | (이 커밋) |
 
 ---
 
-## M0 — 남은 것 (위에서부터 순서대로: 0-13 → 0-14 → 0-12 → 0-10)
+## M0 — 남은 것 (위에서부터 순서대로: 0-14 → 0-12 → 0-10)
 
-- [ ] **0-13. 대기 중 다시 그리기 멈추기 (최우선 최적화)** — 지금 수직 동기화가 안 걸려 대기 중에도 초당 수천 프레임을 그림(상태 줄 4000+ fps). `SDL_GL_SetSwapInterval` 결과 확인(실패 시 적응형 -1 → 1 → 프레임 제한), 입력·애니메이션·파일 변경이 없으면 `SDL_WaitEventTimeout`으로 잠들기. 완료 조건: 대기 중 CPU·GPU 사용률이 거의 0, 입력 반응 지연 없음
 - [ ] **0-14. 버그 제보 보완** — 단축키 F12 → `Ctrl+Shift+B`(Windows 디버거 키 충돌), 보고서의 사용자 경로를 `%USERPROFILE%`로 치환 + 첨부 전 미리보기, 30일 지난 보고서 삭제, PNG 압축(stb_image_write, 퍼블릭 도메인). 완료 조건: 보고서 파일에 사용자 이름이 없음, 스크린샷 500KB 이하 [convenience-features](planning/convenience-features.md)
 - [ ] **0-12. M0 마무리 손질**
   - Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) 추가 → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. (파일 내려받기는 사용자 허락 후)

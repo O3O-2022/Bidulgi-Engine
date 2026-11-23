@@ -23,8 +23,17 @@ class Window {
 public:
   bool Create(const char* title, int32_t w, int32_t h);
   void Destroy();
-  bool PumpEvents(); // false = quit requested
+  // false = quit requested. waitMs > 0: sleep in the OS until an event arrives or the timeout passes
+  // (idle editor uses ~0% CPU/GPU instead of redrawing thousands of times per second).
+  bool PumpEvents(int32_t waitMs = 0);
+  bool HadEvents() const { return hadEvents_; } // anything arrived in the last PumpEvents (input, resize, expose, Wake)
+  void Wake();                                  // thread-safe: makes a sleeping PumpEvents return now
   void Present();
+  // Swap interval actually in effect: -1 adaptive vsync, 1 vsync, 0 off. Request -1 to try adaptive, then 1.
+  int SwapInterval() const { return swapInterval_; }
+  void SetSwapInterval(int interval);
+  float RefreshRate() const;             // Hz of the window's display (60 if unknown)
+  static void SleepPrecise(double ms);   // frame limiter
   void GetDrawableSize(int32_t& w, int32_t& h) const;
   float GetDisplayScale() const; // OS UI scale for this window's monitor (1.0 = 100%, 1.5 = 150%)
   static void* GetGLProcAddress(const char* name); // for the GL loader
@@ -42,5 +51,8 @@ private:
   std::vector<InputEvent> events_;
   SDL_Window* window_ = nullptr;
   void* glContext_ = nullptr;
+  uint32_t wakeEvent_ = 0;
+  int swapInterval_ = 0;
+  bool hadEvents_ = false;
 };
 }

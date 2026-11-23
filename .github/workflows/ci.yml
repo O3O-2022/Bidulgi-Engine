@@ -89,6 +89,15 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_BUG_TEST = '1' } 10
           if ($log -notmatch 'bug report: ') { $errors += 'bug report not written' }
 
+          # 5) Idle editor sleeps (queue 0-13): almost no frames while idle, wakes at once on an event
+          $env:BDG_IDLE_TEST = '3'
+          $log = Invoke-Editor 'Release' @{} 0
+          Remove-Item Env:BDG_IDLE_TEST
+          if ($log -match 'idle: .*frames=(\d+) .*wake_latency_ms=([\d.]+)') {
+            if ([int]$Matches[1] -gt 6) { $errors += "idle editor kept drawing ($($Matches[1]) frames in 3 s)" }
+            if ([double]$Matches[2] -gt 50) { $errors += "idle wake-up too slow ($($Matches[2]) ms)" }
+          } else { $errors += 'idle test line missing' }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

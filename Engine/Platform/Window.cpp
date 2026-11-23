@@ -28,7 +28,8 @@ bool Window::Create(const char* title, int32_t w, int32_t h) {
   }
   glContext_ = SDL_GL_CreateContext(window_);
   if (!glContext_) { LogError("OpenGL 4.5 context failed: {}", SDL_GetError()); return false; }
-  SDL_GL_SetSwapInterval(1);
+  SetSwapInterval(-1);
+  wakeEvent_ = SDL_RegisterEvents(1);
   SDL_StartTextInput(window_); // ready for IME text (Korean input is an M0 exit criterion)
   LogInfo("platform: SDL {}.{}.{}", SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_MICRO_VERSION);
   return true;
@@ -56,38 +57,83 @@ Key MapKey(SDL_Keycode k) {
 }
 }
 
-bool Window::PumpEvents() {
+namespace {
+// Translates one SDL event into an InputEvent (if it is one the UI cares about). false = quit requested.
+bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) {
+  InputEvent ev;
+  switch (e.type) {
+    case SDL_EVENT_QUIT: return false;
+    case SDL_EVENT_MOUSE_MOTION:
+      ev.type = InputEvent::Type::MouseMove; ev.x = e.motion.x * density; ev.y = e.motion.y * density;
+      out.push_back(ev); break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+      ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? InputEvent::Type::MouseDown : InputEvent::Type::MouseUp;
+      ev.x = e.button.x * density; ev.y = e.button.y * density; ev.button = e.button.button;
+      out.push_back(ev); break;
+    case SDL_EVENT_KEY_DOWN:
+      ev.type = InputEvent::Type::KeyDown; ev.key = MapKey(e.key.key);
+      ev.shift = (e.key.mod & SDL_KMOD_SHIFT) != 0; ev.ctrl = (e.key.mod & SDL_KMOD_CTRL) != 0;
+      if (ev.key != Key::None) out.push_back(ev);
+      break;
+    case SDL_EVENT_TEXT_INPUT:
+      ev.type = InputEvent::Type::Text; ev.text = e.text.text;
+      out.push_back(ev); break;
+    case SDL_EVENT_TEXT_EDITING: // IME composition (e.g. Hangul jamo being combined)
+      ev.type = InputEvent::Type::TextEditing; ev.text = e.edit.text ? e.edit.text : "";
+      out.push_back(ev); break;
+    default: break;
+  }
+  return true;
+}
+}
+
+bool Window::PumpEvents(int32_t waitMs) {
   events_.clear();
+  hadEvents_ = false;
   float density = SDL_GetWindowPixelDensity(window_);
   if (density <= 0.f) density = 1.f;
   SDL_Event e;
+  // Any event (input, resize, expose, focus, Wake) means the picture may have changed.
+  if (waitMs > 0 && SDL_WaitEventTimeout(&e, waitMs)) {
+    hadEvents_ = true;
+    if (!Translate(e, density, events_)) return false;
+  }
   while (SDL_PollEvent(&e)) {
-    InputEvent ev;
-    switch (e.type) {
-      case SDL_EVENT_QUIT: return false;
-      case SDL_EVENT_MOUSE_MOTION:
-        ev.type = InputEvent::Type::MouseMove; ev.x = e.motion.x * density; ev.y = e.motion.y * density;
-        events_.push_back(ev); break;
-      case SDL_EVENT_MOUSE_BUTTON_DOWN:
-      case SDL_EVENT_MOUSE_BUTTON_UP:
-        ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? InputEvent::Type::MouseDown : InputEvent::Type::MouseUp;
-        ev.x = e.button.x * density; ev.y = e.button.y * density; ev.button = e.button.button;
-        events_.push_back(ev); break;
-      case SDL_EVENT_KEY_DOWN:
-        ev.type = InputEvent::Type::KeyDown; ev.key = MapKey(e.key.key);
-        ev.shift = (e.key.mod & SDL_KMOD_SHIFT) != 0; ev.ctrl = (e.key.mod & SDL_KMOD_CTRL) != 0;
-        if (ev.key != Key::None) events_.push_back(ev);
-        break;
-      case SDL_EVENT_TEXT_INPUT:
-        ev.type = InputEvent::Type::Text; ev.text = e.text.text;
-        events_.push_back(ev); break;
-      case SDL_EVENT_TEXT_EDITING: // IME composition (e.g. Hangul jamo being combined)
-        ev.type = InputEvent::Type::TextEditing; ev.text = e.edit.text ? e.edit.text : "";
-        events_.push_back(ev); break;
-      default: break;
-    }
+    hadEvents_ = true;
+    if (!Translate(e, density, events_)) return false;
   }
   return true;
+}
+
+void Window::Wake() {
+  if (!wakeEvent_) return;
+  SDL_Event e{};
+  e.type = wakeEvent_;
+  SDL_PushEvent(&e);
+}
+
+void Window::SetSwapInterval(int interval) {
+  // Some drivers accept adaptive vsync (-1) but leave the interval at 0: read it back and fall back to 1.
+  auto apply = [](int want) {
+    int actual = 0;
+    if (!SDL_GL_SetSwapInterval(want) || !SDL_GL_GetSwapInterval(&actual)) return 0;
+    return actual;
+  };
+  int actual = apply(interval);
+  if (interval == -1 && actual == 0) actual = apply(1);
+  swapInterval_ = actual;
+  if (interval != 0 && actual == 0) LogWarn("vsync: unavailable, frames are limited by a timer");
+  else LogInfo("vsync: swap interval {} ({})", actual, actual == -1 ? "adaptive" : actual == 1 ? "on" : "off");
+}
+
+float Window::RefreshRate() const {
+  const SDL_DisplayMode* m = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+  return m && m->refresh_rate > 1.f ? m->refresh_rate : 60.f;
+}
+
+void Window::SleepPrecise(double ms) {
+  if (ms > 0) SDL_DelayPrecise((Uint64)(ms * 1e6));
 }
 
 void Window::Present() { SDL_GL_SwapWindow(window_); }
