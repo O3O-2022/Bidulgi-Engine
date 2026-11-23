@@ -178,6 +178,16 @@ jobs:
           if ((Get-FileHash ci-test.scene).Hash -ne (Get-FileHash ci-test-first.scene).Hash) { $errors += 'save -> open -> save changed the file' }
           Remove-Item Env:BDG_SCENE_FILE, Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 14) Asset database (queue 2-3): .meta files, a move in the editor and one outside it keep GUIDs and references
+          $assets = "$PWD/ci-assets"
+          Remove-Item -Recurse -Force $assets -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory $assets | Out-Null
+          foreach ($n in 'Knight', 'Sword', 'Crystal', 'Plane') { Set-Content "$assets/$n.glb" "glb-$n" -NoNewline }
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = $assets; BDG_ASSET_TEST = '1' } 120
+          if ($log -notmatch 'asset test: knight_guid_kept=1 player_mesh="Characters/Knight.glb" weapon_mesh="Weapons/Sword.glb" watcher=1 orphans=0 assets=4') { $errors += 'asset database test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

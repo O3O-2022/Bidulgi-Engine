@@ -43,6 +43,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_SHORTCUT_TEST=1`, `BDG_SHORTCUTS=경로` | 단축키 자동 테스트(첫 실행 선택 → Unity 키 → Unreal 프리셋 → 다른 키), 단축키 파일 경로 강제 |
 | `BDG_DRAG_TEST=1` | Hierarchy 끌어다 놓기 자동 테스트(Weapon → Main, 월드 위치 유지) |
 | `BDG_SCENE_FILE=경로`, `BDG_SAVE_TEST=1` | 씬 파일 경로 강제(없으면 `Scenes/Main.scene`, 그것도 없으면 샘플 씬), 2번째 프레임에 Ctrl+S |
+| `BDG_ASSETS=폴더`, `BDG_ASSET_TEST=1` | 에셋 폴더(프로젝트 허브 전까지), 에셋 자동 테스트(에디터 안 이동 + 바깥 이동 → GUID·참조 유지) |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
@@ -84,6 +85,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/Core/Crash.*` | 크래시 처리기: 미니덤프·`crash.txt`·로그 → `BugReports/crash-<시간>/`, 다음 실행 때 제보 버튼 |
 | `Engine/Core/Guard.*` | `BDG_CHECK`(복구 가능한 검사), `GuardedCall`(SEH 가드) |
 | `Engine/Core/Command.*` | 명령 버스: set·rename·add·del·mv·addcomp·rmcomp, Undo/Redo, 묶음, 연속 편집 합치기, JSONL 로그·재생 |
+| `Engine/Assets/AssetDatabase.*` | 에셋 DB: `.meta`(GUID·가져오기 설정·출처), GUID↔경로 표, 이동 추적, 파일 감시 |
 | `Engine/Scene/SceneFile.*` | `.scene` JSONL 저장·열기(기본값 생략, 계층 순서, 같은 씬 = 같은 바이트) |
 | `Engine/Scene/*` | 최소 씬 모델(영구 ID·이름·부모·컴포넌트, 스냅샷), 기본 컴포넌트(Transform·MeshRenderer·Light·Camera)·샘플 컴포넌트 |
 | `Engine/Runtime/EditorModel.*` | 씬 + 명령 버스 + 선택, Hierarchy·Inspector를 씬·리플렉션에서 생성 |
@@ -141,7 +143,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 1-7 네트워크·공동 편집 대비 점검 | 영구 ID·명령 직렬화·바뀐 필드 추적·결정성 4가지 확인 → [network-readiness](architecture/network-readiness.md). 발견해서 고침: 바뀐 필드 기록이 비워지지 않고 쌓이던 문제(`EditorModel::Update`가 매 프레임 비움). 결정성 테스트 3개: 무작위 편집 세션을 다른 버스에 줄마다 전달(2010줄), JSONL 재생, **다른 프로세스**(`BidulgiTests --replay-dump`) 재생(1734줄) → 씬 덤프·Undo 깊이 동일. 단위 테스트 31개·376개 검사 | `27d06d1` |
 | 2-0 좌표·단위 확정 | 오른손 좌표계, Y-up, 앞쪽 -Z(glTF·OpenGL·Godot·Maya와 같음), 1단위=1m·kg·초, 각도는 편집·파일에서 도(수학 코드는 라디안), 양의 회전은 오른손 법칙, 오일러 순서 Ry·Rx·Rz(유니티와 같은 순서), 앞면은 반시계 감김. GLM 1.0.1(MIT, 헤더만) 추가, `Core/Space.*`: 오일러↔쿼터니언(짐벌 처리), TRS, 점·방향 변환. 규칙을 고정하는 단위 테스트 4개(총 35개·397개) | `0a6971d` |
 | 2-1 씬 모델 | 1-3의 최소 씬 모델을 확장: 새 오브젝트에는 Transform 자동 추가, Transform 제거 거부, `LocalMatrix`/`WorldMatrix`/`WorldPosition`(부모 사슬, 2-0 규칙), `mv {"keepWorld":true}` = 화면 위치를 유지하며 부모 변경(계산한 로컬 값을 로그에 적어 재생·Undo가 정확). UI 끌어다 놓기(`draggable`/`onDrop`, 6단위 넘게 움직여야 끌기, 대상 강조 + 따라오는 라벨) → Hierarchy 행을 다른 행이나 Main에 놓으면 위치 유지 이동. 복제는 Transform 값을 `set`으로 복사. 단위 테스트 4개 추가(총 39개·420개), CI 12번 | `82e17a8`, `bfc0945` |
-| 2-2 JSONL 씬 저장/열기 | `Scene/SceneFile.*`: 머리 줄 `{"v":1,"defaults":"1.0","scene":..,"mode":"3d"}` + 한 줄에 오브젝트 하나, 기본값 생략(Transform은 0/0/1이 아닐 때만 `pos`/`rot`/`scale`, 컴포넌트는 바뀐 필드만, 모두 기본이면 `{}`), 이름이 id와 같으면 생략, 부모는 `"@id"`, 줄 순서 = 계층 전위 순서(형제 순서 보존). 임시 파일에 쓰고 바꿔치기(저장 중 크래시에도 반쪽 파일 없음). 읽기: 모르는 컴포넌트·키·옛 기본값 세트는 경고, 깨진 줄은 줄 번호와 함께 오류. 에디터: `Scenes/Main.scene`(또는 `BDG_SCENE_FILE`)이 있으면 열고 Ctrl+S로 저장, 열기는 편집이 아니라 Undo 기록을 새로 시작. 분할 저장(셀·레이어 파일)은 형식 문서에만, 구현은 나중. 저장→열기→저장 바이트 동일(단위 테스트 + CI 13번), 로더 퍼징 1500회. 단위 테스트 4개 추가(총 43개·449개) | (이 커밋) |
+| 2-2 JSONL 씬 저장/열기 | `Scene/SceneFile.*`: 머리 줄 `{"v":1,"defaults":"1.0","scene":..,"mode":"3d"}` + 한 줄에 오브젝트 하나, 기본값 생략(Transform은 0/0/1이 아닐 때만 `pos`/`rot`/`scale`, 컴포넌트는 바뀐 필드만, 모두 기본이면 `{}`), 이름이 id와 같으면 생략, 부모는 `"@id"`, 줄 순서 = 계층 전위 순서(형제 순서 보존). 임시 파일에 쓰고 바꿔치기(저장 중 크래시에도 반쪽 파일 없음). 읽기: 모르는 컴포넌트·키·옛 기본값 세트는 경고, 깨진 줄은 줄 번호와 함께 오류. 에디터: `Scenes/Main.scene`(또는 `BDG_SCENE_FILE`)이 있으면 열고 Ctrl+S로 저장, 열기는 편집이 아니라 Undo 기록을 새로 시작. 분할 저장(셀·레이어 파일)은 형식 문서에만, 구현은 나중. 저장→열기→저장 바이트 동일(단위 테스트 + CI 13번), 로더 퍼징 1500회. 단위 테스트 4개 추가(총 43개·449개) | `3188232` |
+| 2-3 에셋 데이터베이스 | `Assets/AssetDatabase.*`: 첫 스캔 때 파일마다 `<파일>.meta` 한 줄(`{"guid":"16자리","importer":"model"}`, 확장자로 importer), 스캐너는 기존 `.meta`를 다시 쓰지 않아 사용자 설정·출처가 보존됨. GUID↔경로 표. `Move()`는 파일과 `.meta`를 함께 옮김. 탐색기처럼 `.meta` 없이 옮겨진 파일은 다음 새로 고침에서 내용(크기+FNV 해시)으로 짝 잃은 `.meta`를 찾아 GUID 재연결, 못 찾은 `.meta`는 지우지 않고 보고. `.meta`째 복사된 파일은 새 GUID. 숨김 폴더(`.cache` 등) 제외. `FileWatcher`(감시 스레드 → `Window::Wake`)로 잠든 에디터도 바로 새로 고침, 옮겨진 에셋을 가리키는 씬의 문자열 필드는 명령 묶음 하나로 새 경로로 갱신. 에셋 폴더는 프로젝트 허브 전까지 `BDG_ASSETS`. 단위 테스트 4개(총 47개·483개), CI 14번 | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -157,7 +160,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M2 — 씬과 에셋 (실제 데이터를 다룸) — 진행 중
 
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
-- [ ] **2-3. 에셋 데이터베이스** — 파일 감시, `.meta`(GUID, 임포트 설정, 출처·라이선스), GUID ↔ 경로 표. 이름 바꾸기·이동해도 참조 유지.
 - [ ] **2-3b. 빨리 열리는 에디터** — 에셋 DB 색인 캐시(`.cache/assetdb`)와 수정 시각 비교 증분 스캔, 패키지 지연 로드, 씬 점진 로드, 시작 단계별 시간 로그, CI에서 시작 시간 측정. 목표: 템플릿 프로젝트 3초, 에셋 1만 개 10초 [pain-points](planning/pain-points.md)
 - [ ] **2-4. Hierarchy·Inspector 실제 동작** — Hierarchy는 씬 트리 표시·선택·드래그로 부모 변경·이름 바꾸기. Inspector는 리플렉션으로 필드 자동 생성(`[Edit]` 메타: Range는 슬라이더, ShowIf, Header, Button). 편집은 전부 명령.
 - [ ] **2-4b. 여러 오브젝트 동시 편집 + 컴포넌트 값 복사·붙여넣기·프리셋(`.preset`)** [convenience-features](planning/convenience-features.md)

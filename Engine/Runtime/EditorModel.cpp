@@ -131,6 +131,33 @@ bool EditorModel::OpenScene(const std::string& path) {
   return true;
 }
 
+int EditorModel::RetargetAssetPath(const std::string& from, const std::string& to) {
+  std::vector<Command> sets;
+  std::vector<std::string> stack(scene.Roots().begin(), scene.Roots().end());
+  while (!stack.empty()) {
+    const SceneObject* o = scene.Find(stack.back());
+    stack.pop_back();
+    for (const Component& c : o->components)
+      for (const TypeInfo* t = c.type; t; t = t->base)
+        for (const FieldInfo& f : t->fields)
+          if (f.value.type == FieldType::String && *reinterpret_cast<const std::string*>(static_cast<const char*>(c.data) + f.offset) == from) {
+            Command set;
+            set.name = "set";
+            set.target = o->id;
+            set.args = std::format("{{\"path\":{},\"value\":{}}}", Q(c.type->name + "." + f.name), Q(to));
+            sets.push_back(set);
+          }
+    for (auto& k : o->children) stack.push_back(k);
+  }
+  if (sets.empty()) return 0;
+  bus.BeginGroup("Asset moved: " + from + " -> " + to, "ui");
+  int n = 0;
+  for (auto& c : sets) n += bus.Execute(c) ? 1 : 0;
+  bus.EndGroup();
+  LogInfo("assets: {} -> {}: {} reference(s) updated", from, to, n);
+  return n;
+}
+
 bool EditorModel::SaveScene() {
   std::string err;
   if (scenePath.empty()) { LogWarn("save: no scene file path"); return false; }

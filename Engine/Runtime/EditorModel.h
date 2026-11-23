@@ -28,6 +28,8 @@ public:
   bool Autosave();                     // scene + command log to .cache/autosave/ (after a guarded crash)
   // Scene file (queue 2-2). Opening is not an edit: history starts fresh. Saving writes the .scene JSONL.
   bool OpenScene(const std::string& path);
+  // An asset moved (queue 2-3): string fields holding the old path are set to the new one, as one undo step.
+  int RetargetAssetPath(const std::string& from, const std::string& to);
   bool SaveScene();                    // to scenePath
   std::string scenePath, sceneName = "Main";
 

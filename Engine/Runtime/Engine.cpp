@@ -8,6 +8,7 @@
 #include "Platform/Window.h"
 #include "RHI/RHI.h"
 #include "Render2D/Batch2D.h"
+#include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
 #include "Runtime/Screens.h"
 #include "Text/Font.h"
@@ -98,6 +99,11 @@ struct bdg_engine {
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
   bool shortcutBannerShown = false;
   bool dragTest = false;
+  bdg::AssetDatabase assets; // project Assets folder (BDG_ASSETS until the project system exists)
+  bdg::FileWatcher assetWatcher;
+  std::atomic<bool> assetsChanged{false};
+  bool assetsOpen = false, assetTest = false, assetWatcherFired = false;
+  std::string assetTestKnightGuid;
   bdg::Vec3 dragTestWorld{};
   std::string pendingCrash; // report folder of the previous session's crash
   std::string cmdTestValues[3];            // Transform.position after edit / undo / redo
@@ -513,6 +519,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
   e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
   e->dragTest = std::getenv("BDG_DRAG_TEST") != nullptr;
+  e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
@@ -582,6 +589,18 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       if (ok) bdg::LogInfo("replay: {} commands from {}", n, desc->replay_path);
       else bdg::LogError("replay failed: {}", err);
     }
+  }
+  if (const char* assetsDir = std::getenv("BDG_ASSETS")) { // asset database + watcher (wakes the idle editor)
+    std::string err;
+    e->assetsOpen = e->assets.Open(assetsDir, &err);
+    if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
+    else e->assetWatcher.Start(e->assets.Root(), [](void* p) {
+      auto* eng = static_cast<bdg_engine*>(p);
+      eng->assetsChanged = true;
+      eng->window.Wake();
+    }, e);
+  } else {
+    bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
   }
   if (bdg::Widget* dock = e->editor->Find("dock"); dock && dock->dock) {
     // Per-user layout (.cache is git-ignored); BDG_LAYOUT overrides for tests.
@@ -715,6 +734,28 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
     }
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
+    if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
+      e->assetWatcherFired = true;
+      bdg::AssetDatabase::Changes ch = e->assets.Refresh();
+      for (auto& [from, to] : ch.moved) if (e->model) e->model->RetargetAssetPath(from, to);
+      if (!ch.Empty())
+        bdg::LogInfo("assets: {} added, {} removed, {} modified, {} moved", ch.added.size(), ch.removed.size(), ch.modified.size(),
+                     ch.moved.size());
+    }
+    if (e->assetTest && e->assetsOpen && e->model) { // BDG_ASSET_TEST: rename in the editor, then move a file outside it
+      namespace fs = std::filesystem;
+      if (frames == 2) {
+        if (const bdg::AssetRecord* r = e->assets.ByPath("Knight.glb")) e->assetTestKnightGuid = r->guid;
+        std::string err;
+        if (e->assets.Move("Knight.glb", "Characters/Knight.glb", &err)) e->model->RetargetAssetPath("Knight.glb", "Characters/Knight.glb");
+        else bdg::LogError("asset test: {}", err);
+      }
+      if (frames == 3) { // like a file manager: the .meta stays behind
+        std::error_code ec;
+        fs::create_directories(fs::path(e->assets.Root()) / "Weapons", ec);
+        fs::rename(fs::path(e->assets.Root()) / "Sword.glb", fs::path(e->assets.Root()) / "Weapons" / "Sword.glb", ec);
+      }
+    }
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
     if (std::getenv("BDG_SAVE_TEST") && frames == 2) { // Ctrl+S through the shortcut system
       bdg::InputEvent ev{bdg::InputEvent::Type::KeyDown};
@@ -783,6 +824,18 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         float d = std::fabs(after.x - e->dragTestWorld.x) + std::fabs(after.y - e->dragTestWorld.y) + std::fabs(after.z - e->dragTestWorld.z);
         bdg::LogInfo("drag test: weapon_parent=\"{}\" world_kept={} undo_depth={}", weapon ? weapon->parent : "?", d < 1e-3f ? 1 : 0,
                      e->model->bus.UndoDepth());
+      }
+      if (e->assetTest && e->model) {
+        auto field = [&](const char* id) {
+          std::string v;
+          bdg::SceneObject* o = e->model->scene.Find(id);
+          if (bdg::Component* c = o ? o->Find("MeshRenderer") : nullptr) bdg::Registry::Get(c->data, *c->type, "mesh", v);
+          return v;
+        };
+        const bdg::AssetRecord* k = e->assets.ByPath("Characters/Knight.glb");
+        bdg::LogInfo("asset test: knight_guid_kept={} player_mesh={} weapon_mesh={} watcher={} orphans={} assets={}",
+                     k && k->guid == e->assetTestKnightGuid ? 1 : 0, field("g6"), field("g7"), e->assetWatcherFired ? 1 : 0,
+                     e->assets.OrphanMetas().size(), e->assets.Count());
       }
       if (e->shortcutTest)
         bdg::LogInfo("shortcut test: banner_shown={} unity_play={} unreal_play={} objects={} preset={} conflicts={} saved={}",
@@ -869,6 +922,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 
 void bdg_engine_destroy(bdg_engine* e) {
   if (!e) return; // destroying null is allowed (like free)
+  e->assetWatcher.Stop();
   bdg::a11y::Detach(); // before the widgets and the window go away
   e->editor.reset();
   e->gallery.reset();

@@ -104,6 +104,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp
+  Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
@@ -142,7 +143,7 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)
