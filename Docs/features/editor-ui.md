@@ -150,7 +150,7 @@ Project 창과 선택 창에서 에셋을 두 가지로 보여 줍니다. 시안
 - 구현 상태: Project 패널 큰 보기에서 묶음 타일 표시 완료 (`Engine/Runtime/Screens.cpp`). 목록 보기·열기·이름 바꾸기 연동은 M2 Project 패널(2-5)에서.
 ## 버그 제보 (2026-11-22)
 
-- **F12** 또는 상태 줄 **버그 제보** 버튼 → `BugReports/<날짜-시간>/`에 `screenshot.png`(절반 해상도), `Bidulgi.log` 사본, `system.txt`(엔진 버전, OS, GPU, OpenGL, 해상도·배율, 메모리, 화면)를 저장하고 폴더를 엽니다.
+- **Ctrl+Shift+B** 또는 상태 줄 **버그 제보** 버튼 → `BugReports/<날짜-시간>/`에 `screenshot.png`(압축 PNG, 500KB를 넘으면 절반 해상도), `Bidulgi.log` 사본, `system.txt`(엔진 버전, OS, GPU, OpenGL, 해상도·배율, 메모리, 화면), `README.txt`(파일 설명)를 저장하고 폴더를 먼저 엽니다. 사용자 폴더·이름은 `%USERPROFILE%`·`%USERNAME%`으로 치환, 30일 지난 보고서는 자동 삭제 (F12는 Windows 디버거 중단 키라 쓰지 않음).
 - 동시에 GitHub 이슈 양식(`.github/ISSUE_TEMPLATE/bug_report.yml`)을 엽니다. 제목과 시스템 정보 칸이 URL 파라미터로 미리 채워집니다.
 - 자동 업로드는 하지 않습니다(개인 정보 보호). 사용자가 파일을 확인한 뒤 끌어다 놓습니다.
 - 자동 테스트: `BDG_BUG_TEST=1`이면 마지막 프레임에 보고서만 만들고 브라우저는 열지 않습니다.

@@ -88,6 +88,14 @@ jobs:
           # 4) Bug report folder is created (no browser in CI)
           $log = Invoke-Editor 'Release' @{ BDG_BUG_TEST = '1' } 10
           if ($log -notmatch 'bug report: ') { $errors += 'bug report not written' }
+          $report = Get-ChildItem BugReports -Directory | Sort-Object LastWriteTime | Select-Object -Last 1
+          if ($report) {
+            foreach ($f in Get-ChildItem $report.FullName -File -Exclude *.png) {
+              if ((Get-Content $f.FullName -Raw -Encoding utf8) -match [regex]::Escape($env:USERNAME)) { $errors += "user name found in $($f.Name)" }
+            }
+            $png = Get-Item (Join-Path $report.FullName 'screenshot.png')
+            if ($png.Length -gt 500KB) { $errors += "bug report screenshot is $([int]($png.Length / 1KB)) KB (limit 500)" }
+          }
 
           # 5) Idle editor sleeps (queue 0-13): almost no frames while idle, wakes at once on an event
           $env:BDG_IDLE_TEST = '3'

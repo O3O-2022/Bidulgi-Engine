@@ -99,13 +99,13 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 엔진 CI | GitHub Actions: Windows Debug·Release 빌드, 엔진 코드 경고 0개 검사, Mesa 소프트웨어 GL 4.5로 자동 테스트 4종(에디터 화면·UI/한글 입력·1만 개 배칭·버그 제보), 스크린샷·로그 아티팩트. README에 배지 | (이 커밋) |
 | 버그 제보 | GitHub 이슈 양식(버그·기능 제안) + 에디터 F12·버튼: 스크린샷·로그·시스템 정보 폴더 + 미리 채운 이슈 양식 | (이 커밋) |
 | 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
-| 0-13 대기 중 다시 그리기 멈추기 | 바뀔 때만 그림(OS 이벤트 대기), vsync 확인 + 무시 감지 시 주사율 타이머 제한, `Window::Wake()`. 대기 CPU 96% → 0ms/5초(스레드별 측정), `BDG_IDLE_TEST=3`: frames=3, wake_latency 0.1~0.6ms. CI 테스트 5번 추가. 셀프테스트 클릭이 화면 배율 1.5에서 빗나가던 버그도 수정 | (이 커밋) |
+| 0-13 대기 중 다시 그리기 멈추기 | 바뀔 때만 그림(OS 이벤트 대기), vsync 확인 + 무시 감지 시 주사율 타이머 제한, `Window::Wake()`. 대기 CPU 96% → 0ms/5초(스레드별 측정), `BDG_IDLE_TEST=3`: frames=3, wake_latency 0.1~0.6ms. CI 테스트 5번 추가. 셀프테스트 클릭이 화면 배율 1.5에서 빗나가던 버그도 수정 | `1a657b9` |
+| 0-14 버그 제보 보완 | 단축키 `Ctrl+Shift+B`, 보고서의 사용자 폴더·이름 → `%USERPROFILE%`·`%USERNAME%`, 폴더를 먼저 열고 `README.txt`로 파일 설명(첨부 전 확인), 30일 지난 보고서 삭제, stb_image_write 압축 PNG(에디터 1920×1080 = 324KB). CI 4번에 사용자 이름·500KB 검사 추가 | (이 커밋) |
 
 ---
 
-## M0 — 남은 것 (위에서부터 순서대로: 0-14 → 0-12 → 0-10)
+## M0 — 남은 것 (위에서부터 순서대로: 0-12 → 0-10)
 
-- [ ] **0-14. 버그 제보 보완** — 단축키 F12 → `Ctrl+Shift+B`(Windows 디버거 키 충돌), 보고서의 사용자 경로를 `%USERPROFILE%`로 치환 + 첨부 전 미리보기, 30일 지난 보고서 삭제, PNG 압축(stb_image_write, 퍼블릭 도메인). 완료 조건: 보고서 파일에 사용자 이름이 없음, 스크린샷 500KB 이하 [convenience-features](planning/convenience-features.md)
 - [ ] **0-12. M0 마무리 손질**
   - Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) 추가 → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. (파일 내려받기는 사용자 허락 후)
   - Inspector 컴포넌트 헤더(`ComponentHeader`)에 `raise` 배경 + 위쪽 `line` 1px (`bundle.css`의 `.bdg-comp-head`).

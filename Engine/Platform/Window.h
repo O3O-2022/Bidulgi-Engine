@@ -6,7 +6,7 @@
 struct SDL_Window;
 
 namespace bdg {
-enum class Key { None, Tab, Enter, Space, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, F1, F12, A, C, V, X, Z, Y };
+enum class Key { None, Tab, Enter, Space, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, F1, F12, A, B, C, V, X, Z, Y };
 
 // Platform-neutral input event. Coordinates are in drawable pixels (same space as rendering).
 struct InputEvent {

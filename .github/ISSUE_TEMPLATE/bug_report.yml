@@ -1,14 +1,14 @@
 name: 🐞 버그 제보 / Bug report
-description: 엔진이 이상하게 동작할 때 알려 주세요. 에디터에서 F12(또는 상태 줄의 "버그 제보")를 누르면 아래 정보가 자동으로 채워집니다.
+description: 엔진이 이상하게 동작할 때 알려 주세요. 에디터에서 Ctrl+Shift+B(또는 상태 줄의 "버그 제보")를 누르면 아래 정보가 자동으로 채워집니다.
 title: "[Bug] "
 labels: ["bug", "triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        제보해 주셔서 고맙습니다! **에디터에서 F12**를 누르면 시스템 정보가 채워진 이 양식이 열리고,
+        제보해 주셔서 고맙습니다! **에디터에서 Ctrl+Shift+B**를 누르면 시스템 정보가 채워진 이 양식이 열리고,
         로그·스크린샷이 담긴 `BugReports/<날짜>/` 폴더도 함께 열립니다. 그 폴더의 파일을 아래에 끌어다 놓아 주세요.
-        Thanks for reporting! Press **F12 in the editor** to open this form with system info prefilled.
+        Thanks for reporting! Press **Ctrl+Shift+B in the editor** to open this form with system info prefilled.
   - type: textarea
     id: summary
     attributes:
@@ -59,7 +59,7 @@ body:
     id: system
     attributes:
       label: 시스템 정보 / System info
-      description: F12로 열었다면 자동으로 채워집니다. Bidulgi.log의 `rhi:` 줄을 붙여 넣어도 됩니다.
+      description: Ctrl+Shift+B로 열었다면 자동으로 채워집니다. Bidulgi.log의 `rhi:` 줄을 붙여 넣어도 됩니다.
       render: text
     validations:
       required: true

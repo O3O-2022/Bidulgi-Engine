@@ -22,6 +22,7 @@
 #include <psapi.h>
 #include <SDL3/SDL_platform.h>
 #include <cctype>
+#include <cstring>
 #include <ctime>
 #undef DrawText // windows.h macro would rename bdg::Font::DrawText in this file
 #include <filesystem>
@@ -116,9 +117,10 @@ void InjectSelfTest(bdg_engine* e, int frame, float scale) { // scale: UI units 
 }
 
 
-// ---- Bug report (F12 or the status bar button) -------------------------------------------
+// ---- Bug report (Ctrl+Shift+B or the status bar button) ----------------------------------
 // Collects screenshot + log + system info into BugReports/<time>/ and opens a prefilled GitHub issue form.
-// Nothing is uploaded automatically: the user reviews the files and attaches them.
+// Nothing is uploaded automatically: the folder opens first so the user can review every file before attaching.
+// User paths and the user name are replaced with %USERPROFILE% / %USERNAME%; reports older than 30 days are deleted.
 std::string UrlEncode(const std::string& s) {
   static const char* hex = "0123456789ABCDEF";
   std::string out;
@@ -129,7 +131,63 @@ std::string UrlEncode(const std::string& s) {
   return out;
 }
 
-void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openBrowser);
+namespace {
+// Replaces every case-insensitive occurrence of `what` in `s` with `with`.
+void ReplaceAllNoCase(std::string& s, const std::string& what, const std::string& with) {
+  if (what.empty()) return;
+  auto lower = [](std::string v) { for (char& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+  std::string ls = lower(s), lw = lower(what);
+  std::string out;
+  size_t pos = 0;
+  for (size_t hit; (hit = ls.find(lw, pos)) != std::string::npos; pos = hit + what.size()) out += s.substr(pos, hit - pos) + with;
+  s = out + s.substr(pos);
+}
+}
+
+// Removes personal data from text that goes into a bug report (exported for the automated check).
+std::string AnonymizeReportText(std::string s) {
+  if (const char* home = std::getenv("USERPROFILE"); home && *home) {
+    std::string h = home, fwd = h;
+    for (char& c : fwd) if (c == '\\') c = '/';
+    ReplaceAllNoCase(s, h, "%USERPROFILE%");
+    ReplaceAllNoCase(s, fwd, "%USERPROFILE%");
+  }
+  if (const char* user = std::getenv("USERNAME"); user && std::strlen(user) >= 2) ReplaceAllNoCase(s, user, "%USERNAME%");
+  return s;
+}
+
+std::string ReadTextFile(const std::filesystem::path& p) {
+  std::string s;
+  if (std::FILE* f = _wfopen(p.c_str(), L"rb")) {
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, n);
+    std::fclose(f);
+  }
+  return s;
+}
+
+bool WriteBytes(const std::filesystem::path& p, const void* data, size_t size) {
+  std::FILE* f = _wfopen(p.c_str(), L"wb");
+  if (!f) return false;
+  bool ok = std::fwrite(data, 1, size, f) == size;
+  std::fclose(f);
+  return ok;
+}
+
+void DeleteOldBugReports(const std::filesystem::path& root, int maxAgeDays) {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (!fs::is_directory(root, ec)) return;
+  auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(24 * maxAgeDays);
+  for (const fs::directory_entry& d : fs::directory_iterator(root, ec)) {
+    if (!d.is_directory(ec)) continue;
+    auto t = d.last_write_time(ec);
+    if (!ec && t < cutoff) {
+      fs::remove_all(d.path(), ec);
+      bdg::LogInfo("bug report: deleted old report {}", d.path().filename().string());
+    }
+  }
+}
 
 void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openBrowser) {
   namespace fs = std::filesystem;
@@ -138,35 +196,50 @@ void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openB
   localtime_s(&tm, &now);
   char stamp[32];
   std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
-  fs::path dir = fs::current_path() / "BugReports" / stamp;
+  fs::path root = fs::current_path() / "BugReports";
+  DeleteOldBugReports(root, 30);
+  fs::path dir = root / stamp;
   std::error_code ec;
   fs::create_directories(dir, ec);
 
-  std::vector<uint8_t> px;
+  // Screenshot: full resolution compressed PNG; half resolution (2x2 box filter) if it would exceed 500 KB.
+  std::vector<uint8_t> px, png;
   e->rhi.ReadPixels(w, h, px);
-  // Half resolution (2x2 box filter) keeps the uncompressed PNG small enough to attach to an issue.
-  int32_t hw = w / 2, hh = h / 2;
-  std::vector<uint8_t> half((size_t)hw * hh * 4);
-  for (int32_t y = 0; y < hh; ++y)
-    for (int32_t x = 0; x < hw; ++x)
-      for (int c = 0; c < 4; ++c) {
-        auto at = [&](int32_t sx, int32_t sy) { return (int)px[((size_t)sy * w + sx) * 4 + c]; };
-        half[((size_t)y * hw + x) * 4 + c] = (uint8_t)((at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1)) / 4);
-      }
-  bdg::WritePNG((dir / "screenshot.png").string().c_str(), hw, hh, half.data(), true);
-  fs::copy_file("Bidulgi.log", dir / "Bidulgi.log", fs::copy_options::overwrite_existing, ec);
+  bdg::EncodePNG(w, h, px.data(), true, png);
+  if (png.size() > 500 * 1024) {
+    int32_t hw = w / 2, hh = h / 2;
+    std::vector<uint8_t> half((size_t)hw * hh * 4);
+    for (int32_t y = 0; y < hh; ++y)
+      for (int32_t x = 0; x < hw; ++x)
+        for (int c = 0; c < 4; ++c) {
+          auto at = [&](int32_t sx, int32_t sy) { return (int)px[((size_t)sy * w + sx) * 4 + c]; };
+          half[((size_t)y * hw + x) * 4 + c] = (uint8_t)((at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1)) / 4);
+        }
+    bdg::EncodePNG(hw, hh, half.data(), true, png);
+  }
+  WriteBytes(dir / "screenshot.png", png.data(), png.size());
 
-  PROCESS_MEMORY_COUNTERS pmc{};
-  GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc);
-  std::string sys = std::format(
+  std::string log = AnonymizeReportText(ReadTextFile("Bidulgi.log"));
+  WriteBytes(dir / "Bidulgi.log", log.data(), log.size());
+
+  std::string sys = AnonymizeReportText(std::format(
       "engine: Bidulgi Engine {}\nos: {}\ngpu: {}\nopengl: {}\ndrawable: {}x{}  ui_scale: {:.2f}\nram: {:.0f} MB\nscreen: {}\n",
-      bdg_version_string(), SDL_GetPlatform(), e->rhi.gpuName, e->rhi.glVersion, w, h, scale,
-      pmc.WorkingSetSize / (1024.0 * 1024.0), e->showGallery ? "gallery" : "editor");
-  if (std::FILE* f = std::fopen((dir / "system.txt").string().c_str(), "w")) { std::fputs(sys.c_str(), f); std::fclose(f); }
-  bdg::LogInfo("bug report: {}", dir.string());
+      bdg_version_string(), SDL_GetPlatform(), e->rhi.gpuName, e->rhi.glVersion, w, h, scale, RamMB(),
+      e->showGallery ? "gallery" : "editor"));
+  WriteBytes(dir / "system.txt", sys.data(), sys.size());
+  std::string readme =
+      "Bidulgi Engine bug report\n\n"
+      "Review these files before attaching them to the GitHub issue. Nothing was uploaded.\n"
+      "  screenshot.png  the editor window when the report was made\n"
+      "  Bidulgi.log     engine log of this session\n"
+      "  system.txt      engine version, OS, GPU, screen size (already filled into the issue form)\n\n"
+      "Your user folder and user name were replaced with %USERPROFILE% and %USERNAME%.\n"
+      "Reports older than 30 days are deleted automatically.\n";
+  WriteBytes(dir / "README.txt", readme.data(), readme.size());
+  bdg::LogInfo("bug report: {} (screenshot {} KB)", AnonymizeReportText(dir.string()), (png.size() + 1023) / 1024);
 
   if (!openBrowser) return;
-  e->window.OpenURL("file:///" + dir.generic_string());
+  e->window.OpenURL("file:///" + dir.generic_string()); // review first
   e->window.OpenURL("https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml&title=" +
                     UrlEncode("[Bug] ") + "&system=" + UrlEncode(sys));
 }
@@ -299,7 +372,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     for (const bdg::InputEvent& ev : e->window.Events())
     {
       if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F1) e->showGallery = !e->showGallery;
-      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F12) e->bugRequested = true;
+      // Bug report: Ctrl+Shift+B (F12 is reserved by Windows for the debugger break).
+      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::B && ev.ctrl && ev.shift) e->bugRequested = true;
     }
     int32_t w = 0, h = 0;
     e->window.GetDrawableSize(w, h);
@@ -327,7 +401,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (idleMeasuring) ++idleFrames;
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
-    if (last && std::getenv("BDG_BUG_TEST")) e->bugRequested = true; // automated check (no browser)
+    if (last && std::getenv("BDG_BUG_TEST")) { // automated check (no browser): personal data must not reach the report
+      const char* home = std::getenv("USERPROFILE");
+      bdg::LogInfo("bug test: profile path {}\\Documents", home ? home : "-");
+      e->bugRequested = true;
+    }
     if (e->bugRequested) {
       e->bugRequested = false;
       WriteBugReport(e, w, h, scale, std::getenv("BDG_BUG_TEST") == nullptr);

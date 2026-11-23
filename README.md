@@ -117,7 +117,7 @@ cmake --build build --config Release --target BidulgiEditor
 
 ## 버그 제보
 
-- **에디터에서 `F12`** (또는 상태 줄의 **버그 제보** 버튼)를 누르면, 스크린샷·로그·시스템 정보가 `BugReports/<날짜>/` 폴더에 모이고 시스템 정보가 채워진 [GitHub 이슈 양식](https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml)이 열립니다. 폴더의 파일을 끌어다 놓기만 하면 됩니다.
+- **에디터에서 `Ctrl+Shift+B`** (또는 상태 줄의 **버그 제보** 버튼)를 누르면, 스크린샷·로그·시스템 정보가 `BugReports/<날짜>/` 폴더에 모이고 시스템 정보가 채워진 [GitHub 이슈 양식](https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml)이 열립니다. 폴더의 파일을 확인한 뒤 끌어다 놓기만 하면 됩니다. 사용자 폴더·이름은 `%USERPROFILE%`·`%USERNAME%`으로 바뀌고, 30일 지난 보고서는 지워집니다.
 - 자동으로 업로드되는 것은 없습니다. 올리기 전에 파일 내용을 확인할 수 있습니다.
 - 기능 제안은 [여기](https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=feature_request.yml)로 보내 주세요.
 

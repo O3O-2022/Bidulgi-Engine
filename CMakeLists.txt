@@ -43,6 +43,10 @@ add_library(glad STATIC ThirdParty/glad/src/gl.c)
 target_include_directories(glad PUBLIC ThirdParty/glad/include)
 set_target_properties(glad PROPERTIES FOLDER ThirdParty)
 
+# ---- External: stb_image_write (MIT / public domain, vendored single header) — PNG compression ----
+add_library(stb INTERFACE)
+target_include_directories(stb SYSTEM INTERFACE ThirdParty/stb)
+
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
@@ -57,7 +61,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

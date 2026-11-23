@@ -50,7 +50,7 @@ Key MapKey(SDL_Keycode k) {
     case SDLK_ESCAPE: return Key::Escape; case SDLK_BACKSPACE: return Key::Backspace; case SDLK_DELETE: return Key::Delete;
     case SDLK_LEFT: return Key::Left;     case SDLK_RIGHT: return Key::Right;   case SDLK_UP: return Key::Up;
     case SDLK_DOWN: return Key::Down;     case SDLK_HOME: return Key::Home;     case SDLK_END: return Key::End;
-    case SDLK_F1: return Key::F1;         case SDLK_F12: return Key::F12;         case SDLK_A: return Key::A;           case SDLK_C: return Key::C;
+    case SDLK_F1: return Key::F1;         case SDLK_F12: return Key::F12;         case SDLK_A: return Key::A;           case SDLK_B: return Key::B;           case SDLK_C: return Key::C;
     case SDLK_V: return Key::V;           case SDLK_X: return Key::X;           case SDLK_Z: return Key::Z;
     case SDLK_Y: return Key::Y;           default: return Key::None;
   }
