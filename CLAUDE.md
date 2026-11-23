@@ -2,7 +2,7 @@
 
 Start here, in this order:
 1. Read `Docs/QUEUE.md` (build steps, test switches, code map, rules, and the ordered task list).
-2. Pick the first `[ ]` item, mark it `[~]`, implement it, verify its exit criterion, mark it `[x]` with the commit hash.
+2. If `Docs/QUEUE.md` has a "★ 지금 우선순위" section, follow its order first; otherwise pick the first `[ ]` item, mark it `[~]`, implement it, verify its exit criterion, mark it `[x]` with the commit hash.
 
 Key rules (details in `Docs/QUEUE.md` §0):
 - The user speaks Korean: reply and write docs in Korean; code comments and commit messages in English.

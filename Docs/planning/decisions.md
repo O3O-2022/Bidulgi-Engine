@@ -89,6 +89,7 @@
 | 2026-11-23 | 물리 컴포넌트 이름은 유니티와 같게(`Rigidbody`, `Collider`, `PhysicsMaterial`). Rigidbody마다 Simulation(Auto/Jolt/GPU/패키지)으로 백엔드 선택, 관절은 같은 백엔드끼리만. Collider Auto = 보이는 모양 그대로(정적 메시·볼록 분해·뼈 캡슐·SDF·복셀 자동 선택, 오차 표시) | [physics](../architecture/physics.md) |
 | 2026-11-23 | 물리 백엔드 목록: 내장 Jolt(3D)·Box2D(2D)·자체 GPU 물리, 패키지 PhysX 5(1순위)·Rapier·Bullet, 수요 시 MuJoCo·Chrono·Bepu, Havok은 어댑터 예제만, Chaos는 불가. 추가 기준은 공통 테스트 장면 통과 + 비교 보고서 | [physics](../architecture/physics.md#지원할-물리-엔진-목록-2026-11-23) |
 | 2026-11-23 | 게임 코드 멀티스레드: 기본은 게임 스레드, 병렬은 `RunOnWorker`·`Jobs.ParallelFor`·`[Parallel] Update`·잡 의존성. 워커의 게임 스레드 API 호출은 오류로 잡음(스레드 검사), 순서 섞기 디버그 모드 | [scripting](../architecture/scripting.md#멀티스레드-2026-11-23) |
+| 2026-11-23 | 작업 우선순위: 3D 그래픽 먼저(머티리얼·텍스처 → 조명·그림자 → 품질 단계·포스트 → 기준 씬·디버그 → 스트레스·이미지 비교 → Halo GI Tier 0 → 고사양), 그다음 나머지 기능 | [QUEUE](../QUEUE.md) |
 
 ## 미결 사항
 
