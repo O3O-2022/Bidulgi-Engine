@@ -207,6 +207,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **4-4. 핫 리로드** — 수집 가능한 AssemblyLoadContext, 상태 직렬화 후 재적용. 목표: 변경 → 반영 2초.
 - [ ] **4-6. 빠른 C++ 반복** — 엔진 SDK(헤더+라이브러리) 배포 형태, 얇은 게임용 헤더, 헤더 도구 증분, 작은 모듈·PCH·유니티 빌드 자동, 모듈 DLL 라이브 리로드(실패 시 이전 DLL 복귀), sccache 옵션. 목표: `.cpp` 수정 반영 5초, 클린 빌드 60초, CI 측정 [pain-points](planning/pain-points.md)
 - [ ] **4-6b. 기다리기(코루틴) — C++20 `BTask`·C# `async`·Lua `wait`** — `Wait`/`WaitUntil`/`NextFrame`/`WaitForEvent`/`RunOnWorker`, 오브젝트·씬·플레이 모드에 묶여 자동 취소, 시간 배율 반영. 완료 조건: 오브젝트를 지운 뒤 대기 중 코루틴이 크래시 없이 취소되는 테스트 [pain-points](planning/pain-points.md)
+- [ ] **4-6c. 멀티스레드 게임 코드** — `RunOnWorker`, `Jobs.ParallelFor`, `[Parallel] Update`, 잡 의존성, 워커에서 게임 스레드 전용 API 호출 시 오류(스레드 검사), 순서 섞기 디버그 모드, 프로파일러 스레드 타임라인. 완료 조건: 총알 1만 개 `[Parallel]` Update가 단일 스레드보다 코어 수에 비례해 빨라지고, 워커에서 Transform 쓰기를 하면 크래시 없이 오류 [scripting](architecture/scripting.md#멀티스레드-2026-11-23)
 - [ ] **4-4b. 디버그 그리기 API + 콘솔 개선** — `Debug.Draw*`(모든 언어), 오류 클릭 → 코드 줄·Graph 노드로 이동, 같은 메시지 묶기, 필터·검색 [convenience-features](planning/convenience-features.md)
 - [ ] **4-4c. 쉬운 API (C#)** — `Get`/`Find`/`Spawn`/`Destroy`/`After`/`Every`/`await Wait`/`Tween`/`Random`, `[Auto]`, 태그·액션·씬 상수 자동 생성 [easy-api](features/easy-api.md)
 - [ ] **4-4d. 데이터 테이블** — `.table.jsonl`, 스프레드시트 편집, CSV, `Data.Get<T>` [convenience-features](planning/convenience-features.md)
