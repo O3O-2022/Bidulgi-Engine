@@ -5,6 +5,7 @@
 // (one counter-clockwise and one clockwise quad) and a depth probe. Check() reads the rendered pixels back and
 // tells whether coordinates, winding, depth, gamma and UV direction behave as Core/Space.h says.
 #include "Render3D/Renderer3D.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,13 @@ public:
   struct Label { glm::vec3 position; std::string text; };
 
   bool Init(RHI& rhi, Renderer3D& renderer);
+  // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes
+  // (x = -2.0, z = 1.6), clear of every probe Check() reads.
+  bool AddModel(const std::filesystem::path& gltf);
+  // The glTF probe placed on the board (queue 3-1): a node hierarchy with a textured unlit quad and an
+  // unindexed triangle without normals. externalBin != nullptr: the buffer goes to "probe data.bin" instead
+  // of a data URI (the bytes are returned there).
+  static std::string ProbeGltf(std::vector<uint8_t>* externalBin = nullptr);
   void Shutdown();
   const std::vector<DrawItem3D>& Items() const { return items_; }
   const std::vector<Label>& Labels() const { return labels_; }
@@ -29,6 +37,8 @@ private:
   RHI* rhi_ = nullptr;
   Renderer3D* renderer_ = nullptr;
   Mesh3D plane_, sphere_, quad_, quadCW_, cylinder_, cone_;
+  Model3D probe_, model_;
+  bool probeLoaded_ = false;
   TextureHandle letters_;
   std::vector<DrawItem3D> items_;
   std::vector<Label> labels_;

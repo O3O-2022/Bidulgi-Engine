@@ -1,4 +1,5 @@
 #include "Render3D/Renderer3D.h"
+#include "Assets/GltfImport.h"
 #include "Core/Log.h"
 #include <algorithm>
 #include <cmath>
@@ -10,24 +11,33 @@ namespace bdg {
 namespace {
 const char* kVS = R"(#version 450 core
 layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; };
+layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
-out vec3 vWorld; out vec3 vNormal; out vec2 vUV;
+layout(location = 3) in vec4 aTangent;
+out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent;
 void main() {
   vec4 w = uModel * vec4(aPos, 1.0);
   vWorld = w.xyz;
   vNormal = transpose(inverse(mat3(uModel))) * aNormal;
+  vTangent = vec4(mat3(uModel) * aTangent.xyz, aTangent.w);
   vUV = aUV;
   gl_Position = uViewProj * w;
 }
 )";
+// Object3D: params = (metallic, roughness, unlit, alpha mode 0 opaque / 1 mask / 2 blend),
+// emissive = (rgb, normal scale), maps = has (base, metal-rough, normal, occlusion), extra = (has emissive,
+// occlusion strength, alpha cutoff, -).
 const char* kFS = R"(#version 450 core
 layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; }; // metallic, roughness, unlit, textured
+layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
 layout(binding = 0) uniform sampler2D uBaseMap;
-in vec3 vWorld; in vec3 vNormal; in vec2 vUV;
+layout(binding = 1) uniform sampler2D uMetalRoughMap;
+layout(binding = 2) uniform sampler2D uNormalMap;
+layout(binding = 3) uniform sampler2D uOcclusionMap;
+layout(binding = 4) uniform sampler2D uEmissiveMap;
+in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent;
 out vec4 oColor;
 const float PI = 3.14159265;
 vec3 ToSrgb(vec3 c) {
@@ -48,28 +58,58 @@ vec2 EnvBRDFApprox(float NoV, float rough) { // Karis, mobile split-sum approxim
   return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 void main() {
-  vec4 tex = texture(uBaseMap, vUV); // sampled outside branches; a white texture when there is no map
-  vec3 base = uBaseColor.rgb * (uParams.w > 0.5 ? tex.rgb : vec3(1.0));
-  if (uParams.z > 0.5) { oColor = vec4(ToSrgb(base), 1.0); return; }
-  vec3 N = normalize(vNormal);
-  if (!gl_FrontFacing) N = -N;
+  // Every map is sampled and every derivative taken before any branch (implicit LOD needs uniform control flow).
+  vec4 baseTex = texture(uBaseMap, vUV), mr = texture(uMetalRoughMap, vUV), nTex = texture(uNormalMap, vUV);
+  vec4 occ = texture(uOcclusionMap, vUV), emTex = texture(uEmissiveMap, vUV);
+  vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
+  vec2 duvx = dFdx(vUV), duvy = dFdy(vUV);
+
+  vec4 base = uBaseColor * (uMaps.x > 0.5 ? baseTex : vec4(1.0));
+  if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
+  float alpha = uParams.w > 1.5 ? base.a : 1.0;
+  if (uParams.z > 0.5) { oColor = vec4(ToSrgb(base.rgb), alpha); return; }
+
+  vec3 ng = normalize(vNormal);
+  // Tangent frame: from the mesh when it has tangents, otherwise from screen-space UV derivatives
+  // (the glTF sample viewer's approach); bitangent = cross(N, T) * w.
+  float det = duvx.x * duvy.y - duvy.x * duvx.y;
+  vec3 t = (duvy.y * dpx - duvx.y * dpy) / (abs(det) > 1e-12 ? det : 1e-12);
+  float w = 1.0;
+  if (vTangent.w != 0.0) { t = vTangent.xyz; w = vTangent.w; }
+  t = t - ng * dot(ng, t);
+  t = dot(t, t) > 1e-16 ? normalize(t) : vec3(1.0, 0.0, 0.0);
+  vec3 b = cross(ng, t) * w;
+  if (!gl_FrontFacing) { t = -t; b = -b; ng = -ng; }
+  vec3 N = ng;
+  if (uMaps.z > 0.5) {
+    vec3 tn = nTex.xyz * 2.0 - 1.0;
+    tn.xy *= uEmissive.w;
+    N = normalize(mat3(t, b, ng) * tn);
+  }
+
   vec3 V = normalize(uCamPos.xyz - vWorld), L = normalize(uToLight.xyz), H = normalize(V + L);
   float NoV = max(dot(N, V), 1e-4), NoL = max(dot(N, L), 0.0), NoH = max(dot(N, H), 0.0), VoH = max(dot(V, H), 0.0);
-  float metallic = clamp(uParams.x, 0.0, 1.0), rough = clamp(uParams.y, 0.045, 1.0), a = rough * rough;
-  vec3 f0 = mix(vec3(0.04), base, metallic), diffuse = base * (1.0 - metallic);
+  float metallic = uParams.x, rough = uParams.y;
+  if (uMaps.y > 0.5) { rough *= mr.g; metallic *= mr.b; }
+  metallic = clamp(metallic, 0.0, 1.0);
+  rough = clamp(rough, 0.045, 1.0);
+  float a = rough * rough;
+  vec3 f0 = mix(vec3(0.04), base.rgb, metallic), diffuse = base.rgb * (1.0 - metallic);
   vec3 F = F_Schlick(VoH, f0);
   vec3 color = (diffuse / PI * (1.0 - F) + D_GGX(NoH, a) * V_SmithGGX(NoV, NoL, a) * F) * uLight.rgb * NoL;
   vec3 R = reflect(-V, N);
   vec3 ambient = mix(uGround.rgb, uSky.rgb, N.y * 0.5 + 0.5);
   vec3 env = mix(uGround.rgb, uSky.rgb, smoothstep(-0.2, 0.2, R.y)); // sharp horizon in reflections
   vec2 ab = EnvBRDFApprox(NoV, rough);
-  color += diffuse * ambient + env * (f0 * ab.x + ab.y);
-  oColor = vec4(ToSrgb(color), 1.0);
+  float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
+  color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
+  color += uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
+  oColor = vec4(ToSrgb(color), alpha);
 }
 )";
 
 struct FrameData { float viewProj[16]; float camPos[4], toLight[4], light[4], sky[4], ground[4]; };
-struct ObjectData { float model[16]; float baseColor[4]; float params[4]; };
+struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4]; };
 }
 
 glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, glm::vec3(0, 1, 0)); }
@@ -99,13 +139,21 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.attrs[0] = {0, 3, offsetof(Vertex3D, px)};
   pd.attrs[1] = {1, 3, offsetof(Vertex3D, nx)};
   pd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
-  pd.attrCount = 3;
+  pd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
+  pd.attrCount = 4;
   pd.stride = sizeof(Vertex3D);
   pd.depthTest = true;
   pd.cull = CullMode::Back;
   pd.debugName = "forward3d";
-  pipeline_ = rhi.CreatePipeline(pd);
-  if (!pipeline_.Valid()) return false;
+  opaque_ = rhi.CreatePipeline(pd);
+  pd.cull = CullMode::None;
+  pd.debugName = "forward3d.twosided";
+  twoSided_ = rhi.CreatePipeline(pd);
+  pd.alphaBlend = true;
+  pd.depthWrite = false;
+  pd.debugName = "forward3d.blend";
+  blend_ = rhi.CreatePipeline(pd);
+  if (!opaque_.Valid() || !twoSided_.Valid() || !blend_.Valid()) return false;
   frameUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FrameData), true);
   const uint8_t white[4] = {255, 255, 255, 255};
   white_ = rhi.CreateTexture2D(1, 1, TextureFormat::SRGBA8, white);
@@ -119,7 +167,7 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectUbo_);
   rhi_->DestroyTexture(white_);
-  rhi_->DestroyPipeline(pipeline_);
+  for (PipelineHandle p : {opaque_, twoSided_, blend_}) rhi_->DestroyPipeline(p);
   rhi_ = nullptr;
 }
 
@@ -136,6 +184,65 @@ void Renderer3D::DestroyMesh(Mesh3D& m) {
   rhi_->DestroyBuffer(m.vertices);
   rhi_->DestroyBuffer(m.indices);
   m = {};
+}
+
+Model3D Renderer3D::UploadModel(const ImportedModel& im) {
+  Model3D m;
+  for (const ImportedTexture& t : im.textures) {
+    if (t.rgba.empty()) { m.textures.push_back({}); continue; }
+    TextureDesc d;
+    d.w = t.w;
+    d.h = t.h;
+    d.format = t.srgb ? TextureFormat::SRGBA8 : TextureFormat::RGBA8;
+    d.mipmaps = true;
+    d.repeat = !t.clamp;
+    d.nearest = t.nearest;
+    m.textures.push_back(rhi_->CreateTexture(d, t.rgba.data()));
+  }
+  auto tex = [&](int i) { return i >= 0 && i < (int)m.textures.size() ? m.textures[i] : TextureHandle{}; };
+  for (const ImportedPrimitive& p : im.primitives) {
+    m.meshes.push_back(p.mesh.indices.empty() ? Mesh3D{} : CreateMesh(p.mesh));
+    Material3D mat; // glTF default material: white, metallic 1, roughness 1
+    mat.baseColor = {1, 1, 1, 1};
+    mat.metallic = 1;
+    mat.roughness = 1;
+    if (p.material >= 0 && p.material < (int)im.materials.size()) {
+      const ImportedMaterial& s = im.materials[p.material];
+      mat.baseColor = {s.baseColor[0], s.baseColor[1], s.baseColor[2], s.baseColor[3]};
+      mat.metallic = s.metallic;
+      mat.roughness = s.roughness;
+      mat.emissive = {s.emissive[0], s.emissive[1], s.emissive[2], 1};
+      mat.unlit = s.unlit;
+      mat.doubleSided = s.doubleSided;
+      mat.alpha = (Material3D::Alpha)s.alpha;
+      mat.alphaCutoff = s.alphaCutoff;
+      mat.normalScale = s.normalScale;
+      mat.occlusionStrength = s.occlusionStrength;
+      mat.baseMap = tex(s.baseColorTex);
+      mat.metalRoughMap = tex(s.metalRoughTex);
+      mat.normalMap = tex(s.normalTex);
+      mat.occlusionMap = tex(s.occlusionTex);
+      mat.emissiveMap = tex(s.emissiveTex);
+    }
+    m.materials.push_back(mat);
+  }
+  for (const ImportedModel::Instance& in : im.instances) m.instances.push_back({in.primitive, in.world});
+  m.boundsMin = im.boundsMin;
+  m.boundsMax = im.boundsMax;
+  return m;
+}
+
+void Renderer3D::DestroyModel(Model3D& m) {
+  for (Mesh3D& mesh : m.meshes) DestroyMesh(mesh);
+  if (rhi_)
+    for (TextureHandle t : m.textures) rhi_->DestroyTexture(t);
+  m = {};
+}
+
+void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::vector<DrawItem3D>& items) {
+  for (const Model3D::Instance& in : m.instances)
+    if (in.mesh >= 0 && in.mesh < (int)m.meshes.size() && m.meshes[in.mesh].indexCount)
+      items.push_back({&m.meshes[in.mesh], placement * in.world, m.materials[in.mesh]});
 }
 
 void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
@@ -165,19 +272,31 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     std::memcpy(o.model, glm::value_ptr(it.model), sizeof(o.model));
     const Material3D& m = it.material;
     o.baseColor[0] = m.baseColor.r; o.baseColor[1] = m.baseColor.g; o.baseColor[2] = m.baseColor.b; o.baseColor[3] = m.baseColor.a;
-    o.params[0] = m.metallic; o.params[1] = m.roughness; o.params[2] = m.unlit ? 1.f : 0.f; o.params[3] = m.baseMap.Valid() ? 1.f : 0.f;
+    o.params[0] = m.metallic; o.params[1] = m.roughness; o.params[2] = m.unlit ? 1.f : 0.f; o.params[3] = (float)m.alpha;
+    o.emissive[0] = m.emissive.r; o.emissive[1] = m.emissive.g; o.emissive[2] = m.emissive.b; o.emissive[3] = m.normalScale;
+    auto has = [](TextureHandle t) { return t.Valid() ? 1.f : 0.f; };
+    o.maps[0] = has(m.baseMap); o.maps[1] = has(m.metalRoughMap); o.maps[2] = has(m.normalMap); o.maps[3] = has(m.occlusionMap);
+    o.extra[0] = has(m.emissiveMap); o.extra[1] = m.occlusionStrength; o.extra[2] = m.alphaCutoff;
     std::memcpy(blob.data() + i * objectStride_, &o, sizeof(o));
   }
   if (!blob.empty()) rhi_->UpdateBuffer(objectUbo_, blob.data(), blob.size());
 
   rhi_->BeginRenderTarget(rt, clear);
   rhi_->BindUniformBuffer(1, frameUbo_);
-  for (size_t i = 0; i < items.size(); ++i) {
+  std::vector<size_t> order, blended;
+  for (size_t i = 0; i < items.size(); ++i)
+    if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : order).push_back(i);
+  auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
+  std::sort(blended.begin(), blended.end(), [&](size_t a, size_t b) { return dist(a) > dist(b); }); // back to front
+  order.insert(order.end(), blended.begin(), blended.end());
+  for (size_t i : order) {
     const DrawItem3D& it = items[i];
-    if (!it.mesh || !it.mesh->indexCount) continue;
+    const Material3D& m = it.material;
     rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
-    rhi_->BindTexture(0, it.material.baseMap.Valid() ? it.material.baseMap : white_);
-    rhi_->DrawIndexed(pipeline_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
+    const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
+    for (uint32_t slot = 0; slot < 5; ++slot) rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
+    PipelineHandle p = m.alpha == Material3D::Alpha::Blend ? blend_ : m.doubleSided ? twoSided_ : opaque_;
+    rhi_->DrawIndexed(p, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
     ++draws_;
   }
   rhi_->EndRenderTarget();

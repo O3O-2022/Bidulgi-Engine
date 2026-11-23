@@ -15,10 +15,17 @@ struct Mesh3D {
 };
 
 struct Material3D {
+  enum class Alpha { Opaque, Mask, Blend };
   Color baseColor{0.8f, 0.8f, 0.8f, 1};  // linear
   float metallic = 0, roughness = 0.5f;
+  Color emissive{0, 0, 0, 1};            // linear, may exceed 1
   bool unlit = false;                    // output baseColor (x texture) as is: reference cards and patches
-  TextureHandle baseMap;                 // optional, SRGBA8; multiplies baseColor
+  bool doubleSided = false;
+  Alpha alpha = Alpha::Opaque;
+  float alphaCutoff = 0.5f, normalScale = 1, occlusionStrength = 1;
+  // Optional maps (glTF layout): base colour (SRGBA8), metal/rough (G roughness, B metallic), tangent-space
+  // normal, occlusion (R), emissive (SRGBA8).
+  TextureHandle baseMap, metalRoughMap, normalMap, occlusionMap, emissiveMap;
 };
 
 struct DrawItem3D {
@@ -47,12 +54,28 @@ Color SrgbToLinear(uint8_t r, uint8_t g, uint8_t b); // exact sRGB transfer func
 // false when the point is behind the camera.
 bool ProjectToPixel(const Camera3D& cam, int32_t w, int32_t h, const glm::vec3& p, float& px, float& py);
 
+struct ImportedModel;
+
+// A glTF model on the GPU: one mesh per primitive, materials with their textures.
+struct Model3D {
+  std::vector<Mesh3D> meshes;            // per ImportedModel primitive (empty mesh = skipped primitive)
+  std::vector<Material3D> materials;     // per primitive (default material when it had none)
+  std::vector<TextureHandle> textures;
+  struct Instance { int mesh; glm::mat4 world; };
+  std::vector<Instance> instances;
+  glm::vec3 boundsMin{0}, boundsMax{0};
+};
+
 class Renderer3D {
 public:
   bool Init(RHI& rhi);
   void Shutdown();
   Mesh3D CreateMesh(const MeshData& data);
   void DestroyMesh(Mesh3D& mesh);
+  Model3D UploadModel(const ImportedModel& model);
+  void DestroyModel(Model3D& model);
+  // Adds every instance of the model, placed by `placement` (model space -> world).
+  static void AppendModel(const Model3D& model, const glm::mat4& placement, std::vector<DrawItem3D>& items);
   // Draws the items into rt (cleared to `clear`, given in display/sRGB values like UI colours).
   void Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
               const std::vector<DrawItem3D>& items, Color clear);
@@ -60,7 +83,7 @@ public:
 
 private:
   RHI* rhi_ = nullptr;
-  PipelineHandle pipeline_;
+  PipelineHandle opaque_, twoSided_, blend_;
   BufferHandle frameUbo_, objectUbo_;
   size_t objectCapacity_ = 0, objectStride_ = 0;
   TextureHandle white_;

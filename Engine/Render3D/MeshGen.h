@@ -6,7 +6,8 @@
 #include <vector>
 
 namespace bdg {
-struct Vertex3D { float px, py, pz, nx, ny, nz, u, v; };
+// Tangent xyz + handedness w (glTF TANGENT). w == 0: no tangent, the shader derives one from UV derivatives.
+struct Vertex3D { float px, py, pz, nx, ny, nz, u, v, tx = 0, ty = 0, tz = 0, tw = 0; };
 
 struct MeshData {
   std::vector<Vertex3D> vertices;

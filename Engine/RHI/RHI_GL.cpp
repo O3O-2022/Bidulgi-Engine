@@ -102,6 +102,26 @@ void RHI::BindUniformBufferRange(uint32_t slot, BufferHandle b, size_t offset, s
 }
 
 // ---- Textures (DSA) ----
+TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
+  int32_t levels = 1;
+  if (d.mipmaps)
+    for (int32_t s = std::max(d.w, d.h); s > 1; s >>= 1) ++levels;
+  GLuint t = 0;
+  glCreateTextures(GL_TEXTURE_2D, 1, &t);
+  GLenum internal = d.format == TextureFormat::R8 ? GL_R8 : d.format == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+  glTextureStorage2D(t, levels, internal, d.w, d.h);
+  glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, d.nearest ? GL_NEAREST : GL_LINEAR);
+  GLint wrap = d.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+  glTextureParameteri(t, GL_TEXTURE_WRAP_S, wrap);
+  glTextureParameteri(t, GL_TEXTURE_WRAP_T, wrap);
+  if (pixels) {
+    UpdateTexture2D({t}, 0, 0, d.w, d.h, d.format, pixels);
+    if (levels > 1) glGenerateTextureMipmap(t);
+  }
+  return {t};
+}
+
 TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const void* pixels) {
   GLuint t = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &t);
@@ -247,7 +267,7 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
     glVertexArrayAttribBinding(vao, a.location, 0);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.cull});
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.depthWrite, d.cull});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -267,7 +287,7 @@ const RHI::PipelineGL* RHI::Bind(PipelineHandle p, BufferHandle vertices) {
   glBindVertexArray(g.vao);
   if (g.alphaBlend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
   else glDisable(GL_BLEND);
-  if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE); }
+  if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(g.depthWrite ? GL_TRUE : GL_FALSE); }
   else { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); }
   if (g.cull == CullMode::Back) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(GL_CCW); }
   else glDisable(GL_CULL_FACE);

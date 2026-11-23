@@ -43,15 +43,25 @@ bool WritePNG(const char* path, int32_t w, int32_t h, const uint8_t* rgba, bool 
   return ok;
 }
 
-bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
+bool ReadFileBytes(const std::filesystem::path& path, std::vector<uint8_t>& bytes) {
+  bytes.clear();
   std::FILE* f = _wfopen(path.c_str(), L"rb");
   if (!f) return false;
-  std::vector<uint8_t> bytes;
   uint8_t buf[65536];
   for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) bytes.insert(bytes.end(), buf, buf + n);
   std::fclose(f);
+  return true;
+}
+
+bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
+  std::vector<uint8_t> bytes;
+  return ReadFileBytes(path, bytes) && DecodeImageRGBA(bytes.data(), bytes.size(), w, h, rgba);
+}
+
+bool DecodeImageRGBA(const uint8_t* data, size_t size, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
+  if (!data || size == 0 || size > 0x7fffffff) return false;
   int comp = 0;
-  stbi_uc* px = stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &comp, 4);
+  stbi_uc* px = stbi_load_from_memory(data, (int)size, &w, &h, &comp, 4);
   if (!px) return false;
   rgba.assign(px, px + (size_t)w * h * 4);
   stbi_image_free(px);

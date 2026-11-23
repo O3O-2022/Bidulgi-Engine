@@ -142,7 +142,7 @@ std::unique_ptr<bdg::Widget> BuildRenderReferenceScreen(bdg_engine* e) {
       b.Rect(x - 5, y - 2, tw + 10, 19, shade, 4);
       ui.Text(x, y, 12, label, l.text);
     }
-    std::string title = std::format("Render reference · stage 1 (queue 3-0) · forward GGX, sun + sky hemisphere, sRGB output, "
+    std::string title = std::format("Render reference (queue 3-0, 3-1 glTF) · forward GGX, sun + sky hemisphere, sRGB output, "
                                     "no tone mapping · {} draws · {}x{} MSAA 4x", e->r3d->DrawsLastFrame(), e->viewW, e->viewH);
     b.Rect(w.x + 10, w.y + 10, ui.Measure(12, title) + 20, 24, shade, 6);
     ui.Text(w.x + 20, w.y + 14, 12, label, title);
@@ -793,7 +793,11 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   if (screen && std::string(screen) == "render-ref") { // rendering reference board (queue 3-0)
     e->r3d = std::make_unique<bdg::Renderer3D>();
     e->board = std::make_unique<bdg::ReferenceBoard>();
-    if (e->r3d->Init(e->rhi) && e->board->Init(e->rhi, *e->r3d)) e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    if (e->r3d->Init(e->rhi) && e->board->Init(e->rhi, *e->r3d)) {
+      if (const char* model = std::getenv("BDG_MODEL")) // any glTF / .glb to look at next to the references
+        e->board->AddModel(std::filesystem::path(std::u8string((const char8_t*)model)));
+      e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    }
     else { bdg::LogError("render-ref: the 3D renderer did not start"); e->board.reset(); }
   }
   e->editor->SetWindow(&e->window);

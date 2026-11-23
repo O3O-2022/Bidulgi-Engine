@@ -92,6 +92,14 @@ set_target_properties(glad PROPERTIES FOLDER ThirdParty)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ThirdParty/stb)
 
+# ---- External: cgltf (MIT, single header) and meshoptimizer (MIT) ----
+add_library(cgltf INTERFACE)
+target_include_directories(cgltf SYSTEM INTERFACE ThirdParty/cgltf)
+file(GLOB MESHOPT_SOURCES ThirdParty/meshoptimizer/src/*.cpp)
+add_library(meshoptimizer STATIC ${MESHOPT_SOURCES})
+target_include_directories(meshoptimizer SYSTEM PUBLIC ThirdParty/meshoptimizer/src)
+set_target_properties(meshoptimizer PROPERTIES FOLDER ThirdParty)
+
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
@@ -106,6 +114,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
+  Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
@@ -125,7 +134,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

@@ -21,6 +21,14 @@ enum class BufferUsage { Vertex, Index, Uniform };
 enum class TextureFormat { R8, RGBA8, SRGBA8 };
 enum class CullMode { None, Back };
 
+struct TextureDesc {
+  int32_t w = 1, h = 1;
+  TextureFormat format = TextureFormat::RGBA8;
+  bool mipmaps = false; // full chain generated from level 0 (trilinear sampling)
+  bool repeat = false;  // wrap UVs (model textures); otherwise clamp to edge
+  bool nearest = false; // nearest magnification (minification stays filtered)
+};
+
 struct VertexAttr {
   uint32_t location;
   uint32_t components; // float components (1-4)
@@ -34,7 +42,8 @@ struct PipelineDesc {
   uint32_t    attrCount = 0;
   uint32_t    stride = 0;               // bytes per vertex
   bool        alphaBlend = false;
-  bool        depthTest = false;        // less-or-equal test + depth writes (3D); 2D pipelines leave it off
+  bool        depthTest = false;        // less-or-equal test (3D); 2D pipelines leave it off
+  bool        depthWrite = true;        // with depthTest: false for blended surfaces
   CullMode    cull = CullMode::None;    // front faces wind counter-clockwise (Core/Space.h)
   const char* debugName = "pipeline";
 };
@@ -54,6 +63,7 @@ public:
   size_t       UniformAlignment() const { return uboAlign_; } // offsets for BindUniformBufferRange are multiples
 
   TextureHandle CreateTexture2D(int32_t w, int32_t h, TextureFormat format, const void* pixels = nullptr);
+  TextureHandle CreateTexture(const TextureDesc& desc, const void* pixels); // pixels: level 0, top row first
   void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
   void          DestroyTexture(TextureHandle t);
   void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D
@@ -80,7 +90,7 @@ public:
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
-  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, depthTest = false; CullMode cull = CullMode::None; };
+  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; };
   struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0; int32_t w = 0, h = 0, samples = 1; };
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;

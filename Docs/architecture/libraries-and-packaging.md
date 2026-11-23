@@ -21,9 +21,9 @@
 | OpenGL 로더 | glad | MIT | GL 4.5 / GLES 3.0 |
 | 셰이더 변환 | glslang + SPIRV-Cross (이후 SDL_shadercross) | BSD / Apache-2.0 | 한 언어로 쓰고 GLSL·ESSL·MSL·DXIL로 변환 |
 | 수학 | GLM으로 시작 | MIT | 핫 경로는 나중에 자체 SIMD로 교체 |
-| 메시 최적화·LOD | meshoptimizer | MIT | 쿠킹 단계 |
+| 메시 최적화·LOD | meshoptimizer | MIT | 쿠킹 단계 (v1.3 도입, 3-1) |
 | 텍스처 | stb_image, basis_universal / KTX-Software | 퍼블릭 도메인 / Apache-2.0 | 웹과 모바일은 KTX2 |
-| 모델 임포트 | cgltf(glTF), ufbx(FBX) | MIT | Assimp 대신 |
+| 모델 임포트 | cgltf(glTF), ufbx(FBX) | MIT | Assimp 대신 (cgltf 1.15 도입, 3-1) |
 | 3D 물리 | **Jolt Physics** | MIT | 멀티스레드, 대형 월드에 강함 |
 | 2D 물리 | **Box2D v3** | MIT | |
 | 오디오 | **miniaudio** | MIT / 퍼블릭 도메인 | 공간 음향은 이후 Steam Audio(Apache-2.0) 선택 |

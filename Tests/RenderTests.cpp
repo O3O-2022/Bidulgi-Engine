@@ -1,6 +1,10 @@
 #include "bdg_test.h"
 #include "Render3D/MeshGen.h"
 #include "Render3D/Renderer3D.h"
+#include "Render3D/ReferenceBoard.h"
+#include "Assets/GltfImport.h"
+#include <cstdio>
+#include <filesystem>
 #include <cmath>
 
 using namespace bdg;
@@ -43,4 +47,61 @@ TEST_CASE("render: sRGB transfer and projection follow the coordinate convention
   CHECK(ProjectToPixel(cam, 200, 100, {1, 0, 0}, x, y) && x > cx); // +X right
   CHECK(ProjectToPixel(cam, 200, 100, {0, 1, 0}, x, y) && y > cy); // +Y up (rows count from the bottom)
   CHECK(!ProjectToPixel(cam, 200, 100, {0, 0, 10}, x, y));          // behind a camera looking along -Z
+}
+
+TEST_CASE("gltf: the reference probe imports through cgltf and meshoptimizer (queue 3-1)") {
+  std::string text = ReferenceBoard::ProbeGltf();
+  ImportedModel m;
+  std::string err;
+  CHECK(ImportGltfMemory(text.data(), text.size(), ".", m, &err));
+  CHECK(err.empty());
+  CHECK(m.primitives.size() == 2);
+  CHECK(m.materials.size() == 1 && m.materials[0].unlit && m.materials[0].metallic == 0.f);
+  CHECK(m.materials[0].baseColorTex == 0);
+  CHECK(m.textures.size() == 1 && m.textures[0].w == 4 && m.textures[0].h == 4 && m.textures[0].srgb);
+  CHECK(m.textures[0].rgba.size() == 64 && m.textures[0].rgba[0] == 230); // top-left texel first
+  CHECK(m.textures[0].nearest && m.textures[0].clamp);                     // from the glTF sampler
+  CHECK(m.instances.size() == 2);
+  // Parent (-4.4, 4.6, 0) + child (0, 0, 0.5): the quad's world origin.
+  glm::vec3 o = glm::vec3(m.instances[0].world[3]);
+  CHECK(std::fabs(o.x + 4.4f) < 1e-5f && std::fabs(o.y - 4.6f) < 1e-5f && std::fabs(o.z - 0.5f) < 1e-5f);
+  CHECK(m.instances[0].node == "probe quad");
+  const MeshData& quad = m.primitives[0].mesh;
+  CHECK(quad.vertices.size() == 4 && quad.indices.size() == 6);
+  CHECK(CountInwardTriangles(quad) == 0);
+  const MeshData& tri = m.primitives[1].mesh; // no indices, no normals: generated
+  CHECK(tri.indices.size() == 3 && m.primitives[1].material == -1);
+  CHECK(CountInwardTriangles(tri) == 0 && std::fabs(tri.vertices[0].nz - 1.f) < 1e-5f);
+  CHECK(m.stats.triangles == 3 && m.stats.skippedPrimitives == 0);
+  CHECK(m.boundsMin.y < -19.f && m.boundsMax.y > 5.f);
+}
+
+TEST_CASE("gltf: external buffer under a non-ASCII folder, errors reported (queue 3-1)") {
+  namespace fs = std::filesystem;
+  fs::path dir = fs::temp_directory_path() / fs::path(u8"bdg 모델 테스트");
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  std::vector<uint8_t> bin;
+  std::string text = ReferenceBoard::ProbeGltf(&bin);
+  auto write = [](const fs::path& p, const void* d, size_t n) {
+    std::FILE* f = _wfopen(p.c_str(), L"wb");
+    if (f) { std::fwrite(d, 1, n, f); std::fclose(f); }
+  };
+  write(dir / u8"프로브.gltf", text.data(), text.size());
+  write(dir / "probe data.bin", bin.data(), bin.size()); // the JSON says "probe%20data.bin"
+  ImportedModel m;
+  std::string err;
+  CHECK(ImportGltf(dir / u8"프로브.gltf", m, &err));
+  CHECK(m.instances.size() == 2 && m.textures.size() == 1 && !m.textures[0].rgba.empty());
+
+  fs::remove(dir / "probe data.bin");
+  CHECK(!ImportGltf(dir / u8"프로브.gltf", m, &err));
+  CHECK(err == "file not found");
+  const char junk[] = "{\"asset\": {\"version\": \"2.0\"}, \"meshes\": [";
+  CHECK(!ImportGltfMemory(junk, sizeof(junk) - 1, dir, m, &err));
+  CHECK(!err.empty());
+  const char empty[] = "{\"asset\": {\"version\": \"2.0\"}}";
+  CHECK(!ImportGltfMemory(empty, sizeof(empty) - 1, dir, m, &err));
+  CHECK(err == "no triangle meshes in the default scene");
+  fs::remove_all(dir);
 }

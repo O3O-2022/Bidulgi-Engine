@@ -1,4 +1,8 @@
 #include "Render3D/ReferenceBoard.h"
+#include "Assets/GltfImport.h"
+#include "Core/Image.h"
+#include "Core/Log.h"
+#include <cstring>
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -22,6 +26,8 @@ const float kLettersSize = 1.3f;
 const glm::vec3 kChecker0{4.4f, 1.3f, 0.5f};
 const float kPatch = 0.34f, kPitch = 0.38f;
 const glm::vec3 kCCW{3.8f, 3.0f, 0.5f}, kCW{5.0f, 3.0f, 0.5f};
+const glm::vec3 kProbeParent{-4.4f, 4.6f, 0.f}, kProbeChild{0.f, 0.f, 0.5f}; // glTF probe: parent + child translation
+const uint8_t kProbeColors[4][3] = {{230, 60, 160}, {60, 200, 220}, {250, 150, 30}, {120, 90, 230}}; // TL TR BL BR
 const glm::vec3 kDepthNear{4.25f, 4.4f, 0.8f}, kDepthFar{4.55f, 4.4f, 0.5f};
 const Color kOrange{1.f, 0.45f, 0.1f, 1}, kYellow{1.f, 0.85f, 0.05f, 1}, kMagenta{0.8f, 0.05f, 0.7f, 1};
 const Color kAxisX{0.9f, 0.04f, 0.04f, 1}, kAxisY{0.05f, 0.75f, 0.06f, 1}, kAxisZ{0.04f, 0.12f, 0.95f, 1};
@@ -61,6 +67,19 @@ std::vector<uint8_t> LetterTexture() {
 glm::mat4 At(const glm::vec3& p, float sx = 1, float sy = 1, float sz = 1) {
   return glm::scale(glm::translate(glm::mat4(1.f), p), glm::vec3(sx, sy, sz));
 }
+std::string Base64(const uint8_t* p, size_t n) {
+  static const char* k = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  for (size_t i = 0; i < n; i += 3) {
+    uint32_t v = (uint32_t)p[i] << 16 | (i + 1 < n ? (uint32_t)p[i + 1] << 8 : 0) | (i + 2 < n ? p[i + 2] : 0);
+    out += k[v >> 18 & 63];
+    out += k[v >> 12 & 63];
+    out += i + 1 < n ? k[v >> 6 & 63] : '=';
+    out += i + 2 < n ? k[v & 63] : '=';
+  }
+  return out;
+}
+
 glm::vec3 ChecherPatchPos(int i) {
   int col = i % 6, row = i / 6;
   return kChecker0 + glm::vec3((col - 2.5f) * kPitch, (1.5f - row) * kPitch, 0.f);
@@ -128,7 +147,17 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
   add(quad_, At(kDepthNear, 0.7f, 0.7f), unlit(kYellow));  // drawn first but nearer: must stay on top
   add(quad_, At(kDepthFar, 0.7f, 0.7f), unlit(kMagenta));
 
-  labels_ = {{{kAxisLen + 0.15f, 0, 0}, "+X"}, {{0, kAxisLen + 0.15f, 0}, "+Y"}, {{0, 0, kAxisLen + 0.2f}, "+Z"},
+  // glTF probe (queue 3-1): goes through the real importer, meshoptimizer and the material path.
+  ImportedModel im;
+  std::string probe = ProbeGltf(), err;
+  if (ImportGltfMemory(probe.data(), probe.size(), ".", im, &err)) {
+    probe_ = r.UploadModel(im);
+    Renderer3D::AppendModel(probe_, glm::mat4(1.f), items_);
+    probeLoaded_ = true;
+  } else LogError("render-ref: glTF probe did not import: {}", err);
+
+  labels_ = {{kProbeParent + kProbeChild - glm::vec3(0.5f, 0.75f, 0), "glTF import"},
+             {{kAxisLen + 0.15f, 0, 0}, "+X"}, {{0, kAxisLen + 0.15f, 0}, "+Y"}, {{0, 0, kAxisLen + 0.2f}, "+Z"},
              {kGreyCard - glm::vec3(0.5f, 0.7f, 0), "18% grey · unlit"},
              {kLetters - glm::vec3(0.65f, 0.85f, 0), "UV · top-left red"},
              {kChecker0 - glm::vec3(1.2f, 1.0f, 0), "ColorChecker"},
@@ -144,8 +173,86 @@ void ReferenceBoard::Shutdown() {
   if (!renderer_) return;
   for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_}) renderer_->DestroyMesh(*m);
   rhi_->DestroyTexture(letters_);
+  renderer_->DestroyModel(probe_);
+  renderer_->DestroyModel(model_);
   items_.clear();
   renderer_ = nullptr;
+}
+
+bool ReferenceBoard::AddModel(const std::filesystem::path& path) {
+  ImportedModel im;
+  std::string err;
+  if (!ImportGltf(path, im, &err)) {
+    LogError("render-ref: model {} did not import: {}", std::string((const char*)path.u8string().c_str()), err);
+    return false;
+  }
+  renderer_->DestroyModel(model_);
+  model_ = renderer_->UploadModel(im);
+  glm::vec3 size = model_.boundsMax - model_.boundsMin, center = (model_.boundsMin + model_.boundsMax) * 0.5f;
+  float s = 2.2f / std::max({size.x, size.y, size.z, 1e-4f});
+  glm::mat4 place = glm::translate(glm::mat4(1.f), {-2.0f, 0.f, 1.6f}) * glm::scale(glm::mat4(1.f), glm::vec3(s)) *
+                    glm::translate(glm::mat4(1.f), {-center.x, -model_.boundsMin.y, -center.z});
+  Renderer3D::AppendModel(model_, place, items_);
+  labels_.push_back({{-3.4f, 2.3f, 1.6f}, std::string((const char*)path.filename().u8string().c_str())});
+  return true;
+}
+
+std::string ReferenceBoard::ProbeGltf(std::vector<uint8_t>* externalBin) {
+  // Buffer: quad positions, normals, uvs, uint16 indices; then an unindexed triangle (positions only).
+  const float pos[12] = {-0.5f, 0.5f, 0, 0.5f, 0.5f, 0, 0.5f, -0.5f, 0, -0.5f, -0.5f, 0};
+  const float nrm[12] = {0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1};
+  const float uv[8] = {0, 0, 1, 0, 1, 1, 0, 1}; // uv (0,0) = picture top-left
+  const uint16_t idx[6] = {3, 2, 1, 3, 1, 0};   // counter-clockwise seen from +Z
+  const float tri[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+  std::vector<uint8_t> bin;
+  auto put = [&](const void* p, size_t n) { bin.insert(bin.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
+  put(pos, 48); put(nrm, 48); put(uv, 32); put(idx, 12); put(tri, 36);
+  // 4x4 picture in 2x2 blocks (a texel centre sits at each quadrant centre, so filtering cannot blur the probe).
+  std::vector<uint8_t> px(4 * 4 * 4);
+  for (int y = 0; y < 4; ++y)
+    for (int x = 0; x < 4; ++x) {
+      const uint8_t* c = kProbeColors[(y / 2) * 2 + x / 2];
+      uint8_t* p = &px[(y * 4 + x) * 4];
+      p[0] = c[0]; p[1] = c[1]; p[2] = c[2]; p[3] = 255;
+    }
+  std::vector<uint8_t> png;
+  EncodePNG(4, 4, px.data(), false, png);
+  std::string bufferUri = externalBin ? "probe%20data.bin" : "data:application/octet-stream;base64," + Base64(bin.data(), bin.size());
+  if (externalBin) *externalBin = bin;
+  return std::format(R"({{
+  "asset": {{"version": "2.0", "generator": "Bidulgi reference board"}},
+  "extensionsUsed": ["KHR_materials_unlit"],
+  "scene": 0,
+  "scenes": [{{"nodes": [0, 2]}}],
+  "nodes": [
+    {{"name": "probe parent", "translation": [{}, {}, {}], "children": [1]}},
+    {{"name": "probe quad", "translation": [{}, {}, {}], "mesh": 0}},
+    {{"name": "hidden triangle", "translation": [0, -20, 0], "mesh": 1}}
+  ],
+  "meshes": [
+    {{"primitives": [{{"attributes": {{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}}, "indices": 3, "material": 0}}]}},
+    {{"primitives": [{{"attributes": {{"POSITION": 4}}}}]}}
+  ],
+  "materials": [{{"name": "probe", "pbrMetallicRoughness": {{"baseColorTexture": {{"index": 0}}, "metallicFactor": 0}},
+                 "extensions": {{"KHR_materials_unlit": {{}}}}}}],
+  "samplers": [{{"magFilter": 9728, "minFilter": 9986, "wrapS": 33071, "wrapT": 33071}}],
+  "textures": [{{"source": 0, "sampler": 0}}],
+  "images": [{{"name": "probe colours", "uri": "data:image/png;base64,{}"}}],
+  "buffers": [{{"byteLength": {}, "uri": "{}"}}],
+  "bufferViews": [
+    {{"buffer": 0, "byteOffset": 0, "byteLength": 128}},
+    {{"buffer": 0, "byteOffset": 128, "byteLength": 12}},
+    {{"buffer": 0, "byteOffset": 140, "byteLength": 36}}
+  ],
+  "accessors": [
+    {{"bufferView": 0, "byteOffset": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-0.5, -0.5, 0], "max": [0.5, 0.5, 0]}},
+    {{"bufferView": 0, "byteOffset": 48, "componentType": 5126, "count": 4, "type": "VEC3"}},
+    {{"bufferView": 0, "byteOffset": 96, "componentType": 5126, "count": 4, "type": "VEC2"}},
+    {{"bufferView": 1, "componentType": 5123, "count": 6, "type": "SCALAR"}},
+    {{"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]}}
+  ]
+}})", kProbeParent.x, kProbeParent.y, kProbeParent.z, kProbeChild.x, kProbeChild.y, kProbeChild.z,
+                     Base64(png.data(), png.size()), bin.size(), bufferUri);
 }
 
 std::string ReferenceBoard::Check(const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const {
@@ -233,6 +340,15 @@ std::string ReferenceBoard::Check(const std::vector<uint8_t>& rgba, int32_t w, i
   bool br = at(kLetters + glm::vec3(in, -in, 0), c) && close(c, kBR[0], kBR[1], kBR[2], 3);
   out += std::string(" uv=") + (tl && tr && bl && br ? "ok" : "bad");
   if (!(tl && tr && bl && br)) fail("uv");
+
+  // 9) glTF probe: hierarchy transform, accessors, embedded PNG and UV orientation through the importer
+  bool gltf = probeLoaded_;
+  const glm::vec3 probe = kProbeParent + kProbeChild;
+  const glm::vec3 quadrant[4] = {{-0.25f, 0.25f, 0}, {0.25f, 0.25f, 0}, {-0.25f, -0.25f, 0}, {0.25f, -0.25f, 0}};
+  for (int q = 0; q < 4 && gltf; ++q)
+    gltf = at(probe + quadrant[q], c) && close(c, kProbeColors[q][0], kProbeColors[q][1], kProbeColors[q][2], 3);
+  out += std::string(" gltf=") + (gltf ? "ok" : "bad");
+  if (!gltf) fail("gltf");
 
   out += failed.empty() ? " result=pass" : " result=FAIL(" + failed + ")";
   return out;
