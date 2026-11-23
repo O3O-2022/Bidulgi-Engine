@@ -10,6 +10,7 @@
 #include <vector>
 
 namespace bdg {
+class AssetDatabase;
 class EditorModel {
 public:
   EditorModel();
@@ -39,6 +40,16 @@ public:
   bool OpenScene(const std::string& path);
   // An asset moved (queue 2-3): string fields holding the old path are set to the new one, as one undo step.
   int RetargetAssetPath(const std::string& from, const std::string& to);
+  // Project panel (queue 2-5, ProjectPanel.cpp): folder tree + list, C++ .h/.cpp pairs as one item.
+  void AttachProject(Widget& panel, AssetDatabase* db);
+  void RebuildProject();
+  void ProjectChanged() { needProject_ = true; }         // the asset database changed on disk
+  bool RenameProjectItem(const std::string& newName);  // a pair renames both files
+  bool OpenProjectItem();                              // default app (a pair opens both files)
+  std::vector<std::string> ProjectItemFiles(const std::string& key) const;
+  const std::string& ProjectSelected() const { return projectSelected_; }
+  void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
+  AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
   std::string scenePath, sceneName = "Main";
 
@@ -69,7 +80,9 @@ private:
   void ApplySelection(const std::string& id, int mode);
   std::string DisplayFor(const std::vector<std::string>& targets, const std::string& path, FieldType type) const;
   static Command SetComp(const std::string& id, const std::string& type, const std::string& value);
-  bool needRebuild_ = false, needRefresh_ = false;
+  bool needRebuild_ = false, needRefresh_ = false, needProject_ = false;
+  Widget* project_ = nullptr;
+  std::string projectFolder_, projectSelected_; // current folder; selected item (path, or folder/stem of a C++ pair)
   std::string showIfState_; // which ShowIf fields are visible; a change rebuilds the Inspector
   std::string ShowIfState() const;
 };

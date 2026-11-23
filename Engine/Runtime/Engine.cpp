@@ -99,7 +99,8 @@ struct bdg_engine {
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
   bool shortcutBannerShown = false;
   bool dragTest = false;
-  bool inspectorTest = false, multiTest = false;
+  bool inspectorTest = false, multiTest = false, projectTest = false;
+  std::string projectTestValues[4];
   std::string multiTestValues[8];
   std::string inspectorTestValues[8];
   bdg::AssetDatabase assets; // project Assets folder (BDG_ASSETS until the project system exists)
@@ -629,6 +630,51 @@ void InjectMultiTest(bdg_engine* e, int frame, float scale) {
   if (frame == 22) v[7] = value("g8", "Health", "maxHealth");
 }
 
+// Scripted Project panel check (BDG_PROJECT_TEST=1 with BDG_ASSETS holding Scripts/Weapon.h + .cpp and more):
+// open the Scripts folder, select the C++ class item, rename it to Sword through the name field.
+void InjectProjectTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen) return;
+  auto click = [&](const std::string& id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w) { bdg::LogError("project test: no widget {}", id); return; }
+    float x = (w->x + 30) * scale, y = (w->y + w->h * 0.5f) * scale;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent({T::MouseDown, x, y, 1});
+    e->window.InjectEvent({T::MouseUp, x, y, 1});
+  };
+  auto* v = e->projectTestValues;
+  static std::string guidH, guidCpp;
+  if (frame == 2) {
+    guidH = e->assets.ByPath("Scripts/Weapon.h") ? e->assets.ByPath("Scripts/Weapon.h")->guid : "";
+    guidCpp = e->assets.ByPath("Scripts/Weapon.cpp") ? e->assets.ByPath("Scripts/Weapon.cpp")->guid : "";
+    click("p.folder.Scripts");
+  }
+  if (frame == 4) {
+    std::string rows;
+    for (const char* id : {"p.item.Scripts/Weapon", "p.item.Scripts/Weapon.h", "p.item.Scripts/Weapon.cpp", "p.item.Scripts/PlayerMove.cs"})
+      if (bdg::Widget* w = e->editor->Find(id)) rows += (rows.empty() ? "" : ",") + w->text + ":" + w->text2;
+    v[0] = rows;
+    click("p.item.Scripts/Weapon");
+  }
+  if (frame == 6) {
+    v[1] = m->ProjectSelected();
+    if (bdg::Widget* f = e->editor->Find("p.name")) {
+      e->editor->Focus(f);
+      bdg::InputEvent a{T::KeyDown}; a.key = bdg::Key::A; a.ctrl = true; e->window.InjectEvent(a);
+      bdg::InputEvent t{T::Text}; t.text = "Sword"; e->window.InjectEvent(t);
+      bdg::InputEvent en{T::KeyDown}; en.key = bdg::Key::Enter; e->window.InjectEvent(en);
+    }
+  }
+  if (frame == 8) {
+    const bdg::AssetRecord* h = e->assets.ByPath("Scripts/Sword.h");
+    const bdg::AssetRecord* c = e->assets.ByPath("Scripts/Sword.cpp");
+    v[2] = std::string(h ? "Sword.h" : "-") + "," + (c ? "Sword.cpp" : "-");
+    v[3] = h && c && h->guid == guidH && c->guid == guidCpp ? "1" : "0";
+  }
+}
+
 extern "C" {
 
 bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
@@ -649,6 +695,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->dragTest = std::getenv("BDG_DRAG_TEST") != nullptr;
   e->inspectorTest = std::getenv("BDG_INSPECTOR_TEST") != nullptr;
   e->multiTest = std::getenv("BDG_MULTI_TEST") != nullptr;
+  e->projectTest = std::getenv("BDG_PROJECT_TEST") != nullptr;
   e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
@@ -746,6 +793,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   } else {
     bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
   }
+  if (e->model && e->assetsOpen)
+    if (bdg::Widget* project = e->editor->Find("project")) e->model->AttachProject(*project, &e->assets);
   if (e->model) { // component presets: BDG_PRESETS, else <assets>/Presets, else ./Presets
     const char* p = std::getenv("BDG_PRESETS");
     e->model->presetDir = p ? p : e->assetsOpen ? (std::filesystem::path(e->assets.Root()) / "Presets").string()
@@ -873,6 +922,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
     if (e->inspectorTest && !e->showGallery) InjectInspectorTest(e, frames, scale);
     if (e->multiTest && !e->showGallery) InjectMultiTest(e, frames, scale);
+    if (e->projectTest && !e->showGallery) InjectProjectTest(e, frames, scale);
     if (e->dragTest && !e->showGallery && frames == 2 && e->model) { // BDG_DRAG_TEST: drag Weapon onto "Main"
       bdg::Widget* src = e->editor->Find("h.g7");
       bdg::Widget* dst = e->editor->Find("h.scene");
@@ -893,6 +943,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
       for (auto& [from, to] : ch.moved) if (e->model) e->model->RetargetAssetPath(from, to);
+      if (e->model && !ch.Empty()) e->model->ProjectChanged();
       if (!ch.Empty())
         bdg::LogInfo("assets: {} added, {} removed, {} modified, {} moved", ch.added.size(), ch.removed.size(), ch.modified.size(),
                      ch.moved.size());
@@ -991,6 +1042,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("asset test: knight_guid_kept={} player_mesh={} weapon_mesh={} watcher={} orphans={} assets={}",
                      k && k->guid == e->assetTestKnightGuid ? 1 : 0, field("g6"), field("g7"), e->assetWatcherFired ? 1 : 0,
                      e->assets.OrphanMetas().size(), e->assets.Count());
+      }
+      if (e->projectTest) {
+        auto* v = e->projectTestValues;
+        bdg::LogInfo("project test: rows={} selected={} renamed={} guids_kept={}", v[0], v[1], v[2], v[3]);
       }
       if (e->multiTest) {
         auto* v = e->multiTestValues;

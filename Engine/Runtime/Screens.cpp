@@ -318,7 +318,14 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   for (int i = 0; i < 4; ++i) {
     auto tab = std::make_shared<Widget>();
     tab->selectedIndex = i;
-    dock.Add(MakeCustom(bottom[i], [tab](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, tab.get()); }));
+    auto draw = [tab](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, tab.get()); };
+    if (i == 0) { // Project: the real asset folder when one is open (EditorModel), else the sample drawing
+      auto& project = dock.Add(MakeBox(Axis::Column));
+      project.id = "project";
+      project.Add(MakeCustom("project.sample", draw)).height = Length::Fill();
+      continue;
+    }
+    dock.Add(MakeCustom(bottom[i], draw));
   }
 
   // History: every undo step; click one to go back or forward to it (EditorModel fills the rows)

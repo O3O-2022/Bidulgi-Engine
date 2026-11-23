@@ -204,6 +204,16 @@ jobs:
           if ($log -notmatch 'multi test: common=Transform,MeshRenderer mixed=1 same=1 shared="M_Shared","M_Shared" undo_steps=1 restored="M_Gold","M_Knight" pasted=321 preset=321') { $errors += 'multi-object editing test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 17) Project panel (queue 2-5): real asset folder, C++ .h/.cpp shown as one class item, renamed together
+          $proj = "$PWD/ci-project/Assets"
+          Remove-Item -Recurse -Force "$PWD/ci-project" -ErrorAction SilentlyContinue
+          foreach ($f in 'Characters/Knight.glb', 'Scripts/Weapon.h', 'Scripts/Weapon.cpp', 'Scripts/PlayerMove.cs', 'Textures/grass.png') {
+            New-Item -ItemType File -Force "$proj/$f" | Out-Null; Set-Content "$proj/$f" "data $f" -NoNewline }
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = $proj; BDG_PROJECT_TEST = '1' } 10
+          if ($log -notmatch 'project test: rows=Weapon:C\+\+ class,Weapon.h:Header,Weapon.cpp:Source,PlayerMove.cs:C# script selected=Scripts/Weapon renamed=Sword.h,Sword.cpp guids_kept=1') { $errors += 'project panel test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

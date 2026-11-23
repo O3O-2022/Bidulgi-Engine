@@ -376,6 +376,7 @@ void EditorModel::Update() {
     if (!bus.JumpTo((size_t)pendingJump_, &err)) LogWarn("history: {}", err);
     pendingJump_ = -1;
   }
+  if (needProject_) RebuildProject();
   bool historyChanged = needRebuild_ || needRefresh_;
   if (needRebuild_) Rebuild();
   else if (needRefresh_) Refresh();

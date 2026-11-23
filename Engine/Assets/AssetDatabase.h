@@ -40,6 +40,7 @@ public:
 
   const AssetRecord* ByGuid(const std::string& guid) const;
   const AssetRecord* ByPath(const std::string& path) const;
+  std::vector<const AssetRecord*> All() const; // sorted by path
   std::vector<std::string> OrphanMetas() const; // .meta files whose asset is gone (relative paths)
   size_t Count() const { return byGuid_.size(); }
   const std::string& Root() const { return root_; }

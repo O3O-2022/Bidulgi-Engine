@@ -316,6 +316,13 @@ const AssetRecord* AssetDatabase::ByGuid(const std::string& guid) const {
   return it == byGuid_.end() ? nullptr : &it->second;
 }
 
+std::vector<const AssetRecord*> AssetDatabase::All() const {
+  std::vector<const AssetRecord*> out;
+  for (auto& [g, r] : byGuid_) out.push_back(&r);
+  std::sort(out.begin(), out.end(), [](const AssetRecord* a, const AssetRecord* b) { return a->path < b->path; });
+  return out;
+}
+
 const AssetRecord* AssetDatabase::ByPath(const std::string& path) const {
   auto it = pathToGuid_.find(path);
   return it == pathToGuid_.end() ? nullptr : ByGuid(it->second);
