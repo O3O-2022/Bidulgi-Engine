@@ -21,6 +21,7 @@ public:
   const std::string& Selected() const { return selected_; }
   bool Duplicate();                    // selected object + components, as one undo step
   bool DeleteSelected();
+  size_t fieldChanges = 0;             // fields changed this session (drained from Registry each frame)
   bool playing = false;                // play mode comes with 3-6; for now the toggle and its button
   std::string tool = "move";          // active scene tool (gizmos: 3-3)
   void Update();                       // once per frame after input: rebuild / refresh panels if needed

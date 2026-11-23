@@ -165,6 +165,9 @@ bool EditorModel::DeleteSelected() {
 }
 
 void EditorModel::Update() {
+  // Field-level change records (Registry::Set) are the replication feed later (queue N-2); until a network
+  // layer consumes them, drain them every frame so they do not pile up for the whole session.
+  fieldChanges += Registry::Instance().TakeChanges().size();
   if (!pendingSelect_.empty()) {
     if (scene.Find(pendingSelect_)) selected_ = pendingSelect_;
     pendingSelect_.clear();
