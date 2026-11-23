@@ -92,6 +92,12 @@ bool Scene::Destroy(std::string_view id) {
   return true;
 }
 
+void Scene::Clear() {
+  std::vector<std::string> roots = roots_;
+  for (auto& r : roots) Destroy(r);
+  nextId_ = 1;
+}
+
 int Scene::IndexInParent(std::string_view id) const {
   const SceneObject* o = Find(id);
   if (!o) return -1;

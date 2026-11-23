@@ -42,6 +42,7 @@ public:
   std::string NewId();                                         // "g<n>", never reused
   SceneObject* Create(std::string id, std::string name, std::string parent = {}, int index = -1);
   bool Destroy(std::string_view id);                           // with all children
+  void Clear();                                                // every object (before loading another scene)
   bool Reparent(std::string_view id, std::string parent, int index = -1, std::string* error = nullptr);
   int IndexInParent(std::string_view id) const;
   void* AddComponent(std::string_view id, const TypeInfo& type, std::string_view valueJson = {}, std::string* error = nullptr);

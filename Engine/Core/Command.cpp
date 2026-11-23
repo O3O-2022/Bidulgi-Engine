@@ -329,6 +329,14 @@ void CommandBus::EndGroup() {
 }
 
 // ---- Log / replay ------------------------------------------------------------------------------
+void CommandBus::Reset() {
+  undo_.clear();
+  redo_.clear();
+  log_.clear();
+  groupDepth_ = 0;
+  group_ = {};
+}
+
 bool CommandBus::SaveLog(const std::string& path) const {
   std::FILE* f = std::fopen(path.c_str(), "w");
   if (!f) return false;

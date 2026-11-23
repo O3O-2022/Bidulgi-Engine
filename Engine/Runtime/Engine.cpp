@@ -434,7 +434,7 @@ void SetupShortcuts(bdg_engine* e) {
   s.Register("edit.duplicate", "Duplicate", [m] { m->Duplicate(); });
   s.Register("edit.delete", "Delete", [m] { m->DeleteSelected(); });
   s.Register("edit.rename", "Rename", log("rename: in-place rename comes with the Hierarchy (queue 2-4)"));
-  s.Register("file.save", "Save Scene", log("save: scene files come with queue 2-2"));
+  s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
   s.Register("play.toggle", "Play / Stop", [e, m] {
     m->playing = !m->playing;
     if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
@@ -571,6 +571,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     bdg::EditorModel* model = e->model.get();
     SetupShortcuts(e);
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { model->Autosave(); }); // keep the work
+    // Scene file: BDG_SCENE_FILE, else Scenes/Main.scene in the working folder; the sample scene when there is none.
+    const char* sceneEnv = std::getenv("BDG_SCENE_FILE");
+    model->scenePath = sceneEnv ? sceneEnv : (std::filesystem::current_path() / "Scenes" / "Main.scene").string();
+    if (std::filesystem::exists(model->scenePath)) model->OpenScene(model->scenePath);
     if (desc->replay_path) {
       std::string err;
       size_t n = 0;
@@ -712,6 +716,12 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     }
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
+    if (std::getenv("BDG_SAVE_TEST") && frames == 2) { // Ctrl+S through the shortcut system
+      bdg::InputEvent ev{bdg::InputEvent::Type::KeyDown};
+      ev.key = bdg::Key::S;
+      ev.ctrl = true;
+      e->window.InjectEvent(ev);
+    }
     if (e->faultTest && frames == 2) { // BDG_FAULT_TEST: a crashing panel and a failed check must not stop the editor
       if (bdg::Widget* scene = e->editor->Find("scene"))
         scene->onDraw = [](bdg::Widget&, bdg::UIContext&) { volatile int* p = nullptr; *p = 1; };

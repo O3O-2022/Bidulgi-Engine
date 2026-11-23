@@ -166,6 +166,18 @@ jobs:
           if ($log -notmatch 'drag test: weapon_parent="" world_kept=1 undo_depth=1') { $errors += 'hierarchy drag (keep world) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 13) Scene files (queue 2-2): Ctrl+S saves; opening that file and saving again gives the same bytes
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $env:BDG_SCENE_FILE = "$PWD/ci-test.scene"
+          Remove-Item $env:BDG_SCENE_FILE -ErrorAction SilentlyContinue
+          $log = Invoke-Editor 'Release' @{ BDG_SAVE_TEST = '1' } 5
+          if ($log -notmatch 'scene: saved .* \(9 objects\)') { $errors += 'Ctrl+S did not save the scene' }
+          Copy-Item ci-test.scene ci-test-first.scene
+          $log = Invoke-Editor 'Release' @{ BDG_SAVE_TEST = '1' } 5
+          if ($log -notmatch 'scene: opened') { $errors += 'saved scene did not open' }
+          if ((Get-FileHash ci-test.scene).Hash -ne (Get-FileHash ci-test-first.scene).Hash) { $errors += 'save -> open -> save changed the file' }
+          Remove-Item Env:BDG_SCENE_FILE, Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

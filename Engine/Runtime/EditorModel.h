@@ -26,6 +26,10 @@ public:
   std::string tool = "move";          // active scene tool (gizmos: 3-3)
   void Update();                       // once per frame after input: rebuild / refresh panels if needed
   bool Autosave();                     // scene + command log to .cache/autosave/ (after a guarded crash)
+  // Scene file (queue 2-2). Opening is not an edit: history starts fresh. Saving writes the .scene JSONL.
+  bool OpenScene(const std::string& path);
+  bool SaveScene();                    // to scenePath
+  std::string scenePath, sceneName = "Main";
 
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
   static std::string ToDisplay(const std::string& json, FieldType type);

@@ -10,3 +10,4 @@ build*.log
 __pycache__/
 /build-*/
 /ProjectSettings/
+/Scenes/

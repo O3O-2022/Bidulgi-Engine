@@ -2,6 +2,7 @@
 #include "Core/Log.h"
 #include "Scene/Components.h"
 #include "Scene/SampleComponents.h"
+#include "Scene/SceneFile.h"
 #include <yyjson.h>
 #include <cctype>
 #include <format>
@@ -109,6 +110,33 @@ void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Wi
 
 void EditorModel::Select(const std::string& id) {
   pendingSelect_ = id;
+}
+
+bool EditorModel::OpenScene(const std::string& path) {
+  Scene loaded;
+  std::string name, err;
+  std::vector<std::string> warnings;
+  if (!LoadSceneFile(loaded, path, &name, &warnings, &err)) { LogError("scene: {}", err); return false; }
+  for (auto& w : warnings) LogWarn("scene: {}: {}", path, w);
+  // Swap the contents into the live scene (other code holds references to it).
+  scene.Clear();
+  std::string text = WriteSceneText(loaded, name);
+  ReadSceneText(scene, text);
+  bus.Reset();
+  scenePath = path;
+  sceneName = name.empty() ? "Main" : name;
+  selected_ = scene.Roots().empty() ? "" : scene.Roots().front();
+  needRebuild_ = true;
+  LogInfo("scene: opened {} ({} objects)", path, scene.ObjectCount());
+  return true;
+}
+
+bool EditorModel::SaveScene() {
+  std::string err;
+  if (scenePath.empty()) { LogWarn("save: no scene file path"); return false; }
+  if (!SaveSceneFile(scene, sceneName, scenePath, &err)) { LogError("save: {}", err); return false; }
+  LogInfo("scene: saved {} ({} objects)", scenePath, scene.ObjectCount());
+  return true;
 }
 
 bool EditorModel::Autosave() {

@@ -45,6 +45,7 @@ public:
   bool SaveLog(const std::string& path) const;
   bool ExecuteLine(std::string_view jsonLine, std::string* error = nullptr);
   bool Replay(const std::string& path, std::string* error = nullptr, size_t* count = nullptr);
+  void Reset(); // forget history and log (a different scene was opened: old commands do not apply to it)
 
   static bool IsStructural(const std::string& name) { return name != "set"; } // changes the object tree
 
