@@ -29,6 +29,22 @@ layout   ✓ 6 boxes, max error 0.5px
 image    ✓ FLIP 0.012 (기준 0.03)
 ```
 
+## 1차 구현 (2026-11-23, QUEUE 0-10) — 1~2단계
+
+```
+python tools/ui_compare/compare.py          # 빌드된 build/Release/BidulgiEditor.exe 사용
+tokens   ✓ 72/72
+layout   ✓ Panel    8 boxes, max error 0.02px
+...
+result   PASS (layout max error 0.64px, tolerance 1.0px)
+```
+
+- 브라우저 쪽 `tools/ui_compare/browser_boxes.py`: 추가 패키지 없이 **헤드리스 Edge `--dump-dom`**. 토큰 CSS 변수 + `bundle.css` + 저장소 글꼴(Pretendard, JetBrains Mono) + `preview.html`로 하네스 페이지를 만들고, 글꼴 로드 후 `[data-bdg-id]` 요소의 `getBoundingClientRect()`를 DOM에 써 넣는 스크립트를 넣어 덤프에서 읽습니다. 엔진처럼 커닝·합자를 끄고, 페이지 폭을 800px로 고정합니다.
+- 엔진 쪽: `BDG_SCREEN=parity:<부품>`(Screens.cpp `BuildParityScreen`) + `--size 800x600` + `BDG_DUMP_WIDGETS`, 토큰은 `--dump-tokens`.
+- 맞추면서 고친 엔진 쪽: 글자 진행폭을 힌팅 없는 값(`linearHoriAdvance`)으로(크기와 무관하게 정확), `line-height: normal`을 브라우저처럼 올림, 글자 간격(letter-spacing), 여러 줄 Label, Label 변형(컴포넌트 머리글·캡션), Button 상태 점, Badge 색·출처 배지, 작업공간 탭 막대(`size-workspace-bar`), Node 치수(CSS 그대로), Cover를 디자인(960×300)대로, 고정 크기 위젯은 부모를 넘어갈 수 있게.
+- 아직 엔진이 그리지 않는 조각(아이콘 버튼 묶음)은 토큰 크기의 상자로 자리만 잡습니다. 3단계(부품 이미지 비교)부터는 다음 차례.
+- CI의 `Design parity` 단계가 매 푸시마다 돌립니다.
+
 ## 운영
 
 - 디자인 시스템이나 UI 프레임워크가 바뀔 때마다 CI에서 자동으로 돌립니다.

@@ -109,6 +109,15 @@ jobs:
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 
+      - name: Design parity (tokens + layout vs design-system previews)
+        shell: pwsh
+        env:
+          MESA_GL_VERSION_OVERRIDE: '4.5'
+          MESA_GLSL_VERSION_OVERRIDE: '450'
+          GALLIUM_DRIVER: llvmpipe
+          PYTHONIOENCODING: utf-8
+        run: python tools/ui_compare/compare.py --exe build/Release/BidulgiEditor.exe
+
       - name: Upload screenshots and logs
         if: always()
         uses: actions/upload-artifact@v4

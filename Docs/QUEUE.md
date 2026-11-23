@@ -35,6 +35,8 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_SCREENSHOT=경로.png` | 마지막 프레임을 PNG로 저장 → 이미지로 직접 확인 |
 | `BDG_DUMP_WIDGETS=경로.jsonl` | 위젯 상자(id, kind, x, y, w, h) 덤프 |
 | `BDG_SCREEN=gallery` | 부품 갤러리 화면으로 시작 (실행 중에는 F1) |
+| `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
+| `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
 | `BDG_BATCH_STRESS=1` | 사각형 1만 개 부하 테스트 |
 | `BDG_GL_ERROR_TEST=1` | 일부러 GL 오류를 내서 디버그 출력 경로 확인 (Debug 빌드) |
@@ -102,22 +104,14 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-13 대기 중 다시 그리기 멈추기 | 바뀔 때만 그림(OS 이벤트 대기), vsync 확인 + 무시 감지 시 주사율 타이머 제한, `Window::Wake()`. 대기 CPU 96% → 0ms/5초(스레드별 측정), `BDG_IDLE_TEST=3`: frames=3, wake_latency 0.1~0.6ms. CI 테스트 5번 추가. 셀프테스트 클릭이 화면 배율 1.5에서 빗나가던 버그도 수정 | `1a657b9` |
 | 0-14 버그 제보 보완 | 단축키 `Ctrl+Shift+B`, 보고서의 사용자 폴더·이름 → `%USERPROFILE%`·`%USERNAME%`, 폴더를 먼저 열고 `README.txt`로 파일 설명(첨부 전 확인), 30일 지난 보고서 삭제, stb_image_write 압축 PNG(에디터 1920×1080 = 324KB). CI 4번에 사용자 이름·500KB 검사 추가 | `5b89dbc` |
 | 0-12 M0 손질 | Inspector 카드 헤더에 위쪽 `line` 1px(안 쓰던 `ComponentHeader` 삭제), Batch2D SDF 삼각형 모드 → Node 실행 핀 삼각형, `shadow` 토큰 파싱(`Theme::S`) + `Batch2D::Shadow`(흐림 반경 SDF) → 노드 그림자. 갤러리 스크린샷에서 세 가지 확인, 경고 0개 | `8abd5a9` |
-| 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | (이 커밋) |
+| 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | `a397455` |
+| 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | (이 커밋) |
 
 ---
 
 ## M0 — 남은 것
 
----
-
-- [ ] **0-10. 디자인 일치 검사 1차** ([design-parity-test](planning/design-parity-test.md) 1~2단계)
-  - 구현:
-    1. `tools/ui_compare/`에 Python 스크립트 `compare.py`를 만든다. 입력: 브라우저 쪽 JSON, 엔진 쪽 JSONL(`BDG_DUMP_WIDGETS`).
-    2. 브라우저 쪽: `design-system/project/components/*/preview.html`을 헤드리스 Edge(`msedge --headless --dump-dom`은 상자를 못 주므로) 대신 **Playwright(Apache-2.0)** 로 열어 `getBoundingClientRect()`로 `[data-bdg-id]` 요소 상자를 JSON으로 저장한다. preview.html 요소에 `data-bdg-id` 속성을 붙인다.
-    3. 엔진 쪽: 같은 id를 가진 갤러리 위젯을 만든다 (`Screens.cpp`의 `BuildGalleryScreen`에 부품별 미리보기와 같은 크기의 고정 레이아웃 추가). 창 크기를 브라우저와 같게 맞추는 `--size 800x600` 인자를 `Editor/main.cpp`에 추가.
-    4. 토큰 비교: 엔진에 `--dump-tokens 경로` 추가 (Theme의 모든 값을 JSON으로) → `tokens.json`과 값 비교.
-    5. 보고서는 텍스트: `tokens ✓ 64/64`, `layout max error 0.6px` 형식. 기준 초과 시 종료 코드 1.
-  - 완료 조건: 부품 8개에 대해 토큰 전부 일치, 레이아웃 오차 1px 이하 보고서가 나옴.
+(없음 — M0 완료)
 
 ## M1 — 에디터 골격 (실제로 편집되는 에디터)
 

@@ -26,6 +26,7 @@ typedef struct bdg_engine_desc {
   int32_t     width;
   int32_t     height;
   int32_t     max_frames; /* 0 = until window closes, >0 = quit after N frames (smoke test) */
+  const char* dump_tokens_path; /* optional: write every design token value the engine uses as JSON */
 } bdg_engine_desc;
 
 bdg_result  bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out);

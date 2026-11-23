@@ -32,8 +32,14 @@ struct Widget {
   std::string id, text, text2;        // text2: secondary text (type column, node subtitle, cover subtitle)
   std::vector<std::string> items;     // Tabs / Panel header tabs; Node: pins "in|exec|Exec" / "out|float|Value"
   int selectedIndex = 0, indent = 0;
-  int variant = 0;                    // Label: 1 = dim; Tabs: 1 = workspace bar style; Badge: 1 = ok; Node: stripe kind
+  // Label: 1 dim, 2 component header (.bdg-comp-head), 3 caption (.bdg-caption)
+  // Tabs: 1 workspace tabs, 2 workspace bar (.bdg-wsbar)   Button: 1 status dot   Node: stripe kind
+  // Badge: 0 pill, 1 ok, 2 warn, 3 err; 10 Unity, 11 Unreal, 12 Blender, 13 native (origin badges)
+  int variant = 0;
   float fontSize = 0;                 // Label: 0 = body style
+  float lineHeight = 0;               // Label: multiple of fontSize (0 = 1.45 body, -1 = font's normal line height)
+  float letterSpacing = 0;            // Label: em units (CSS letter-spacing)
+  bool bold = false;                  // Label: weight 600+ (drawn with the regular face for now)
   std::function<void(Widget&, UIContext&)> onDraw; // Custom: draws inside its rect (viewports, previews)
   bool primary = false, selected = false, focusable = false;
   bool collapsed = false;             // Card: body hidden, header still shown
@@ -73,7 +79,7 @@ std::unique_ptr<Widget> MakeListRow(std::string id, std::string text, std::strin
 std::unique_ptr<Widget> MakeBadge(std::string text, int variant = 0); // 1 = ok
 std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string subtitle, int variant,
                                  std::vector<std::string> pins); // variant: 0 flow, 1 event, 2 function, 3 pure
-std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle);
+std::unique_ptr<Widget> MakeCover(std::string id, std::string title, std::string subtitle); // 960x300 brand cover, children <id>.name / <id>.tag
 std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> tabs, int selected = 0);
 std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw);
 // Collapsible component card (Inspector). badge: language tag such as "C#", "C++", "Lua"; empty = built-in.
@@ -102,6 +108,8 @@ public:
   const Theme& Tokens() const { return theme_; }
   float Text(float x, float y, float size, Color c, const std::string& s, bool mono = false);
   float Measure(float size, const std::string& s, bool mono = false) const;
+  float MeasureSpaced(float size, const std::string& s, float letterSpacingEm) const; // + CSS letter-spacing per character
+  float NormalLineHeight(float size) const;
 
 private:
   void Measure(Widget& w);

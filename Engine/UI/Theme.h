@@ -12,6 +12,7 @@ class Theme {
 public:
   bool Load(const std::string& path);
   bool ReloadIfChanged();
+  bool DumpJSON(const std::string& path) const; // every value as the engine sees it (design parity test)
 
   Color C(std::string_view name) const;          // missing token -> magenta (easy to spot)
   float N(std::string_view name, float fallback) const;

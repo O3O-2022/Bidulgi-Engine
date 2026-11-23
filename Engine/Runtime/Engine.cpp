@@ -274,10 +274,17 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
   std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
   if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
+  if (desc->dump_tokens_path)
+    bdg::LogInfo("token dump {}: {}", e->theme.DumpJSON(desc->dump_tokens_path) ? "saved" : "FAILED", desc->dump_tokens_path);
 
   bdg::Font* font = e->hasFont ? &e->font : nullptr;
   e->editor = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->editor->SetRoot(bdg::BuildEditorScreen());
+  if (screen && std::string(screen).rfind("parity:", 0) == 0) { // design parity test: one component preview
+    std::string component = std::string(screen).substr(7);
+    if (auto parity = bdg::BuildParityScreen(component)) e->editor->SetRoot(std::move(parity));
+    else bdg::LogError("unknown parity component: {}", component);
+  }
   e->editor->SetWindow(&e->window);
   if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
   if (const char* tab = std::getenv("BDG_DOCK_TAB")) // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)

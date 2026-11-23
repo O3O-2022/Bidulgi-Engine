@@ -1,13 +1,13 @@
 <!-- @dsCard group="Actions" height=110 subtitle="Default, primary, status, icon group" -->
-<div class="bdg" style="background:var(--panel);padding:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
-  <button class="bdg-btn is-primary">Compile</button>
-  <button class="bdg-btn"><span class="bdg-dot"></span>컴파일됨</button>
-  <button class="bdg-btn">Diff</button>
-  <span class="bdg-group" role="group" aria-label="Play">
+<div class="bdg" data-bdg-id="button.root" style="background:var(--panel);padding:16px;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+  <button class="bdg-btn is-primary" data-bdg-id="button.compile">Compile</button>
+  <button class="bdg-btn" data-bdg-id="button.compiled"><span class="bdg-dot"></span>컴파일됨</button>
+  <button class="bdg-btn" data-bdg-id="button.diff">Diff</button>
+  <span class="bdg-group" role="group" aria-label="Play" data-bdg-id="button.group.play">
     <button class="bdg-iconbtn" aria-pressed="true" aria-label="Play"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg></button>
     <button class="bdg-iconbtn" aria-label="Pause"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="3.5" y="3" width="3" height="10"/><rect x="9.5" y="3" width="3" height="10"/></svg></button>
   </span>
-  <span class="bdg-group" role="group" aria-label="Tools">
+  <span class="bdg-group" role="group" aria-label="Tools" data-bdg-id="button.group.tools">
     <button class="bdg-iconbtn" aria-label="Move"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1v14M1 8h14"/></svg></button>
     <button class="bdg-iconbtn" aria-label="Rotate"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M13.5 8A5.5 5.5 0 1 1 11 3.4"/><path d="M11 1v3h3"/></svg></button>
   </span>

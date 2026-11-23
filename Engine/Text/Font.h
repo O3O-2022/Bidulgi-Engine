@@ -1,5 +1,6 @@
 #pragma once
 #include "RHI/RHI.h"
+#include <cmath>
 #include <string_view>
 #include <unordered_map>
 
@@ -18,6 +19,10 @@ public:
   // Draws UTF-8 text with its top-left at (x, y). Returns the advance width in pixels.
   float DrawText(Batch2D& batch, float x, float y, float sizePx, Color color, std::string_view utf8, bool mono = false);
   float Measure(float sizePx, std::string_view utf8, bool mono = false);
+  // CSS line-height: normal, rounded like browsers do (ascent and descent rounded separately).
+  float NormalLineHeight(float sizePx) const {
+    return std::round(ascEm_ * sizePx) + std::round(descEm_ * sizePx) + std::round(gapEm_ * sizePx);
+  }
   float LineHeight(float sizePx) const { return lineHeight_ * sizePx / (float)basePx_; }
 
   TextureHandle Atlas() const { return atlas_; }
@@ -33,6 +38,7 @@ private:
   void* monoFace_ = nullptr;
   int basePx_ = 48;
   float ascender_ = 0, lineHeight_ = 0;
+  float ascEm_ = 0.95f, descEm_ = 0.25f, gapEm_ = 0; // face metrics in em (hhea)
   TextureHandle atlas_;
   static constexpr int kAtlasSize = 2048;
   int penX_ = 1, penY_ = 1, rowH_ = 0;

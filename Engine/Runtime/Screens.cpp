@@ -349,8 +349,12 @@ std::unique_ptr<Widget> BuildEditorScreen() {
 std::unique_ptr<Widget> BuildGalleryScreen(int* clickCounter) {
   auto root = MakeBox(Axis::Column, 16);
   root->Pad(16);
-  auto& cover = root->Add(MakeCover("비둘기 엔진 디자인 시스템", "부품 8개: Panel · Tabs · Button · Field · ListRow · Badge · Node · Cover"));
-  cover.height = Length::Px(112);
+  // Title (the 960x300 Cover component itself is checked by the parity screen: BDG_SCREEN=parity:Cover).
+  auto& head = root->Add(MakeBox(Axis::Column, 4));
+  head.padL = 4;
+  auto& title = head.Add(MakeLabel("비둘기 엔진 디자인 시스템"));
+  title.fontSize = 20; title.lineHeight = 1.2f;
+  head.Add(MakeLabel("부품 8개: Panel · Tabs · Button · Field · ListRow · Badge · Node · Cover")).variant = 1;
 
   auto& row = root->Add(MakeBox(Axis::Row, 16));
   row.height = Length::Fill();
@@ -396,6 +400,88 @@ std::unique_ptr<Widget> BuildGalleryScreen(int* clickCounter) {
   nodes.padT = 8; nodes.padL = 4;
   nodes.Add(MakeNode("node.start", "Start", "Event", 1, {"out|exec|", "out|object|Self"}));
   nodes.Add(MakeNode("node.rotate", "Rotate", "Transform", 2, {"in|exec|", "in|object|Target", "in|float|Speed", "out|exec|"}));
+  return root;
+}
+
+// ---- Design parity screens -------------------------------------------------------------------
+// Each mirrors a component preview: the root box has the preview root's padding/gap, children use the
+// same ids. Pieces the engine does not draw yet (icon button groups) are fixed-size boxes sized from tokens.
+std::unique_ptr<Widget> BuildParityScreen(const std::string& c) {
+  auto root = MakeBox(Axis::Column);
+  auto withId = [](std::unique_ptr<Widget> w, const char* id) { w->id = id; return w; };
+  if (c == "Button") {
+    auto& r = root->Add(withId(MakeBox(Axis::Row, 12), "button.root"));
+    r.Pad(16); r.crossAlign = Align::Center;
+    r.Add(MakeButton("button.compile", "Compile", true));
+    r.Add(MakeButton("button.compiled", "컴파일됨")).variant = 1;
+    r.Add(MakeButton("button.diff", "Diff"));
+    for (const char* id : {"button.group.play", "button.group.tools"}) { // .bdg-group with two .bdg-iconbtn
+      auto& g = r.Add(withId(MakeBox(Axis::Row), id));
+      g.width = Length::Px(2 * 2 + 2 + 2 * 28 + 2); // padding + border + 2 icon buttons (size-icon-button) + gap
+      g.height = Length::Px(24 + 2 * 2 + 2);
+    }
+  } else if (c == "Badge") {
+    auto& r = root->Add(withId(MakeBox(Axis::Row, 8), "badge.root"));
+    r.Pad(16); r.crossAlign = Align::Center;
+    struct B { const char* id; const char* text; int variant; };
+    for (B b : {B{"badge.cs", "C#", 0}, B{"badge.luau", "Luau", 0}, B{"badge.rust", "Rust", 0}, B{"badge.ok", "OK 컴파일됨", 1},
+                B{"badge.warn", "WARN 예산 초과", 2}, B{"badge.err", "ERROR 참조 없음", 3}, B{"badge.unity", "Unity", 10},
+                B{"badge.unreal", "Unreal", 11}, B{"badge.blender", "Blender", 12}, B{"badge.native", "비둘기 고유", 13}})
+      r.Add(withId(MakeBadge(b.text, b.variant), b.id));
+  } else if (c == "Tabs") {
+    auto& r = root->Add(withId(MakeBox(Axis::Column, 12), "tabs.root"));
+    r.Pad(12); r.width = Length::Px(640 + 24);
+    r.Add(MakeTabs("tabs.panel", {"Scene", "Game"}, 0));
+    r.Add(MakeTabs("tabs.ws", {"Level", "Graph", "Animation", "UI Designer", "Scripting"}, 0)).variant = 2;
+  } else if (c == "ListRow") {
+    auto& r = root->Add(withId(MakeBox(Axis::Column), "list.root"));
+    r.width = Length::Px(302); r.padL = r.padR = 1; r.padT = r.padB = 1 + 2; // panel border + list padding
+    r.Add(MakeListRow("list.camera", "Main Camera", "Camera"));
+    r.Add(MakeListRow("list.sun", "Sun", "Light"));
+    r.Add(MakeListRow("list.player", "Player", "Mesh"));
+    r.Add(MakeListRow("list.sign", "Shop Sign", "Widget")).selected = true;
+    r.Add(MakeListRow("list.enemies", "▾ Enemies", "Empty"));
+    r.Add(MakeListRow("list.goblin", "Goblin", "BP_Goblin", 1));
+  } else if (c == "Field") {
+    auto& r = root->Add(withId(MakeBox(Axis::Column), "field.root"));
+    r.width = Length::Px(362); r.Pad(1);
+    auto head = [&](const char* id, const char* text) { auto& l = r.Add(withId(MakeLabel(text), id)); l.variant = 2; };
+    head("field.head.transform", "Transform");
+    r.Add(MakeField("field.position", "Position", "-4, 1.6, 0"));
+    head("field.head.widget", "Widget");
+    r.Add(MakeField("field.ui", "UI", "ui/shop.ui"));
+    r.Add(MakeField("field.space", "Space", "World"));
+    r.Add(MakeField("field.interactive", "Interactive", "true"));
+    r.Add(MakeField("field.hp", "Hp", "12"));
+  } else if (c == "Panel") {
+    auto& r = root->Add(withId(MakeBox(Axis::Row, 1), "panel.root"));
+    r.width = Length::Px(642); r.Pad(1);
+    auto& left = r.Add(MakePanelTabs("panel.hierarchy", {"Hierarchy", "Search"}, 0));
+    left.width = Length::Fill();
+    left.Add(withId(MakeLabel("Scene"), "panel.caption")).variant = 3;
+    auto& list = left.Add(MakeBox(Axis::Column));
+    list.padT = list.padB = 2;
+    list.Add(MakeListRow("panel.camera", "Main Camera", "Camera"));
+    list.Add(MakeListRow("panel.sign", "Shop Sign", "Widget")).selected = true;
+    auto& right = r.Add(MakePanelTabs("panel.inspector", {"Inspector", "Text"}, 0));
+    right.width = Length::Fill();
+    right.Add(MakeField("panel.name", "Name", "Shop Sign"));
+    right.Add(MakeField("panel.space", "Space", "World"));
+  } else if (c == "Node") {
+    auto& r = root->Add(withId(MakeBox(Axis::Row, 18), "node.root"));
+    r.Pad(18); r.crossAlign = Align::Start;
+    r.Add(MakeNode("node.update", "Event Update", "", 1, {"out|exec|", "out|float|Delta Time"}));
+    r.Add(MakeNode("node.distance", "Distance", "Vector", 3, {"in|vector|A", "in|vector|B", "out|float|"}));
+    r.Add(MakeNode("node.move", "Move Towards", "Transform", 2, {"in|exec|", "in|vector|Target", "in|float|Speed", "out|exec|"})).selected = true;
+    r.Add(MakeNode("node.branch", "Branch", "", 0, {"in|exec|", "in|bool|Condition", "out|exec|True", "out|exec|False"}));
+  } else if (c == "Cover") {
+    root->crossAlign = Align::Start;
+    auto& cv = root->Add(MakeCover("cover.root", "Bidulgi\nEditor", "AI와 사람이 같은 방식으로 다루는 게임 엔진 에디터"));
+    cv.children[0]->id = "cover.name";
+    cv.children[1]->id = "cover.tag";
+  } else {
+    return nullptr;
+  }
   return root;
 }
 }

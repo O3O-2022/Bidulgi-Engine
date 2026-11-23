@@ -95,6 +95,32 @@ bool Theme::ReloadIfChanged() {
   return Load(path_);
 }
 
+bool Theme::DumpJSON(const std::string& path) const {
+  std::FILE* f = std::fopen(path.c_str(), "w");
+  if (!f) return false;
+  auto color = [&](const Color& c) { std::fprintf(f, "[%.6f,%.6f,%.6f,%.6f]", c.r, c.g, c.b, c.a); };
+  std::fprintf(f, "{\n \"colors\": {");
+  const char* sep = "";
+  for (auto& [k, v] : colors_) { std::fprintf(f, "%s\n  \"%s\": ", sep, k.c_str()); color(v); sep = ","; }
+  std::fprintf(f, "\n },\n \"numbers\": {");
+  sep = "";
+  for (auto& [k, v] : numbers_) { std::fprintf(f, "%s\n  \"%s\": %g", sep, k.c_str(), v); sep = ","; }
+  std::fprintf(f, "\n },\n \"fontSizes\": {");
+  sep = "";
+  for (auto& [k, v] : fontSizes_) { std::fprintf(f, "%s\n  \"%s\": %g", sep, k.c_str(), v); sep = ","; }
+  std::fprintf(f, "\n },\n \"shadows\": {");
+  sep = "";
+  for (auto& [k, v] : shadows_) {
+    std::fprintf(f, "%s\n  \"%s\": {\"x\": %g, \"y\": %g, \"blur\": %g, \"color\": ", sep, k.c_str(), v.x, v.y, v.blur);
+    color(v.color);
+    std::fprintf(f, "}");
+    sep = ",";
+  }
+  std::fprintf(f, "\n }\n}\n");
+  std::fclose(f);
+  return true;
+}
+
 Theme::Shadow Theme::S(std::string_view name) const {
   auto it = shadows_.find(std::string(name));
   return it != shadows_.end() ? it->second : Shadow{};

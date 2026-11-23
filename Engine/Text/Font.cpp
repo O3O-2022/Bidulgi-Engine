@@ -40,6 +40,10 @@ bool Font::Load(RHI& rhi, const char* path, int basePixelSize) {
   FT_Set_Pixel_Sizes(face, 0, (FT_UInt)basePx_);
   ascender_ = face->size->metrics.ascender / 64.f;
   lineHeight_ = face->size->metrics.height / 64.f;
+  float upem = face->units_per_EM > 0 ? (float)face->units_per_EM : 1000.f;
+  ascEm_ = face->ascender / upem;
+  descEm_ = -face->descender / upem;
+  gapEm_ = (face->height - (face->ascender - face->descender)) / upem;
 
   atlas_ = rhi.CreateTexture2D(kAtlasSize, kAtlasSize, TextureFormat::R8, nullptr);
   LogInfo("font: {} ({}, base {}px, SDF atlas {}x{})", path, face->family_name ? face->family_name : "?",
@@ -76,7 +80,7 @@ const Font::Glyph& Font::Get(uint32_t cp, bool mono) {
   if (it != glyphs_.end()) return it->second;
   Glyph g;
   if (face && !FT_Load_Char(face, cp, FT_LOAD_DEFAULT)) {
-    g.advance = face->glyph->advance.x / 64.f;
+    g.advance = face->glyph->linearHoriAdvance / 65536.f; // unhinted: scales exactly to any size (browser-equal widths)
     if (face->glyph->outline.n_points > 0 && !FT_Render_Glyph(face->glyph, FT_RENDER_MODE_SDF)) {
       const FT_Bitmap& bm = face->glyph->bitmap;
       int w = (int)bm.width, h = (int)bm.rows;

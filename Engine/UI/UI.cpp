@@ -43,7 +43,21 @@ std::unique_ptr<Widget> MakeNode(std::string id, std::string title, std::string 
   auto w = Make(WidgetKind::Node, std::move(id), std::move(title)); w->text2 = std::move(subtitle); w->variant = variant;
   w->items = std::move(pins); w->focusable = true; return w;
 }
-std::unique_ptr<Widget> MakeCover(std::string title, std::string subtitle) { auto w = Make(WidgetKind::Cover, {}, std::move(title)); w->text2 = std::move(subtitle); return w; }
+std::unique_ptr<Widget> MakeCover(std::string id, std::string title, std::string subtitle) {
+  // Matches design-system Cover: 960x300, name 96px bold (line-height .95, letter-spacing -.02em) 64px above the
+  // bottom, tag 13px 32px above the bottom, both 40px from the left.
+  auto w = Make(WidgetKind::Cover, id);
+  w->axis = Axis::Column; w->crossAlign = Align::Start;
+  w->padL = 40; w->padB = 32; w->gap = 17;
+  w->width = Length::Px(960); w->height = Length::Px(300);
+  auto name = Make(WidgetKind::Label, id + ".name", std::move(title));
+  name->fontSize = 96; name->lineHeight = 0.95f; name->letterSpacing = -0.02f; name->bold = true;
+  auto tag = Make(WidgetKind::Label, id + ".tag", std::move(subtitle));
+  tag->fontSize = 13; tag->lineHeight = -1; tag->variant = 1;
+  w->Add(std::move(name));
+  w->Add(std::move(tag));
+  return w;
+}
 std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> tabs, int selected) {
   auto w = Make(WidgetKind::Panel, std::move(id), tabs.empty() ? std::string() : tabs[selected]);
   w->items = std::move(tabs); w->selectedIndex = selected; return w;
@@ -58,6 +72,31 @@ std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, U
 // ---- Helpers -------------------------------------------------------------------------------
 float UIContext::Text(float x, float y, float size, Color c, const std::string& s, bool mono) { return font_ ? font_->DrawText(batch_, x, y, size, c, s, mono) : 0.f; }
 float UIContext::Measure(float size, const std::string& s, bool mono) const { return font_ ? font_->Measure(size, s, mono) : s.size() * size * 0.55f; }
+float UIContext::MeasureSpaced(float size, const std::string& s, float ls) const {
+  size_t chars = 0;
+  for (unsigned char c : s) chars += (c & 0xC0) != 0x80; // UTF-8 code points
+  return Measure(size, s) + ls * size * (float)chars;
+}
+float UIContext::NormalLineHeight(float size) const { return font_ ? font_->NormalLineHeight(size) : size * 1.2f; }
+
+namespace {
+std::vector<std::string> Lines(const std::string& s) {
+  std::vector<std::string> out;
+  size_t a = 0;
+  for (size_t b; (b = s.find('\n', a)) != std::string::npos; a = b + 1) out.push_back(s.substr(a, b - a));
+  out.push_back(s.substr(a));
+  return out;
+}
+std::string Upper(std::string s) { for (char& c : s) if (c >= 'a' && c <= 'z') c = (char)(c - 32); return s; }
+// Graph node metrics, shared by measure and draw (design-system .bdg-node).
+constexpr float kPinRow = 11.5f * 1.45f, kPinIcon = 10.f, kPinGap = 5.f;
+struct PinInfo { bool out; std::string type, label; };
+PinInfo ParsePin(const std::string& pin) {
+  size_t a = pin.find('|'), c = pin.find('|', a + 1);
+  return {pin.rfind("out|", 0) == 0, pin.substr(a + 1, c - a - 1), pin.substr(c + 1)};
+}
+float PinHeight(const PinInfo& p) { return p.label.empty() ? kPinIcon : kPinRow; }
+}
 
 int UIContext::NextBlinkMs() const {
   if (!focused_ || focused_->kind != WidgetKind::Field) return -1;
@@ -77,28 +116,34 @@ Widget* UIContext::Find(const std::string& id) {
 }
 
 // ---- Layout: measure (bottom-up preferred sizes), arrange (top-down rects, flex fill) -------
-namespace {
-struct NodePins { int in = 0, out = 0; };
-NodePins CountPins(const Widget& w) {
-  NodePins p;
-  for (auto& s : w.items) (s.rfind("out|", 0) == 0 ? p.out : p.in)++;
-  return p;
-}
-}
-
 void UIContext::Measure(Widget& w) {
   const Theme& t = theme_;
   for (auto& c : w.children) Measure(*c);
   float s3 = t.N("space-3", 6), s5 = t.N("space-5", 10), s6 = t.N("space-6", 12);
   switch (w.kind) {
     case WidgetKind::Label: {
+      if (w.variant == 2) { // component header: padding space-3 space-5, 12.5px, border-top 1px
+        w.prefW = Measure(12.5f, w.text) + s5 * 2; w.prefH = 12.5f * 1.45f + s3 * 2 + 1; break;
+      }
+      if (w.variant == 3) { // caption: uppercase 10.5px, letter-spacing .07em, padding space-4 space-5 space-2
+        w.prefW = MeasureSpaced(10.5f, Upper(w.text), 0.07f) + s5 * 2;
+        w.prefH = 10.5f * 1.45f + t.N("space-4", 8) + t.N("space-2", 4); break;
+      }
       float fs = w.fontSize > 0 ? w.fontSize : t.FontSize("body", 13);
-      w.prefW = Measure(fs, w.text); w.prefH = fs * 1.45f; break;
+      float lh = w.lineHeight < 0 ? NormalLineHeight(fs) : fs * (w.lineHeight > 0 ? w.lineHeight : 1.45f);
+      std::vector<std::string> lines = Lines(w.text);
+      w.prefW = 0;
+      for (auto& l : lines) w.prefW = std::max(w.prefW, MeasureSpaced(fs, l, w.letterSpacing));
+      w.prefH = lh * (float)lines.size(); break;
     }
     case WidgetKind::Custom: w.prefW = 0; w.prefH = 0; break;
-    case WidgetKind::Button:  w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2; w.prefH = 24; break;
+    case WidgetKind::Button:
+      w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2 + (w.variant == 1 ? 8 + s3 : 0); w.prefH = 24; break;
     case WidgetKind::Field:   w.prefW = 240; w.prefH = std::max(26.f, t.N("size-row", 22) + 4); break;
-    case WidgetKind::Badge:   w.prefW = Measure(t.FontSize("badge", 10), w.text) + s3 * 2 + 2; w.prefH = 18; break;
+    case WidgetKind::Badge:
+      if (w.variant >= 10) w.prefW = MeasureSpaced(10, w.text, 0.04f) + s3 * 2 + 2; // origin badge (.bdg-src)
+      else w.prefW = Measure(t.FontSize("badge", 10), w.text) + s3 * 2 + 2;          // pill (.bdg-pill)
+      w.prefH = 18; break;
     case WidgetKind::ListRow:
       w.prefW = s5 * 2 + w.indent * 12.f + 18 + Measure(t.FontSize("control", 12.5f), w.text) +
                 (w.text2.empty() ? 0 : 16 + Measure(11, w.text2));
@@ -107,19 +152,33 @@ void UIContext::Measure(Widget& w) {
     case WidgetKind::Tabs: {
       float sum = 0;
       float fs = w.variant == 1 ? t.FontSize("control", 12.5f) : t.FontSize("label", 12);
-      for (auto& it : w.items) sum += Measure(fs, it) + s6 * 2 + (w.variant == 1 ? t.N("space-1", 2) : 0);
-      w.prefW = sum; w.prefH = w.variant == 1 ? fs + s3 * 2 + 4 : t.N("size-panel-header", 30);
+      float fsTab = w.variant >= 1 ? t.FontSize("control", 12.5f) : fs;
+      for (auto& it : w.items) sum += Measure(fsTab, it) + s6 * 2;
+      if (w.variant >= 1 && !w.items.empty()) sum += t.N("space-1", 2) * (float)(w.items.size() - 1);
+      w.prefW = sum;
+      w.prefH = w.variant == 1 ? 12.5f * 1.45f + s3 * 2 : t.N("size-panel-header", 30);
+      if (w.variant == 2) { w.prefW += t.N("space-4", 8) * 2; w.prefH = t.N("size-workspace-bar", 38); }
       break;
     }
     case WidgetKind::Node: {
-      NodePins p = CountPins(w);
-      float head = 5 + 16 + 5 + t.N("size-node-stripe", 3);
-      w.prefW = std::max(150.f, Measure(12, w.text) + Measure(10.5f, w.text2) + s5 * 2 + 12);
-      w.prefH = head + s3 * 2 + std::max(p.in, p.out) * 20.f;
+      float head = t.N("size-node-stripe", 3) + 5 + 12 * 1.45f + 5 + 1;
+      float headW = s5 * 2 + Measure(12, w.text) + (w.text2.empty() ? 0 : s3 + Measure(10.5f, w.text2));
+      float colW[2] = {0, 0}, colH[2] = {0, 0};
+      int count[2] = {0, 0};
+      for (auto& s : w.items) {
+        PinInfo p = ParsePin(s);
+        int k = p.out ? 1 : 0;
+        float pw = 9 * 2 + (p.type == "exec" ? 8.f : kPinIcon) + (p.label.empty() ? 0 : s3 + Measure(11.5f, p.label));
+        colW[k] = std::max(colW[k], pw);
+        colH[k] += PinHeight(p) + (count[k]++ ? kPinGap : 0);
+      }
+      float pinsW = colW[0] + 14 + colW[1], pinsH = s3 * 2 + std::max(colH[0], colH[1]);
+      w.prefW = std::max(150.f, std::max(headW, pinsW) + 2);
+      w.prefH = 2 + head + pinsH;
       break;
     }
-    case WidgetKind::Cover: w.prefW = 320; w.prefH = 112; break;
     case WidgetKind::Box:
+    case WidgetKind::Cover:
     case WidgetKind::Card:
     case WidgetKind::Panel: {
       if (w.kind == WidgetKind::Card) {
@@ -145,6 +204,7 @@ void UIContext::Measure(Widget& w) {
       w.prefW = w.axis == Axis::Row ? main + padMain : cross + padCross;
       w.prefH = w.axis == Axis::Row ? cross + padCross : main + padMain;
       if (w.kind == WidgetKind::Panel) w.prefW = std::max(w.prefW, Measure(12, w.text) + 40);
+      if (w.kind == WidgetKind::Cover) { w.prefW = 960; w.prefH = 300; }
       break;
     }
   }
@@ -155,6 +215,16 @@ void UIContext::Measure(Widget& w) {
 void UIContext::Arrange(Widget& w, float x, float y, float width, float height) {
   w.x = x; w.y = y; w.w = width; w.h = height;
   if (w.children.empty() || w.collapsed) return;
+  if (w.kind == WidgetKind::Cover) { // children stacked from the bottom edge
+    float by = y + height - w.padB;
+    for (auto it = w.children.rbegin(); it != w.children.rend(); ++it) {
+      Widget& c = **it;
+      by -= c.prefH;
+      Arrange(c, x + w.padL, by, c.prefW, c.prefH);
+      by -= w.gap;
+    }
+    return;
+  }
   bool row = w.axis == Axis::Row;
   float cx = x + w.padL, cy = y + w.padT;
   float cw = std::max(0.f, width - w.padL - w.padR), ch = std::max(0.f, height - w.padT - w.padB);
@@ -172,7 +242,9 @@ void UIContext::Arrange(Widget& w, float x, float y, float width, float height) 
                                                   : (row ? c->prefW : c->prefH);
     float crossAvail = row ? ch : cw;
     bool stretch = (w.crossAlign == Align::Stretch && crossLen.mode != Length::Mode::Px) || crossLen.mode == Length::Mode::Fill;
-    float crossSize = stretch ? crossAvail : std::min(crossAvail, row ? c->prefH : c->prefW);
+    float crossSize = stretch ? crossAvail
+                    : crossLen.mode == Length::Mode::Px ? crossLen.value                 // fixed size may overflow (CSS)
+                    : std::min(crossAvail, row ? c->prefH : c->prefW);
     float crossOff = 0;
     if (!stretch && w.crossAlign == Align::Center) crossOff = (crossAvail - crossSize) * 0.5f;
     if (!stretch && w.crossAlign == Align::End) crossOff = crossAvail - crossSize;
@@ -197,8 +269,30 @@ void UIContext::DrawWidget(Widget& w) {
   switch (w.kind) {
     case WidgetKind::Box: break;
     case WidgetKind::Label: {
+      if (w.variant == 2) {
+        b.Rect(w.x, w.y, w.w, w.h, t.C("raise"));
+        b.Rect(w.x, w.y, w.w, 1, t.C("line"));
+        Text(w.x + s5, w.y + 1 + s3 + (12.5f * 1.45f - 12.5f) * 0.5f - 1, 12.5f, t.C("fg"), w.text);
+        break;
+      }
+      if (w.variant == 3) {
+        float x = w.x + s5, y = w.y + t.N("space-4", 8) + (10.5f * 1.45f - 10.5f) * 0.5f - 1;
+        std::string up = Upper(w.text);
+        for (size_t i = 0; i < up.size();) { // one code point at a time: letter-spacing .07em
+          size_t n = 1;
+          while (i + n < up.size() && ((unsigned char)up[i + n] & 0xC0) == 0x80) ++n;
+          x += Text(x, y, 10.5f, t.C("fg-faint"), up.substr(i, n)) + 0.07f * 10.5f;
+          i += n;
+        }
+        break;
+      }
       float fs = w.fontSize > 0 ? w.fontSize : t.FontSize("body", 13);
-      Text(w.x, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-dim") : t.C("fg"), w.text);
+      float lh = w.lineHeight < 0 ? NormalLineHeight(fs) : fs * (w.lineHeight > 0 ? w.lineHeight : 1.45f);
+      float y = w.y;
+      for (auto& line : Lines(w.text)) {
+        Text(w.x, y + (lh - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-dim") : t.C("fg"), line);
+        y += lh;
+      }
       break;
     }
     case WidgetKind::Custom: if (w.onDraw) w.onDraw(w, *this); break;
@@ -243,16 +337,18 @@ void UIContext::DrawWidget(Widget& w) {
       break;
     }
     case WidgetKind::Tabs: {
-      bool ws = w.variant == 1;
+      bool ws = w.variant >= 1;
       float fs = ws ? t.FontSize("control", 12.5f) : t.FontSize("label", 12), px = w.x;
-      if (!ws) b.Rect(w.x, w.y, w.w, w.h, t.C("win"), rsm);
+      float ty = w.y, th = w.h;
+      if (!ws || w.variant == 2) b.Rect(w.x, w.y, w.w, w.h, t.C("win"), rsm);
+      if (w.variant == 2) { px += t.N("space-4", 8); th = 12.5f * 1.45f + s3 * 2; ty = w.y + (w.h - th) * 0.5f; }
       w.itemX.clear();
       for (size_t i = 0; i < w.items.size(); ++i) {
         float tw = Measure(fs, w.items[i]) + s6 * 2;
         bool on = (int)i == w.selectedIndex;
-        if (on && ws) { b.Rect(px, w.y, tw, w.h, t.C("raise"), t.N("radius-lg", 5)); b.Rect(px + 2, w.y + w.h - 2, tw - 4, 2, t.C("accent")); }
+        if (on && ws) { b.Rect(px, ty, tw, th, t.C("raise"), t.N("radius-lg", 5)); b.Rect(px + 2, ty + th - 2, tw - 4, 2, t.C("accent")); }
         else if (on) { b.Rect(px, w.y, tw, w.h, t.C("panel")); b.Rect(px, w.y, tw, 2, t.C("accent")); }
-        Text(px + s6, w.y + (w.h - fs) * 0.5f - 1, fs, on ? t.C("fg") : t.C("fg-dim"), w.items[i]);
+        Text(px + s6, ty + (th - fs) * 0.5f - 1, fs, on ? t.C("fg") : t.C("fg-dim"), w.items[i]);
         px += tw + (ws ? t.N("space-1", 2) : 0);
         w.itemX.push_back(px);
       }
@@ -264,7 +360,12 @@ void UIContext::DrawWidget(Widget& w) {
       Color border = w.primary ? t.C("accent") : (w.hovered ? t.C("fg-faint") : t.C("line-strong"));
       if (w.pressed) fill = Alpha(fill, 0.8f);
       b.Rect(w.x, w.y, w.w, w.h, fill, rmd, 1, border);
-      Text(w.x + (w.w - Measure(fs, w.text)) * 0.5f, w.y + (w.h - fs) * 0.5f - 1, fs, w.primary ? t.C("on-accent") : t.C("fg"), w.text);
+      float tx = w.x + (w.w - Measure(fs, w.text)) * 0.5f;
+      if (w.variant == 1) { // status dot before the label
+        b.Rect(w.x + 1 + s5, w.y + (w.h - 8) * 0.5f, 8, 8, t.C("ok"), 4);
+        tx = w.x + 1 + s5 + 8 + s3;
+      }
+      Text(tx, w.y + (w.h - fs) * 0.5f - 1, fs, w.primary ? t.C("on-accent") : t.C("fg"), w.text);
       break;
     }
     case WidgetKind::Field: {
@@ -329,13 +430,22 @@ void UIContext::DrawWidget(Widget& w) {
     }
     case WidgetKind::Badge: {
       float fs = t.FontSize("badge", 10);
+      if (w.variant >= 10) { // origin badge: outline in the source colour
+        static const char* src[] = {"source-unity", "source-unreal", "source-blender", "accent"};
+        Color c = t.C(src[std::min(w.variant - 10, 3)]);
+        b.Rect(w.x, w.y, w.w, w.h, w.variant == 13 ? t.C("accent-soft") : Color{0, 0, 0, 0}, rsm, 1, c);
+        float x = w.x + s3 + 1;
+        Text(x, w.y + (w.h - fs) * 0.5f - 1, fs, c, w.text);
+        break;
+      }
+      static const char* pill[] = {"fg-dim", "ok", "warn", "err"};
       b.Rect(w.x, w.y, w.w, w.h, t.C("sunk"), t.N("radius-pill", 12), 1, t.C("line"));
-      Text(w.x + s3 + 1, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("ok") : t.C("fg-dim"), w.text);
+      Text(w.x + s3 + 1, w.y + (w.h - fs) * 0.5f - 1, fs, t.C(pill[std::clamp(w.variant, 0, 3)]), w.text);
       break;
     }
     case WidgetKind::Node: {
       static const char* stripes[] = {"node-flow", "node-event", "node-function", "node-pure"};
-      float stripe = t.N("size-node-stripe", 3), head = 5 + 16 + 5 + stripe;
+      float stripe = t.N("size-node-stripe", 3), head = stripe + 5 + 12 * 1.45f + 5 + 1;
       if (Theme::Shadow sh = t.S("shadow-node"); sh.color.a > 0)                      // shadow-node token
         b.Shadow(w.x + sh.x, w.y + sh.y, w.w, w.h, sh.color, rmd, sh.blur);
       b.Rect(w.x, w.y, w.w, w.h, t.C("panel"), rmd, 1, t.C("line-strong"));
@@ -343,30 +453,37 @@ void UIContext::DrawWidget(Widget& w) {
       b.Rect(w.x + 1, w.y + 1, w.w - 2, stripe, t.C(stripes[w.variant & 3]), rmd);
       b.Rect(w.x + 1, w.y + head - 1, w.w - 2, 1, t.C("line"));
       float tx = w.x + s5;
-      tx += Text(tx, w.y + stripe + 6, 12, t.C("fg"), w.text) + 6;
-      Text(tx, w.y + stripe + 7.5f, 10.5f, t.C("fg-dim"), w.text2);
-      float inY = w.y + head + s3, outY = inY;
-      for (auto& pin : w.items) {
-        bool out = pin.rfind("out|", 0) == 0;
-        size_t a = pin.find('|'), c = pin.find('|', a + 1);
-        std::string type = pin.substr(a + 1, c - a - 1), label = pin.substr(c + 1);
-        Color pc = t.C("pin-" + type);
-        float py = out ? outY : inY;
-        float cxp = out ? w.x + w.w - 9 - 10 : w.x + 9;
-        if (type == "exec") b.Triangle(cxp + 1, py + 3, 8, 10, pc);            // exec pin: right-pointing triangle
-        else b.Rect(cxp, py + 3, 10, 10, {0, 0, 0, 0}, 5, 2, pc);
-        float lw = Measure(11.5f, label);
-        Text(out ? cxp - 6 - lw : cxp + 16, py, 11.5f, t.C("fg"), label);
-        (out ? outY : inY) += 20;
+      float textY = w.y + 1 + stripe + 5 + (12 * 1.45f - 12) * 0.5f - 1;
+      tx += Text(tx, textY, 12, t.C("fg"), w.text) + s3;
+      Text(tx, textY + 1.5f, 10.5f, t.C("fg-dim"), w.text2);
+      float inY = w.y + 1 + head + s3, outY = inY;
+      for (auto& s : w.items) {
+        PinInfo p = ParsePin(s);
+        Color pc = t.C("pin-" + p.type);
+        float& py = p.out ? outY : inY;
+        float rowH = PinHeight(p), iconW = p.type == "exec" ? 8.f : kPinIcon;
+        float ix = p.out ? w.x + w.w - 1 - 9 - iconW : w.x + 1 + 9, iy = py + (rowH - kPinIcon) * 0.5f;
+        if (p.type == "exec") b.Triangle(ix, iy, 8, 10, pc);                    // exec pin: right-pointing triangle
+        else b.Rect(ix, iy, 10, 10, {0, 0, 0, 0}, 5, 2, pc);
+        if (!p.label.empty()) {
+          float lw = Measure(11.5f, p.label);
+          Text(p.out ? ix - s3 - lw : ix + iconW + s3, py + (rowH - 11.5f) * 0.5f - 1, 11.5f, t.C("fg"), p.label);
+        }
+        py += rowH + kPinGap;
       }
       if (w.selected) b.Rect(w.x - 2, w.y - 2, w.w + 4, w.h + 4, {0, 0, 0, 0}, rmd + 2, 2, t.C("accent"));
       break;
     }
-    case WidgetKind::Cover: {
-      b.Rect(w.x, w.y, w.w, w.h, t.C("raise"), t.N("radius-window", 8), 1, t.C("line-strong"));
-      b.Rect(w.x + 20, w.y + 22, 36, 4, t.C("accent"), 2);
-      Text(w.x + 20, w.y + 36, t.FontSize("page-title", 20), t.C("fg"), w.text);
-      Text(w.x + 20, w.y + 68, t.FontSize("body", 13), t.C("fg-dim"), w.text2);
+    case WidgetKind::Cover: { // design-system Cover: canvas field, node, selection, accent slab, dot grid
+      float r = t.N("radius-md", 4);
+      b.Rect(w.x, w.y, w.w, w.h, t.C("ground"));
+      b.Rect(w.x + 480, w.y, 480, 300, t.C("raise"));
+      b.Rect(w.x + 560, w.y + 40, 176, 88, t.C("win"), r);
+      b.Rect(w.x + 560, w.y + 40, 176, 3, t.C("node-function"));
+      b.Rect(w.x + 560, w.y + 144, 176, 110, t.C("selection"), r);
+      b.Rect(w.x + 752, w.y + 40, 96, 220, t.C("accent"), r);
+      for (float dy = 48; dy <= 248; dy += 16)
+        for (float dx = 872; dx <= 920; dx += 16) b.Rect(w.x + dx - 1.4f, w.y + dy - 1.4f, 2.8f, 2.8f, t.C("line-strong"), 1.4f);
       break;
     }
   }
