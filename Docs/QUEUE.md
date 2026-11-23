@@ -272,4 +272,5 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [-] Graph AOT (1.0 이후, 차분 테스트가 생긴 뒤)
 - [-] 대형 게임 트랙 L1~L7 ([large-game-track](planning/large-game-track.md)): 오픈월드, GPU 물리·복셀 파괴, Halo GI Tier 1~3
 - [-] 전신 IK, 물리 애니메이션(Active Ragdoll)·일어나기, 천·머리카락 시뮬레이션, 모션 매칭 (1.0 이후 / L 트랙) [animation](features/animation.md#ik와-물리-애니메이션-2026-11-23-보강)
+- [-] 물리 백엔드 패키지: PhysX 5(1순위) → Rapier → Bullet, 공통 테스트 장면·`bdg physics bench` 비교 보고서 (1.0 이후) [physics](architecture/physics.md#지원할-물리-엔진-목록-2026-11-23)
 - [-] 원클릭 클라우드 호스팅 (엔진 범위 밖, 선택형 서비스로 나중에 검토)
