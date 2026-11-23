@@ -39,6 +39,18 @@ FetchContent_MakeAvailable(yyjson)
 find_package(OpenGL REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
+# ---- AddressSanitizer build (CI job "asan"; queue 1-4c): cmake -B build-asan -DBDG_ASAN=ON ----
+# Applies to the engine, editor and tests defined below (third-party code above is not instrumented).
+option(BDG_ASAN "Build engine code with AddressSanitizer (MSVC /fsanitize=address)" OFF)
+if(BDG_ASAN AND MSVC)
+  foreach(flags CMAKE_C_FLAGS_DEBUG CMAKE_CXX_FLAGS_DEBUG)
+    string(REGEX REPLACE "/RTC[1csu]+" "" ${flags} "${${flags}}") # run-time checks do not mix with ASan
+  endforeach()
+  add_compile_options(/fsanitize=address /Zi)
+  add_link_options(/INCREMENTAL:NO /DEBUG)
+  add_compile_definitions(BDG_ASAN=1)
+endif()
+
 # ---- Reflection: Bidulgi Header Tool (queue 1-2) ----
 # bdg_reflect(<target> <header>...): runs tools/bht/bht.py on each header (only when it or the tool changed)
 # and adds <stem>.gen.cpp plus <target>_reflect.cpp, which defines bdg_reflect_register_<target>().
@@ -77,6 +89,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Log.h        Engine/Core/Log.cpp
   Engine/Core/Math.h       Engine/Core/Handle.h
   Engine/Core/Crash.h      Engine/Core/Crash.cpp
+  Engine/Core/Guard.h      Engine/Core/Guard.cpp
   Engine/Core/Reflection.h Engine/Core/Reflection.cpp
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
@@ -116,11 +129,12 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine)
 if(MSVC)
   target_compile_options(BidulgiTests PRIVATE /W4 /utf-8)
+  target_compile_definitions(BidulgiTests PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 add_test(NAME unit COMMAND BidulgiTests)

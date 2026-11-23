@@ -1,4 +1,5 @@
 #include "UI/UI.h"
+#include "Core/Guard.h"
 #include "UI/Theme.h"
 #include "Render2D/Batch2D.h"
 #include "Text/Font.h"
@@ -304,7 +305,19 @@ void UIContext::DrawWidget(Widget& w) {
       }
       break;
     }
-    case WidgetKind::Custom: if (w.onDraw) w.onDraw(w, *this); break;
+    case WidgetKind::Custom:
+      if (w.onDraw) {
+        std::string reason;
+        if (!GuardedCall(w.id.empty() ? "custom panel" : w.id.c_str(), [&] { w.onDraw(w, *this); }, &reason)) {
+          w.onDraw = [reason](Widget& self, UIContext& ui) { // stop calling the broken code; say so in its place
+            const Theme& th = ui.Tokens();
+            ui.Batch().Rect(self.x, self.y, self.w, self.h, th.C("ground"));
+            ui.Text(self.x + 12, self.y + 12, 12, th.C("err"), "이 패널의 그리기 코드가 오류로 멈췄습니다 (작업은 자동 저장됨)");
+            ui.Text(self.x + 12, self.y + 32, 11, th.C("fg-dim"), reason);
+          };
+        }
+      }
+      break;
     case WidgetKind::Dock: DrawDock(w); break;
     case WidgetKind::Card: {
       float fs = t.FontSize("control", 12.5f);

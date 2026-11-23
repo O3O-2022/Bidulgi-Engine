@@ -38,6 +38,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_DOCK_TEST=1`, `BDG_LAYOUT=경로` | 도킹 자동 테스트(경계선 +100, Console 탭 이동), 레이아웃 파일 경로 강제 |
 | `BDG_CMD_TEST=1`, `BDG_CMD_LOG=경로`, `BDG_SCENE_DUMP=경로`, `--replay 경로` | 명령 버스 자동 테스트(Inspector 입력 → Ctrl+Z → Ctrl+Y → 선택), 명령 로그·씬 덤프 저장, 로그 재생 |
 | `BDG_CRASH_TEST=1` | 3번째 프레임에서 일부러 크래시 (보고서 확인용) |
+| `BDG_FAULT_TEST=1` | 오류 주입: Scene 패널 그리기 크래시 + 일부러 실패하는 검사 → 에디터가 살아 있고 자동 저장 |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
@@ -74,6 +75,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/Core/Reflection.*`, `Math.h` | 리플렉션 레지스트리(타입·필드·함수, 경로로 JSON 값 읽기/쓰기, 변경 추적), 값 타입 |
 | `Engine/Core/Handle.h` | `Handle<T>{index, generation}` + `Pool<T>`(세대 비교, 주소 고정), 공통 오류 문구 |
 | `Engine/Core/Crash.*` | 크래시 처리기: 미니덤프·`crash.txt`·로그 → `BugReports/crash-<시간>/`, 다음 실행 때 제보 버튼 |
+| `Engine/Core/Guard.*` | `BDG_CHECK`(복구 가능한 검사), `GuardedCall`(SEH 가드) |
 | `Engine/Core/Command.*` | 명령 버스: set·rename·add·del·mv·addcomp·rmcomp, Undo/Redo, 묶음, 연속 편집 합치기, JSONL 로그·재생 |
 | `Engine/Scene/*` | 최소 씬 모델(영구 ID·이름·부모·컴포넌트, 스냅샷), 기본 컴포넌트(Transform·MeshRenderer·Light·Camera)·샘플 컴포넌트 |
 | `Engine/Runtime/EditorModel.*` | 씬 + 명령 버스 + 선택, Hierarchy·Inspector를 씬·리플렉션에서 생성 |
@@ -124,7 +126,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 1-3 명령 버스 + Undo/Redo | `Core/Command.*`: 명령 `{cmd, target, args(JSON), source, t}` → 실행 + 역명령 기록, Undo/Redo, 묶음(AI 요청 하나 = Undo 한 번), UI의 같은 필드 연속 편집은 300ms 안이면 합침, JSONL 로그 저장·`--replay`. 대상이 될 최소 씬 모델(`Scene/*`, 2-1의 바탕)과 기본·샘플 컴포넌트. Inspector·Hierarchy를 씬·리플렉션에서 생성, 필드 확정 → `set` 명령, Ctrl+Z/Y 전역(필드 내부 Undo는 미확정 편집 중에만). 자동 테스트: `edit=[3,4,5] undo=[0,1,0] redo=[3,4,5]`, 재생한 씬 덤프 동일. 단위 테스트 14개·검사 214개. CI 7번 | `7c761ba` |
 | 1-3b Undo 기록 패널 | 아래 도크에 History 탭: 단계마다 한 줄(`Player: Transform.position = [3,4,5]`), 현재 단계 강조, 되돌린 단계 흐리게, 클릭하면 그 시점으로 이동(`CommandBus::JumpTo`, 로그에는 undo/redo로 남아 재생도 같음), 출처 열(AI·Script·Terminal), 묶음은 한 줄 `(N edits)`로 접힘. float 값은 가장 짧은 표기(0.45), 긴 입력값은 칸 안에서 잘림. 자동 테스트: 기록 클릭 후 `maxHealth=100 undo_depth=1` | `7a53daf` |
 | 1-4 핸들 기반 오브젝트 수명 | `Core/Handle.h`: `Handle<T>{index:32, generation:32}`(0 = 널), `Pool<T>`(파괴 시 세대 증가 → 재사용돼도 옛 핸들 무효, 객체 주소 고정), `DeadHandleMessage` 모든 언어 공통 문구. 씬이 풀 위로(영구 ID ↔ 현재 핸들 표): 삭제 후 Undo로 같은 `g1`이 돌아와도 옛 핸들은 무효. 단위 테스트 3개 추가(총 17개·242개 검사) | `cfadf8f` |
-| 1-4b 크래시 보고 | crashpad 대신 Windows `dbghelp`(새 의존성 없음): 처리되지 않은 예외 → `BugReports/crash-<시간>/`에 `crash.dmp`(미니덤프)·`crash.txt`(예외 코드·모듈+오프셋)·로그, `pending-crash.txt` 표시 → 다음 실행 때 경고 + 상태 줄 "지난 실행이 비정상 종료됨 — 제보하기"(폴더 + 미리 채운 `[Crash]` 이슈, 로그는 사용자 경로 치환). 디버거가 붙어 있으면 설치 안 함, 스택 넘침용 여유 스택. 상자 레이아웃은 숨긴 자식을 건너뜀. CI 8번 | (이 커밋) |
+| 1-4b 크래시 보고 | crashpad 대신 Windows `dbghelp`(새 의존성 없음): 처리되지 않은 예외 → `BugReports/crash-<시간>/`에 `crash.dmp`(미니덤프)·`crash.txt`(예외 코드·모듈+오프셋)·로그, `pending-crash.txt` 표시 → 다음 실행 때 경고 + 상태 줄 "지난 실행이 비정상 종료됨 — 제보하기"(폴더 + 미리 채운 `[Crash]` 이슈, 로그는 사용자 경로 치환). 디버거가 붙어 있으면 설치 안 함, 스택 넘침용 여유 스택. 상자 레이아웃은 숨긴 자식을 건너뜀. CI 8번 | `ceba06b` |
+| 1-4c 잘 죽지 않는 엔진 기초 | C API 널 인자 경고+오류 코드(크래시 없음), `BDG_CHECK`(실패 시 로그·횟수·false 반환으로 복구), `GuardedCall` SEH 가드(접근 위반·0 나누기·스택 넘침·C++ 예외 → 오류 문구), Custom 패널 그리기를 가드 → 크래시한 패널은 그 자리에 안내문, 실패 시 `.cache/autosave/`에 씬·명령 로그 자동 저장. 테스트: 오류 주입 5개 + 로더 퍼징 3개(반사 값·씬 스냅샷·명령 줄·도킹 레이아웃, 각 1500회 변형) → 25개·330개 검사. CMake `BDG_ASAN` + CI `asan` 작업(ASan으로 전체 단위 테스트·퍼징), CI 9번 | (이 커밋) |
 
 ---
 
@@ -136,7 +139,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-4c. 잘 죽지 않는 엔진 기초** — 엔진 API의 널·무효 핸들 안전 반환(경고 로그), 에디터에서 `check` 실패를 복구 가능한 오류로, C++ 모듈 호출 SEH 가드 + 자동 저장, CI에 ASan 빌드와 로더 퍼징, 오류 주입 테스트 모음 [pain-points](planning/pain-points.md)
 - [ ] **1-5. 단축키 시스템 + 프리셋**
   - 구현: `Engine/UI/Shortcuts.*`. 동작 이름 ↔ 키 조합 매핑 파일 `ProjectSettings/Shortcuts.jsonl`, 프리셋 `unity`(기본)·`unreal`. 첫 실행 때 선택 화면. 충돌 검사.
   - 완료 조건: 프리셋 전환 시 같은 동작(예: 이동 기즈모)이 다른 키로 실행.

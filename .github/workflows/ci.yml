@@ -139,6 +139,10 @@ jobs:
           $log = Invoke-Editor 'Release' @{} 5
           if ($log -notmatch 'crash: the previous session crashed' -or $log -notmatch 'crash: report button shown') { $errors += 'crash not offered on the next start' }
 
+          # 9) Fault injection (queue 1-4c): a crashing panel and a failed check; the editor survives and autosaves
+          $log = Invoke-Editor 'Release' @{ BDG_FAULT_TEST = '1' } 10
+          if ($log -notmatch 'fault test: guard_failures=1 check_failures=1 frames=10 survived=1' -or $log -notmatch 'autosave: ') { $errors += 'fault injection test failed' }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 
@@ -168,3 +172,31 @@ jobs:
             build-*.log
             BugReports/
           if-no-files-found: ignore
+
+  asan:
+    name: Unit tests + fuzzing under AddressSanitizer
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build-asan/_deps
+          key: deps-asan-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure (BDG_ASAN=ON)
+        run: cmake -S . -B build-asan -A x64 -DBDG_ASAN=ON
+
+      - name: Build tests
+        run: cmake --build build-asan --config Release --target BidulgiTests -- /m /v:minimal
+
+      - name: Run tests (ASan runtime from the MSVC toolset)
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dll = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\clang_rt.asan_dynamic-x86_64.dll" | Sort-Object FullName | Select-Object -Last 1
+          $env:PATH = "$($dll.DirectoryName);$env:PATH"
+          build-asan/Release/BidulgiTests.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }

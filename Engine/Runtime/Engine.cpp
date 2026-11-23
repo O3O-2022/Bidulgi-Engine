@@ -1,6 +1,7 @@
 // C API hub implementation: every bdg_api.h function forwards into the C++ engine here.
 #include "bdg/bdg_api.h"
 #include "Core/Crash.h"
+#include "Core/Guard.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include "Platform/Window.h"
@@ -86,7 +87,7 @@ struct bdg_engine {
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
-  bool cmdTest = false, crashTest = false;
+  bool cmdTest = false, crashTest = false, faultTest = false;
   std::string pendingCrash; // report folder of the previous session's crash
   std::string cmdTestValues[3];            // Transform.position after edit / undo / redo
   std::chrono::steady_clock::time_point createdAt;
@@ -327,7 +328,7 @@ void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openB
 extern "C" {
 
 bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
-  if (!desc || !out) return BDG_ERR_INVALID_ARG;
+  if (!desc || !out) { bdg::LogWarn("bdg_engine_create: desc and out must not be null"); return BDG_ERR_INVALID_ARG; }
   *out = nullptr;
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
   auto* e = new (std::nothrow) bdg_engine();
@@ -339,6 +340,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->dockTest = std::getenv("BDG_DOCK_TEST") != nullptr;
   e->cmdTest = std::getenv("BDG_CMD_TEST") != nullptr;
   e->crashTest = std::getenv("BDG_CRASH_TEST") != nullptr;
+  e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -395,6 +397,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     e->model->Attach(*e->editor, *h, *i, e->editor->Find("history"));
     bdg::EditorModel* model = e->model.get();
     e->editor->SetKeyHandler([model](const bdg::InputEvent& ev) { return model->HandleKey(ev); });
+    bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { model->Autosave(); }); // keep the work
     if (desc->replay_path) {
       std::string err;
       size_t n = 0;
@@ -422,7 +425,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
 }
 
 bdg_result bdg_engine_run(bdg_engine* e) {
-  if (!e) return BDG_ERR_INVALID_ARG;
+  if (!e) { bdg::LogWarn("bdg_engine_run: engine is null (did bdg_engine_create fail?)"); return BDG_ERR_INVALID_ARG; }
   using clock = std::chrono::steady_clock;
   using msd = std::chrono::duration<double, std::milli>;
   // Interactive runs draw only when something changed (input, window event, Wake, token file edit, caret blink)
@@ -519,6 +522,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
+    if (e->faultTest && frames == 2) { // BDG_FAULT_TEST: a crashing panel and a failed check must not stop the editor
+      if (bdg::Widget* scene = e->editor->Find("scene"))
+        scene->onDraw = [](bdg::Widget&, bdg::UIContext&) { volatile int* p = nullptr; *p = 1; };
+      BDG_CHECK(frames < 0, "deliberate check failure (fault test)");
+    }
     float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
     e->batch.Begin((int32_t)lw, (int32_t)lh);
@@ -567,6 +575,9 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("dock final: {}", d.Describe());
       }
       if (bdg::Widget* crash = e->editor->Find("status.crash"); crash && !crash->hidden) bdg::LogInfo("crash: report button shown");
+      if (e->faultTest)
+        bdg::LogInfo("fault test: guard_failures={} check_failures={} frames={} survived=1", bdg::GuardFailureCount(),
+                     bdg::CheckFailureCount(), frames);
       if (e->model) {
         if (e->cmdTest) {
           std::string hp;
@@ -643,7 +654,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 }
 
 void bdg_engine_destroy(bdg_engine* e) {
-  if (!e) return;
+  if (!e) return; // destroying null is allowed (like free)
   e->editor.reset();
   e->gallery.reset();
   e->font.Shutdown();

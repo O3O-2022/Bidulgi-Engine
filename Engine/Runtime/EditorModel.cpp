@@ -5,6 +5,8 @@
 #include <yyjson.h>
 #include <cctype>
 #include <format>
+#include <cstdio>
+#include <filesystem>
 #include <functional>
 
 namespace bdg {
@@ -107,6 +109,21 @@ void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Wi
 
 void EditorModel::Select(const std::string& id) {
   pendingSelect_ = id;
+}
+
+bool EditorModel::Autosave() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  fs::path dir = fs::current_path() / ".cache" / "autosave";
+  fs::create_directories(dir, ec);
+  std::string dump = scene.Dump();
+  std::FILE* f = std::fopen((dir / "scene.jsonl").string().c_str(), "wb");
+  bool ok = f && std::fwrite(dump.data(), 1, dump.size(), f) == dump.size();
+  if (f) std::fclose(f);
+  ok = bus.SaveLog((dir / "commands.jsonl").string()) && ok;
+  if (ok) LogInfo("autosave: {} ({} objects, {} commands)", dir.string(), scene.ObjectCount(), bus.Log().size());
+  else LogError("autosave failed: {}", dir.string());
+  return ok;
 }
 
 bool EditorModel::HandleKey(const InputEvent& e) {
