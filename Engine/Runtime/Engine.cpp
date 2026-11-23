@@ -97,6 +97,8 @@ struct bdg_engine {
   std::string shortcutsPath; // ProjectSettings/Shortcuts.jsonl
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
   bool shortcutBannerShown = false;
+  bool dragTest = false;
+  bdg::Vec3 dragTestWorld{};
   std::string pendingCrash; // report folder of the previous session's crash
   std::string cmdTestValues[3];            // Transform.position after edit / undo / redo
   std::chrono::steady_clock::time_point createdAt;
@@ -510,6 +512,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->crashTest = std::getenv("BDG_CRASH_TEST") != nullptr;
   e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
   e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
+  e->dragTest = std::getenv("BDG_DRAG_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
@@ -692,6 +695,21 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
     if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
+    if (e->dragTest && !e->showGallery && frames == 2 && e->model) { // BDG_DRAG_TEST: drag Weapon onto "Main"
+      bdg::Widget* src = e->editor->Find("h.g7");
+      bdg::Widget* dst = e->editor->Find("h.scene");
+      if (src && dst) {
+        e->dragTestWorld = e->model->scene.WorldPosition("g7");
+        using T = bdg::InputEvent::Type;
+        float sx = (src->x + 40) * scale, sy = (src->y + src->h * 0.5f) * scale;
+        float dx = (dst->x + 40) * scale, dy = (dst->y + dst->h * 0.5f) * scale;
+        e->window.InjectEvent({T::MouseMove, sx, sy});
+        e->window.InjectEvent({T::MouseDown, sx, sy, 1});
+        e->window.InjectEvent({T::MouseMove, sx, sy - 20 * scale});
+        e->window.InjectEvent({T::MouseMove, dx, dy});
+        e->window.InjectEvent({T::MouseUp, dx, dy, 1});
+      }
+    }
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
     if (e->faultTest && frames == 2) { // BDG_FAULT_TEST: a crashing panel and a failed check must not stop the editor
@@ -749,6 +767,13 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
       if (bdg::Widget* crash = e->editor->Find("status.crash"); crash && !crash->hidden) bdg::LogInfo("crash: report button shown");
       if (e->a11yTest) bdg::LogInfo("a11y test: {} next_panel={}", e->a11yResult, e->a11yNextPanel);
+      if (e->dragTest && e->model) {
+        const bdg::SceneObject* weapon = e->model->scene.Find("g7");
+        bdg::Vec3 after = e->model->scene.WorldPosition("g7");
+        float d = std::fabs(after.x - e->dragTestWorld.x) + std::fabs(after.y - e->dragTestWorld.y) + std::fabs(after.z - e->dragTestWorld.z);
+        bdg::LogInfo("drag test: weapon_parent=\"{}\" world_kept={} undo_depth={}", weapon ? weapon->parent : "?", d < 1e-3f ? 1 : 0,
+                     e->model->bus.UndoDepth());
+      }
       if (e->shortcutTest)
         bdg::LogInfo("shortcut test: banner_shown={} unity_play={} unreal_play={} objects={} preset={} conflicts={} saved={}",
                      e->shortcutBannerShown ? 1 : 0, e->shortcutTestValues[0], e->shortcutTestValues[1],

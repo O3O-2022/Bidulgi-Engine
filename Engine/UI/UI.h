@@ -54,6 +54,8 @@ struct Widget {
 
   std::vector<std::unique_ptr<Widget>> children;
   std::function<void(Widget&)> onClick;
+  bool draggable = false;                     // can be picked up and dropped on a widget with onDrop
+  std::function<void(Widget& dropped)> onDrop; // something was dropped on this widget (Hierarchy reparent, ...)
 
   // Text editing state (Field). Byte offsets into text2, always on UTF-8 boundaries.
   size_t cursor = 0, anchor = 0;
@@ -148,6 +150,12 @@ private:
   std::vector<Widget*> docks_;         // filled by Layout
   std::function<bool(const InputEvent&)> onKey_;
   std::function<void(Widget*)> onFocus_;
+  Widget* dragSource_ = nullptr; // pressed draggable widget
+  Widget* dropTarget_ = nullptr; // widget under the mouse that accepts the drop
+  bool dragging_ = false;
+  float pressX_ = 0, pressY_ = 0, dragX_ = 0, dragY_ = 0;
+  Widget* DropTargetAt(float x, float y);
+  void DrawDragOverlay();
 
   Window* window_ = nullptr;
   float scale_ = 1.f;

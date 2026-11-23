@@ -541,12 +541,33 @@ void UIContext::ForgetRemovedWidgets() {
   if (!reachable(hovered_)) hovered_ = nullptr;
   if (!reachable(pressed_)) pressed_ = nullptr;
   if (!reachable(focused_)) focused_ = nullptr;
+  if (!reachable(dragSource_)) { dragSource_ = nullptr; dragging_ = false; }
+  if (!reachable(dropTarget_)) dropTarget_ = nullptr;
+}
+
+Widget* UIContext::DropTargetAt(float x, float y) {
+  Widget* hit = root_ ? HitTest(*root_, x, y) : nullptr;
+  return hit && hit->onDrop ? hit : nullptr;
+}
+
+void UIContext::DrawDragOverlay() {
+  if (!dragging_ || !dragSource_) return;
+  const Theme& t = theme_;
+  if (dropTarget_ && dropTarget_ != dragSource_) {
+    Widget& d = *dropTarget_;
+    batch_.Rect(d.x + 1, d.y + 1, d.w - 2, d.h - 2, {0, 0, 0, 0}, t.N("radius-sm", 3), 2, t.C("accent"));
+  }
+  std::string label = dragSource_->text.empty() ? dragSource_->id : dragSource_->text;
+  float fs = t.FontSize("label", 12), w = Measure(fs, label) + 20;
+  batch_.Rect(dragX_ + 12, dragY_ + 8, w, 22, t.C("raise"), t.N("radius-sm", 3), 1, t.C("accent"));
+  Text(dragX_ + 22, dragY_ + 8 + (22 - fs) * 0.5f - 1, fs, t.C("fg"), label);
 }
 
 void UIContext::Draw() {
   if (!root_) return;
   DrawWidget(*root_);
   for (Widget* d : docks_) DrawDockOverlay(*d); // drag previews above everything
+  DrawDragOverlay();
 }
 
 // ---- Input ----------------------------------------------------------------------------------
@@ -598,6 +619,11 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
     if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse
     switch (e.type) {
       case InputEvent::Type::MouseMove: {
+        if (dragSource_) { // drag and drop: starts after 6 units so clicks stay clicks
+          dragX_ = e.x; dragY_ = e.y;
+          if (!dragging_ && std::hypot(e.x - pressX_, e.y - pressY_) > 6.f) dragging_ = true;
+          if (dragging_) { dropTarget_ = DropTargetAt(e.x, e.y); break; }
+        }
         Widget* hit = HitTest(*root_, e.x, e.y);
         if (hovered_ && hovered_ != hit) hovered_->hovered = false;
         hovered_ = hit;
@@ -608,17 +634,26 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         if (e.button != 1) break;
         pressed_ = HitTest(*root_, e.x, e.y);
         if (pressed_) pressed_->pressed = true;
+        dragSource_ = pressed_ && pressed_->draggable ? pressed_ : nullptr;
+        dragging_ = false;
+        dropTarget_ = nullptr;
+        pressX_ = dragX_ = e.x; pressY_ = dragY_ = e.y;
         SetFocus((pressed_ && pressed_->focusable) ? pressed_ : nullptr);
         if (focused_ && focused_->kind == WidgetKind::Field) focused_->cursor = focused_->anchor = FieldHit(*focused_, e.x);
         break;
       case InputEvent::Type::MouseUp: {
         if (e.button != 1) break;
         Widget* hit = HitTest(*root_, e.x, e.y);
-        if (pressed_) {
+        if (dragging_) { // a drop, not a click
+          if (dropTarget_ && dropTarget_ != dragSource_ && dropTarget_->onDrop) dropTarget_->onDrop(*dragSource_);
+          if (pressed_) pressed_->pressed = false;
+        } else if (pressed_) {
           pressed_->pressed = false;
           if (hit == pressed_) Activate(*hit, e.x, e.y);
         }
         pressed_ = nullptr;
+        dragSource_ = dropTarget_ = nullptr;
+        dragging_ = false;
         break;
       }
       case InputEvent::Type::KeyDown: {

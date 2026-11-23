@@ -41,6 +41,7 @@ private:
   Widget* inspector_ = nullptr;
   Widget* history_ = nullptr;
   long long pendingJump_ = -1; // History row clicked: jump there in Update
+  std::string moveSource_, moveTarget_; bool pendingMove_ = false; // Hierarchy drop, applied in Update
   void RebuildHistory();
   std::vector<Binding> bindings_;
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type

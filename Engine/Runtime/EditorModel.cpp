@@ -187,6 +187,15 @@ void EditorModel::Update() {
     needRebuild_ = true;
   }
   if (!selected_.empty() && !scene.Find(selected_)) { selected_.clear(); needRebuild_ = true; } // deleted
+  if (pendingMove_) { // Hierarchy drop: reparent and keep the object where it is in the world (Unity's default)
+    pendingMove_ = false;
+    Command mv;
+    mv.name = "mv";
+    mv.target = moveSource_;
+    mv.args = std::format("{{\"parent\":{},\"keepWorld\":true}}", Q(moveTarget_));
+    std::string err;
+    if (!bus.Execute(mv, &err)) LogWarn("move: {}", err);
+  }
   if (pendingJump_ >= 0) {
     std::string err;
     if (!bus.JumpTo((size_t)pendingJump_, &err)) LogWarn("history: {}", err);
@@ -253,7 +262,10 @@ void EditorModel::Rebuild() {
 
   // Hierarchy: the scene tree in order
   hierarchy_->children.clear();
-  hierarchy_->Add(MakeListRow("h.scene", "Main", "Scene"));
+  auto& sceneRow = hierarchy_->Add(MakeListRow("h.scene", "Main", "Scene"));
+  sceneRow.onDrop = [this](Widget& w) { // drop on the scene row: back to the top level
+    if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_.clear(); pendingMove_ = true; }
+  };
   std::function<void(const std::string&, int)> addRow = [&](const std::string& id, int depth) {
     const SceneObject* o = scene.Find(id);
     std::string kind = o->prefab ? "Prefab" : "";
@@ -266,6 +278,10 @@ void EditorModel::Rebuild() {
     auto& row = hierarchy_->Add(MakeListRow("h." + id, o->name, kind, depth));
     row.selected = id == selected_;
     row.onClick = [this, id](Widget&) { pendingSelect_ = id; }; // applied in Update (never rebuild inside a click)
+    row.draggable = true;
+    row.onDrop = [this, id](Widget& w) {
+      if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_ = id; pendingMove_ = true; }
+    };
     for (auto& k : o->children) addRow(k, depth + 1);
   };
   for (auto& r : scene.Roots()) addRow(r, 1);

@@ -41,6 +41,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_FAULT_TEST=1` | 오류 주입: Scene 패널 그리기 크래시 + 일부러 실패하는 검사 → 에디터가 살아 있고 자동 저장 |
 | `BDG_A11Y_TEST=1`, `BDG_A11Y=0` | 접근성 자동 테스트(UIA 클라이언트로 포커스 이름·역할 읽기 + Ctrl+F6), 접근성 연결 끄기 |
 | `BDG_SHORTCUT_TEST=1`, `BDG_SHORTCUTS=경로` | 단축키 자동 테스트(첫 실행 선택 → Unity 키 → Unreal 프리셋 → 다른 키), 단축키 파일 경로 강제 |
+| `BDG_DRAG_TEST=1` | Hierarchy 끌어다 놓기 자동 테스트(Weapon → Main, 월드 위치 유지) |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
@@ -136,7 +137,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 1-5 단축키 시스템 + 프리셋 | `UI/Shortcuts.*`: 동작 15개(undo·redo·duplicate·delete·rename·save·play·도구 5개·focus·gallery·bug), 프리셋 `unity`(기본)·`unreal`(예: Play Ctrl+P ↔ Alt+P, Duplicate Ctrl+D ↔ Ctrl+W), 사용자 바인딩은 프리셋 위에 유지, 충돌 검사(로그 + 설정 목록), `ProjectSettings/Shortcuts.jsonl`(첫 줄 프리셋 + 바꾼 것만). 첫 실행 때 선택 줄, Project Settings에 프리셋 버튼과 동작별 키 목록. 키 입력 칸에서 글자를 칠 때는 Ctrl/Alt 조합과 F키만 단축키로. 키 전체(A~Z, 0~9, F1~F12, Alt). Duplicate는 명령 묶음(add + addcomp). 자동 테스트: `unity_play=1 unreal_play=0 objects=10`, 재시작 후 프리셋 유지. 단위 테스트 3개(총 28개·362개). CI 10번 | `c610361` |
 | 1-6 접근성 기초 | AccessKit 대신 Windows UI Automation 제공자 직접 구현(`Platform/Accessibility*`, 새 의존성·Rust 빌드 없음): 창 = 루트, 포커스 가능한 위젯 = 자식 요소(Tab 순서, 위젯 id로 찾아 패널이 다시 만들어져도 안전), 역할(Button·TabItem·Edit·ListItem·Group)·이름(장식 기호 ▶·+ 제외)·AutomationId·포커스 상태·화면 위치, 누르기(Invoke)·값(Value, 입력은 명령으로 확정) 패턴, 포커스 변경 알림(`UiaRaiseAutomationEvent`). Ctrl+F6 = 다음 도킹 패널의 첫 컨트롤로 이동(두 프리셋 공통, 단축키 동작 `view.nextPanel`). `BDG_A11Y=0`이면 끔. 자동 테스트: 다른 스레드의 UIA 클라이언트가 `focused_name=Add Component control=Button children=30`, Ctrl+F6 후 `next_panel=h.scene`. CI 11번. **내레이터가 실제로 읽는지는 사용자 수동 확인 필요** | (이 커밋) |
 | 1-7 네트워크·공동 편집 대비 점검 | 영구 ID·명령 직렬화·바뀐 필드 추적·결정성 4가지 확인 → [network-readiness](architecture/network-readiness.md). 발견해서 고침: 바뀐 필드 기록이 비워지지 않고 쌓이던 문제(`EditorModel::Update`가 매 프레임 비움). 결정성 테스트 3개: 무작위 편집 세션을 다른 버스에 줄마다 전달(2010줄), JSONL 재생, **다른 프로세스**(`BidulgiTests --replay-dump`) 재생(1734줄) → 씬 덤프·Undo 깊이 동일. 단위 테스트 31개·376개 검사 | `27d06d1` |
-| 2-0 좌표·단위 확정 | 오른손 좌표계, Y-up, 앞쪽 -Z(glTF·OpenGL·Godot·Maya와 같음), 1단위=1m·kg·초, 각도는 편집·파일에서 도(수학 코드는 라디안), 양의 회전은 오른손 법칙, 오일러 순서 Ry·Rx·Rz(유니티와 같은 순서), 앞면은 반시계 감김. GLM 1.0.1(MIT, 헤더만) 추가, `Core/Space.*`: 오일러↔쿼터니언(짐벌 처리), TRS, 점·방향 변환. 규칙을 고정하는 단위 테스트 4개(총 35개·397개) | (이 커밋) |
+| 2-0 좌표·단위 확정 | 오른손 좌표계, Y-up, 앞쪽 -Z(glTF·OpenGL·Godot·Maya와 같음), 1단위=1m·kg·초, 각도는 편집·파일에서 도(수학 코드는 라디안), 양의 회전은 오른손 법칙, 오일러 순서 Ry·Rx·Rz(유니티와 같은 순서), 앞면은 반시계 감김. GLM 1.0.1(MIT, 헤더만) 추가, `Core/Space.*`: 오일러↔쿼터니언(짐벌 처리), TRS, 점·방향 변환. 규칙을 고정하는 단위 테스트 4개(총 35개·397개) | `0a6971d` |
+| 2-1 씬 모델 | 1-3의 최소 씬 모델을 확장: 새 오브젝트에는 Transform 자동 추가, Transform 제거 거부, `LocalMatrix`/`WorldMatrix`/`WorldPosition`(부모 사슬, 2-0 규칙), `mv {"keepWorld":true}` = 화면 위치를 유지하며 부모 변경(계산한 로컬 값을 로그에 적어 재생·Undo가 정확). UI 끌어다 놓기(`draggable`/`onDrop`, 6단위 넘게 움직여야 끌기, 대상 강조 + 따라오는 라벨) → Hierarchy 행을 다른 행이나 Main에 놓으면 위치 유지 이동. 복제는 Transform 값을 `set`으로 복사. 단위 테스트 4개 추가(총 39개·420개), CI 12번 | `82e17a8`, (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -151,7 +153,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ## M2 — 씬과 에셋 (실제 데이터를 다룸) — 진행 중
 
-- [ ] **2-1. 씬 모델** — 오브젝트(영구 ID, 이름, 부모, Transform) + 컴포넌트(리플렉션 타입). 계층 변경은 명령.
 - [ ] **2-2. JSONL 씬 저장/열기** — 형식은 [data-formats](features/data-formats.md): 머리 줄 `{"scene":..,"defaults":"1.0"}` + 한 줄에 오브젝트 하나, 기본값 생략, id 순 정렬(git diff 안정). yyjson으로 쓰기/읽기. 분할 저장(셀·오브젝트별)은 형식만 지원하고 UI는 나중.
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
 - [ ] **2-3. 에셋 데이터베이스** — 파일 감시, `.meta`(GUID, 임포트 설정, 출처·라이선스), GUID ↔ 경로 표. 이름 바꾸기·이동해도 참조 유지.

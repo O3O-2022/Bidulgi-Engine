@@ -160,6 +160,12 @@ jobs:
           elseif ([int]$Matches[1] -lt 10) { $errors += "accessibility tree too small ($($Matches[1]) elements)" }
           Remove-Item Env:BDG_LAYOUT
 
+          # 12) Scene model (queue 2-1): drag Weapon onto "Main" in the Hierarchy; it keeps its world position
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_DRAG_TEST = '1' } 6
+          if ($log -notmatch 'drag test: weapon_parent="" world_kept=1 undo_depth=1') { $errors += 'hierarchy drag (keep world) failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

@@ -15,7 +15,7 @@ FetchContent_Declare(SDL3
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(SDL3)
 
-# ---- External: FreeType (FreeType License, BSD-style) — SDF glyph rendering ----
+# ---- External: FreeType (FreeType License, BSD-style) ??SDF glyph rendering ----
 set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
 set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
@@ -29,14 +29,14 @@ if(MSVC)
   target_compile_options(freetype PRIVATE /utf-8) # its sources contain UTF-8 comments
 endif()
 
-# ---- External: yyjson (MIT) — JSON / JSONL reading and writing ----
+# ---- External: yyjson (MIT) ??JSON / JSONL reading and writing ----
 set(YYJSON_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(yyjson
   URL https://github.com/ibireme/yyjson/archive/refs/tags/0.10.0.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(yyjson)
 
-# ---- External: GLM (MIT) — vector / matrix math, header-only (queue 2-0) ----
+# ---- External: GLM (MIT) ??vector / matrix math, header-only (queue 2-0) ----
 set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_LIBRARY OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
@@ -88,7 +88,7 @@ add_library(glad STATIC ThirdParty/glad/src/gl.c)
 target_include_directories(glad PUBLIC ThirdParty/glad/include)
 set_target_properties(glad PROPERTIES FOLDER ThirdParty)
 
-# ---- External: stb_image_write (MIT / public domain, vendored single header) — PNG compression ----
+# ---- External: stb_image_write (MIT / public domain, vendored single header) ??PNG compression ----
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ThirdParty/stb)
 
@@ -141,7 +141,7 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)
