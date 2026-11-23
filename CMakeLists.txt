@@ -95,6 +95,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
+  Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
   Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
@@ -108,7 +109,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

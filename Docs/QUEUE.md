@@ -39,6 +39,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_CMD_TEST=1`, `BDG_CMD_LOG=경로`, `BDG_SCENE_DUMP=경로`, `--replay 경로` | 명령 버스 자동 테스트(Inspector 입력 → Ctrl+Z → Ctrl+Y → 선택), 명령 로그·씬 덤프 저장, 로그 재생 |
 | `BDG_CRASH_TEST=1` | 3번째 프레임에서 일부러 크래시 (보고서 확인용) |
 | `BDG_FAULT_TEST=1` | 오류 주입: Scene 패널 그리기 크래시 + 일부러 실패하는 검사 → 에디터가 살아 있고 자동 저장 |
+| `BDG_A11Y_TEST=1`, `BDG_A11Y=0` | 접근성 자동 테스트(UIA 클라이언트로 포커스 이름·역할 읽기 + Ctrl+F6), 접근성 연결 끄기 |
 | `BDG_SHORTCUT_TEST=1`, `BDG_SHORTCUTS=경로` | 단축키 자동 테스트(첫 실행 선택 → Unity 키 → Unreal 프리셋 → 다른 키), 단축키 파일 경로 강제 |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
@@ -65,6 +66,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/Runtime/Engine.cpp` | C API 구현, 메인 루프, 자동 테스트 주입 |
 | `Engine/Runtime/Screens.cpp` | 에디터 화면·갤러리 화면 구성 (에디터 모듈이 생기면 옮김) |
 | `Engine/Platform/Window.*` | SDL3 창, GL 컨텍스트, 입력 이벤트, IME, 클립보드, 화면 배율 |
+| `Engine/Platform/Accessibility*` | 화면 낭독기 연결: Windows UI Automation 제공자(위젯 → 접근성 요소, 포커스 알림, 누르기·값) |
 | `Engine/RHI/RHI.h`, `RHI_GL.cpp` | 그래픽 추상화. 버퍼·텍스처·파이프라인·그리기 (GL 4.5 DSA) |
 | `Engine/Render2D/Batch2D.*` | 2D 일괄 그리기 (SDF 둥근 사각형, 선, SDF 글자) |
 | `Engine/Text/Font.*` | FreeType SDF 글자 아틀라스 |
@@ -130,7 +132,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 1-4 핸들 기반 오브젝트 수명 | `Core/Handle.h`: `Handle<T>{index:32, generation:32}`(0 = 널), `Pool<T>`(파괴 시 세대 증가 → 재사용돼도 옛 핸들 무효, 객체 주소 고정), `DeadHandleMessage` 모든 언어 공통 문구. 씬이 풀 위로(영구 ID ↔ 현재 핸들 표): 삭제 후 Undo로 같은 `g1`이 돌아와도 옛 핸들은 무효. 단위 테스트 3개 추가(총 17개·242개 검사) | `cfadf8f` |
 | 1-4b 크래시 보고 | crashpad 대신 Windows `dbghelp`(새 의존성 없음): 처리되지 않은 예외 → `BugReports/crash-<시간>/`에 `crash.dmp`(미니덤프)·`crash.txt`(예외 코드·모듈+오프셋)·로그, `pending-crash.txt` 표시 → 다음 실행 때 경고 + 상태 줄 "지난 실행이 비정상 종료됨 — 제보하기"(폴더 + 미리 채운 `[Crash]` 이슈, 로그는 사용자 경로 치환). 디버거가 붙어 있으면 설치 안 함, 스택 넘침용 여유 스택. 상자 레이아웃은 숨긴 자식을 건너뜀. CI 8번 | `ceba06b` |
 | 1-4c 잘 죽지 않는 엔진 기초 | C API 널 인자 경고+오류 코드(크래시 없음), `BDG_CHECK`(실패 시 로그·횟수·false 반환으로 복구), `GuardedCall` SEH 가드(접근 위반·0 나누기·스택 넘침·C++ 예외 → 오류 문구), Custom 패널 그리기를 가드 → 크래시한 패널은 그 자리에 안내문, 실패 시 `.cache/autosave/`에 씬·명령 로그 자동 저장. 테스트: 오류 주입 5개 + 로더 퍼징 3개(반사 값·씬 스냅샷·명령 줄·도킹 레이아웃, 각 1500회 변형) → 25개·330개 검사. CMake `BDG_ASAN` + CI `asan` 작업(ASan으로 전체 단위 테스트·퍼징), CI 9번 | `e676464` |
-| 1-5 단축키 시스템 + 프리셋 | `UI/Shortcuts.*`: 동작 15개(undo·redo·duplicate·delete·rename·save·play·도구 5개·focus·gallery·bug), 프리셋 `unity`(기본)·`unreal`(예: Play Ctrl+P ↔ Alt+P, Duplicate Ctrl+D ↔ Ctrl+W), 사용자 바인딩은 프리셋 위에 유지, 충돌 검사(로그 + 설정 목록), `ProjectSettings/Shortcuts.jsonl`(첫 줄 프리셋 + 바꾼 것만). 첫 실행 때 선택 줄, Project Settings에 프리셋 버튼과 동작별 키 목록. 키 입력 칸에서 글자를 칠 때는 Ctrl/Alt 조합과 F키만 단축키로. 키 전체(A~Z, 0~9, F1~F12, Alt). Duplicate는 명령 묶음(add + addcomp). 자동 테스트: `unity_play=1 unreal_play=0 objects=10`, 재시작 후 프리셋 유지. 단위 테스트 3개(총 28개·362개). CI 10번 | (이 커밋) |
+| 1-5 단축키 시스템 + 프리셋 | `UI/Shortcuts.*`: 동작 15개(undo·redo·duplicate·delete·rename·save·play·도구 5개·focus·gallery·bug), 프리셋 `unity`(기본)·`unreal`(예: Play Ctrl+P ↔ Alt+P, Duplicate Ctrl+D ↔ Ctrl+W), 사용자 바인딩은 프리셋 위에 유지, 충돌 검사(로그 + 설정 목록), `ProjectSettings/Shortcuts.jsonl`(첫 줄 프리셋 + 바꾼 것만). 첫 실행 때 선택 줄, Project Settings에 프리셋 버튼과 동작별 키 목록. 키 입력 칸에서 글자를 칠 때는 Ctrl/Alt 조합과 F키만 단축키로. 키 전체(A~Z, 0~9, F1~F12, Alt). Duplicate는 명령 묶음(add + addcomp). 자동 테스트: `unity_play=1 unreal_play=0 objects=10`, 재시작 후 프리셋 유지. 단위 테스트 3개(총 28개·362개). CI 10번 | `c610361` |
+| 1-6 접근성 기초 | AccessKit 대신 Windows UI Automation 제공자 직접 구현(`Platform/Accessibility*`, 새 의존성·Rust 빌드 없음): 창 = 루트, 포커스 가능한 위젯 = 자식 요소(Tab 순서, 위젯 id로 찾아 패널이 다시 만들어져도 안전), 역할(Button·TabItem·Edit·ListItem·Group)·이름(장식 기호 ▶·+ 제외)·AutomationId·포커스 상태·화면 위치, 누르기(Invoke)·값(Value, 입력은 명령으로 확정) 패턴, 포커스 변경 알림(`UiaRaiseAutomationEvent`). Ctrl+F6 = 다음 도킹 패널의 첫 컨트롤로 이동(두 프리셋 공통, 단축키 동작 `view.nextPanel`). `BDG_A11Y=0`이면 끔. 자동 테스트: 다른 스레드의 UIA 클라이언트가 `focused_name=Add Component control=Button children=30`, Ctrl+F6 후 `next_panel=h.scene`. CI 11번. **내레이터가 실제로 읽는지는 사용자 수동 확인 필요** | (이 커밋) |
 
 ---
 
@@ -142,9 +145,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-6. 접근성 기초**
-  - 구현: AccessKit C 바인딩(MIT/Apache) FetchContent. 위젯 트리 → 접근성 트리(역할: button, tab, textbox, list item; 이름; 상태). 포커스 변경을 알림. Ctrl+F6 등으로 패널 간 이동.
-  - 완료 조건: Windows 내레이터가 포커스된 버튼·탭·입력칸 이름을 읽음 (사용자 수동 확인).
 - [ ] **1-7. 네트워크·공동 편집 대비 점검** (구현 기능은 나중, 구조만 지금)
   - 확인 목록: 영구 ID가 모든 오브젝트에 있음 / 모든 변경이 명령으로 직렬화됨 / 리플렉션이 바뀐 필드를 추적함 / 명령 적용이 결정적(같은 입력 → 같은 결과).
   - 완료 조건: 명령 로그를 다른 프로세스에서 재생해 씬 덤프가 같음을 비교하는 테스트.

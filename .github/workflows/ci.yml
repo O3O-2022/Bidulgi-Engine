@@ -153,6 +153,13 @@ jobs:
           if ($log -notmatch 'shortcuts: preset unreal loaded') { $errors += 'shortcut preset not kept' }
           Remove-Item Env:BDG_SHORTCUTS, Env:BDG_LAYOUT
 
+          # 11) Accessibility (queue 1-6): a UI Automation client reads the focused button; Ctrl+F6 moves to the next panel
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_A11Y_TEST = '1' } 8
+          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.scene') { $errors += 'accessibility test failed' }
+          elseif ([int]$Matches[1] -lt 10) { $errors += "accessibility tree too small ($($Matches[1]) elements)" }
+          Remove-Item Env:BDG_LAYOUT
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

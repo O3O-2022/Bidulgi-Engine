@@ -56,6 +56,7 @@ public:
   void SetTextInputArea(float x, float y, float w, float h, int cursorOffsetPx);
   std::string GetClipboardText() const;
   bool OpenURL(const std::string& url); // default browser / file explorer (file:///)
+  void* NativeHandle() const;           // HWND on Windows (accessibility bridge)
   void SetClipboardText(const std::string& text);
 
 private:

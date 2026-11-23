@@ -101,6 +101,14 @@ public:
   Widget* Focused() const { return focused_; }
   void SetKeyHandler(std::function<bool(const InputEvent&)> h) { onKey_ = std::move(h); } // keys no widget used
   void ForgetRemovedWidgets(); // call after replacing a subtree: drops hover/press/focus on removed widgets
+  // Accessibility and keyboard navigation (queue 1-6).
+  void Focus(Widget* w) { SetFocus(w); }             // nullptr clears focus
+  void Invoke(Widget& w) { Activate(w, -1, -1); }   // same as a click / Enter
+  void SetFocusListener(std::function<void(Widget*)> f) { onFocus_ = std::move(f); }
+  std::vector<Widget*> FocusOrder();                // visible focusable widgets in Tab order
+  float Scale() const { return scale_; }            // UI units -> drawable pixels
+  static const char* AccessibleRole(const Widget& w); // "button", "tab", "textbox", "listitem", ...
+  static std::string AccessibleName(const Widget& w); // what a screen reader says
   int NextBlinkMs() const; // ms until the text caret toggles (-1 = no focused text field): idle wake-up timer
 
   void Layout(float width, float height);
@@ -139,6 +147,7 @@ private:
   bool DockMouse(const InputEvent& e); // true = consumed (splitter or tab drag)
   std::vector<Widget*> docks_;         // filled by Layout
   std::function<bool(const InputEvent&)> onKey_;
+  std::function<void(Widget*)> onFocus_;
 
   Window* window_ = nullptr;
   float scale_ = 1.f;

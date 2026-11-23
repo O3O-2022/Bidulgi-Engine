@@ -27,6 +27,7 @@ const PresetRow kTable[] = {
     {"tool.scale", "R", "R"},
     {"view.focus", "F", "F"},
     {"view.gallery", "F1", "F1"},
+    {"view.nextPanel", "Ctrl+F6", "Ctrl+F6"},
     {"help.bug", "Ctrl+Shift+B", "Ctrl+Shift+B"},
 };
 

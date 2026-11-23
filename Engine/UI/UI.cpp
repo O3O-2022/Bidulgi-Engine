@@ -4,6 +4,7 @@
 #include "Render2D/Batch2D.h"
 #include "Text/Font.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -678,6 +679,46 @@ void UIContext::SetFocus(Widget* w) {
   }
   focused_ = w;
   if (w && w->kind == WidgetKind::Field) { w->cursor = w->anchor = w->text2.size(); w->composing.clear(); }
+  if (onFocus_) onFocus_(w); // screen readers announce the new focus
+}
+
+std::vector<Widget*> UIContext::FocusOrder() {
+  std::vector<Widget*> out;
+  if (root_) CollectFocusable(*root_, out);
+  return out;
+}
+
+const char* UIContext::AccessibleRole(const Widget& w) {
+  switch (w.kind) {
+    case WidgetKind::Button: return "button";
+    case WidgetKind::Tabs: return "tab";
+    case WidgetKind::Field: return "textbox";
+    case WidgetKind::ListRow: return "listitem";
+    case WidgetKind::Node: return "group";
+    case WidgetKind::Card: return "group";
+    default: return "text";
+  }
+}
+
+std::string UIContext::AccessibleName(const Widget& w) {
+  switch (w.kind) {
+    case WidgetKind::Tabs: return w.items.empty() ? w.id : w.items[std::clamp(w.selectedIndex, 0, (int)w.items.size() - 1)] + " tab";
+    case WidgetKind::Field: return w.text;  // label; the value is reported separately
+    case WidgetKind::ListRow: return w.text2.empty() ? w.text : w.text + ", " + w.text2;
+    case WidgetKind::Node: return w.text + (w.text2.empty() ? "" : " " + w.text2) + " node";
+    default: {
+      // Drop decoration a screen reader would read aloud: "+  Add Component" -> "Add Component", "▶  Play" -> "Play".
+      size_t i = 0;
+      while (i < w.text.size()) {
+        unsigned char c = (unsigned char)w.text[i];
+        if (c < 0x80 && !std::isalnum(c)) ++i;
+        else if (c == 0xE2 && i + 2 < w.text.size()) i += 3; // U+2000-U+2FFF: arrows, shapes, punctuation
+        else break;
+      }
+      std::string name = w.text.substr(i);
+      return name.empty() ? w.id : name;
+    }
+  }
 }
 
 void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {

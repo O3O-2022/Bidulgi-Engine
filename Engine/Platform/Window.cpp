@@ -192,4 +192,7 @@ std::string Window::GetClipboardText() const {
 
 void Window::SetClipboardText(const std::string& text) { SDL_SetClipboardText(text.c_str()); }
 bool Window::OpenURL(const std::string& url) { return SDL_OpenURL(url.c_str()); }
+void* Window::NativeHandle() const {
+  return window_ ? SDL_GetPointerProperty(SDL_GetWindowProperties(window_), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) : nullptr;
+}
 }

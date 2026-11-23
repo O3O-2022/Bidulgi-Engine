@@ -4,6 +4,7 @@
 #include "Core/Guard.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
+#include "Platform/Accessibility.h"
 #include "Platform/Window.h"
 #include "RHI/RHI.h"
 #include "Render2D/Batch2D.h"
@@ -89,6 +90,9 @@ struct bdg_engine {
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
   bool cmdTest = false, crashTest = false, faultTest = false, shortcutTest = false;
+  bool a11yTest = false;
+  int a11yStage = 0;        // BDG_A11Y_TEST: 0 focus, 1 start probe, 2 wait, 3 after Ctrl+F6, 4 done
+  std::string a11yResult, a11yNextPanel;
   bdg::Shortcuts shortcuts;  // named actions <-> keys (queue 1-5)
   std::string shortcutsPath; // ProjectSettings/Shortcuts.jsonl
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
@@ -352,6 +356,73 @@ void UsePreset(bdg_engine* e, const char* preset) {
   RebuildShortcutList(e);
 }
 
+namespace {
+bool Contains(const bdg::Widget& root, const bdg::Widget* target) {
+  if (&root == target) return true;
+  for (auto& c : root.children) if (Contains(*c, target)) return true;
+  return false;
+}
+bdg::Widget* FirstFocusable(bdg::Widget& w) {
+  if (w.hidden) return nullptr;
+  if (w.focusable) return &w;
+  for (auto& c : w.children) if (bdg::Widget* f = FirstFocusable(*c)) return f;
+  return nullptr;
+}
+}
+
+// Ctrl+F6: focus the first control of the next docked panel (panels without controls are skipped).
+void FocusNextPanel(bdg_engine* e) {
+  bdg::Widget* dw = e->editor->Find("dock");
+  if (!dw || !dw->dock || e->showGallery) return;
+  const bdg::DockState& d = *dw->dock;
+  std::vector<std::string> panels; // selected tab of each leaf, in tree order
+  std::vector<int> stack{d.root};
+  while (!stack.empty()) {
+    int n = stack.back();
+    stack.pop_back();
+    if (n < 0) continue;
+    const bdg::DockNode& node = d.nodes[n];
+    if (node.split) { stack.push_back(node.b); stack.push_back(node.a); }
+    else if (!node.tabs.empty()) panels.push_back(node.tabs[node.sel]);
+  }
+  if (panels.empty()) return;
+  bdg::Widget* focused = e->editor->Focused();
+  size_t current = panels.size() - 1; // nothing focused: start at the first panel
+  for (size_t i = 0; i < panels.size(); ++i)
+    if (bdg::Widget* p = e->editor->Find(panels[i]); p && focused && Contains(*p, focused)) current = i;
+  for (size_t step = 1; step <= panels.size(); ++step) {
+    bdg::Widget* p = e->editor->Find(panels[(current + step) % panels.size()]);
+    if (bdg::Widget* f = p ? FirstFocusable(*p) : nullptr) {
+      e->editor->Focus(f);
+      bdg::LogInfo("focus: panel {} ({})", panels[(current + step) % panels.size()], f->id);
+      return;
+    }
+  }
+}
+
+// Scripted check (BDG_A11Y_TEST=1): focus the Add Component button, let a UI Automation client read the
+// window from another thread, then press Ctrl+F6 and see where focus went.
+void InjectA11yTest(bdg_engine* e, int frame) {
+  if (e->a11yStage == 0 && frame == 2) {
+    if (bdg::Widget* b = e->editor->Find("insp.add")) e->editor->Focus(b);
+    e->a11yStage = 1;
+  } else if (e->a11yStage == 1 && frame >= 4) {
+    bdg::a11y::StartProbe();
+    e->a11yStage = 2;
+  } else if (e->a11yStage == 2 && bdg::a11y::ProbeDone()) {
+    e->a11yResult = bdg::a11y::ProbeResult();
+    bdg::InputEvent ev{bdg::InputEvent::Type::KeyDown};
+    ev.key = bdg::Key::F6;
+    ev.ctrl = true;
+    e->window.InjectEvent(ev);
+    e->a11yStage = 3;
+  } else if (e->a11yStage == 3) {
+    bdg::Widget* f = e->editor->Focused();
+    e->a11yNextPanel = f ? f->id : "-";
+    e->a11yStage = 4;
+  }
+}
+
 void SetupShortcuts(bdg_engine* e) {
   bdg::EditorModel* m = e->model.get();
   auto log = [](const char* what) { return [what] { bdg::LogInfo("{}", what); }; };
@@ -371,6 +442,7 @@ void SetupShortcuts(bdg_engine* e) {
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
   s.Register("view.focus", "Focus Selected", log("focus: needs the 3D scene view (queue 3-2)"));
   s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
+  s.Register("view.nextPanel", "Next Panel", [e] { FocusNextPanel(e); }); // keyboard users jump between docked panels
   s.Register("help.bug", "Report a Bug", [e] { e->bugRequested = true; }); // F12 is Windows' debugger break key
 
   const char* custom = std::getenv("BDG_SHORTCUTS");
@@ -438,6 +510,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->crashTest = std::getenv("BDG_CRASH_TEST") != nullptr;
   e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
   e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
+  e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -518,6 +591,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
   e->gallery->SetKeyHandler([e](const bdg::InputEvent& ev) { return e->shortcuts.Handle(ev); }); // F1 back, bug report
+  // Screen readers (queue 1-6): the current screen's widgets through UI Automation, focus changes announced.
+  for (bdg::UIContext* ui : {e->editor.get(), e->gallery.get()}) ui->SetFocusListener([](bdg::Widget*) { bdg::a11y::FocusChanged(); });
+  if (const char* off = std::getenv("BDG_A11Y"); !off || std::string(off) != "0") // BDG_A11Y=0 turns the bridge off
+    bdg::a11y::Attach(e->window, [e] { return e->showGallery ? e->gallery.get() : e->editor.get(); });
   *out = e;
   return BDG_OK;
 }
@@ -615,6 +692,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
     if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
+    if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
     if (e->faultTest && frames == 2) { // BDG_FAULT_TEST: a crashing panel and a failed check must not stop the editor
       if (bdg::Widget* scene = e->editor->Find("scene"))
@@ -641,6 +719,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (idleMeasuring) ++idleFrames;
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
+    if (last && e->a11yTest && e->a11yStage < 4 && frames < e->maxFrames + 3000) last = false; // wait for the UIA probe
     if (last && std::getenv("BDG_BUG_TEST")) { // automated check (no browser): personal data must not reach the report
       const char* home = std::getenv("USERPROFILE");
       bdg::LogInfo("bug test: profile path {}\\Documents", home ? home : "-");
@@ -669,6 +748,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("dock final: {}", d.Describe());
       }
       if (bdg::Widget* crash = e->editor->Find("status.crash"); crash && !crash->hidden) bdg::LogInfo("crash: report button shown");
+      if (e->a11yTest) bdg::LogInfo("a11y test: {} next_panel={}", e->a11yResult, e->a11yNextPanel);
       if (e->shortcutTest)
         bdg::LogInfo("shortcut test: banner_shown={} unity_play={} unreal_play={} objects={} preset={} conflicts={} saved={}",
                      e->shortcutBannerShown ? 1 : 0, e->shortcutTestValues[0], e->shortcutTestValues[1],
@@ -754,6 +834,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 
 void bdg_engine_destroy(bdg_engine* e) {
   if (!e) return; // destroying null is allowed (like free)
+  bdg::a11y::Detach(); // before the widgets and the window go away
   e->editor.reset();
   e->gallery.reset();
   e->font.Shutdown();
