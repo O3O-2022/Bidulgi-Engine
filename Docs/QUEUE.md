@@ -151,7 +151,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 2-3b 빨리 열리는 에디터 | 에셋 DB 색인 캐시 `<프로젝트>/.cache/assetdb.jsonl`(GUID·경로·크기·해시·수정 시각): 다음 시작 때 크기·시각이 같은 파일은 `.meta`도 내용도 읽지 않음. 스캔은 `FindFirstFileEx` 한 번(목록에 크기·시각이 함께 와서 파일마다 시스템 호출 없음, 경로는 UTF-8). 측정: **에셋 1만 개 첫 스캔 4.9초(`.meta` 1만 개 쓰기 포함), 다음 시작 41ms**(목표 10초), 3천 개 16ms. 시작 단계별 시간 한 줄(`startup: window=260 gl=32 fonts=1 ... total 294 ms`) + 첫 프레임 작업·만든 글자 수(`first frame 503 ms, 122 glyphs`) → 남은 큰 비용은 첫 프레임 글자 SDF 생성(글자당 약 4ms, 아틀라스 캐시는 후속). CI 첫 단계가 시작 시간을 실행 페이지에 표시. 패키지 지연 로드·씬 점진 로드는 패키지(1.0)·큰 씬이 생길 때로 미룸 | `bcf39e1`, `15d7638` |
 | 2-4 Hierarchy·Inspector 실제 동작 | Hierarchy: 씬 트리·선택·끌어다 놓기로 부모 변경(2-1)에 더해 이름 바꾸기 — Inspector 맨 위 Name 칸, F2가 그 칸에 포커스·전체 선택, Enter = `rename` 명령. Inspector는 리플렉션 메타를 따름: `Range` → 슬라이더(칸 안 끌기, 끄는 동안의 `set`은 300ms 합치기로 Undo 한 번, 글자 입력도 그대로), `ShowIf`(`flag`·`!flag`·`field == 값`·`!=`, 조건이 바뀌면 칸이 나타나고 사라짐, 모르는 필드는 숨기지 않음), `Header`(섹션 캡션, bht가 생성), `BFUNCTION(Button)` → 버튼 = 새 명령 `call`(함수 실행, 역명령은 새 명령 `setcomp`로 컴포넌트 값 복원 → Undo·재생 가능). 샘플: PlayerMove `Movement` 머리글, Health `Revive` 버튼. 단위 테스트 3개(총 51개·529개), 에디터 자동 테스트·CI 15번 | `64a0028` |
 | 2-4b 여러 오브젝트 편집·값 복사·프리셋 | Hierarchy Ctrl+클릭(추가/빼기)·Shift+클릭(범위) 다중 선택(마지막이 기준). Inspector는 모두가 가진 컴포넌트만, 값이 다르면 "—", 수정하면 선택 전체에 명령 묶음 하나(Undo 한 번); 다중일 때 슬라이더 끌기는 끄고 입력만. 버튼도 전체에. 카드마다 값 복사·값 붙여넣기(`setcomp`)·프리셋 저장·프리셋 적용, 복사한 컴포넌트가 없는 오브젝트에는 "+ 붙여넣기: 타입"(새 컴포넌트, `addcomp`). 복사는 시스템 클립보드에도 `{"bdgComponent":..,"value":..}`로. 프리셋은 `<Presets>/<타입>.preset` 한 줄 JSON (`BDG_PRESETS` 또는 에셋 폴더/Presets). 함께 고침: Inspector가 패널보다 길면 아래가 보이지도 눌리지도 않던 문제 → 도킹 패널 내용 휠 스크롤(본문 밖은 그리지도 맞히지도 않음, 스크롤 막대), 포커스가 옮겨가면 보이게 스크롤. 단위 테스트 1개(총 52개·540개), CI 16번. 메뉴 위젯이 생기면 카드 버튼 줄을 컴포넌트 메뉴로 옮김 | `3ce90bc` |
-| 2-5 Project 패널 | 에셋 폴더가 열려 있으면(`BDG_ASSETS`) Project 탭이 실제 내용: 왼쪽 폴더 트리, 오른쪽 현재 폴더(하위 폴더 → 파일, 종류 표시: Texture·Model·Audio·Scene·C# script·Lua script·Python script·C++…). **C++ `.h`+`.cpp` 묶음**: 이름이 같은 헤더·소스는 한 항목 `Weapon · C++ class` + 아래에 두 파일 중첩, 이름 바꾸기 칸에서 바꾸면 두 파일이 함께 바뀜(확장자 유지, GUID 유지, 씬 참조 갱신), 열기는 두 파일을 함께 기본 앱으로. 파일 감시로 바깥 변경도 반영. 썸네일 캐시는 이미지 디코더 확인이 필요해 2-5t로 분리. CI 17번 | (이 커밋) |
+| 2-5 Project 패널 | 에셋 폴더가 열려 있으면(`BDG_ASSETS`) Project 탭이 실제 내용: 왼쪽 폴더 트리, 오른쪽 현재 폴더(하위 폴더 → 파일, 종류 표시: Texture·Model·Audio·Scene·C# script·Lua script·Python script·C++…). **C++ `.h`+`.cpp` 묶음**: 이름이 같은 헤더·소스는 한 항목 `Weapon · C++ class` + 아래에 두 파일 중첩, 이름 바꾸기 칸에서 바꾸면 두 파일이 함께 바뀜(확장자 유지, GUID 유지, 씬 참조 갱신), 열기는 두 파일을 함께 기본 앱으로. 파일 감시로 바깥 변경도 반영. CI 17번 | `b04a1cd` |
+| 2-5t 썸네일 캐시(핵심) | stb_image 2.34(퍼블릭 도메인, 같은 stb 커밋, 사용자 승인) 추가 → `LoadImageRGBA`(PNG·JPEG·TGA·BMP·PSD·HDR, 유니코드 경로). `Assets/Thumbnails.*`: 이미지 에셋을 64×64(비율 유지, 평균 축소)로 만들어 `<프로젝트>/.cache/thumbnails/<GUID>-<해시>.png`에 저장, 다음 시작은 작은 캐시 PNG만 읽음, 내용이 바뀌면 새로 만들고 옛 파일 삭제, 깨진 이미지는 실패로 셈. 단위 테스트 1개(총 53개·551개). **Project 패널에 그리기는 3-2와 함께**(UI에 RGBA 텍스처를 그리는 기능이 씬 뷰 표시와 같음) | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -164,17 +165,16 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ---
 
-## M2 — 씬과 에셋 (실제 데이터를 다룸) — 진행 중
+## M2 — 씬과 에셋 (실제 데이터를 다룸) — 남은 항목은 M3 3D 핵심(3-0~3-4) 다음으로 (사용자 결정 2026-11-23)
 
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
-- [ ] **2-5t. 썸네일 캐시** — 텍스처·모델 썸네일 `.cache/thumbnails/`, Project 패널 타일 보기. 이미지 디코더(stb_image, 퍼블릭 도메인) 내려받기 확인 필요
 - [ ] **2-5b. 참조 찾기·안 쓰는 에셋 찾기·찾아 바꾸기** — `bdg refs`, `bdg unused`, 지우기 전 경고, 참조 일괄 교체, 일괄 이름 바꾸기 [convenience-features](planning/convenience-features.md)
 - [ ] **2-5c. 테마 편집기** — 토큰 색상 선택기, 실시간 반영, 프로젝트별 테마 [convenience-features](planning/convenience-features.md)
 - [ ] **2-5d. 끌어다 놓기 임포트·자동 다시 가져오기·에셋 규칙 검사** (`.blend` 직접 가져오기는 M3) [convenience-features](planning/convenience-features.md)
 - [ ] **2-6. 새 프로젝트 기본 3D 씬** — Main Camera, Sun, Sky, World Settings, Ground ([projects-and-templates](features/projects-and-templates.md)).
 - [ ] **2-7. CLI `bdg` 1차** — `bdg view/query/set/add/del/validate` 를 같은 명령 버스로 (에디터 없이 헤드리스 실행). AI가 쓰는 첫 경로.
 
-## M3 — 3D 렌더링과 플레이 모드
+## M3 — 3D 렌더링과 플레이 모드 — **지금 진행** (3-0 → 3-1 → 3-2 → 3-3 → 3-4)
 
 - [ ] **3-0. 렌더링 기준판 1단계** — 단색 평면 + 방향광 + MetalRoughSpheres + 좌표·색 기준판(축, 글자 판, 18% 회색, 컬러 체커)으로 좌표계·와인딩(CW/CCW)·sRGB↔Linear 감마를 먼저 확정. `bdg testassets fetch`(라이선스 기록, `.cache/testassets/`) ([graphics-test-scenes](features/graphics-test-scenes.md))
 - [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))

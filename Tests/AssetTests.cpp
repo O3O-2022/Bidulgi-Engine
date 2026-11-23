@@ -1,5 +1,7 @@
 // Asset database tests (queue 2-3).
 #include "Assets/AssetDatabase.h"
+#include "Assets/Thumbnails.h"
+#include "Core/Image.h"
 #include "bdg_test.h"
 #include <cstdio>
 #include <cstdlib>
@@ -138,5 +140,35 @@ TEST_CASE("assets: the index cache skips unchanged files (queue 2-3b)") {
   CHECK_EQ(third.LastScan().hashed, size_t(1));
   CHECK(!third.ByPath("Folder6/asset_6.png"));
   std::printf("       %d assets: first scan %.0f ms, cached scan %.0f ms\n", count, cold, warm);
+  fs::remove_all(project);
+}
+
+TEST_CASE("assets: thumbnails are made once and cached (queue 2-5t)") {
+  fs::path project = Fresh("bdg_thumbs"), d = project / "Assets";
+  fs::create_directories(d / "Textures");
+  std::vector<uint8_t> img(200 * 100 * 4);
+  for (int y = 0; y < 100; ++y)
+    for (int x = 0; x < 200; ++x) { uint8_t* p = &img[((size_t)y * 200 + x) * 4]; p[0] = (uint8_t)x; p[1] = (uint8_t)(y * 2); p[2] = 128; p[3] = 255; }
+  CHECK(WritePNG((d / "Textures/wide.png").string().c_str(), 200, 100, img.data(), false));
+  Write(d / "Textures/broken.png", "not a png");
+  AssetDatabase db;
+  CHECK(db.Open(d.string()));
+  ThumbnailCache cache;
+  cache.SetDirectory(project / ".cache" / "thumbnails");
+  std::vector<uint8_t> t;
+  const AssetRecord* r = db.ByPath("Textures/wide.png");
+  CHECK(r && ThumbnailCache::Supported(*r));
+  CHECK(cache.Get(*r, d / r->path, t));
+  CHECK_EQ(t.size(), size_t(64 * 64 * 4));
+  CHECK_EQ((int)t[(0 * 64 + 10) * 4 + 3], 0);    // 2:1 image: transparent band above
+  CHECK_EQ((int)t[(32 * 64 + 10) * 4 + 3], 255); // picture in the middle
+  CHECK_EQ(cache.GetStats().generated, 1);
+  ThumbnailCache again;                            // next start: read from .cache, the source is not decoded
+  again.SetDirectory(project / ".cache" / "thumbnails");
+  std::vector<uint8_t> t2;
+  CHECK(again.Get(*r, d / r->path, t2) && t2 == t);
+  CHECK(again.GetStats().loaded == 1 && again.GetStats().generated == 0);
+  const AssetRecord* bad = db.ByPath("Textures/broken.png");
+  CHECK(bad && !cache.Get(*bad, d / bad->path, t) && cache.GetStats().failed == 1);
   fs::remove_all(project);
 }

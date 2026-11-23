@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace bdg {
@@ -7,4 +8,6 @@ namespace bdg {
 // flipY = true for bottom-up rows such as OpenGL read-backs.
 bool EncodePNG(int32_t w, int32_t h, const uint8_t* rgba, bool flipY, std::vector<uint8_t>& out);
 bool WritePNG(const char* path, int32_t w, int32_t h, const uint8_t* rgba, bool flipY);
+// PNG / JPEG / TGA / BMP / PSD / HDR -> RGBA8 (stb_image), top row first. Unicode paths work.
+bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
 }

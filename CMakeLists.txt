@@ -105,6 +105,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
+  Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
