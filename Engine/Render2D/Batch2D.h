@@ -21,6 +21,10 @@ public:
   // One glyph quad sampled from the SDF text atlas (see SetTextAtlas).
   void Glyph(float x, float y, float w, float h, float u0, float v0, float u1, float v1, Color color);
   void SetTextAtlas(TextureHandle atlas); // single atlas for now
+  // Textured quad (RGBA, colour multiplied by tint). A different texture than the previous image flushes the
+  // batch. uv (0,0) = the texture's first row: pass v0 = 1, v1 = 0 for a render target (bottom-up).
+  void Image(float x, float y, float w, float h, TextureHandle texture, float u0 = 0, float v0 = 0, float u1 = 1, float v1 = 1,
+             Color tint = {1, 1, 1, 1});
   // Clip rectangles (intersected when nested). Stored per vertex, so clipping never splits the batch.
   void PushClip(float x, float y, float w, float h);
   void PopClip();
@@ -37,7 +41,7 @@ private:
     float radius, border;
     float r, g, b, a;     // fill
     float br, bg, bb, ba; // border color
-    float u, v, mode, blur; // mode 0 = rounded rect, 1 = SDF glyph, 2 = triangle; blur = soft edge width
+    float u, v, mode, blur; // mode 0 = rounded rect, 1 = SDF glyph, 2 = triangle, 3 = image; blur = soft edge width
     float cx0, cy0, cx1, cy1; // clip rectangle
   };
   static constexpr uint32_t kMaxQuads = 16384;
@@ -49,7 +53,7 @@ private:
   RHI* rhi_ = nullptr;
   PipelineHandle pipeline_;
   BufferHandle vertexBuffer_, indexBuffer_, uniformBuffer_;
-  TextureHandle dummyTexture_, atlas_;
+  TextureHandle dummyTexture_, atlas_, image_;
   std::vector<Vertex> vertices_;
   struct Clip { float x0, y0, x1, y1; };
   std::vector<Clip> clips_;

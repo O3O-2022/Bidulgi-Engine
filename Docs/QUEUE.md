@@ -46,6 +46,8 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_ASSETS=폴더`, `BDG_ASSET_TEST=1` | 에셋 폴더(프로젝트 허브 전까지), 에셋 자동 테스트(에디터 안 이동 + 바깥 이동 → GUID·참조 유지) |
 | `BDG_INSPECTOR_TEST=1` | Inspector 자동 테스트(슬라이더 끌기·Undo, F2 이름 바꾸기, 버튼·Undo, ShowIf) |
 | `BDG_MULTI_TEST=1`, `BDG_PRESETS=폴더` | 여러 오브젝트 편집·값 복사/붙여넣기·프리셋 자동 테스트, 프리셋 폴더 강제 |
+| `BDG_SCREEN=render-ref` | 렌더링 기준판(3D) 전체 화면 |
+| `BDG_RENDER_TEST=1` | 기준판 렌더 결과 자동 판정(`render-ref`와 함께) |
 | `BDG_PROJECT_TEST=1` | Project 패널 자동 테스트(Scripts 폴더 → C++ 클래스 항목 → 이름 바꾸기) |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
@@ -74,7 +76,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/Platform/Window.*` | SDL3 창, GL 컨텍스트, 입력 이벤트, IME, 클립보드, 화면 배율 |
 | `Engine/Platform/Accessibility*` | 화면 낭독기 연결: Windows UI Automation 제공자(위젯 → 접근성 요소, 포커스 알림, 누르기·값) |
 | `Engine/RHI/RHI.h`, `RHI_GL.cpp` | 그래픽 추상화. 버퍼·텍스처·파이프라인·그리기 (GL 4.5 DSA) |
-| `Engine/Render2D/Batch2D.*` | 2D 일괄 그리기 (SDF 둥근 사각형, 선, SDF 글자) |
+| `Engine/Render2D/Batch2D.*` | 2D 일괄 그리기 (SDF 둥근 사각형, 선, SDF 글자, RGBA 이미지) |
+| `Engine/Render3D/*` | 3D: 절차 메시(`MeshGen`), 전방 렌더러(`Renderer3D`, GGX + 방향광 + 반구 환경), 렌더링 기준판(`ReferenceBoard`) |
 | `Engine/Text/Font.*` | FreeType SDF 글자 아틀라스 |
 | `Engine/UI/Theme.*` | `design-system/project/tokens.json` 읽기, 실시간 다시 읽기 |
 | `Engine/UI/UI.*` | 유지형 위젯 트리, 플렉스 레이아웃, 입력·포커스, 부품 8개, 텍스트 입력 |
@@ -152,7 +155,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 2-4 Hierarchy·Inspector 실제 동작 | Hierarchy: 씬 트리·선택·끌어다 놓기로 부모 변경(2-1)에 더해 이름 바꾸기 — Inspector 맨 위 Name 칸, F2가 그 칸에 포커스·전체 선택, Enter = `rename` 명령. Inspector는 리플렉션 메타를 따름: `Range` → 슬라이더(칸 안 끌기, 끄는 동안의 `set`은 300ms 합치기로 Undo 한 번, 글자 입력도 그대로), `ShowIf`(`flag`·`!flag`·`field == 값`·`!=`, 조건이 바뀌면 칸이 나타나고 사라짐, 모르는 필드는 숨기지 않음), `Header`(섹션 캡션, bht가 생성), `BFUNCTION(Button)` → 버튼 = 새 명령 `call`(함수 실행, 역명령은 새 명령 `setcomp`로 컴포넌트 값 복원 → Undo·재생 가능). 샘플: PlayerMove `Movement` 머리글, Health `Revive` 버튼. 단위 테스트 3개(총 51개·529개), 에디터 자동 테스트·CI 15번 | `64a0028` |
 | 2-4b 여러 오브젝트 편집·값 복사·프리셋 | Hierarchy Ctrl+클릭(추가/빼기)·Shift+클릭(범위) 다중 선택(마지막이 기준). Inspector는 모두가 가진 컴포넌트만, 값이 다르면 "—", 수정하면 선택 전체에 명령 묶음 하나(Undo 한 번); 다중일 때 슬라이더 끌기는 끄고 입력만. 버튼도 전체에. 카드마다 값 복사·값 붙여넣기(`setcomp`)·프리셋 저장·프리셋 적용, 복사한 컴포넌트가 없는 오브젝트에는 "+ 붙여넣기: 타입"(새 컴포넌트, `addcomp`). 복사는 시스템 클립보드에도 `{"bdgComponent":..,"value":..}`로. 프리셋은 `<Presets>/<타입>.preset` 한 줄 JSON (`BDG_PRESETS` 또는 에셋 폴더/Presets). 함께 고침: Inspector가 패널보다 길면 아래가 보이지도 눌리지도 않던 문제 → 도킹 패널 내용 휠 스크롤(본문 밖은 그리지도 맞히지도 않음, 스크롤 막대), 포커스가 옮겨가면 보이게 스크롤. 단위 테스트 1개(총 52개·540개), CI 16번. 메뉴 위젯이 생기면 카드 버튼 줄을 컴포넌트 메뉴로 옮김 | `3ce90bc` |
 | 2-5 Project 패널 | 에셋 폴더가 열려 있으면(`BDG_ASSETS`) Project 탭이 실제 내용: 왼쪽 폴더 트리, 오른쪽 현재 폴더(하위 폴더 → 파일, 종류 표시: Texture·Model·Audio·Scene·C# script·Lua script·Python script·C++…). **C++ `.h`+`.cpp` 묶음**: 이름이 같은 헤더·소스는 한 항목 `Weapon · C++ class` + 아래에 두 파일 중첩, 이름 바꾸기 칸에서 바꾸면 두 파일이 함께 바뀜(확장자 유지, GUID 유지, 씬 참조 갱신), 열기는 두 파일을 함께 기본 앱으로. 파일 감시로 바깥 변경도 반영. CI 17번 | `b04a1cd` |
-| 2-5t 썸네일 캐시(핵심) | stb_image 2.34(퍼블릭 도메인, 같은 stb 커밋, 사용자 승인) 추가 → `LoadImageRGBA`(PNG·JPEG·TGA·BMP·PSD·HDR, 유니코드 경로). `Assets/Thumbnails.*`: 이미지 에셋을 64×64(비율 유지, 평균 축소)로 만들어 `<프로젝트>/.cache/thumbnails/<GUID>-<해시>.png`에 저장, 다음 시작은 작은 캐시 PNG만 읽음, 내용이 바뀌면 새로 만들고 옛 파일 삭제, 깨진 이미지는 실패로 셈. 단위 테스트 1개(총 53개·551개). **Project 패널에 그리기는 3-2와 함께**(UI에 RGBA 텍스처를 그리는 기능이 씬 뷰 표시와 같음) | (이 커밋) |
+| 2-5t 썸네일 캐시(핵심) | stb_image 2.34(퍼블릭 도메인, 같은 stb 커밋, 사용자 승인) 추가 → `LoadImageRGBA`(PNG·JPEG·TGA·BMP·PSD·HDR, 유니코드 경로). `Assets/Thumbnails.*`: 이미지 에셋을 64×64(비율 유지, 평균 축소)로 만들어 `<프로젝트>/.cache/thumbnails/<GUID>-<해시>.png`에 저장, 다음 시작은 작은 캐시 PNG만 읽음, 내용이 바뀌면 새로 만들고 옛 파일 삭제, 깨진 이미지는 실패로 셈. 단위 테스트 1개(총 53개·551개). **Project 패널에 그리기는 3-2와 함께**(UI에 RGBA 텍스처를 그리는 기능이 씬 뷰 표시와 같음) | `4d6bdbf` |
+| 3-0 렌더링 기준판 1단계 | **첫 3D 렌더링.** RHI: 오프스크린 렌더 타깃(RGBA8 + 깊이24, MSAA 4× → 해석), 깊이 테스트·후면 컬링(CCW 앞면), sRGB 텍스처 형식, UBO 구간 바인딩. Batch2D: RGBA 이미지 사각형(모드 3) — UI 안에 3D 화면·썸네일을 그리는 길. `Render3D/`: 절차 메시(사각형·평면·상자·구·원기둥·원뿔, 모두 바깥에서 CCW), 전방 렌더러(GGX 금속/거칠기, 방향광 1 + 하늘/땅 반구 환경, 선형 계산 → sRGB 출력, 톤매핑 없음), 기준판(바닥, 구 7×7 거칠기×금속, 축 화살표, 18% 회색 카드, ColorChecker 24칸, 글자 텍스처 판, 와인딩·깊이 탐침). `BDG_SCREEN=render-ref` 화면, `BDG_RENDER_TEST=1`이 렌더 결과를 읽어 8가지 판정 → 회색 118, 체커 오차 0, 축·오른손·CCW·깊이·위쪽 조명·UV 모두 통과. 단위 테스트 2개(총 55개·587개), CI 18번. **MetalRoughSpheres glTF와 `bdg testassets fetch`는 3-1로**(glTF 로더와 내려받기 승인이 필요) | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -176,8 +180,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ## M3 — 3D 렌더링과 플레이 모드 — **지금 진행** (3-0 → 3-1 → 3-2 → 3-3 → 3-4)
 
-- [ ] **3-0. 렌더링 기준판 1단계** — 단색 평면 + 방향광 + MetalRoughSpheres + 좌표·색 기준판(축, 글자 판, 18% 회색, 컬러 체커)으로 좌표계·와인딩(CW/CCW)·sRGB↔Linear 감마를 먼저 확정. `bdg testassets fetch`(라이선스 기록, `.cache/testassets/`) ([graphics-test-scenes](features/graphics-test-scenes.md))
-- [ ] **3-1. 메시·머티리얼·카메라** — glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))
+- [ ] **3-1. 메시·머티리얼·카메라** — (3-0에서 넘어옴: 기준판에 MetalRoughSpheres glTF + `bdg testassets fetch`) glTF 임포트(cgltf, MIT), meshoptimizer, PBR 기본 셰이더. 머티리얼은 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처는 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md))
 - [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
 - [ ] **3-3b. 스냅·정렬·측정** — 그리드·꼭짓점·표면 스냅, 정렬·간격 맞추기, 거리 측정 [convenience-features](planning/convenience-features.md)

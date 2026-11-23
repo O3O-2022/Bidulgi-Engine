@@ -111,6 +111,9 @@ add_library(BidulgiEngine STATIC
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
   Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
+  Engine/Render3D/MeshGen.h Engine/Render3D/MeshGen.cpp
+  Engine/Render3D/Renderer3D.h Engine/Render3D/Renderer3D.cpp
+  Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp
   Engine/UI/Theme.h        Engine/UI/Theme.cpp
@@ -144,7 +147,7 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

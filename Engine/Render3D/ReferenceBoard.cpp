@@ -1,0 +1,240 @@
+#include "Render3D/ReferenceBoard.h"
+#include <algorithm>
+#include <cmath>
+#include <format>
+#include <glm/gtc/matrix_transform.hpp>
+
+namespace bdg {
+namespace {
+// ColorChecker Classic, sRGB (D65) values per patch, rows top to bottom (BabelColor averages, rounded).
+const uint8_t kChecker[24][3] = {
+  {115, 82, 68},  {194, 150, 130}, {98, 122, 157}, {87, 108, 67},  {133, 128, 177}, {103, 189, 170},
+  {214, 126, 44}, {80, 91, 166},   {193, 90, 99},  {94, 60, 108},  {157, 188, 64},  {224, 163, 46},
+  {56, 61, 150},  {70, 148, 73},   {175, 54, 60},  {231, 199, 31}, {187, 86, 149},  {8, 133, 161},
+  {243, 243, 242}, {200, 200, 200}, {160, 160, 160}, {122, 122, 121}, {85, 85, 85},  {52, 52, 52}};
+constexpr int kTex = 64, kMark = 10;
+const uint8_t kTL[3] = {220, 40, 40}, kTR[3] = {40, 200, 60}, kBL[3] = {40, 80, 220}, kBR[3] = {240, 210, 40};
+
+// Board layout (world units = metres).
+const glm::vec3 kGreyCard{-4.4f, 1.3f, 0.5f};
+const glm::vec3 kLetters{-4.4f, 3.0f, 0.5f};
+const float kLettersSize = 1.3f;
+const glm::vec3 kChecker0{4.4f, 1.3f, 0.5f};
+const float kPatch = 0.34f, kPitch = 0.38f;
+const glm::vec3 kCCW{3.8f, 3.0f, 0.5f}, kCW{5.0f, 3.0f, 0.5f};
+const glm::vec3 kDepthNear{4.25f, 4.4f, 0.8f}, kDepthFar{4.55f, 4.4f, 0.5f};
+const Color kOrange{1.f, 0.45f, 0.1f, 1}, kYellow{1.f, 0.85f, 0.05f, 1}, kMagenta{0.8f, 0.05f, 0.7f, 1};
+const Color kAxisX{0.9f, 0.04f, 0.04f, 1}, kAxisY{0.05f, 0.75f, 0.06f, 1}, kAxisZ{0.04f, 0.12f, 0.95f, 1};
+const float kAxisLen = 1.2f, kShaft = 0.9f;
+
+glm::vec3 SpherePos(int col, int row) { return {-2.4f + col * 0.8f, 0.55f + row * 0.78f, -3.f}; }
+const float kSphereR = 0.32f;
+
+uint8_t LinearToSrgb8(float c) {
+  c = std::clamp(c, 0.f, 1.f);
+  float s = c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.f / 2.4f) - 0.055f;
+  return (uint8_t)std::lround(s * 255.f);
+}
+
+// The letter board picture: an "F" (mirroring shows at once) and four coloured corners.
+std::vector<uint8_t> LetterTexture() {
+  std::vector<uint8_t> px((size_t)kTex * kTex * 4);
+  auto fill = [&](int x0, int y0, int x1, int y1, const uint8_t c[3]) {
+    for (int y = y0; y < y1; ++y)
+      for (int x = x0; x < x1; ++x) {
+        uint8_t* p = &px[((size_t)y * kTex + x) * 4];
+        p[0] = c[0]; p[1] = c[1]; p[2] = c[2]; p[3] = 255;
+      }
+  };
+  const uint8_t paper[3] = {235, 235, 230}, ink[3] = {20, 20, 24};
+  fill(0, 0, kTex, kTex, paper);
+  fill(20, 14, 28, 50, ink); // stem
+  fill(20, 14, 46, 21, ink); // top bar
+  fill(20, 29, 40, 35, ink); // middle bar
+  fill(0, 0, kMark, kMark, kTL);
+  fill(kTex - kMark, 0, kTex, kMark, kTR);
+  fill(0, kTex - kMark, kMark, kTex, kBL);
+  fill(kTex - kMark, kTex - kMark, kTex, kTex, kBR);
+  return px;
+}
+
+glm::mat4 At(const glm::vec3& p, float sx = 1, float sy = 1, float sz = 1) {
+  return glm::scale(glm::translate(glm::mat4(1.f), p), glm::vec3(sx, sy, sz));
+}
+glm::vec3 ChecherPatchPos(int i) {
+  int col = i % 6, row = i / 6;
+  return kChecker0 + glm::vec3((col - 2.5f) * kPitch, (1.5f - row) * kPitch, 0.f);
+}
+}
+
+bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  sphere_ = r.CreateMesh(MakeSphere(1));
+  quad_ = r.CreateMesh(MakeQuad(1, 1));
+  MeshData cw = MakeQuad(1, 1);
+  cw.FlipWinding();
+  quadCW_ = r.CreateMesh(cw);
+  cylinder_ = r.CreateMesh(MakeCylinder(1, 1));
+  cone_ = r.CreateMesh(MakeCone(1, 1));
+  std::vector<uint8_t> letters = LetterTexture();
+  letters_ = rhi.CreateTexture2D(kTex, kTex, TextureFormat::SRGBA8, letters.data());
+
+  camera.position = {0, 3.0f, 9.5f};
+  camera.target = {0, 2.4f, -1.f};
+  camera.fovY = 40.f;
+  light.toLight = {-0.4f, 0.8f, 0.45f};
+  light.intensity = 2.6f;
+
+  auto add = [&](const Mesh3D& m, const glm::mat4& model, Material3D mat) { items_.push_back({&m, model, mat}); };
+  auto unlit = [](Color c) { Material3D m; m.baseColor = c; m.unlit = true; return m; };
+
+  Material3D ground;
+  ground.baseColor = {0.2f, 0.2f, 0.21f, 1};
+  ground.roughness = 0.9f;
+  add(plane_, At({0, 0, 0}, 30, 1, 30), ground);
+
+  for (int row = 0; row < 7; ++row) // X: roughness 0 -> 1, Y: metallic 0 -> 1
+    for (int col = 0; col < 7; ++col) {
+      Material3D m;
+      m.baseColor = {0.85f, 0.85f, 0.85f, 1};
+      m.roughness = col / 6.f;
+      m.metallic = row / 6.f;
+      add(sphere_, At(SpherePos(col, row), kSphereR, kSphereR, kSphereR), m);
+    }
+
+  // Axis arrows at the world origin: cylinder + cone built along +Y, turned onto each axis.
+  auto arrow = [&](const glm::mat4& turn, Color c) {
+    add(cylinder_, turn * At({0, 0, 0}, 0.035f, kShaft, 0.035f), unlit(c));
+    add(cone_, turn * glm::translate(glm::mat4(1.f), {0, kShaft, 0}) * At({0, 0, 0}, 0.1f, kAxisLen - kShaft, 0.1f), unlit(c));
+  };
+  arrow(glm::rotate(glm::mat4(1.f), glm::radians(-90.f), {0, 0, 1}), kAxisX); // +Y -> +X
+  arrow(glm::mat4(1.f), kAxisY);
+  arrow(glm::rotate(glm::mat4(1.f), glm::radians(90.f), {1, 0, 0}), kAxisZ);  // +Y -> +Z
+  add(sphere_, At({0, 0, 0}, 0.07f, 0.07f, 0.07f), unlit({0.9f, 0.9f, 0.9f, 1}));
+
+  add(quad_, At(kGreyCard, 1.0f, 1.0f), unlit({0.18f, 0.18f, 0.18f, 1})); // 18% grey: display value 118
+  Material3D lettersMat = unlit({1, 1, 1, 1});
+  lettersMat.baseMap = letters_;
+  add(quad_, At(kLetters, kLettersSize, kLettersSize), lettersMat);
+
+  add(quad_, At(kChecker0 - glm::vec3(0, 0, 0.01f), 6 * kPitch + 0.16f, 4 * kPitch + 0.16f), unlit({0.02f, 0.02f, 0.02f, 1}));
+  for (int i = 0; i < 24; ++i)
+    add(quad_, At(ChecherPatchPos(i), kPatch, kPatch), unlit(SrgbToLinear(kChecker[i][0], kChecker[i][1], kChecker[i][2])));
+
+  add(quad_, At(kCCW, 0.7f, 0.7f), unlit(kOrange));   // counter-clockwise: front face, drawn
+  add(quadCW_, At(kCW, 0.7f, 0.7f), unlit(kOrange));  // clockwise: back face, culled
+  add(quad_, At(kDepthNear, 0.7f, 0.7f), unlit(kYellow));  // drawn first but nearer: must stay on top
+  add(quad_, At(kDepthFar, 0.7f, 0.7f), unlit(kMagenta));
+
+  labels_ = {{{kAxisLen + 0.15f, 0, 0}, "+X"}, {{0, kAxisLen + 0.15f, 0}, "+Y"}, {{0, 0, kAxisLen + 0.2f}, "+Z"},
+             {kGreyCard - glm::vec3(0.5f, 0.7f, 0), "18% grey · unlit"},
+             {kLetters - glm::vec3(0.65f, 0.85f, 0), "UV · top-left red"},
+             {kChecker0 - glm::vec3(1.2f, 1.0f, 0), "ColorChecker"},
+             {kCCW - glm::vec3(0.35f, 0.55f, 0), "CCW shown · CW culled"},
+             {kDepthNear + glm::vec3(-0.35f, 0.45f, 0), "depth: near wins"},
+             {SpherePos(0, 0) + glm::vec3(-0.3f, -0.55f, 0.4f), "roughness 0 → 1"},
+             {SpherePos(0, 6) + glm::vec3(-1.4f, 0.1f, 0), "metallic"},
+             {SpherePos(0, 6) + glm::vec3(-1.4f, -0.25f, 0), "0 → 1 ↑"}};
+  return true;
+}
+
+void ReferenceBoard::Shutdown() {
+  if (!renderer_) return;
+  for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_}) renderer_->DestroyMesh(*m);
+  rhi_->DestroyTexture(letters_);
+  items_.clear();
+  renderer_ = nullptr;
+}
+
+std::string ReferenceBoard::Check(const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const {
+  std::string out, failed;
+  auto fail = [&](const char* key) { failed += failed.empty() ? key : std::string(",") + key; };
+  auto at = [&](const glm::vec3& p, int c[3]) {
+    float x = 0, y = 0;
+    c[0] = c[1] = c[2] = -1;
+    if (!ProjectToPixel(camera, w, h, p, x, y)) return false;
+    int ix = (int)x, iy = (int)y;
+    if (ix < 0 || iy < 0 || ix >= w || iy >= h) return false;
+    const uint8_t* q = &rgba[((size_t)iy * w + ix) * 4];
+    c[0] = q[0]; c[1] = q[1]; c[2] = q[2];
+    return true;
+  };
+  auto close = [](const int c[3], int r, int g, int b, int tol) {
+    return std::abs(c[0] - r) <= tol && std::abs(c[1] - g) <= tol && std::abs(c[2] - b) <= tol;
+  };
+  auto display = [](Color c, int e[3]) { e[0] = LinearToSrgb8(c.r); e[1] = LinearToSrgb8(c.g); e[2] = LinearToSrgb8(c.b); };
+  int c[3], e[3];
+
+  at(kGreyCard, c); // 1) gamma: linear 0.18 written through the sRGB curve is 118
+  out += std::format("grey={}", c[0]);
+  if (!close(c, 118, 118, 118, 1)) fail("grey");
+
+  int worst = 0; // 2) colour round trip: sRGB value -> linear material -> sRGB output
+  for (int i = 0; i < 24; ++i) {
+    at(ChecherPatchPos(i), c);
+    for (int k = 0; k < 3; ++k) worst = std::max(worst, std::abs(c[k] - kChecker[i][k]));
+  }
+  out += std::format(" checker_maxerr={}", worst);
+  if (worst > 2) fail("checker");
+
+  // 3) axes: each arrow head shows its colour where the math puts it
+  bool axes = true;
+  const Color axisColor[3] = {kAxisX, kAxisY, kAxisZ};
+  const glm::vec3 head[3] = {{1.f, 0, 0}, {0, 1.f, 0}, {0, 0, 1.f}};
+  for (int a = 0; a < 3; ++a) {
+    display(axisColor[a], e);
+    axes = at(head[a], c) && close(c, e[0], e[1], e[2], 3) && axes;
+  }
+  out += std::string(" axes=") + (axes ? "ok" : "bad");
+  if (!axes) fail("axes");
+
+  // 4) handedness on screen: +X to the right, +Y up, +Z toward the viewer (below the origin from this camera)
+  float ox, oy, xx, xy, yx, yy, zx, zy;
+  ProjectToPixel(camera, w, h, {0, 0, 0}, ox, oy);
+  ProjectToPixel(camera, w, h, head[0], xx, xy);
+  ProjectToPixel(camera, w, h, head[1], yx, yy);
+  ProjectToPixel(camera, w, h, head[2], zx, zy);
+  bool right = xx > ox + 10 && yy > oy + 10 && zy < oy - 5;
+  out += std::string(" handed=") + (right ? "right" : "WRONG");
+  if (!right) fail("handed");
+
+  // 5) winding: the counter-clockwise quad is drawn, the clockwise one is culled (background shows)
+  display(kOrange, e);
+  int bg[3] = {(int)std::lround(clear.r * 255), (int)std::lround(clear.g * 255), (int)std::lround(clear.b * 255)};
+  bool ccw = at(kCCW, c) && close(c, e[0], e[1], e[2], 2);
+  bool cwCulled = at(kCW, c) && close(c, bg[0], bg[1], bg[2], 2);
+  out += std::string(" winding=") + (ccw && cwCulled ? "ccw" : ccw ? "cw-not-culled" : "ccw-missing");
+  if (!ccw || !cwCulled) fail("winding");
+
+  // 6) depth: overlap keeps the nearer (earlier) quad, the far quad still shows beside it
+  display(kYellow, e);
+  bool nearWins = at({4.4f, 4.4f, 0.8f}, c) && close(c, e[0], e[1], e[2], 2);
+  display(kMagenta, e);
+  bool farShown = at({4.8f, 4.4f, 0.5f}, c) && close(c, e[0], e[1], e[2], 2);
+  out += std::string(" depth=") + (nearWins && farShown ? "ok" : "bad");
+  if (!nearWins || !farShown) fail("depth");
+
+  // 7) light from above: the upper half of a rough dielectric sphere is brighter than the lower half
+  glm::vec3 s = SpherePos(3, 0);
+  int top[3], bottom[3];
+  at(s + kSphereR * glm::normalize(glm::vec3(0, 0.6f, 0.8f)), top);
+  at(s + kSphereR * glm::normalize(glm::vec3(0, -0.6f, 0.8f)), bottom);
+  int lt = top[0] + top[1] + top[2], lb = bottom[0] + bottom[1] + bottom[2];
+  out += std::format(" light={}", lt > lb + 30 ? "top" : "flat");
+  if (lt <= lb + 30) fail("light");
+
+  // 8) UV: picture row 0 is the top of the board, column 0 the left
+  float in = kLettersSize * 0.5f - kLettersSize * (kMark * 0.5f / kTex);
+  bool tl = at(kLetters + glm::vec3(-in, in, 0), c) && close(c, kTL[0], kTL[1], kTL[2], 3);
+  bool tr = at(kLetters + glm::vec3(in, in, 0), c) && close(c, kTR[0], kTR[1], kTR[2], 3);
+  bool bl = at(kLetters + glm::vec3(-in, -in, 0), c) && close(c, kBL[0], kBL[1], kBL[2], 3);
+  bool br = at(kLetters + glm::vec3(in, -in, 0), c) && close(c, kBR[0], kBR[1], kBR[2], 3);
+  out += std::string(" uv=") + (tl && tr && bl && br ? "ok" : "bad");
+  if (!(tl && tr && bl && br)) fail("uv");
+
+  out += failed.empty() ? " result=pass" : " result=FAIL(" + failed + ")";
+  return out;
+}
+}

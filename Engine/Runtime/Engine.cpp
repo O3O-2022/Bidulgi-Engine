@@ -8,6 +8,8 @@
 #include "Platform/Window.h"
 #include "RHI/RHI.h"
 #include "Render2D/Batch2D.h"
+#include "Render3D/ReferenceBoard.h"
+#include "Render3D/Renderer3D.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
 #include "Runtime/Screens.h"
@@ -115,7 +117,53 @@ struct bdg_engine {
   int clicks = 0;
   bool bugRequested = false;
   int32_t maxFrames = 0;
+  // 3D (queue 3-0): BDG_SCREEN=render-ref draws the rendering reference board into an offscreen target that the
+  // UI shows as an image; BDG_RENDER_TEST=1 reads it back and checks gamma, colours, axes, winding, depth, UV.
+  std::unique_ptr<bdg::Renderer3D> r3d;
+  std::unique_ptr<bdg::ReferenceBoard> board;
+  bdg::RenderTargetHandle viewRT;
+  int32_t viewW = 0, viewH = 0;
+  bool renderTest = false;
 };
+
+namespace {
+// Full-window view of the reference board with labels projected onto it.
+std::unique_ptr<bdg::Widget> BuildRenderReferenceScreen(bdg_engine* e) {
+  auto view = bdg::MakeCustom("render.view", [e](bdg::Widget& w, bdg::UIContext& ui) {
+    bdg::Batch2D& b = ui.Batch();
+    if (!e->board || !e->viewRT.Valid() || e->viewW <= 0 || e->viewH <= 0) return;
+    b.Image(w.x, w.y, w.w, w.h, e->rhi.RenderTargetColor(e->viewRT), 0, 1, 1, 0); // render target rows are bottom-up
+    const bdg::Color label{0.92f, 0.93f, 0.95f, 1}, shade{0.05f, 0.06f, 0.07f, 0.72f};
+    for (const bdg::ReferenceBoard::Label& l : e->board->Labels()) {
+      float px = 0, py = 0;
+      if (!bdg::ProjectToPixel(e->board->camera, e->viewW, e->viewH, l.position, px, py)) continue;
+      float x = w.x + px / e->viewW * w.w, y = w.y + (1.f - py / e->viewH) * w.h;
+      float tw = ui.Measure(12, l.text);
+      b.Rect(x - 5, y - 2, tw + 10, 19, shade, 4);
+      ui.Text(x, y, 12, label, l.text);
+    }
+    std::string title = std::format("Render reference · stage 1 (queue 3-0) · forward GGX, sun + sky hemisphere, sRGB output, "
+                                    "no tone mapping · {} draws · {}x{} MSAA 4x", e->r3d->DrawsLastFrame(), e->viewW, e->viewH);
+    b.Rect(w.x + 10, w.y + 10, ui.Measure(12, title) + 20, 24, shade, 6);
+    ui.Text(w.x + 20, w.y + 14, 12, label, title);
+  });
+  view->width = bdg::Length::Fill();
+  view->height = bdg::Length::Fill();
+  return view;
+}
+
+// Renders the board at the view widget's size in drawable pixels (re-creating the target when it changes).
+void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
+  int32_t pw = std::max(1, (int32_t)std::lround(v.w * scale)), ph = std::max(1, (int32_t)std::lround(v.h * scale));
+  if (!e->viewRT.Valid() || pw != e->viewW || ph != e->viewH) {
+    e->rhi.DestroyRenderTarget(e->viewRT);
+    e->viewRT = e->rhi.CreateRenderTarget(pw, ph, 4);
+    e->viewW = pw;
+    e->viewH = ph;
+  }
+  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear);
+}
+}
 
 namespace {
 // Scripted input for automated checks (BDG_UI_SELFTEST=1 with BDG_SCREEN=gallery).
@@ -698,6 +746,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->projectTest = std::getenv("BDG_PROJECT_TEST") != nullptr;
   e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
+  e->renderTest = std::getenv("BDG_RENDER_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -740,6 +789,12 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     std::string component = std::string(screen).substr(7);
     if (auto parity = bdg::BuildParityScreen(component)) e->editor->SetRoot(std::move(parity));
     else bdg::LogError("unknown parity component: {}", component);
+  }
+  if (screen && std::string(screen) == "render-ref") { // rendering reference board (queue 3-0)
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->board = std::make_unique<bdg::ReferenceBoard>();
+    if (e->r3d->Init(e->rhi) && e->board->Init(e->rhi, *e->r3d)) e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    else { bdg::LogError("render-ref: the 3D renderer did not start"); e->board.reset(); }
   }
   e->editor->SetWindow(&e->window);
   if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
@@ -986,6 +1041,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       ui.HandleEvents(events);
       if (&ui == e->editor.get() && e->model) e->model->Update(); // panels follow the scene (after edits/undo)
       ui.Layout(lw, lh);
+      if (e->board && &ui == e->editor.get())
+        if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);
       ui.Draw();
     }
     e->batch.End();
@@ -1062,6 +1119,14 @@ bdg_result bdg_engine_run(bdg_engine* e) {
                      e->shortcutBannerShown ? 1 : 0, e->shortcutTestValues[0], e->shortcutTestValues[1],
                      e->model ? e->model->scene.ObjectCount() : 0, e->shortcuts.Preset(), e->shortcuts.Conflicts().size(),
                      std::filesystem::exists(e->shortcutsPath) ? 1 : 0);
+      if (e->renderTest) {
+        if (e->board && e->viewRT.Valid()) {
+          int32_t rw = 0, rh = 0;
+          std::vector<uint8_t> px;
+          e->rhi.ReadRenderTarget(e->viewRT, rw, rh, px);
+          bdg::LogInfo("render test: {}x{} {}", rw, rh, e->board->Check(px, rw, rh));
+        } else bdg::LogError("render test: no reference board (run with BDG_SCREEN=render-ref)");
+      }
       if (e->faultTest)
         bdg::LogInfo("fault test: guard_failures={} check_failures={} frames={} survived=1", bdg::GuardFailureCount(),
                      bdg::CheckFailureCount(), frames);
@@ -1147,6 +1212,9 @@ void bdg_engine_destroy(bdg_engine* e) {
   bdg::a11y::Detach(); // before the widgets and the window go away
   e->editor.reset();
   e->gallery.reset();
+  if (e->board) e->board->Shutdown();
+  e->rhi.DestroyRenderTarget(e->viewRT);
+  if (e->r3d) e->r3d->Shutdown();
   e->font.Shutdown();
   e->batch.Shutdown();
   e->rhi.Shutdown();

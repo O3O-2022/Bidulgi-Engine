@@ -214,6 +214,10 @@ jobs:
           if ($log -notmatch 'project test: rows=Weapon:C\+\+ class,Weapon.h:Header,Weapon.cpp:Source,PlayerMove.cs:C# script selected=Scripts/Weapon renamed=Sword.h,Sword.cpp guids_kept=1') { $errors += 'project panel test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 18) Rendering reference board (queue 3-0): gamma, ColorChecker round trip, axes, winding, depth, light, UV
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ref'; BDG_RENDER_TEST = '1' } 5
+          if ($log -notmatch 'render test: \d+x\d+ grey=118 .* result=pass') { $errors += 'render reference board failed' }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

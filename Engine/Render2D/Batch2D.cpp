@@ -26,6 +26,7 @@ void main() {
 )";
 const char* kFS = R"(#version 450 core
 layout(binding = 0) uniform sampler2D uAtlas;
+layout(binding = 1) uniform sampler2D uImage;
 in vec2 vLocal; in vec2 vHalf; in vec2 vShape; in vec4 vFill; in vec4 vBorder; in vec4 vUVMode;
 in vec2 vPos; flat in vec4 vClip;
 out vec4 oColor;
@@ -51,11 +52,13 @@ void main() {
   // Sample and take derivatives outside any branch (derivatives need uniform control flow).
   float sd = texture(uAtlas, vUVMode.xy).r - 0.5;
   float aa = max(fwidth(sd), 1e-4);
+  vec4 img = texture(uImage, vUVMode.xy);
   if (vPos.x < vClip.x || vPos.y < vClip.y || vPos.x >= vClip.z || vPos.y >= vClip.w) discard; // clip rect
   if (vUVMode.z > 0.5 && vUVMode.z < 1.5) {               // SDF glyph
     oColor = vec4(vFill.rgb, vFill.a * clamp(sd / aa + 0.5, 0.0, 1.0));
     return;
   }
+  if (vUVMode.z > 2.5) { oColor = img * vFill; return; }  // image
   if (vUVMode.z > 1.5) {                                  // triangle (+ optional outline)
     float dt = sdTriangleRight(vLocal, vHalf);
     vec4 tc = vShape.y > 0.0 ? mix(vBorder, vFill, clamp(0.5 - (dt + vShape.y), 0.0, 1.0)) : vFill;
@@ -128,6 +131,7 @@ void Batch2D::Begin(int32_t w, int32_t h) {
   rhi_->UpdateBuffer(uniformBuffer_, vp, sizeof(vp));
   rhi_->BindUniformBuffer(0, uniformBuffer_);
   vertices_.clear();
+  image_ = {};
   quadsFrame_ = flushesFrame_ = 0;
   clips_.clear();
   clip_ = {-1e9f, -1e9f, 1e9f, 1e9f};
@@ -202,13 +206,28 @@ void Batch2D::Glyph(float x, float y, float w, float h, float u0, float v0, floa
   ++quadsFrame_;
 }
 
+void Batch2D::Image(float x, float y, float w, float h, TextureHandle t, float u0, float v0, float u1, float v1, Color c) {
+  if (!t.Valid()) return;
+  if (image_.Valid() && image_.id != t.id) Flush(); // one image texture per draw call
+  image_ = t;
+  if (vertices_.size() >= kMaxQuads * 4) Flush();
+  const float px[4][2] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}};
+  const float uv[4][2] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+  for (int i = 0; i < 4; ++i)
+    vertices_.push_back({px[i][0], px[i][1], 0, 0, 0, 0, 0, 0, c.r, c.g, c.b, c.a, 0, 0, 0, 0,
+                         uv[i][0], uv[i][1], 3, 0, clip_.x0, clip_.y0, clip_.x1, clip_.y1});
+  ++quadsFrame_;
+}
+
 void Batch2D::Flush() {
   if (vertices_.empty()) return;
   uint32_t quads = (uint32_t)(vertices_.size() / 4);
   rhi_->UpdateBuffer(vertexBuffer_, vertices_.data(), vertices_.size() * sizeof(Vertex));
   rhi_->BindTexture(0, atlas_.Valid() ? atlas_ : dummyTexture_);
+  rhi_->BindTexture(1, image_.Valid() ? image_ : dummyTexture_);
   rhi_->DrawIndexed(pipeline_, vertexBuffer_, indexBuffer_, quads * 6);
   vertices_.clear();
+  image_ = {};
   ++flushesFrame_;
 }
 

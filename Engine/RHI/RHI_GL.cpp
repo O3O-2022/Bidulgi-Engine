@@ -2,6 +2,7 @@
 #include "Platform/Window.h"
 #include "Core/Log.h"
 #include <glad/gl.h>
+#include <algorithm>
 #include <string>
 
 namespace bdg {
@@ -43,6 +44,9 @@ bool RHI::Init(Window&) {
   glVersion = (const char*)glGetString(GL_VERSION);
   gpuName = (const char*)glGetString(GL_RENDERER);
   LogInfo("rhi: OpenGL {} | {}", glVersion, gpuName);
+  GLint align = 256;
+  glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align);
+  uboAlign_ = (size_t)std::max(align, 16);
 
   GLint flags = 0;
   glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
@@ -57,11 +61,16 @@ bool RHI::Init(Window&) {
 
 void RHI::Shutdown() {
   for (uint32_t i = 1; i < pipelines_.size(); ++i) DestroyPipeline({i});
+  for (uint32_t i = 1; i < targets_.size(); ++i) DestroyRenderTarget({i});
 }
 
 void RHI::BeginFrame(int32_t w, int32_t h, Color c) {
   drawCalls_ = 0;
+  frameW_ = w;
+  frameH_ = h;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glViewport(0, 0, w, h);
+  glDepthMask(GL_TRUE); // glClear honours the depth write mask
   glClearColor(c.r, c.g, c.b, c.a);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -88,11 +97,15 @@ void RHI::BindUniformBuffer(uint32_t slot, BufferHandle b) {
   glBindBufferBase(GL_UNIFORM_BUFFER, slot, b.id);
 }
 
+void RHI::BindUniformBufferRange(uint32_t slot, BufferHandle b, size_t offset, size_t size) {
+  glBindBufferRange(GL_UNIFORM_BUFFER, slot, b.id, (GLintptr)offset, (GLsizeiptr)size);
+}
+
 // ---- Textures (DSA) ----
 TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const void* pixels) {
   GLuint t = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &t);
-  glTextureStorage2D(t, 1, f == TextureFormat::R8 ? GL_R8 : GL_RGBA8, w, h);
+  glTextureStorage2D(t, 1, f == TextureFormat::R8 ? GL_R8 : f == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8 : GL_RGBA8, w, h);
   glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTextureParameteri(t, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -119,7 +132,92 @@ void RHI::ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba) {
   glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
 }
 
-// ---- Pipelines: program + vertex layout (VAO) + blend state ----
+// ---- Render targets ----
+RenderTargetHandle RHI::CreateRenderTarget(int32_t w, int32_t h, int32_t samples) {
+  TargetGL t;
+  t.w = std::max(w, 1);
+  t.h = std::max(h, 1);
+  t.samples = std::max(samples, 1);
+  glCreateTextures(GL_TEXTURE_2D, 1, &t.color);
+  glTextureStorage2D(t.color, 1, GL_RGBA8, t.w, t.h);
+  glTextureParameteri(t.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(t.color, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(t.color, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glCreateFramebuffers(1, &t.fbo);
+  glNamedFramebufferTexture(t.fbo, GL_COLOR_ATTACHMENT0, t.color, 0);
+  glCreateRenderbuffers(1, &t.depth);
+  if (t.samples > 1) { // draw into multisampled buffers, resolve into the texture
+    glCreateRenderbuffers(1, &t.msColor);
+    glNamedRenderbufferStorageMultisample(t.msColor, t.samples, GL_RGBA8, t.w, t.h);
+    glNamedRenderbufferStorageMultisample(t.depth, t.samples, GL_DEPTH_COMPONENT24, t.w, t.h);
+    glCreateFramebuffers(1, &t.msFbo);
+    glNamedFramebufferRenderbuffer(t.msFbo, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, t.msColor);
+    glNamedFramebufferRenderbuffer(t.msFbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+  } else {
+    glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, t.w, t.h);
+    glNamedFramebufferRenderbuffer(t.fbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+  }
+  GLuint drawFbo = t.samples > 1 ? t.msFbo : t.fbo;
+  if (glCheckNamedFramebufferStatus(drawFbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
+      glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    LogError("rhi: render target {}x{} (x{}) is incomplete", t.w, t.h, t.samples);
+  }
+  for (uint32_t i = 1; i < targets_.size(); ++i)
+    if (!targets_[i].fbo) { targets_[i] = t; return {i}; }
+  targets_.push_back(t);
+  return {(uint32_t)targets_.size() - 1};
+}
+
+void RHI::DestroyRenderTarget(RenderTargetHandle rt) {
+  if (!rt.Valid() || rt.id >= targets_.size()) return;
+  TargetGL& t = targets_[rt.id];
+  if (t.fbo) glDeleteFramebuffers(1, &t.fbo);
+  if (t.msFbo) glDeleteFramebuffers(1, &t.msFbo);
+  if (t.color) glDeleteTextures(1, &t.color);
+  if (t.depth) glDeleteRenderbuffers(1, &t.depth);
+  if (t.msColor) glDeleteRenderbuffers(1, &t.msColor);
+  t = {};
+}
+
+TextureHandle RHI::RenderTargetColor(RenderTargetHandle rt) const {
+  return rt.Valid() && rt.id < targets_.size() ? TextureHandle{targets_[rt.id].color} : TextureHandle{};
+}
+
+void RHI::BeginRenderTarget(RenderTargetHandle rt, Color c) {
+  if (!rt.Valid() || rt.id >= targets_.size() || !targets_[rt.id].fbo) return;
+  const TargetGL& t = targets_[rt.id];
+  currentTarget_ = rt.id;
+  glBindFramebuffer(GL_FRAMEBUFFER, t.samples > 1 ? t.msFbo : t.fbo);
+  glViewport(0, 0, t.w, t.h);
+  glDepthMask(GL_TRUE);
+  glClearColor(c.r, c.g, c.b, c.a);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void RHI::EndRenderTarget() {
+  if (currentTarget_ && currentTarget_ < targets_.size()) {
+    const TargetGL& t = targets_[currentTarget_];
+    if (t.samples > 1) glBlitNamedFramebuffer(t.msFbo, t.fbo, 0, 0, t.w, t.h, 0, 0, t.w, t.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+  }
+  currentTarget_ = 0;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, frameW_, frameH_);
+}
+
+void RHI::ReadRenderTarget(RenderTargetHandle rt, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
+  w = h = 0;
+  rgba.clear();
+  if (!rt.Valid() || rt.id >= targets_.size() || !targets_[rt.id].color) return;
+  const TargetGL& t = targets_[rt.id];
+  w = t.w;
+  h = t.h;
+  rgba.resize((size_t)w * h * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 1);
+  glGetTextureImage(t.color, 0, GL_RGBA, GL_UNSIGNED_BYTE, (GLsizei)rgba.size(), rgba.data());
+}
+
+// ---- Pipelines: program + vertex layout (VAO) + blend / depth / cull state ----
 PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
   GLuint vs = CompileStage(GL_VERTEX_SHADER, d.vertexSource, d.debugName);
   GLuint fs = CompileStage(GL_FRAGMENT_SHADER, d.fragmentSource, d.debugName);
@@ -149,7 +247,7 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
     glVertexArrayAttribBinding(vao, a.location, 0);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend});
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.cull});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -169,6 +267,10 @@ const RHI::PipelineGL* RHI::Bind(PipelineHandle p, BufferHandle vertices) {
   glBindVertexArray(g.vao);
   if (g.alphaBlend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
   else glDisable(GL_BLEND);
+  if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(GL_TRUE); }
+  else { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); }
+  if (g.cull == CullMode::Back) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(GL_CCW); }
+  else glDisable(GL_CULL_FACE);
   return &g;
 }
 

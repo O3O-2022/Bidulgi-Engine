@@ -1,0 +1,36 @@
+#pragma once
+// Rendering reference board, stage 1 (queue 3-0, Docs/features/graphics-test-scenes.md): a plain ground plane,
+// one directional light, a 7x7 sphere matrix (X: roughness 0->1, Y: metallic 0->1) and the coordinate/colour
+// reference zone: axis arrows, an unlit 18% grey card, a ColorChecker, a letter texture board, a winding probe
+// (one counter-clockwise and one clockwise quad) and a depth probe. Check() reads the rendered pixels back and
+// tells whether coordinates, winding, depth, gamma and UV direction behave as Core/Space.h says.
+#include "Render3D/Renderer3D.h"
+#include <string>
+#include <vector>
+
+namespace bdg {
+class ReferenceBoard {
+public:
+  struct Label { glm::vec3 position; std::string text; };
+
+  bool Init(RHI& rhi, Renderer3D& renderer);
+  void Shutdown();
+  const std::vector<DrawItem3D>& Items() const { return items_; }
+  const std::vector<Label>& Labels() const { return labels_; }
+  Camera3D camera;
+  Light3D light;
+  Color clear{0.11f, 0.12f, 0.14f, 1}; // display value (sRGB) of the empty background
+
+  // rgba: bottom-up RGBA8 rows of a w x h render made with `camera`. Returns "key=value ..." ending in
+  // "result=pass" or "result=FAIL(<failed keys>)".
+  std::string Check(const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const;
+
+private:
+  RHI* rhi_ = nullptr;
+  Renderer3D* renderer_ = nullptr;
+  Mesh3D plane_, sphere_, quad_, quadCW_, cylinder_, cone_;
+  TextureHandle letters_;
+  std::vector<DrawItem3D> items_;
+  std::vector<Label> labels_;
+};
+}
