@@ -33,7 +33,7 @@ jobs:
         run: |
           $fail = $false
           foreach ($cfg in 'Debug', 'Release') {
-            cmake --build build --config $cfg --target BidulgiEditor -- /m /v:minimal 2>&1 | Tee-Object -FilePath "build-$cfg.log"
+            cmake --build build --config $cfg --target BidulgiEditor BidulgiTests -- /m /v:minimal 2>&1 | Tee-Object -FilePath "build-$cfg.log"
             if ($LASTEXITCODE -ne 0) { Write-Error "$cfg build failed"; exit 1 }
             # Warnings from our own sources only (third-party code under build/_deps is excluded).
             $warn = Select-String -Path "build-$cfg.log" -Pattern 'warning C\d+' | Where-Object { $_.Line -notmatch '_deps' }
@@ -120,6 +120,12 @@ jobs:
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
+
+      - name: Unit tests
+        shell: pwsh
+        run: |
+          build/Release/BidulgiTests.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Design parity (tokens + layout vs design-system previews)
         shell: pwsh

@@ -69,6 +69,9 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/UI/Dock.*` | 도킹 트리(분할·탭 묶음), 경계선 드래그, 탭 끌어 옮기기, 레이아웃 JSONL 저장 |
 | `tools/ui_compare/` | 디자인 일치 검사 (`compare.py`) |
 | `Engine/Core/Log.*`, `Image.*` | 텍스트 로그, PNG 저장 |
+| `Engine/Core/Reflection.*`, `Math.h` | 리플렉션 레지스트리(타입·필드·함수, 경로로 JSON 값 읽기/쓰기, 변경 추적), 값 타입 |
+| `Tools/bht/bht.py` | 헤더 도구: `BCLASS`/`BPROPERTY`… → `<File>.gen.cpp` (CMake `bdg_reflect()`) |
+| `Tests/` | 단위 테스트 (`BidulgiTests.exe`, 자체 최소 매크로 `bdg_test.h`) |
 | `Editor/main.cpp` | 에디터 실행 파일 진입점 (C API만 사용) |
 | `ThirdParty/glad` | 생성된 GL 로더 (커밋됨) |
 
@@ -109,7 +112,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-12 M0 손질 | Inspector 카드 헤더에 위쪽 `line` 1px(안 쓰던 `ComponentHeader` 삭제), Batch2D SDF 삼각형 모드 → Node 실행 핀 삼각형, `shadow` 토큰 파싱(`Theme::S`) + `Batch2D::Shadow`(흐림 반경 SDF) → 노드 그림자. 갤러리 스크린샷에서 세 가지 확인, 경고 0개 | `8abd5a9` |
 | 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | `a397455` |
 | 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | `5fedfeb` |
-| 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | (이 커밋) |
+| 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | `36b1e5c` |
+| 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `Tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | (이 커밋) |
 
 ---
 
@@ -121,16 +125,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-2. 리플렉션 레지스트리 + 헤더 도구**
-  - 문서: [command-bus-and-reflection](architecture/command-bus-and-reflection.md), [code-syntax](features/code-syntax.md).
-  - 구현:
-    1. `Engine/Core/Reflection.h`: `TypeInfo{name, size, fields[], functions[], base}`, `FieldInfo{name, type, offset, flags(Edit/Save/ReadOnly/Replicated), meta(range, tooltip, category, showIf)}`. 전역 `Registry`에 이름으로 등록.
-    2. 매크로: `BCLASS(...)`, `BSTRUCT`, `BPROPERTY(...)`, `BFUNCTION(...)`, `GENERATED_BODY()` — 컴파일러에는 빈 매크로(또는 friend 선언).
-    3. 헤더 도구 `Tools/bht/`(C++ 또는 Python, libclang 쓰지 않음): 헤더를 토큰 단위로 읽어 매크로 뒤 선언을 파싱 → `<File>.gen.h/.gen.cpp`에 등록 코드 생성. CMake `add_custom_command`로 빌드 전 실행, 바뀐 헤더만.
-    4. 기본 타입 지원: bool, int32, float, double, Vec2/3/4, Quat, Color, string, enum, 핸들, `std::vector<T>`.
-    5. 값 읽기·쓰기를 문자열/JSON으로: `Registry::Get(obj, "path.to.field")`, `Set(...)` — 명령 버스와 `bdg set`의 바탕.
-    6. **변경 추적 훅**: 필드 쓰기는 반드시 `Set`을 거쳐 "바뀐 필드" 표시를 남긴다 → 나중에 네트워크 복제·공동 편집이 같은 정보를 씀.
-  - 완료 조건: 테스트 클래스(`BTestComponent`: 필드 6종 + 함수 1개)의 타입 정보가 자동 생성되고, 이름으로 값 읽기·쓰기가 되는 단위 테스트 통과 (doctest 추가).
 - [ ] **1-3. 명령 버스 + Undo/Redo**
   - 구현: `Engine/Core/Command.*`. 명령 = `{name, target(오브젝트 id), args(JSON), inverse(JSON)}`. `CommandBus::Execute(cmd)` → 실행 + Undo 스택에 push. 기본 명령: `set`(필드 값), `add`/`del`(오브젝트·컴포넌트), `mv`(부모 변경), `rename`.
   - 모든 편집(UI·터미널·AI)은 명령만 사용. 연속 드래그는 하나로 합침(merge window 300ms).

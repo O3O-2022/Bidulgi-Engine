@@ -1,4 +1,5 @@
 #pragma once
+#include "Core/Math.h"
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -8,7 +9,6 @@ namespace bdg {
 class Window;
 
 // RHI: engine code never calls a graphics API directly. First backend: OpenGL 4.5 (DSA).
-struct Color { float r, g, b, a; };
 
 struct BufferHandle   { uint32_t id = 0; bool Valid() const { return id != 0; } };
 struct PipelineHandle { uint32_t id = 0; bool Valid() const { return id != 0; } };
