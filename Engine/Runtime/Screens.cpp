@@ -205,8 +205,8 @@ void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
   } else if (tab == 1 || tab == 2) { // Console / Build Log
     struct Line { const char* lvl; const char* text; };
     static const Line console[] = {{"info", "Bidulgi Engine 0.0.1"}, {"info", "rhi: OpenGL 4.5 · NVIDIA GeForce RTX 5070 Ti"},
-                                   {"info", "font: Malgun Gothic (SDF atlas 2048)"}, {"info", "tokens: 40 colors, 18 sizes, 12 type styles"},
-                                   {"warn", "Pretendard not found, using system font"}, {"info", "PlayerMove.cs compiled in 0.42 s"},
+                                   {"info", "font: Pretendard (SDF atlas 2048)"}, {"info", "tokens: 40 colors, 18 sizes, 12 type styles"},
+                                   {"warn", "vsync ignored by the driver, frame limiter 240 Hz"}, {"info", "PlayerMove.cs compiled in 0.42 s"},
                                    {"error", "quest.lua:12  attempt to index nil value 'npc'"}};
     static const Line build[] = {{"info", "> bdg build --platform windows --profile development"}, {"info", "[1/5] collect   38 assets"},
                                  {"info", "[2/5] cook      BC7 · binary scenes (cache 92%)"}, {"info", "[3/5] scripts   C# 3 · Lua 2 · Graph 4"},

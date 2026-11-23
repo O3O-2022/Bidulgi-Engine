@@ -266,8 +266,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->hasFont = !fontPath.empty() && e->font.Load(e->rhi, fontPath.c_str());
   if (e->hasFont) {
     e->batch.SetTextAtlas(e->font.Atlas());
-    for (const char* mono : {"C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/cour.ttf"}) // code font (system, not redistributed)
-      if (std::filesystem::exists(mono) && e->font.LoadMono(mono)) break;
+    // Code font: bundled JetBrains Mono (OFL), then system fallbacks (not redistributed).
+    std::string bundled = FindUp("BDG_FONT_MONO", {"Assets/Fonts/JetBrainsMono-Regular.ttf"});
+    for (std::string mono : {bundled, std::string("C:/Windows/Fonts/consola.ttf"), std::string("C:/Windows/Fonts/cour.ttf")})
+      if (!mono.empty() && std::filesystem::exists(mono) && e->font.LoadMono(mono.c_str())) break;
   }
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
   std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
