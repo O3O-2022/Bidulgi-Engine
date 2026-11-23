@@ -73,7 +73,8 @@ jobs:
           # 1) Editor screen renders, tokens and font load, UI draws in one call
           $log = Invoke-Editor 'Release' @{ BDG_SCREENSHOT = 'ci-editor.png' } 30
           if ($log -notmatch 'tokens: \d+ colors') { $errors += 'design tokens not loaded' }
-          if ($log -notmatch 'frame stats: .*draws=1') { $errors += 'editor frame is not a single draw call' }
+          if ($log -notmatch 'frame stats: .*ui_draws=1 ') { $errors += 'editor UI is not a single draw call' }
+          if ($log -notmatch 'frame stats: .*draws3d=[1-9]') { $errors += 'scene view drew nothing in 3D' }
           if ($log -match '\[error\]') { $errors += 'errors in editor log' }
           # Start-up time (queue 2-3b): shown on the run page; software GL on CI is much slower than a GPU
           if ($log -match '(startup: .*)') { Write-Host "::notice::$($Matches[1])" }
@@ -86,7 +87,7 @@ jobs:
 
           # 3) 10k rects in one draw call
           $log = Invoke-Editor 'Release' @{ BDG_BATCH_STRESS = '1' } 10
-          if ($log -notmatch 'quads=10000 flushes=1 draws=1') { $errors += 'batch stress test failed' }
+          if ($log -notmatch 'quads=10000 flushes=1 ui_draws=1 draws3d=0 draws=1 ') { $errors += 'batch stress test failed' }
 
           # 4) Bug report folder is created (no browser in CI)
           $log = Invoke-Editor 'Release' @{ BDG_BUG_TEST = '1' } 10
@@ -217,6 +218,12 @@ jobs:
           # 18) Rendering reference board (queue 3-0): gamma, ColorChecker round trip, axes, winding, depth, light, UV
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ref'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'render test: \d+x\d+ grey=118 .* result=pass') { $errors += 'render reference board failed' }
+
+          # 19) Scene view in 3D (queue 3-2): sample scene drawn, click picking, outline, orbit/zoom/frame/pan/fly, icons
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_SCENEVIEW_TEST = '1' } 26
+          if ($log -notmatch 'sceneview test: drawn=1 pick=g8 outline=1 orbit=1 zoom=1 frame=1 pan=1 fly=1 deselect=1 icon=g9') { $errors += 'scene view test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'

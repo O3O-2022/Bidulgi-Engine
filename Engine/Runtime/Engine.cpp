@@ -10,6 +10,7 @@
 #include "Render2D/Batch2D.h"
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
+#include "Runtime/SceneView.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
 #include "Runtime/Screens.h"
@@ -124,6 +125,9 @@ struct bdg_engine {
   bdg::RenderTargetHandle viewRT;
   int32_t viewW = 0, viewH = 0;
   bool renderTest = false;
+  std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
+  bool sceneViewTest = false;
+  std::string sceneViewTestValues[10];
 };
 
 namespace {
@@ -678,6 +682,119 @@ void InjectMultiTest(bdg_engine* e, int frame, float scale) {
   if (frame == 22) v[7] = value("g8", "Health", "maxHealth");
 }
 
+// Scripted Scene view check (BDG_SCENEVIEW_TEST=1, queue 3-2): the sample scene drawn in 3D, click picking, the
+// selection outline, orbit / zoom / frame / pan / fly camera moves, a click on empty space, a light icon click.
+void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->sceneViewTestValues;
+  auto ev = [&](T type, float x, float y, int button = 0, bool alt = false) {
+    bdg::InputEvent i{type, x * scale, y * scale, button};
+    i.alt = alt;
+    e->window.InjectEvent(i);
+  };
+  auto key = [&](T type, bdg::Key k) { bdg::InputEvent i{type}; i.key = k; e->window.InjectEvent(i); };
+  auto at = [&](const char* id, float& x, float& y) {
+    glm::vec3 c;
+    float r;
+    return sv->ObjectCenter(*m, id, c, r) && sv->ProjectUI(c, x, y);
+  };
+  static float cx, cy, yaw0, dist0;
+  static glm::vec3 pivot0, pos0;
+  if (frame == 2) { // the Crystal (g8) must be on screen and drawn (not the background colour)
+    int32_t w, h;
+    std::vector<uint8_t> px;
+    sv->ReadPixels(w, h, px);
+    float x, y, ux = 0, uy = 0;
+    bool ok = at("g8", x, y);
+    glm::vec3 c;
+    float r;
+    sv->ObjectCenter(*m, "g8", c, r);
+    float pxX = 0, pxY = 0;
+    ok = ok && bdg::ProjectToPixel(sv->camera.ToCamera(), w, h, c, pxX, pxY) && pxX >= 0 && pxY >= 0 && pxX < w && pxY < h;
+    if (ok) {
+      const uint8_t* p = &px[((size_t)pxY * w + (size_t)pxX) * 4];
+      ok = !(std::abs(p[0] - 43) <= 2 && std::abs(p[1] - 48) <= 2 && std::abs(p[2] - 56) <= 2); // not the clear colour
+    }
+    v[0] = std::format("{}", ok ? 1 : 0);
+    (void)ux; (void)uy;
+    cx = x; cy = y;
+    ev(T::MouseMove, cx, cy);
+    ev(T::MouseDown, cx, cy, 1);
+    ev(T::MouseUp, cx, cy, 1);
+  }
+  if (frame == 4) { // picked, and orange outline pixels around it
+    v[1] = m->Selected();
+    int32_t w, h;
+    std::vector<uint8_t> px;
+    sv->ReadPixels(w, h, px);
+    int orange = 0;
+    for (size_t i = 0; i + 3 < px.size(); i += 4) orange += px[i] > 230 && px[i + 1] > 130 && px[i + 1] < 170 && px[i + 2] < 60;
+    v[2] = std::format("{}", orange > 20 && sv->OutlinedCount() > 0 ? 1 : 0);
+    yaw0 = sv->camera.yaw;
+    ev(T::MouseDown, cx, cy, 1, true); // Alt + left drag: orbit
+    ev(T::MouseMove, cx + 100, cy, 0, true);
+    ev(T::MouseUp, cx + 100, cy, 1, true);
+  }
+  if (frame == 6) {
+    v[3] = std::format("{}", std::fabs(sv->camera.yaw - yaw0 + 30.f) < 0.5f ? 1 : 0); // 100 units x 0.3 degrees
+    dist0 = sv->camera.distance;
+    bdg::InputEvent wh{T::Wheel, cx * scale, cy * scale};
+    wh.wheel = 3;
+    e->window.InjectEvent(wh);
+  }
+  if (frame == 8) {
+    v[4] = std::format("{}", sv->camera.distance < dist0 * 0.75f ? 1 : 0);
+    ev(T::MouseMove, cx, cy);
+    key(T::KeyDown, bdg::Key::F); // frame the Crystal
+  }
+  if (frame == 10) {
+    glm::vec3 c;
+    float r;
+    sv->ObjectCenter(*m, "g8", c, r);
+    v[5] = std::format("{}", glm::distance(sv->camera.pivot, c) < 0.01f ? 1 : 0);
+    pivot0 = sv->camera.pivot;
+    float x = cx, y = cy; // middle drag: pan
+    ev(T::MouseDown, x, y, 2);
+    ev(T::MouseMove, x + 50, y + 20, 0);
+    ev(T::MouseUp, x + 50, y + 20, 2);
+  }
+  if (frame == 12) {
+    v[6] = std::format("{}", glm::distance(sv->camera.pivot, pivot0) > 0.05f ? 1 : 0);
+    pos0 = sv->camera.Position();
+    ev(T::MouseDown, cx, cy, 3); // right button held + W: fly forward
+    key(T::KeyDown, bdg::Key::W);
+  }
+  if (frame == 16) {
+    key(T::KeyUp, bdg::Key::W);
+    ev(T::MouseUp, cx, cy, 3);
+  }
+  if (frame == 18) {
+    glm::vec3 moved = sv->camera.Position() - pos0;
+    v[7] = std::format("{}", glm::length(moved) > 0.001f && glm::dot(glm::normalize(moved), sv->camera.Forward()) > 0.99f ? 1 : 0);
+    float x = 0, y = 0; // empty sky: the top-left area of the view
+    if (bdg::Widget* s = e->editor->Find("scene")) { x = s->x + s->w * 0.5f; y = s->y + 40; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    ev(T::MouseUp, x, y, 1);
+  }
+  if (frame == 20) {
+    v[8] = std::format("{}", m->Selection().empty() ? 1 : 0);
+    sv->Frame(*m); // whole scene
+  }
+  if (frame == 22) { // the Lantern Light (g9) has no surface: its icon is clickable
+    float x, y;
+    if (sv->ProjectUI(m->scene.WorldMatrix("g9")[3], x, y)) {
+      ev(T::MouseMove, x, y);
+      ev(T::MouseDown, x, y, 1);
+      ev(T::MouseUp, x, y, 1);
+    }
+  }
+  if (frame == 24) v[9] = m->Selected();
+}
+
 // Scripted Project panel check (BDG_PROJECT_TEST=1 with BDG_ASSETS holding Scripts/Weapon.h + .cpp and more):
 // open the Scripts folder, select the C++ class item, rename it to Sword through the name field.
 void InjectProjectTest(bdg_engine* e, int frame, float scale) {
@@ -747,6 +864,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   e->renderTest = std::getenv("BDG_RENDER_TEST") != nullptr;
+  e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -789,6 +907,17 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     std::string component = std::string(screen).substr(7);
     if (auto parity = bdg::BuildParityScreen(component)) e->editor->SetRoot(std::move(parity));
     else bdg::LogError("unknown parity component: {}", component);
+  }
+  if (!screen || std::string(screen) != "render-ref") { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->sceneView = std::make_unique<bdg::SceneView>();
+    if (e->r3d->Init(e->rhi) && e->sceneView->Init(e->rhi, *e->r3d)) {
+      if (bdg::Widget* scene = e->editor->Find("scene"))
+        scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
+    } else {
+      bdg::LogError("scene view: the 3D renderer did not start; the Scene panel shows a placeholder");
+      e->sceneView.reset();
+    }
   }
   if (screen && std::string(screen) == "render-ref") { // rendering reference board (queue 3-0)
     e->r3d = std::make_unique<bdg::Renderer3D>();
@@ -998,6 +1127,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
     }
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
+    if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
@@ -1036,21 +1166,38 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
     e->batch.Begin((int32_t)lw, (int32_t)lh);
+    if (e->r3d) e->r3d->NewFrame();
     bdg::UIContext& ui = e->showGallery ? *e->gallery : *e->editor;
     if (e->stress) DrawStress(e->batch, lw, lh);
     else {
       std::vector<bdg::InputEvent> events = e->window.Events();
       for (bdg::InputEvent& ev : events) { ev.x /= scale; ev.y /= scale; }
+      bdg::Widget* sceneWidget = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("scene") : nullptr;
+      if (sceneWidget && (sceneWidget->hidden || sceneWidget->w < 2 || sceneWidget->h < 2)) sceneWidget = nullptr;
+      {
+        static auto lastFrame = std::chrono::steady_clock::now();
+        auto nowFrame = std::chrono::steady_clock::now();
+        double dt = std::chrono::duration<double>(nowFrame - lastFrame).count();
+        lastFrame = nowFrame;
+        bdg::Widget* focused = ui.Focused();
+        if (sceneWidget)
+          e->sceneView->HandleEvents(events, *sceneWidget, *e->model, dt, focused && focused->kind == bdg::WidgetKind::Field);
+        else
+          std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
+      }
       ui.SetScale(scale);
       ui.HandleEvents(events);
       if (&ui == e->editor.get() && e->model) e->model->Update(); // panels follow the scene (after edits/undo)
       ui.Layout(lw, lh);
       if (e->board && &ui == e->editor.get())
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);
+      if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2)
+        e->sceneView->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, *sceneWidget, scale);
       ui.Draw();
     }
     e->batch.End();
     e->rhi.EndFrame();
+    if (e->sceneView && e->sceneView->Animating()) pending = std::max(pending, 2); // flying: keep drawing
     ++frames;
     if (idleMeasuring) ++idleFrames;
 
@@ -1066,8 +1213,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       WriteBugReport(e, w, h, scale, std::getenv("BDG_BUG_TEST") == nullptr);
     }
     if (last) {
-      bdg::LogInfo("frame stats: quads={} flushes={} draws={} glyphs={} tokens={} ui_scale={:.2f} display_scale={:.2f} drawable={}x{}",
-                   e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame(),
+      // ui_draws: the whole UI (one batch); draws3d: the Scene view / reference board render; draws: both.
+      uint32_t draws3d = e->r3d ? e->r3d->DrawsLastFrame() : 0;
+      bdg::LogInfo("frame stats: quads={} flushes={} ui_draws={} draws3d={} draws={} glyphs={} tokens={} ui_scale={:.2f} display_scale={:.2f} drawable={}x{}",
+                   e->batch.QuadsThisFrame(), e->batch.FlushesThisFrame(), e->rhi.DrawCallsThisFrame() - draws3d, draws3d,
+                   e->rhi.DrawCallsThisFrame(),
                    e->hasFont ? e->font.GlyphCount() : 0, e->theme.TokenCount(), scale, e->window.GetDisplayScale(), w, h);
       if (e->showGallery) {
         bdg::Widget* f = e->gallery->Focused();
@@ -1130,6 +1280,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->rhi.ReadRenderTarget(e->viewRT, rw, rh, px);
           bdg::LogInfo("render test: {}x{} {}", rw, rh, e->board->Check(px, rw, rh));
         } else bdg::LogError("render test: no reference board (run with BDG_SCREEN=render-ref)");
+      }
+      if (e->sceneViewTest) {
+        auto* v = e->sceneViewTestValues;
+        bdg::LogInfo("sceneview test: drawn={} pick={} outline={} orbit={} zoom={} frame={} pan={} fly={} deselect={} icon={}",
+                     v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
       }
       if (e->faultTest)
         bdg::LogInfo("fault test: guard_failures={} check_failures={} frames={} survived=1", bdg::GuardFailureCount(),
@@ -1217,6 +1372,7 @@ void bdg_engine_destroy(bdg_engine* e) {
   e->editor.reset();
   e->gallery.reset();
   if (e->board) e->board->Shutdown();
+  if (e->sceneView) e->sceneView->Shutdown();
   e->rhi.DestroyRenderTarget(e->viewRT);
   if (e->r3d) e->r3d->Shutdown();
   e->font.Shutdown();

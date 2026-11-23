@@ -48,6 +48,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_MULTI_TEST=1`, `BDG_PRESETS=폴더` | 여러 오브젝트 편집·값 복사/붙여넣기·프리셋 자동 테스트, 프리셋 폴더 강제 |
 | `BDG_SCREEN=render-ref` | 렌더링 기준판(3D) 전체 화면 |
 | `BDG_RENDER_TEST=1` | 기준판 렌더 결과 자동 판정(`render-ref`와 함께) |
+| `BDG_SCENEVIEW_TEST=1` | 씬 뷰 자동 테스트(그리기·클릭 선택·외곽선·궤도·확대·맞추기·이동·비행·선택 해제·아이콘) |
 | `BDG_MODEL=<.gltf/.glb>` | `render-ref` 기준판 왼쪽에 모델 표시(2.2 m로 맞춤) |
 | `BDG_PROJECT_TEST=1` | Project 패널 자동 테스트(Scripts 폴더 → C++ 클래스 항목 → 이름 바꾸기) |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
@@ -79,6 +80,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/RHI/RHI.h`, `RHI_GL.cpp` | 그래픽 추상화. 버퍼·텍스처·파이프라인·그리기 (GL 4.5 DSA) |
 | `Engine/Render2D/Batch2D.*` | 2D 일괄 그리기 (SDF 둥근 사각형, 선, SDF 글자, RGBA 이미지) |
 | `Engine/Assets/GltfImport.*` | glTF 2.0 임포트(cgltf) + meshoptimizer 최적화 → `ImportedModel` |
+| `Engine/Runtime/SceneView.*` | Scene 패널 3D: 씬 → 그리기 항목, 메시 캐시, 에디터 카메라, 피킹, 오버레이 |
 | `Engine/Render3D/*` | 3D: 절차 메시(`MeshGen`), 전방 렌더러(`Renderer3D`, GGX + 방향광 + 반구 환경), 렌더링 기준판(`ReferenceBoard`) |
 | `Engine/Text/Font.*` | FreeType SDF 글자 아틀라스 |
 | `Engine/UI/Theme.*` | `design-system/project/tokens.json` 읽기, 실시간 다시 읽기 |
@@ -159,7 +161,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 2-5 Project 패널 | 에셋 폴더가 열려 있으면(`BDG_ASSETS`) Project 탭이 실제 내용: 왼쪽 폴더 트리, 오른쪽 현재 폴더(하위 폴더 → 파일, 종류 표시: Texture·Model·Audio·Scene·C# script·Lua script·Python script·C++…). **C++ `.h`+`.cpp` 묶음**: 이름이 같은 헤더·소스는 한 항목 `Weapon · C++ class` + 아래에 두 파일 중첩, 이름 바꾸기 칸에서 바꾸면 두 파일이 함께 바뀜(확장자 유지, GUID 유지, 씬 참조 갱신), 열기는 두 파일을 함께 기본 앱으로. 파일 감시로 바깥 변경도 반영. CI 17번 | `b04a1cd` |
 | 2-5t 썸네일 캐시(핵심) | stb_image 2.34(퍼블릭 도메인, 같은 stb 커밋, 사용자 승인) 추가 → `LoadImageRGBA`(PNG·JPEG·TGA·BMP·PSD·HDR, 유니코드 경로). `Assets/Thumbnails.*`: 이미지 에셋을 64×64(비율 유지, 평균 축소)로 만들어 `<프로젝트>/.cache/thumbnails/<GUID>-<해시>.png`에 저장, 다음 시작은 작은 캐시 PNG만 읽음, 내용이 바뀌면 새로 만들고 옛 파일 삭제, 깨진 이미지는 실패로 셈. 단위 테스트 1개(총 53개·551개). **Project 패널에 그리기는 3-2와 함께**(UI에 RGBA 텍스처를 그리는 기능이 씬 뷰 표시와 같음) | `4d6bdbf` |
 | 3-0 렌더링 기준판 1단계 | **첫 3D 렌더링.** RHI: 오프스크린 렌더 타깃(RGBA8 + 깊이24, MSAA 4× → 해석), 깊이 테스트·후면 컬링(CCW 앞면), sRGB 텍스처 형식, UBO 구간 바인딩. Batch2D: RGBA 이미지 사각형(모드 3) — UI 안에 3D 화면·썸네일을 그리는 길. `Render3D/`: 절차 메시(사각형·평면·상자·구·원기둥·원뿔, 모두 바깥에서 CCW), 전방 렌더러(GGX 금속/거칠기, 방향광 1 + 하늘/땅 반구 환경, 선형 계산 → sRGB 출력, 톤매핑 없음), 기준판(바닥, 구 7×7 거칠기×금속, 축 화살표, 18% 회색 카드, ColorChecker 24칸, 글자 텍스처 판, 와인딩·깊이 탐침). `BDG_SCREEN=render-ref` 화면, `BDG_RENDER_TEST=1`이 렌더 결과를 읽어 8가지 판정 → 회색 118, 체커 오차 0, 축·오른손·CCW·깊이·위쪽 조명·UV 모두 통과. 단위 테스트 2개(총 55개·587개), CI 18번. **MetalRoughSpheres glTF와 `bdg testassets fetch`는 3-1로**(glTF 로더와 내려받기 승인이 필요) | `153d3b4` |
-| 3-1 glTF 임포트·PBR 맵 | cgltf 1.15·meshoptimizer 1.3(둘 다 MIT, 사용자 승인) 추가. `Assets/GltfImport.*`: .gltf(외부·data URI 버퍼)·.glb, 유니코드 경로(cgltf 파일 콜백), 노드 계층 → 월드 행렬, 삼각형 프리미티브(노멀 없으면 생성, 인덱스 없으면 생성), 머티리얼(금속/거칠기·노멀·AO·발광·발광 세기·알파 마스크/블렌드·양면·KHR_materials_unlit), 이미지(내장·data URI·파일, 용도별 sRGB/선형, 샘플러 NEAREST·CLAMP), meshoptimizer(중복 제거·버텍스 캐시·오버드로·페치 순서). 렌더러: 맵 5종, 탄젠트 없으면 화면 미분으로 탄젠트(glTF 샘플 뷰어 방식), 불투명 → 반투명(뒤에서 앞) 순서, 양면·블렌드 파이프라인, 밉맵. 기준판에 **glTF 탐침**(직접 만든 glTF가 실제 임포터를 거쳐 그려짐) → 렌더 검사 9번째 `gltf=ok`. `BDG_MODEL=<파일>`로 아무 glTF나 기준판 옆에 표시(로컬 마네킹 4만 삼각형 확인). 단위 테스트 2개(총 57개·612개). 머티리얼 파일·텍스처 쿠킹·표준 에셋 검증은 3-1b로 | (이 커밋) |
+| 3-1 glTF 임포트·PBR 맵 | cgltf 1.15·meshoptimizer 1.3(둘 다 MIT, 사용자 승인) 추가. `Assets/GltfImport.*`: .gltf(외부·data URI 버퍼)·.glb, 유니코드 경로(cgltf 파일 콜백), 노드 계층 → 월드 행렬, 삼각형 프리미티브(노멀 없으면 생성, 인덱스 없으면 생성), 머티리얼(금속/거칠기·노멀·AO·발광·발광 세기·알파 마스크/블렌드·양면·KHR_materials_unlit), 이미지(내장·data URI·파일, 용도별 sRGB/선형, 샘플러 NEAREST·CLAMP), meshoptimizer(중복 제거·버텍스 캐시·오버드로·페치 순서). 렌더러: 맵 5종, 탄젠트 없으면 화면 미분으로 탄젠트(glTF 샘플 뷰어 방식), 불투명 → 반투명(뒤에서 앞) 순서, 양면·블렌드 파이프라인, 밉맵. 기준판에 **glTF 탐침**(직접 만든 glTF가 실제 임포터를 거쳐 그려짐) → 렌더 검사 9번째 `gltf=ok`. `BDG_MODEL=<파일>`로 아무 glTF나 기준판 옆에 표시(사용자 로컬 파일로 4만 삼각형 모델 확인, 저장소·CI에는 넣지 않음). 단위 테스트 2개(총 57개·612개). 머티리얼 파일·텍스처 쿠킹·표준 에셋 검증은 3-1b로 | `6601ed3` |
+| 3-2 씬 뷰 실제 3D | Scene 패널이 열린 씬을 실제 3D로 그림(`Runtime/SceneView.*`): 오프스크린 MSAA 타깃 → 패널 이미지, 오버레이(칩, Draw·Tris·ms, 카메라 방향을 따르는 축 위젯, 조명·카메라 아이콘, 조작 안내). **에디터 카메라**: Alt+왼쪽 드래그 궤도, 가운데 드래그 이동, 휠 확대, 오른쪽 드래그 둘러보기 + WASDQE 비행(휠 = 속도), F 선택에 맞추기. **클릭 선택**(삼각형 레이 피킹, 아이콘 클릭, Ctrl/Shift 추가·제거, 빈 곳 클릭 = 선택 해제). **선택 외곽선**(마스크 타깃 + 2px 외곽선, 가려져도 보임, 자식 포함). **그리드**(1 m/10 m, X 빨강·Z 파랑 축선, 거리 페이드, 바닥 위로 살짝). 메시: 프로젝트 에셋 glTF(해시가 바뀌면 다시 임포트) 또는 내장 도형(Plane·Cube·Sphere·Cylinder·Cone), 없으면 자리표시 상자 + 경고. 머티리얼은 3-1b 전까지 이름으로(M_Ground·M_Gold·M_Steel·M_Copper·M_Glass, 그 외 이름 해시 색). 첫 방향광이 태양. 샘플 씬 Sun 회전을 이 엔진 규칙(양의 pitch = 위)에 맞게 (-50, -30, 0)으로. 키 뗌 이벤트(`KeyUp`) 추가. 프레임 통계에 `ui_draws`·`draws3d` 분리. `BDG_SCENEVIEW_TEST=1` 10개 판정 통과, CI 19번, 로컬에서 CI 스모크 전체 통과. **Project 패널 썸네일은 3-2b로** | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -184,7 +187,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M3 — 3D 렌더링과 플레이 모드 — **지금 진행** (3-0 → 3-1 → 3-2 → 3-3 → 3-4)
 
 - [ ] **3-1b. 머티리얼 파일·텍스처 쿠킹·표준 에셋** — 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md)). `bdg testassets fetch`(Khronos MetalRoughSpheres·NormalTangentTest·TextureCoordinateTest·AlphaBlendModeTest, 라이선스 기록, `.cache/testassets/`)로 노멀맵·알파 모드를 실제 에셋으로 검증 — **내려받기 승인 필요**. 탄젠트 없는 메시의 MikkTSpace 생성 검토
-- [ ] **3-2. 씬 뷰 실제 3D** — Custom 위젯 안에 오프스크린 렌더 타깃 → 텍스처로 표시. 궤도·이동 카메라, 그리드, 선택 외곽선.
+- [ ] **3-2b. Project 패널 썸네일 표시** — 2-5t 캐시(64×64 PNG)를 텍스처로 올려 Project 패널 타일에 그림(Batch2D 이미지 모드 사용). 모델 썸네일은 Renderer3D로 오프스크린 렌더 후 같은 캐시에
 - [ ] **3-3. 기즈모** — 이동·회전·크기 (자체 구현), 명령으로 기록.
 - [ ] **3-3b. 스냅·정렬·측정** — 그리드·꼭짓점·표면 스냅, 정렬·간격 맞추기, 거리 측정 [convenience-features](planning/convenience-features.md)
 - [ ] **3-3c. 그레이박스(블록아웃) 도구** — 상자·계단·경사로, 면 밀고 당기기, 메시+충돌체 [convenience-features](planning/convenience-features.md)

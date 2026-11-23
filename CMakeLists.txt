@@ -131,6 +131,7 @@ add_library(BidulgiEngine STATIC
   Engine/UI/Shortcuts.h    Engine/UI/Shortcuts.cpp
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
   Engine/Runtime/EditorModel.h Engine/Runtime/EditorModel.cpp Engine/Runtime/ProjectPanel.cpp
+  Engine/Runtime/SceneView.h Engine/Runtime/SceneView.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)

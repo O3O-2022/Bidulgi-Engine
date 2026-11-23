@@ -108,6 +108,70 @@ void main() {
 }
 )";
 
+// Editor grid on y = 0 around the camera. Colours are display values (the target holds display-encoded colour).
+const char* kGridVS = R"(#version 450 core
+layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+layout(location = 0) in vec3 aPos;
+out vec3 vWorld;
+void main() {
+  float r = clamp(abs(uCamPos.y) * 40.0, 60.0, 1500.0);
+  vWorld = vec3(uCamPos.x + aPos.x * r, 0.0, uCamPos.z + aPos.z * r);
+  // Lifted a hair above y = 0 so it stays visible on a ground plane at the same height (no z-fighting).
+  float lift = 0.0015 * clamp(abs(uCamPos.y), 1.0, 1000.0);
+  gl_Position = uViewProj * vec4(vWorld + vec3(0.0, lift, 0.0), 1.0);
+}
+)";
+const char* kGridFS = R"(#version 450 core
+layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+in vec3 vWorld;
+out vec4 oColor;
+float Lines(vec2 p, float spacing, float width) {
+  vec2 c = p / spacing, d = fwidth(c);
+  vec2 g = abs(fract(c - 0.5) - 0.5) / max(d, vec2(1e-6));
+  return 1.0 - min(min(g.x, g.y) / width, 1.0);
+}
+void main() {
+  vec2 p = vWorld.xz, d = fwidth(p);
+  float density = max(d.x, d.y);                                       // metres per pixel here
+  float minor = Lines(p, 1.0, 1.0) * (1.0 - smoothstep(0.08, 0.3, density));
+  float major = Lines(p, 10.0, 1.2) * (1.0 - smoothstep(0.8, 3.0, density));
+  float ax = 1.0 - min(abs(p.y) / max(d.y * 1.5, 1e-6), 1.0);          // X axis: the line z = 0
+  float az = 1.0 - min(abs(p.x) / max(d.x * 1.5, 1e-6), 1.0);          // Z axis: the line x = 0
+  float fadeEnd = clamp(abs(uCamPos.y) * 30.0, 40.0, 1200.0);
+  float fade = 1.0 - smoothstep(fadeEnd * 0.35, fadeEnd, length(vWorld - uCamPos.xyz));
+  vec3 col = vec3(0.62);
+  float a = max(minor * 0.28, major * 0.5);
+  col = mix(col, vec3(0.88, 0.27, 0.27), ax);
+  col = mix(col, vec3(0.3, 0.5, 0.95), az * (1.0 - ax));
+  a = max(a, max(ax, az) * 0.85);
+  if (a * fade < 0.004) discard;
+  oColor = vec4(col, a * fade);
+}
+)";
+// Selection: selected items are drawn white into a mask; the outline pass marks pixels within 2 px of the mask.
+const char* kMaskFS = R"(#version 450 core
+out vec4 oColor;
+void main() { oColor = vec4(1.0); }
+)";
+const char* kFullscreenVS = R"(#version 450 core
+layout(location = 0) in vec3 aPos;
+void main() { gl_Position = vec4(aPos.xy, 0.0, 1.0); }
+)";
+const char* kOutlineFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uMask;
+out vec4 oColor;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy), last = textureSize(uMask, 0) - 1;
+  if (texelFetch(uMask, clamp(p, ivec2(0), last), 0).r > 0.5) discard;
+  float m = 0.0;
+  for (int y = -2; y <= 2; ++y)
+    for (int x = -2; x <= 2; ++x)
+      if (x * x + y * y <= 5) m = max(m, texelFetch(uMask, clamp(p + ivec2(x, y), ivec2(0), last), 0).r);
+  if (m < 0.5) discard;
+  oColor = vec4(1.0, 0.58, 0.12, 1.0);
+}
+)";
+
 struct FrameData { float viewProj[16]; float camPos[4], toLight[4], light[4], sky[4], ground[4]; };
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4]; };
 }
@@ -154,6 +218,32 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.debugName = "forward3d.blend";
   blend_ = rhi.CreatePipeline(pd);
   if (!opaque_.Valid() || !twoSided_.Valid() || !blend_.Valid()) return false;
+  pd.fragmentSource = kMaskFS; // same vertex stage and layout as the scene
+  pd.alphaBlend = false;
+  pd.depthTest = false;
+  pd.debugName = "editor.mask";
+  mask_ = rhi.CreatePipeline(pd);
+  PipelineDesc gp;
+  gp.vertexSource = kGridVS;
+  gp.fragmentSource = kGridFS;
+  gp.attrs[0] = {0, 3, 0};
+  gp.attrCount = 1;
+  gp.stride = 12;
+  gp.alphaBlend = true;
+  gp.depthTest = true;
+  gp.depthWrite = false;
+  gp.debugName = "editor.grid";
+  grid_ = rhi.CreatePipeline(gp);
+  gp.vertexSource = kFullscreenVS;
+  gp.fragmentSource = kOutlineFS;
+  gp.depthTest = false;
+  gp.debugName = "editor.outline";
+  outline_ = rhi.CreatePipeline(gp);
+  if (!mask_.Valid() || !grid_.Valid() || !outline_.Valid()) return false;
+  const float quad[18] = {-1, 0, -1, -1, 0, 1, 1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0, -1};
+  gridQuad_ = rhi.CreateBuffer(BufferUsage::Vertex, quad, sizeof(quad));
+  const float tri[9] = {-1, -1, 0, 3, -1, 0, -1, 3, 0};
+  fullscreen_ = rhi.CreateBuffer(BufferUsage::Vertex, tri, sizeof(tri));
   frameUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FrameData), true);
   const uint8_t white[4] = {255, 255, 255, 255};
   white_ = rhi.CreateTexture2D(1, 1, TextureFormat::SRGBA8, white);
@@ -167,7 +257,10 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectUbo_);
   rhi_->DestroyTexture(white_);
-  for (PipelineHandle p : {opaque_, twoSided_, blend_}) rhi_->DestroyPipeline(p);
+  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_}) rhi_->DestroyPipeline(p);
+  rhi_->DestroyBuffer(gridQuad_);
+  rhi_->DestroyBuffer(fullscreen_);
+  rhi_->DestroyRenderTarget(maskRT_);
   rhi_ = nullptr;
 }
 
@@ -246,8 +339,7 @@ void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::
 }
 
 void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
-                        const std::vector<DrawItem3D>& items, Color clear) {
-  draws_ = 0;
+                        const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras) {
   if (!rhi_ || !rt.Valid() || w <= 0 || h <= 0) return;
   FrameData f{};
   glm::mat4 vp = cam.Projection((float)w / (float)h) * cam.View();
@@ -281,15 +373,39 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   if (!blob.empty()) rhi_->UpdateBuffer(objectUbo_, blob.data(), blob.size());
 
-  rhi_->BeginRenderTarget(rt, clear);
   rhi_->BindUniformBuffer(1, frameUbo_);
+  bool outline = extras && !extras->outlined.empty();
+  if (outline) { // selection mask first (its own target, no depth: the outline shows through other objects)
+    if (!maskRT_.Valid() || maskW_ != w || maskH_ != h) {
+      rhi_->DestroyRenderTarget(maskRT_);
+      maskRT_ = rhi_->CreateRenderTarget(w, h, 1);
+      maskW_ = w;
+      maskH_ = h;
+    }
+    rhi_->BeginRenderTarget(maskRT_, {0, 0, 0, 0});
+    for (size_t i : extras->outlined)
+      if (i < items.size() && items[i].mesh && items[i].mesh->indexCount) {
+        rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
+        rhi_->DrawIndexed(mask_, items[i].mesh->vertices, items[i].mesh->indices, items[i].mesh->indexCount);
+        ++draws_;
+      }
+    rhi_->EndRenderTarget();
+  }
+  rhi_->BeginRenderTarget(rt, clear);
   std::vector<size_t> order, blended;
   for (size_t i = 0; i < items.size(); ++i)
     if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : order).push_back(i);
   auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
   std::sort(blended.begin(), blended.end(), [&](size_t a, size_t b) { return dist(a) > dist(b); }); // back to front
+  size_t opaqueCount = order.size();
   order.insert(order.end(), blended.begin(), blended.end());
-  for (size_t i : order) {
+  for (size_t n = 0; n <= order.size(); ++n) {
+    if (n == opaqueCount && extras && extras->grid) { // after opaque surfaces, before blended ones
+      rhi_->Draw(grid_, gridQuad_, 6);
+      ++draws_;
+    }
+    if (n == order.size()) break;
+    size_t i = order[n];
     const DrawItem3D& it = items[i];
     const Material3D& m = it.material;
     rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
@@ -297,6 +413,12 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     for (uint32_t slot = 0; slot < 5; ++slot) rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
     PipelineHandle p = m.alpha == Material3D::Alpha::Blend ? blend_ : m.doubleSided ? twoSided_ : opaque_;
     rhi_->DrawIndexed(p, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
+    ++draws_;
+    triangles_ += it.mesh->indexCount / 3;
+  }
+  if (outline) {
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(maskRT_));
+    rhi_->Draw(outline_, fullscreen_, 3);
     ++draws_;
   }
   rhi_->EndRenderTarget();

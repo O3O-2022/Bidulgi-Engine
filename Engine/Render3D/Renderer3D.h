@@ -66,6 +66,12 @@ struct Model3D {
   glm::vec3 boundsMin{0}, boundsMax{0};
 };
 
+// Editor additions to a render (queue 3-2).
+struct RenderExtras {
+  bool grid = false;             // ground grid at y = 0: 1 m and 10 m lines, red X axis and blue Z axis lines, fades out
+  std::vector<size_t> outlined;  // indices into the item list: drawn with a selection outline, visible through walls
+};
+
 class Renderer3D {
 public:
   bool Init(RHI& rhi);
@@ -78,8 +84,10 @@ public:
   static void AppendModel(const Model3D& model, const glm::mat4& placement, std::vector<DrawItem3D>& items);
   // Draws the items into rt (cleared to `clear`, given in display/sRGB values like UI colours).
   void Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
-              const std::vector<DrawItem3D>& items, Color clear);
+              const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras = nullptr);
+  void NewFrame() { draws_ = 0; triangles_ = 0; } // stats count every Render() since the last call
   uint32_t DrawsLastFrame() const { return draws_; }
+  uint64_t TrianglesLastFrame() const { return triangles_; }
 
 private:
   RHI* rhi_ = nullptr;
@@ -88,5 +96,11 @@ private:
   size_t objectCapacity_ = 0, objectStride_ = 0;
   TextureHandle white_;
   uint32_t draws_ = 0;
+  uint64_t triangles_ = 0;
+  // Editor passes: grid plane, selection mask (own target) and the outline drawn from it.
+  PipelineHandle grid_, mask_, outline_;
+  BufferHandle gridQuad_, fullscreen_;
+  RenderTargetHandle maskRT_;
+  int32_t maskW_ = 0, maskH_ = 0;
 };
 }

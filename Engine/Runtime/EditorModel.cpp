@@ -68,7 +68,7 @@ void EditorModel::BuildSampleScene() {
   Add<Transform>(scene, "g1").position = {0, 2, -6};
   Add<Camera>(scene, "g1");
   obj("g2", "Sun");
-  Add<Transform>(scene, "g2").rotation = {50, -30, 0};
+  Add<Transform>(scene, "g2").rotation = {-50, -30, 0}; // pitch -50: shining down (positive pitch looks up)
   Light& sun = Add<Light>(scene, "g2");
   sun.type = LightType::Directional;
   sun.intensity = 3;

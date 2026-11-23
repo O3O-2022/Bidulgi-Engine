@@ -80,6 +80,10 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
       ev.shift = (e.key.mod & SDL_KMOD_SHIFT) != 0; ev.ctrl = (e.key.mod & SDL_KMOD_CTRL) != 0; ev.alt = (e.key.mod & SDL_KMOD_ALT) != 0;
       if (ev.key != Key::None) out.push_back(ev);
       break;
+    case SDL_EVENT_KEY_UP: // held keys (scene view fly mode); the UI ignores these
+      ev.type = InputEvent::Type::KeyUp; ev.key = MapKey(e.key.key);
+      if (ev.key != Key::None) out.push_back(ev);
+      break;
     case SDL_EVENT_TEXT_INPUT:
       ev.type = InputEvent::Type::Text; ev.text = e.text.text;
       out.push_back(ev); break;
