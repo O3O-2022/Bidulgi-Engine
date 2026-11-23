@@ -225,7 +225,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 ## M6 — 게임 기능
 
 - [ ] **6-1. 프리팹·오버라이드** — `@g1/hpbar` 경로, 오버라이드 표시(파란 막대), 되돌리기.
-- [ ] **6-2. 물리** — PHI 추상 계층 + Jolt(3D) + Box2D(2D) ([physics](architecture/physics.md)).
+- [ ] **6-2. 물리** — PHI 추상 계층 + Jolt(3D) + Box2D(2D), `Rigidbody`·`Collider`·`PhysicsMaterial`, "물리 추가" 원클릭, Rigidbody별 Simulation 백엔드 선택, Collider Auto(정적 메시·볼록 분해·뼈 캡슐) + 충돌 오차 표시 ([physics](architecture/physics.md#컴포넌트와-사용법-2026-11-23-확정))
 - [ ] **6-3. 오디오** — miniaudio, 3D 소리, 믹서.
 - [ ] **6-4. 입력 액션** — [input](features/input.md): `Input/Actions.jsonl`, 매핑 컨텍스트, 패드.
 - [ ] **6-5. MCP 서버 + AGENTS.md 자동 생성** — [agent-integration](features/agent-integration.md).
