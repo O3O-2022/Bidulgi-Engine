@@ -106,6 +106,18 @@ jobs:
             if ([double]$Matches[2] -gt 50) { $errors += "idle wake-up too slow ($($Matches[2]) ms)" }
           } else { $errors += 'idle test line missing' }
 
+          # 6) Docking (queue 1-1): splitter drag + tab move, then the saved layout comes back after a restart
+          $env:BDG_LAYOUT = "$PWD/ci-layout.jsonl"
+          Remove-Item $env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          $log = Invoke-Editor 'Release' @{ BDG_DOCK_TEST = '1' } 10
+          if ($log -notmatch 'dock test: hierarchy_w ([\d.]+) -> ([\d.]+)  console_leaf_tabs=1') { $errors += 'dock test line missing or tab not moved' }
+          elseif ([math]::Abs(([double]$Matches[2] - [double]$Matches[1]) - 100) -gt 1) { $errors += "splitter drag moved $([double]$Matches[2] - [double]$Matches[1]) instead of 100" }
+          $final1 = if ($log -match 'dock final: (.*)') { $Matches[1].Trim() } else { '' }
+          $log = Invoke-Editor 'Release' @{} 5
+          $final2 = if ($log -match 'dock final: (.*)') { $Matches[1].Trim() } else { '' }
+          if ($log -notmatch 'dock: layout loaded' -or $final1 -ne $final2 -or -not $final1) { $errors += "dock layout not restored ('$final1' vs '$final2')" }
+          Remove-Item Env:BDG_LAYOUT
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

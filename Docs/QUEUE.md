@@ -35,6 +35,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_SCREENSHOT=경로.png` | 마지막 프레임을 PNG로 저장 → 이미지로 직접 확인 |
 | `BDG_DUMP_WIDGETS=경로.jsonl` | 위젯 상자(id, kind, x, y, w, h) 덤프 |
 | `BDG_SCREEN=gallery` | 부품 갤러리 화면으로 시작 (실행 중에는 F1) |
+| `BDG_DOCK_TEST=1`, `BDG_LAYOUT=경로` | 도킹 자동 테스트(경계선 +100, Console 탭 이동), 레이아웃 파일 경로 강제 |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
@@ -65,6 +66,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/Text/Font.*` | FreeType SDF 글자 아틀라스 |
 | `Engine/UI/Theme.*` | `design-system/project/tokens.json` 읽기, 실시간 다시 읽기 |
 | `Engine/UI/UI.*` | 유지형 위젯 트리, 플렉스 레이아웃, 입력·포커스, 부품 8개, 텍스트 입력 |
+| `Engine/UI/Dock.*` | 도킹 트리(분할·탭 묶음), 경계선 드래그, 탭 끌어 옮기기, 레이아웃 JSONL 저장 |
+| `tools/ui_compare/` | 디자인 일치 검사 (`compare.py`) |
 | `Engine/Core/Log.*`, `Image.*` | 텍스트 로그, PNG 저장 |
 | `Editor/main.cpp` | 에디터 실행 파일 진입점 (C API만 사용) |
 | `ThirdParty/glad` | 생성된 GL 로더 (커밋됨) |
@@ -105,7 +108,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-14 버그 제보 보완 | 단축키 `Ctrl+Shift+B`, 보고서의 사용자 폴더·이름 → `%USERPROFILE%`·`%USERNAME%`, 폴더를 먼저 열고 `README.txt`로 파일 설명(첨부 전 확인), 30일 지난 보고서 삭제, stb_image_write 압축 PNG(에디터 1920×1080 = 324KB). CI 4번에 사용자 이름·500KB 검사 추가 | `5b89dbc` |
 | 0-12 M0 손질 | Inspector 카드 헤더에 위쪽 `line` 1px(안 쓰던 `ComponentHeader` 삭제), Batch2D SDF 삼각형 모드 → Node 실행 핀 삼각형, `shadow` 토큰 파싱(`Theme::S`) + `Batch2D::Shadow`(흐림 반경 SDF) → 노드 그림자. 갤러리 스크린샷에서 세 가지 확인, 경고 0개 | `8abd5a9` |
 | 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | `a397455` |
-| 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | (이 커밋) |
+| 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | `5fedfeb` |
+| 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | (이 커밋) |
 
 ---
 
@@ -117,11 +121,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-1. 도킹·탭·패널 크기 조절**
-  - 구현: `Engine/UI/Dock.*`. 도킹 트리 = 노드(가로/세로 분할 + 비율) 또는 잎(탭 묶음: 패널 id 목록 + 선택 탭). 분할 경계선 드래그로 비율 변경. 탭을 끌면 미리보기 영역(위·아래·좌·우·가운데) 강조 → 놓으면 트리 수정. 패널 내용은 기존 Widget 트리를 id로 연결.
-  - 레이아웃 저장: `ProjectSettings/EditorLayout.jsonl`(사용자별은 `.cache/`), 형식은 한 줄에 노드 하나 `{"id":"n1","split":"row","ratio":0.2,"a":"n2","b":"n3"}`, `{"id":"n2","tabs":["hierarchy"],"sel":0}`.
-  - 입력: 마우스 캡처(드래그 중 창 밖으로 나가도 추적) → `Window`에 `SDL_CaptureMouse` 추가.
-  - 완료 조건: 패널 크기 조절·탭 이동·재시작 후 레이아웃 유지. 자동 테스트: 드래그 이벤트 주입 후 덤프로 크기 변화 확인.
 - [ ] **1-2. 리플렉션 레지스트리 + 헤더 도구**
   - 문서: [command-bus-and-reflection](architecture/command-bus-and-reflection.md), [code-syntax](features/code-syntax.md).
   - 구현:

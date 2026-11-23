@@ -21,6 +21,9 @@ public:
   // One glyph quad sampled from the SDF text atlas (see SetTextAtlas).
   void Glyph(float x, float y, float w, float h, float u0, float v0, float u1, float v1, Color color);
   void SetTextAtlas(TextureHandle atlas); // single atlas for now
+  // Clip rectangles (intersected when nested). Stored per vertex, so clipping never splits the batch.
+  void PushClip(float x, float y, float w, float h);
+  void PopClip();
   void End(); // flushes remaining quads
 
   uint32_t QuadsThisFrame() const { return quadsFrame_; }
@@ -35,6 +38,7 @@ private:
     float r, g, b, a;     // fill
     float br, bg, bb, ba; // border color
     float u, v, mode, blur; // mode 0 = rounded rect, 1 = SDF glyph, 2 = triangle; blur = soft edge width
+    float cx0, cy0, cx1, cy1; // clip rectangle
   };
   static constexpr uint32_t kMaxQuads = 16384;
 
@@ -47,6 +51,9 @@ private:
   BufferHandle vertexBuffer_, indexBuffer_, uniformBuffer_;
   TextureHandle dummyTexture_, atlas_;
   std::vector<Vertex> vertices_;
+  struct Clip { float x0, y0, x1, y1; };
+  std::vector<Clip> clips_;
+  Clip clip_{-1e9f, -1e9f, 1e9f, 1e9f};
   uint32_t quadsFrame_ = 0, flushesFrame_ = 0;
 };
 }

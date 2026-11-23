@@ -17,7 +17,7 @@ std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text
   return w;
 }
 const char* KindName(WidgetKind k) {
-  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom", "Card"};
+  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom", "Card", "Dock"};
   return names[(int)k];
 }
 Color Alpha(Color c, float a) { c.a = a; return c; }
@@ -136,7 +136,8 @@ void UIContext::Measure(Widget& w) {
       for (auto& l : lines) w.prefW = std::max(w.prefW, MeasureSpaced(fs, l, w.letterSpacing));
       w.prefH = lh * (float)lines.size(); break;
     }
-    case WidgetKind::Custom: w.prefW = 0; w.prefH = 0; break;
+    case WidgetKind::Custom:
+    case WidgetKind::Dock: w.prefW = 0; w.prefH = 0; break;
     case WidgetKind::Button:
       w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2 + (w.variant == 1 ? 8 + s3 : 0); w.prefH = 24; break;
     case WidgetKind::Field:   w.prefW = 240; w.prefH = std::max(26.f, t.N("size-row", 22) + 4); break;
@@ -214,6 +215,7 @@ void UIContext::Measure(Widget& w) {
 
 void UIContext::Arrange(Widget& w, float x, float y, float width, float height) {
   w.x = x; w.y = y; w.w = width; w.h = height;
+  if (w.kind == WidgetKind::Dock) { ArrangeDock(w); return; }
   if (w.children.empty() || w.collapsed) return;
   if (w.kind == WidgetKind::Cover) { // children stacked from the bottom edge
     float by = y + height - w.padB;
@@ -256,12 +258,14 @@ void UIContext::Arrange(Widget& w, float x, float y, float width, float height) 
 
 void UIContext::Layout(float width, float height) {
   if (!root_) return;
+  docks_.clear();
   Measure(*root_);
   Arrange(*root_, 0, 0, width, height);
 }
 
 // ---- Drawing (design system components) ----------------------------------------------------
 void UIContext::DrawWidget(Widget& w) {
+  if (w.hidden) return;
   const Theme& t = theme_;
   Batch2D& b = batch_;
   const float rsm = t.N("radius-sm", 3), rmd = t.N("radius-md", 4);
@@ -296,6 +300,7 @@ void UIContext::DrawWidget(Widget& w) {
       break;
     }
     case WidgetKind::Custom: if (w.onDraw) w.onDraw(w, *this); break;
+    case WidgetKind::Dock: DrawDock(w); break;
     case WidgetKind::Card: {
       float fs = t.FontSize("control", 12.5f);
       b.Rect(w.x + 4, w.y + 2, w.w - 8, w.h - 4, t.C("panel"), t.N("radius-lg", 5), 1, t.C("line-strong"));
@@ -489,13 +494,27 @@ void UIContext::DrawWidget(Widget& w) {
   }
   if (focused_ == &w && w.kind != WidgetKind::Field)
     b.Rect(w.x - 3, w.y - 3, w.w + 6, w.h + 6, {0, 0, 0, 0}, rmd + 3, 2, t.C("accent")); // focus-visible ring
+  if (w.kind == WidgetKind::Dock) { // each panel's content stays inside its body
+    for (auto& c : w.children) {
+      if (c->hidden) continue;
+      b.PushClip(c->x, c->y, c->w, c->h);
+      DrawWidget(*c);
+      b.PopClip();
+    }
+    return;
+  }
   if (!w.collapsed) for (auto& c : w.children) DrawWidget(*c);
 }
 
-void UIContext::Draw() { if (root_) DrawWidget(*root_); }
+void UIContext::Draw() {
+  if (!root_) return;
+  DrawWidget(*root_);
+  for (Widget* d : docks_) DrawDockOverlay(*d); // drag previews above everything
+}
 
 // ---- Input ----------------------------------------------------------------------------------
 Widget* UIContext::HitTest(Widget& w, float x, float y) {
+  if (w.hidden) return nullptr;
   if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
   if (w.kind == WidgetKind::Card && y < w.y + 30) return &w;
   if (!w.collapsed)
@@ -506,6 +525,7 @@ Widget* UIContext::HitTest(Widget& w, float x, float y) {
 }
 
 void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
+  if (w.hidden) return;
   if (w.focusable) out.push_back(&w);
   for (auto& c : w.children) CollectFocusable(*c, out);
 }
@@ -537,6 +557,8 @@ void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
 void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
   if (!root_) return;
   for (const InputEvent& e : events) {
+    bool mouse = e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseDown || e.type == InputEvent::Type::MouseUp;
+    if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse
     switch (e.type) {
       case InputEvent::Type::MouseMove: {
         Widget* hit = HitTest(*root_, e.x, e.y);

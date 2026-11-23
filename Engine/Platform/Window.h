@@ -29,6 +29,9 @@ public:
   bool HadEvents() const { return hadEvents_; } // anything arrived in the last PumpEvents (input, resize, expose, Wake)
   void Wake();                                  // thread-safe: makes a sleeping PumpEvents return now
   void Present();
+  enum class Cursor { Default, ResizeH, ResizeV };
+  void SetCursor(Cursor c);
+  void SetMouseCapture(bool on); // keep receiving mouse events outside the window while dragging
   // Swap interval actually in effect: -1 adaptive vsync, 1 vsync, 0 off. Request -1 to try adaptive, then 1.
   int SwapInterval() const { return swapInterval_; }
   void SetSwapInterval(int interval);

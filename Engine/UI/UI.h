@@ -14,7 +14,8 @@ class Theme;
 // ---- Retained widget tree ------------------------------------------------------------------
 // Widgets persist between frames; only layout/draw run each frame. Components follow the
 // design system (design-system/project/components) and read every size and color from tokens.
-enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom, Card };
+enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom, Card, Dock };
+struct DockState; // UI/Dock.h
 class UIContext;
 enum class Axis { Row, Column };
 enum class Align { Start, Center, End, Stretch };
@@ -43,6 +44,8 @@ struct Widget {
   std::function<void(Widget&, UIContext&)> onDraw; // Custom: draws inside its rect (viewports, previews)
   bool primary = false, selected = false, focusable = false;
   bool collapsed = false;             // Card: body hidden, header still shown
+  bool hidden = false;                // not laid out, drawn or hit (e.g. unselected dock tab)
+  std::shared_ptr<DockState> dock;    // Dock: split tree of tabbed panels (children = panel contents)
 
   Axis axis = Axis::Column;
   Align crossAlign = Align::Stretch;
@@ -126,6 +129,13 @@ private:
   void FieldPushUndo(Widget& f);
   size_t FieldHit(const Widget& f, float mouseX) const;
   void FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const;
+
+  // Docking (UI/Dock.cpp).
+  void ArrangeDock(Widget& w);
+  void DrawDock(Widget& w);
+  void DrawDockOverlay(Widget& w);
+  bool DockMouse(const InputEvent& e); // true = consumed (splitter or tab drag)
+  std::vector<Widget*> docks_;         // filled by Layout
 
   Window* window_ = nullptr;
   float scale_ = 1.f;

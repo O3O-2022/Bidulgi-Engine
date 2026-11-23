@@ -58,6 +58,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Image.h      Engine/Core/Image.cpp
   Engine/UI/Theme.h        Engine/UI/Theme.cpp
   Engine/UI/UI.h           Engine/UI/UI.cpp
+  Engine/UI/Dock.h         Engine/UI/Dock.cpp
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)

@@ -1,5 +1,6 @@
 #include "Runtime/Screens.h"
 #include "Render2D/Batch2D.h"
+#include "UI/Dock.h"
 #include "UI/Theme.h"
 #include <algorithm>
 #include <cstdio>
@@ -271,12 +272,25 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   ws.Add(MakeBadge("Windows"));
   ws.Add(MakeButton("tool.build", "Build"));
 
-  auto& main = root->Add(MakeBox(Axis::Row, 1));
-  main.height = Length::Fill();
+  // Main area: docked panels (drag splitters to resize, drag tabs to move; layout saved per user).
+  auto state = std::make_shared<DockState>();
+  state->titles = {{"hierarchy", "Hierarchy"}, {"scene", "Scene"}, {"game", "Game"}, {"project", "Project"},
+                   {"console", "Console"}, {"buildlog", "Build Log"}, {"profiler", "Profiler"},
+                   {"inspector", "Inspector"}, {"settings", "Project Settings"}};
+  int hierLeaf = state->AddLeaf({"hierarchy"});
+  int sceneLeaf = state->AddLeaf({"scene", "game"});
+  int bottomLeaf = state->AddLeaf({"project", "console", "buildlog", "profiler"});
+  int inspLeaf = state->AddLeaf({"inspector", "settings"});
+  int center = state->AddSplit(Axis::Column, 0.68f, sceneLeaf, bottomLeaf);
+  int right = state->AddSplit(Axis::Row, 0.675f, center, inspLeaf);
+  state->AddSplit(Axis::Row, 0.2f, hierLeaf, right);
+  auto& dock = root->Add(MakeDock("dock", state));
+  dock.height = Length::Fill();
 
   // Hierarchy with type icons
-  auto& hier = main.Add(MakePanelTabs("panel.hierarchy", {"Hierarchy"}));
-  hier.width = Length::Px(260);
+  auto& hier = dock.Add(MakeBox(Axis::Column));
+  hier.id = "hierarchy";
+  hier.padT = 4;
   hier.Add(MakeListRow("h.main", "Main", "Scene"));
   hier.Add(MakeListRow("h.camera", "Main Camera", "Camera", 1));
   hier.Add(MakeListRow("h.sun", "Sun", "Light", 1));
@@ -288,23 +302,28 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   hier.Add(MakeListRow("h.crystal", "Crystal", "Prefab", 1));
   hier.Add(MakeListRow("h.lamp", "Lantern Light", "Light", 1));
 
-  // Center: viewport + bottom dock
-  auto& center = main.Add(MakeBox(Axis::Column, 1));
-  center.width = Length::Fill();
-  auto& scene = center.Add(MakePanelTabs("panel.scene", {"Scene", "Game"}));
-  scene.height = Length::Fill();
-  auto& view = scene.Add(MakeCustom("scene.view", DrawSceneViewV2));
-  view.height = Length::Fill();
-  auto& dock = center.Add(MakePanelTabs("panel.bottom", {"Project", "Console", "Build Log", "Profiler"}));
-  dock.height = Length::Px(230);
-  Widget* dockPtr = &dock;
-  auto& dockBody = dock.Add(MakeCustom("bottom.body", [dockPtr](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, dockPtr); }));
-  dockBody.height = Length::Fill();
+  // Viewports
+  dock.Add(MakeCustom("scene", DrawSceneViewV2));
+  dock.Add(MakeCustom("game", [](Widget& w, UIContext& ui) {
+    const Theme& t = ui.Tokens();
+    ui.Batch().Rect(w.x, w.y, w.w, w.h, t.C("ground"));
+    const char* msg = "Game view: press Play";
+    float fs = t.FontSize("label", 12);
+    ui.Text(w.x + (w.w - ui.Measure(fs, msg)) * 0.5f, w.y + w.h * 0.5f - fs, fs, t.C("fg-faint"), msg);
+  }));
+
+  // Bottom tools: one panel per tab (Project, Console, Build Log, Profiler)
+  const char* bottom[] = {"project", "console", "buildlog", "profiler"};
+  for (int i = 0; i < 4; ++i) {
+    auto tab = std::make_shared<Widget>();
+    tab->selectedIndex = i;
+    dock.Add(MakeCustom(bottom[i], [tab](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, tab.get()); }));
+  }
 
   // Inspector: component cards (click a header to fold)
-  auto& insp = main.Add(MakePanelTabs("panel.inspector", {"Inspector", "Project Settings"}));
-  insp.width = Length::Px(330);
-  insp.gap = 4;
+  auto& insp = dock.Add(MakeBox(Axis::Column, 4));
+  insp.id = "inspector";
+  insp.padT = 4;
   auto& nameRow = insp.Add(MakeBox(Axis::Row, 8));
   nameRow.padL = 10; nameRow.padT = 4; nameRow.padB = 2;
   nameRow.crossAlign = Align::Center;
@@ -330,6 +349,15 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   addRow.padL = 8; addRow.padT = 6;
   addRow.crossAlign = Align::Center;
   addRow.Add(MakeButton("insp.add", "+  Add Component"));
+
+  auto& settings = dock.Add(MakeBox(Axis::Column, 2));
+  settings.id = "settings";
+  settings.padT = 4;
+  settings.Add(MakeLabel("Rendering")).variant = 2;
+  settings.Add(MakeField("s.quality", "Quality", "Medium"));
+  settings.Add(MakeField("s.vsync", "VSync", "Adaptive"));
+  settings.Add(MakeLabel("Editor")).variant = 2;
+  settings.Add(MakeField("s.shortcuts", "Shortcuts", "Unity"));
 
   // Status bar: build state, live FPS / memory, branch, encoding
   auto& status = root->Add(MakeBox(Axis::Row, 10));

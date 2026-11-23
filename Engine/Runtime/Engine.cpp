@@ -7,6 +7,7 @@
 #include "Render2D/Batch2D.h"
 #include "Runtime/Screens.h"
 #include "Text/Font.h"
+#include "UI/Dock.h"
 #include "UI/Theme.h"
 #include "UI/UI.h"
 #include <algorithm>
@@ -78,7 +79,8 @@ struct bdg_engine {
   bdg::Font font;
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
-  bool showGallery = false, selfTest = false, stress = false, hasFont = false;
+  bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
+  float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::chrono::steady_clock::time_point createdAt;
   int clicks = 0;
   bool bugRequested = false;
@@ -112,6 +114,28 @@ void InjectSelfTest(bdg_engine* e, int frame, float scale) { // scale: UI units 
     key(bdg::Key::Backspace);
     key(bdg::Key::Z, true);
     text(T::TextEditing, "ㅋ");
+  }
+}
+
+// Scripted docking check (BDG_DOCK_TEST=1, editor screen): drag the hierarchy splitter 100 units right,
+// then drag the Console tab onto the right edge of the Scene panel.
+void InjectDockTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::Widget* dw = e->editor->Find("dock");
+  if (!dw || !dw->dock) return;
+  bdg::DockState& d = *dw->dock;
+  auto ev = [&](T type, float x, float y) { e->window.InjectEvent({type, x * scale, y * scale, type == T::MouseMove ? 0 : 1}); };
+  if (frame == 2) {
+    const bdg::DockRect& r = d.nodes[d.FindLeaf("hierarchy")].rect;
+    e->dockTestW0 = r.w;
+    float sx = r.x + r.w + bdg::DockState::kGap * 0.5f, sy = r.y + r.h * 0.5f;
+    ev(T::MouseMove, sx, sy); ev(T::MouseDown, sx, sy); ev(T::MouseMove, sx + 100, sy); ev(T::MouseUp, sx + 100, sy);
+  }
+  if (frame == 5) {
+    const bdg::DockRect& tab = d.tabRects["console"];
+    const bdg::DockRect& scene = d.nodes[d.FindLeaf("scene")].rect;
+    float tx = tab.x + tab.w * 0.5f, ty = tab.y + tab.h * 0.5f, gx = scene.x + scene.w * 0.9f, gy = scene.y + scene.h * 0.5f;
+    ev(T::MouseMove, tx, ty); ev(T::MouseDown, tx, ty); ev(T::MouseMove, tx + 10, ty); ev(T::MouseMove, gx, gy); ev(T::MouseUp, gx, gy);
   }
 }
 }
@@ -256,6 +280,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->maxFrames = desc->max_frames;
   e->stress = std::getenv("BDG_BATCH_STRESS") != nullptr;
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
+  e->dockTest = std::getenv("BDG_DOCK_TEST") != nullptr;
   const char* screen = std::getenv("BDG_SCREEN");
   e->showGallery = screen && std::string(screen) == "gallery";
   if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height)) { delete e; return BDG_ERR_PLATFORM; }
@@ -287,8 +312,17 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   e->editor->SetWindow(&e->window);
   if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
-  if (const char* tab = std::getenv("BDG_DOCK_TAB")) // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
-    if (bdg::Widget* dock = e->editor->Find("panel.bottom")) dock->selectedIndex = std::atoi(tab);
+  if (bdg::Widget* dock = e->editor->Find("dock"); dock && dock->dock) {
+    // Per-user layout (.cache is git-ignored); BDG_LAYOUT overrides for tests.
+    const char* custom = std::getenv("BDG_LAYOUT");
+    dock->dock->layoutPath = custom ? custom : (std::filesystem::current_path() / ".cache" / "EditorLayout.jsonl").string();
+    if (dock->dock->Load(dock->dock->layoutPath)) bdg::LogInfo("dock: layout loaded {}", dock->dock->layoutPath);
+    bdg::LogInfo("dock: {}", dock->dock->Describe());
+    if (const char* tab = std::getenv("BDG_DOCK_TAB")) { // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
+      const char* names[] = {"project", "console", "buildlog", "profiler"};
+      dock->dock->SelectPanel(names[std::clamp(std::atoi(tab), 0, 3)]);
+    }
+  }
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
@@ -391,6 +425,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (const char* s = std::getenv("BDG_UI_SCALE")) scale = std::strtof(s, nullptr);
     if (scale < 0.5f) scale = 1.f;
     if (e->selfTest && e->showGallery) InjectSelfTest(e, frames, scale);
+    if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
     e->batch.Begin((int32_t)lw, (int32_t)lh);
@@ -429,6 +464,13 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("ui: clicks(Apply)={} focused={} tabs.view={} field.speed=\"{}\" composing=\"{}\" cursor={}",
                      e->clicks, f ? f->id : "-", e->gallery->Find("tabs.view")->selectedIndex, speed->text2,
                      speed->composing, speed->cursor);
+      }
+      if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) {
+        const bdg::DockState& d = *dw->dock;
+        if (e->dockTest)
+          bdg::LogInfo("dock test: hierarchy_w {:.1f} -> {:.1f}  console_leaf_tabs={}", e->dockTestW0,
+                       d.nodes[d.FindLeaf("hierarchy")].rect.w, d.nodes[d.FindLeaf("console")].tabs.size());
+        bdg::LogInfo("dock final: {}", d.Describe());
       }
       if (const char* dump = std::getenv("BDG_DUMP_WIDGETS"))
         bdg::LogInfo("widget dump {}: {}", ui.DumpJSONL(dump) ? "saved" : "FAILED", dump);

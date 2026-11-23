@@ -137,6 +137,14 @@ void Window::SleepPrecise(double ms) {
 }
 
 void Window::Present() { SDL_GL_SwapWindow(window_); }
+void Window::SetCursor(Cursor c) {
+  static SDL_Cursor* cursors[3] = {};
+  static const SDL_SystemCursor ids[3] = {SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NS_RESIZE};
+  int i = (int)c;
+  if (!cursors[i]) cursors[i] = SDL_CreateSystemCursor(ids[i]);
+  if (cursors[i]) SDL_SetCursor(cursors[i]);
+}
+void Window::SetMouseCapture(bool on) { SDL_CaptureMouse(on); }
 void Window::GetDrawableSize(int32_t& w, int32_t& h) const { SDL_GetWindowSizeInPixels(window_, &w, &h); }
 float Window::GetDisplayScale() const {
   float s = SDL_GetWindowDisplayScale(window_);
