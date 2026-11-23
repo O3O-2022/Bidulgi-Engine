@@ -77,8 +77,7 @@ jobs:
           if ($log -match '\[error\]') { $errors += 'errors in editor log' }
           # Start-up time (queue 2-3b): shown on the run page; software GL on CI is much slower than a GPU
           if ($log -match '(startup: .*)') { Write-Host "::notice::$($Matches[1])" }
-          if ($log -match '(perf: startup_to_first_frame_ms=\d+[^
-]*)') { Write-Host "::notice::$($Matches[1])" }
+          if ($log -match '(perf: startup_to_first_frame_ms=\d+[^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
 
           # 2) UI self-test: click, focus, Korean text input, IME composition
           $log = Invoke-Editor 'Debug' @{ BDG_SCREEN = 'gallery'; BDG_UI_SELFTEST = '1' } 20
