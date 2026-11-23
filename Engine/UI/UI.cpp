@@ -206,6 +206,7 @@ void UIContext::DrawWidget(Widget& w) {
       float fs = t.FontSize("control", 12.5f);
       b.Rect(w.x + 4, w.y + 2, w.w - 8, w.h - 4, t.C("panel"), t.N("radius-lg", 5), 1, t.C("line-strong"));
       b.Rect(w.x + 5, w.y + 3, w.w - 10, 26, w.hovered ? t.C("line-strong") : t.C("raise"), t.N("radius-lg", 5));
+      b.Rect(w.x + 5, w.y + 3, w.w - 10, 1, t.C("line"));                      // .bdg-comp-head border-top
       float cx = w.x + 16, cy = w.y + 16;
       if (w.collapsed) { b.Line(cx - 2, cy - 4, cx + 2, cy, 1.5f, t.C("fg-dim")); b.Line(cx + 2, cy, cx - 2, cy + 4, 1.5f, t.C("fg-dim")); }
       else { b.Line(cx - 4, cy - 2, cx, cy + 2, 1.5f, t.C("fg-dim")); b.Line(cx, cy + 2, cx + 4, cy - 2, 1.5f, t.C("fg-dim")); }
@@ -335,7 +336,8 @@ void UIContext::DrawWidget(Widget& w) {
     case WidgetKind::Node: {
       static const char* stripes[] = {"node-flow", "node-event", "node-function", "node-pure"};
       float stripe = t.N("size-node-stripe", 3), head = 5 + 16 + 5 + stripe;
-      b.Rect(w.x + 2, w.y + 4, w.w, w.h, {0, 0, 0, 0.35f}, rmd);                       // shadow-node (approx.)
+      if (Theme::Shadow sh = t.S("shadow-node"); sh.color.a > 0)                      // shadow-node token
+        b.Shadow(w.x + sh.x, w.y + sh.y, w.w, w.h, sh.color, rmd, sh.blur);
       b.Rect(w.x, w.y, w.w, w.h, t.C("panel"), rmd, 1, t.C("line-strong"));
       b.Rect(w.x + 1, w.y + 1, w.w - 2, head - 1, t.C("win"), rmd);
       b.Rect(w.x + 1, w.y + 1, w.w - 2, stripe, t.C(stripes[w.variant & 3]), rmd);
@@ -351,7 +353,8 @@ void UIContext::DrawWidget(Widget& w) {
         Color pc = t.C("pin-" + type);
         float py = out ? outY : inY;
         float cxp = out ? w.x + w.w - 9 - 10 : w.x + 9;
-        b.Rect(cxp, py + 3, 10, 10, {0, 0, 0, 0}, 5, 2, pc);
+        if (type == "exec") b.Triangle(cxp + 1, py + 3, 8, 10, pc);            // exec pin: right-pointing triangle
+        else b.Rect(cxp, py + 3, 10, 10, {0, 0, 0, 0}, 5, 2, pc);
         float lw = Measure(11.5f, label);
         Text(out ? cxp - 6 - lw : cxp + 16, py, 11.5f, t.C("fg"), label);
         (out ? outY : inY) += 20;

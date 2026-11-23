@@ -14,6 +14,10 @@ public:
   void Rect(float x, float y, float w, float h, Color fill, float radius = 0.f,
             float border = 0.f, Color borderColor = {0, 0, 0, 0});
   void Line(float x0, float y0, float x1, float y1, float thickness, Color color);
+  // Soft-edged rounded rect for drop shadows (CSS box-shadow): blur = edge falloff width in pixels.
+  void Shadow(float x, float y, float w, float h, Color color, float radius, float blur);
+  // Isosceles triangle inside the box, pointing right (Graph exec pins). border > 0 draws an outline.
+  void Triangle(float x, float y, float w, float h, Color fill, float border = 0.f, Color borderColor = {0, 0, 0, 0});
   // One glyph quad sampled from the SDF text atlas (see SetTextAtlas).
   void Glyph(float x, float y, float w, float h, float u0, float v0, float u1, float v1, Color color);
   void SetTextAtlas(TextureHandle atlas); // single atlas for now
@@ -30,12 +34,12 @@ private:
     float radius, border;
     float r, g, b, a;     // fill
     float br, bg, bb, ba; // border color
-    float u, v, mode, pad; // mode 0 = shape, 1 = SDF glyph
+    float u, v, mode, blur; // mode 0 = rounded rect, 1 = SDF glyph, 2 = triangle; blur = soft edge width
   };
   static constexpr uint32_t kMaxQuads = 16384;
 
   void PushQuad(const float corners[4][2], const float local[4][2], float hw, float hh,
-                float radius, float border, Color fill, Color borderColor);
+                float radius, float border, Color fill, Color borderColor, float mode = 0.f, float blur = 0.f);
   void Flush();
 
   RHI* rhi_ = nullptr;

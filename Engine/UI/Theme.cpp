@@ -49,7 +49,7 @@ bool Theme::Load(const std::string& path) {
   yyjson_doc* doc = yyjson_read_file(path.c_str(), 0, nullptr, &err);
   if (!doc) { LogError("tokens: cannot read {} ({} at {})", path, err.msg, err.pos); return false; }
   yyjson_val* root = yyjson_doc_get_root(doc);
-  colors_.clear(); numbers_.clear(); fontSizes_.clear();
+  colors_.clear(); numbers_.clear(); fontSizes_.clear(); shadows_.clear();
 
   ForTokens(root, "color", [&](const char* name, const char* value) {
     Color c;
@@ -58,6 +58,19 @@ bool Theme::Load(const std::string& path) {
   });
   for (const char* group : {"spacing", "radius", "size"})
     ForTokens(root, group, [&](const char* name, const char* value) { numbers_[name] = std::strtof(value, nullptr); });
+  ForTokens(root, "shadow", [&](const char* name, const char* value) { // "x y blur color" (CSS box-shadow)
+    Shadow sh;
+    char* end = nullptr;
+    sh.x = std::strtof(value, &end);
+    if (end && std::strncmp(end, "px", 2) == 0) end += 2;
+    sh.y = std::strtof(end, &end);
+    if (end && std::strncmp(end, "px", 2) == 0) end += 2;
+    sh.blur = std::strtof(end, &end);
+    if (end && std::strncmp(end, "px", 2) == 0) end += 2;
+    while (end && *end == ' ') ++end;
+    if (end && ParseColor(end, sh.color)) shadows_[name] = sh;
+    else LogWarn("tokens: bad shadow {} = {}", name, value);
+  });
 
   size_t gi, gn, si, sn;
   yyjson_val *g, *s;
@@ -70,7 +83,7 @@ bool Theme::Load(const std::string& path) {
   }
   yyjson_doc_free(doc);
   mtime_ = FileTime(path);
-  LogInfo("tokens: {} colors, {} sizes, {} type styles from {}", colors_.size(), numbers_.size(), fontSizes_.size(), path);
+  LogInfo("tokens: {} colors, {} sizes, {} type styles, {} shadows from {}", colors_.size(), numbers_.size(), fontSizes_.size(), shadows_.size(), path);
   return true;
 }
 
@@ -80,6 +93,11 @@ bool Theme::ReloadIfChanged() {
   if (t == 0 || t == mtime_) return false;
   mtime_ = t;
   return Load(path_);
+}
+
+Theme::Shadow Theme::S(std::string_view name) const {
+  auto it = shadows_.find(std::string(name));
+  return it != shadows_.end() ? it->second : Shadow{};
 }
 
 Color Theme::C(std::string_view name) const {

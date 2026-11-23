@@ -53,15 +53,6 @@ void DrawProjectTiles(Widget& w, UIContext& ui) {
   }
 }
 
-std::unique_ptr<Widget> ComponentHeader(std::string title) {
-  auto row = MakeBox(Axis::Row, 8);
-  row->padL = 10; row->padT = 6; row->padB = 6;
-  row->crossAlign = Align::Center;
-  auto& l = row->Add(MakeLabel(std::move(title)));
-  l.fontSize = 12.5f;
-  row->Add(Spacer());
-  return row;
-}
 }
 
 namespace {
@@ -394,6 +385,8 @@ std::unique_ptr<Widget> BuildGalleryScreen(int* clickCounter) {
   badges.Add(MakeBadge("C#"));
   badges.Add(MakeBadge("Saved", 1));
   badges.Add(MakeBadge("Prefab"));
+  auto& card = insp.Add(MakeCard("gallery.card", "PlayerMove", "C#")); // component header (.bdg-comp-head)
+  card.Add(MakeField("gallery.card.speed", "Move Speed", "4.5"));
 
   auto& side = row.Add(MakeBox(Axis::Column, 16));
   side.width = Length::Px(440);

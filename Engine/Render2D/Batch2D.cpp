@@ -12,8 +12,8 @@ layout(location = 2) in vec2 aHalf;
 layout(location = 3) in vec2 aShape;   // x = radius, y = border
 layout(location = 4) in vec4 aFill;
 layout(location = 5) in vec4 aBorder;
-layout(location = 6) in vec3 aUVMode;  // uv, mode
-out vec2 vLocal; out vec2 vHalf; out vec2 vShape; out vec4 vFill; out vec4 vBorder; out vec3 vUVMode;
+layout(location = 6) in vec4 aUVMode;  // uv, mode, blur
+out vec2 vLocal; out vec2 vHalf; out vec2 vShape; out vec4 vFill; out vec4 vBorder; out vec4 vUVMode;
 void main() {
   vLocal = aLocal; vHalf = aHalf; vShape = aShape; vFill = aFill; vBorder = aBorder; vUVMode = aUVMode;
   vec2 ndc = aPos / uViewport * 2.0 - 1.0;
@@ -22,23 +22,44 @@ void main() {
 )";
 const char* kFS = R"(#version 450 core
 layout(binding = 0) uniform sampler2D uAtlas;
-in vec2 vLocal; in vec2 vHalf; in vec2 vShape; in vec4 vFill; in vec4 vBorder; in vec3 vUVMode;
+in vec2 vLocal; in vec2 vHalf; in vec2 vShape; in vec4 vFill; in vec4 vBorder; in vec4 vUVMode;
 out vec4 oColor;
 float sdRoundBox(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - b + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
+// Signed distance to the triangle (-h.x,-h.y) (-h.x,h.y) (h.x,0): pointing right.
+float sdTriangleRight(vec2 p, vec2 h) {
+  vec2 a = vec2(-h.x, -h.y), b = vec2(-h.x, h.y), c = vec2(h.x, 0.0);
+  vec2 e0 = b - a, e1 = c - b, e2 = a - c;
+  vec2 v0 = p - a, v1 = p - b, v2 = p - c;
+  vec2 pq0 = v0 - e0 * clamp(dot(v0, e0) / dot(e0, e0), 0.0, 1.0);
+  vec2 pq1 = v1 - e1 * clamp(dot(v1, e1) / dot(e1, e1), 0.0, 1.0);
+  vec2 pq2 = v2 - e2 * clamp(dot(v2, e2) / dot(e2, e2), 0.0, 1.0);
+  float s = sign(e0.x * e2.y - e0.y * e2.x);
+  vec2 d = min(min(vec2(dot(pq0, pq0), s * (v0.x * e0.y - v0.y * e0.x)),
+                   vec2(dot(pq1, pq1), s * (v1.x * e1.y - v1.y * e1.x))),
+                   vec2(dot(pq2, pq2), s * (v2.x * e2.y - v2.y * e2.x)));
+  return -sqrt(d.x) * sign(d.y);
+}
 void main() {
   // Sample and take derivatives outside any branch (derivatives need uniform control flow).
   float sd = texture(uAtlas, vUVMode.xy).r - 0.5;
   float aa = max(fwidth(sd), 1e-4);
-  if (vUVMode.z > 0.5) {                                  // SDF glyph
+  if (vUVMode.z > 0.5 && vUVMode.z < 1.5) {               // SDF glyph
     oColor = vec4(vFill.rgb, vFill.a * clamp(sd / aa + 0.5, 0.0, 1.0));
+    return;
+  }
+  if (vUVMode.z > 1.5) {                                  // triangle (+ optional outline)
+    float dt = sdTriangleRight(vLocal, vHalf);
+    vec4 tc = vShape.y > 0.0 ? mix(vBorder, vFill, clamp(0.5 - (dt + vShape.y), 0.0, 1.0)) : vFill;
+    oColor = vec4(tc.rgb, tc.a * clamp(0.5 - dt, 0.0, 1.0));
     return;
   }
   float r = min(vShape.x, min(vHalf.x, vHalf.y));
   float d = sdRoundBox(vLocal, vHalf, r);
   float coverage = clamp(0.5 - d, 0.0, 1.0);              // 1px anti-aliased edge
+  if (vUVMode.w > 0.0) coverage = 1.0 - smoothstep(-0.5 * vUVMode.w, 0.5 * vUVMode.w, d); // soft shadow edge
   vec4 color = vFill;
   if (vShape.y > 0.0) {
     vec2 innerHalf = max(vHalf - vShape.y, vec2(0.0));
@@ -61,7 +82,7 @@ bool Batch2D::Init(RHI& rhi) {
   pd.attrs[3] = {3, 2, offsetof(Vertex, radius)};
   pd.attrs[4] = {4, 4, offsetof(Vertex, r)};
   pd.attrs[5] = {5, 4, offsetof(Vertex, br)};
-  pd.attrs[6] = {6, 3, offsetof(Vertex, u)};
+  pd.attrs[6] = {6, 4, offsetof(Vertex, u)};
   pd.attrCount = 7;
   pd.stride = sizeof(Vertex);
   pd.alphaBlend = true;
@@ -104,11 +125,11 @@ void Batch2D::Begin(int32_t w, int32_t h) {
 }
 
 void Batch2D::PushQuad(const float c[4][2], const float l[4][2], float hw, float hh, float radius,
-                       float border, Color f, Color b) {
+                       float border, Color f, Color b, float mode, float blur) {
   if (vertices_.size() >= kMaxQuads * 4) Flush();
   for (int i = 0; i < 4; ++i)
     vertices_.push_back({c[i][0], c[i][1], l[i][0], l[i][1], hw, hh, radius, border,
-                         f.r, f.g, f.b, f.a, b.r, b.g, b.b, b.a, 0, 0, 0, 0});
+                         f.r, f.g, f.b, f.a, b.r, b.g, b.b, b.a, 0, 0, mode, blur});
   ++quadsFrame_;
 }
 
@@ -118,6 +139,22 @@ void Batch2D::Rect(float x, float y, float w, float h, Color fill, float radius,
   float c[4][2] = {{x - pad, y - pad}, {x + w + pad, y - pad}, {x + w + pad, y + h + pad}, {x - pad, y + h + pad}};
   float l[4][2] = {{-hw - pad, -hh - pad}, {hw + pad, -hh - pad}, {hw + pad, hh + pad}, {-hw - pad, hh + pad}};
   PushQuad(c, l, hw, hh, radius, border, fill, borderColor);
+}
+
+void Batch2D::Shadow(float x, float y, float w, float h, Color color, float radius, float blur) {
+  const float pad = 1.f + blur; // the soft edge extends blur/2 outside the box
+  float hw = w * 0.5f, hh = h * 0.5f;
+  float c[4][2] = {{x - pad, y - pad}, {x + w + pad, y - pad}, {x + w + pad, y + h + pad}, {x - pad, y + h + pad}};
+  float l[4][2] = {{-hw - pad, -hh - pad}, {hw + pad, -hh - pad}, {hw + pad, hh + pad}, {-hw - pad, hh + pad}};
+  PushQuad(c, l, hw, hh, radius, 0.f, color, color, 0.f, blur > 0.f ? blur : 0.f);
+}
+
+void Batch2D::Triangle(float x, float y, float w, float h, Color fill, float border, Color borderColor) {
+  const float pad = 1.f;
+  float hw = w * 0.5f, hh = h * 0.5f;
+  float c[4][2] = {{x - pad, y - pad}, {x + w + pad, y - pad}, {x + w + pad, y + h + pad}, {x - pad, y + h + pad}};
+  float l[4][2] = {{-hw - pad, -hh - pad}, {hw + pad, -hh - pad}, {hw + pad, hh + pad}, {-hw - pad, hh + pad}};
+  PushQuad(c, l, hw, hh, 0.f, border, fill, borderColor, 2.f);
 }
 
 void Batch2D::Line(float x0, float y0, float x1, float y1, float thickness, Color color) {

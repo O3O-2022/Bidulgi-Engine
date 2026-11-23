@@ -100,18 +100,14 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 버그 제보 | GitHub 이슈 양식(버그·기능 제안) + 에디터 F12·버튼: 스크린샷·로그·시스템 정보 폴더 + 미리 채운 이슈 양식 | (이 커밋) |
 | 에디터 2차 디자인 | 로고·Obsidian Dark 테마·컴포넌트 카드(접기)·타입 아이콘·하단 도크(Project/Console/Build Log/Profiler)·Consolas·상태 줄 FPS/메모리·exe 아이콘 | (이 커밋) |
 | 0-13 대기 중 다시 그리기 멈추기 | 바뀔 때만 그림(OS 이벤트 대기), vsync 확인 + 무시 감지 시 주사율 타이머 제한, `Window::Wake()`. 대기 CPU 96% → 0ms/5초(스레드별 측정), `BDG_IDLE_TEST=3`: frames=3, wake_latency 0.1~0.6ms. CI 테스트 5번 추가. 셀프테스트 클릭이 화면 배율 1.5에서 빗나가던 버그도 수정 | `1a657b9` |
-| 0-14 버그 제보 보완 | 단축키 `Ctrl+Shift+B`, 보고서의 사용자 폴더·이름 → `%USERPROFILE%`·`%USERNAME%`, 폴더를 먼저 열고 `README.txt`로 파일 설명(첨부 전 확인), 30일 지난 보고서 삭제, stb_image_write 압축 PNG(에디터 1920×1080 = 324KB). CI 4번에 사용자 이름·500KB 검사 추가 | (이 커밋) |
+| 0-14 버그 제보 보완 | 단축키 `Ctrl+Shift+B`, 보고서의 사용자 폴더·이름 → `%USERPROFILE%`·`%USERNAME%`, 폴더를 먼저 열고 `README.txt`로 파일 설명(첨부 전 확인), 30일 지난 보고서 삭제, stb_image_write 압축 PNG(에디터 1920×1080 = 324KB). CI 4번에 사용자 이름·500KB 검사 추가 | `5b89dbc` |
+| 0-12 M0 손질 | Inspector 카드 헤더에 위쪽 `line` 1px(안 쓰던 `ComponentHeader` 삭제), Batch2D SDF 삼각형 모드 → Node 실행 핀 삼각형, `shadow` 토큰 파싱(`Theme::S`) + `Batch2D::Shadow`(흐림 반경 SDF) → 노드 그림자. 갤러리 스크린샷에서 세 가지 확인, 경고 0개. 글꼴은 0-12b로 분리 | (이 커밋) |
 
 ---
 
-## M0 — 남은 것 (위에서부터 순서대로: 0-12 → 0-10)
+## M0 — 남은 것 (위에서부터 순서대로: 0-12b → 0-10)
 
-- [ ] **0-12. M0 마무리 손질**
-  - Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) 추가 → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. (파일 내려받기는 사용자 허락 후)
-  - Inspector 컴포넌트 헤더(`ComponentHeader`)에 `raise` 배경 + 위쪽 `line` 1px (`bundle.css`의 `.bdg-comp-head`).
-  - Node 실행 핀(`exec`)을 원 대신 삼각형으로 (Batch2D에 `Triangle` 추가: 정점 3개짜리 쿼드 대신 SDF 삼각형 모드 추가).
-  - `shadow-node` 토큰 문자열을 파싱해 그림자 오프셋·흐림을 반영 (Batch2D 사각형에 흐림 반경 인자 추가: SDF 거리로 부드러운 가장자리).
-  - 완료 조건: 갤러리 스크린샷에서 세 가지가 보임, 경고 0개.
+- [ ] **0-12b. 글꼴 추가 (사용자 허락 필요)** — Pretendard(OFL) `Assets/Fonts/Pretendard-Regular.otf`, JetBrains Mono(OFL) → `FindFont`가 우선 사용. 라이선스 파일 함께 커밋. 완료 조건: 로그의 `font:` 줄이 Pretendard, 코드 글꼴이 JetBrains Mono
 
 ---
 

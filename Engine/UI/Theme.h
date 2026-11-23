@@ -16,7 +16,9 @@ public:
   Color C(std::string_view name) const;          // missing token -> magenta (easy to spot)
   float N(std::string_view name, float fallback) const;
   float FontSize(std::string_view style, float fallback) const;
-  size_t TokenCount() const { return colors_.size() + numbers_.size() + fontSizes_.size(); }
+  struct Shadow { float x = 0, y = 0, blur = 0; Color color{0, 0, 0, 0}; };
+  Shadow S(std::string_view name) const; // CSS box-shadow token "x y blur color"; missing -> no shadow
+  size_t TokenCount() const { return colors_.size() + numbers_.size() + fontSizes_.size() + shadows_.size(); }
   const std::string& Path() const { return path_; }
 
 private:
@@ -24,5 +26,6 @@ private:
   long long mtime_ = 0;
   std::unordered_map<std::string, Color> colors_;
   std::unordered_map<std::string, float> numbers_, fontSizes_;
+  std::unordered_map<std::string, Shadow> shadows_;
 };
 }
