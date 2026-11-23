@@ -70,7 +70,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `tools/ui_compare/` | 디자인 일치 검사 (`compare.py`) |
 | `Engine/Core/Log.*`, `Image.*` | 텍스트 로그, PNG 저장 |
 | `Engine/Core/Reflection.*`, `Math.h` | 리플렉션 레지스트리(타입·필드·함수, 경로로 JSON 값 읽기/쓰기, 변경 추적), 값 타입 |
-| `Tools/bht/bht.py` | 헤더 도구: `BCLASS`/`BPROPERTY`… → `<File>.gen.cpp` (CMake `bdg_reflect()`) |
+| `tools/bht/bht.py` | 헤더 도구: `BCLASS`/`BPROPERTY`… → `<File>.gen.cpp` (CMake `bdg_reflect()`) |
 | `Tests/` | 단위 테스트 (`BidulgiTests.exe`, 자체 최소 매크로 `bdg_test.h`) |
 | `Editor/main.cpp` | 에디터 실행 파일 진입점 (C API만 사용) |
 | `ThirdParty/glad` | 생성된 GL 로더 (커밋됨) |
@@ -113,7 +113,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | `a397455` |
 | 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | `5fedfeb` |
 | 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | `36b1e5c` |
-| 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `Tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | (이 커밋) |
+| 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | (이 커밋) |
 
 ---
 

@@ -40,7 +40,7 @@ find_package(OpenGL REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # ---- Reflection: Bidulgi Header Tool (queue 1-2) ----
-# bdg_reflect(<target> <header>...): runs Tools/bht/bht.py on each header (only when it or the tool changed)
+# bdg_reflect(<target> <header>...): runs tools/bht/bht.py on each header (only when it or the tool changed)
 # and adds <stem>.gen.cpp plus <target>_reflect.cpp, which defines bdg_reflect_register_<target>().
 function(bdg_reflect target)
   set(decls "")
@@ -50,8 +50,8 @@ function(bdg_reflect target)
     string(MAKE_C_IDENTIFIER ${stem} id)
     set(out ${CMAKE_BINARY_DIR}/gen/${target}/${stem}.gen.cpp)
     add_custom_command(OUTPUT ${out}
-      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Tools/bht/bht.py ${CMAKE_SOURCE_DIR}/${header} ${out} ${header}
-      DEPENDS ${CMAKE_SOURCE_DIR}/${header} ${CMAKE_SOURCE_DIR}/Tools/bht/bht.py
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bht/bht.py ${CMAKE_SOURCE_DIR}/${header} ${out} ${header}
+      DEPENDS ${CMAKE_SOURCE_DIR}/${header} ${CMAKE_SOURCE_DIR}/tools/bht/bht.py
       COMMENT "bht ${header}" VERBATIM)
     target_sources(${target} PRIVATE ${out})
     string(APPEND decls "void bdg_reflect_register_${id}();\n")

@@ -1,5 +1,5 @@
 #pragma once
-// Reflection test types (queue 1-2). Tools/bht generates BTestComponent.gen.cpp from this header.
+// Reflection test types (queue 1-2). tools/bht generates BTestComponent.gen.cpp from this header.
 #include "Core/Reflection.h"
 #include <string>
 #include <vector>
