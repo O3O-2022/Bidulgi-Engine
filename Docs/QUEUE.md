@@ -101,16 +101,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ---
 
-## M0 — 남은 것
+## M0 — 남은 것 (위에서부터 순서대로: 0-13 → 0-14 → 0-12 → 0-10)
 
-- [ ] **0-10. 디자인 일치 검사 1차** ([design-parity-test](planning/design-parity-test.md) 1~2단계)
-  - 구현:
-    1. `tools/ui_compare/`에 Python 스크립트 `compare.py`를 만든다. 입력: 브라우저 쪽 JSON, 엔진 쪽 JSONL(`BDG_DUMP_WIDGETS`).
-    2. 브라우저 쪽: `design-system/project/components/*/preview.html`을 헤드리스 Edge(`msedge --headless --dump-dom`은 상자를 못 주므로) 대신 **Playwright(Apache-2.0)** 로 열어 `getBoundingClientRect()`로 `[data-bdg-id]` 요소 상자를 JSON으로 저장한다. preview.html 요소에 `data-bdg-id` 속성을 붙인다.
-    3. 엔진 쪽: 같은 id를 가진 갤러리 위젯을 만든다 (`Screens.cpp`의 `BuildGalleryScreen`에 부품별 미리보기와 같은 크기의 고정 레이아웃 추가). 창 크기를 브라우저와 같게 맞추는 `--size 800x600` 인자를 `Editor/main.cpp`에 추가.
-    4. 토큰 비교: 엔진에 `--dump-tokens 경로` 추가 (Theme의 모든 값을 JSON으로) → `tokens.json`과 값 비교.
-    5. 보고서는 텍스트: `tokens ✓ 64/64`, `layout max error 0.6px` 형식. 기준 초과 시 종료 코드 1.
-  - 완료 조건: 부품 8개에 대해 토큰 전부 일치, 레이아웃 오차 1px 이하 보고서가 나옴.
 - [ ] **0-13. 대기 중 다시 그리기 멈추기 (최우선 최적화)** — 지금 수직 동기화가 안 걸려 대기 중에도 초당 수천 프레임을 그림(상태 줄 4000+ fps). `SDL_GL_SetSwapInterval` 결과 확인(실패 시 적응형 -1 → 1 → 프레임 제한), 입력·애니메이션·파일 변경이 없으면 `SDL_WaitEventTimeout`으로 잠들기. 완료 조건: 대기 중 CPU·GPU 사용률이 거의 0, 입력 반응 지연 없음
 - [ ] **0-14. 버그 제보 보완** — 단축키 F12 → `Ctrl+Shift+B`(Windows 디버거 키 충돌), 보고서의 사용자 경로를 `%USERPROFILE%`로 치환 + 첨부 전 미리보기, 30일 지난 보고서 삭제, PNG 압축(stb_image_write, 퍼블릭 도메인). 완료 조건: 보고서 파일에 사용자 이름이 없음, 스크린샷 500KB 이하 [convenience-features](planning/convenience-features.md)
 - [ ] **0-12. M0 마무리 손질**
@@ -121,6 +113,15 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
   - 완료 조건: 갤러리 스크린샷에서 세 가지가 보임, 경고 0개.
 
 ---
+
+- [ ] **0-10. 디자인 일치 검사 1차** ([design-parity-test](planning/design-parity-test.md) 1~2단계)
+  - 구현:
+    1. `tools/ui_compare/`에 Python 스크립트 `compare.py`를 만든다. 입력: 브라우저 쪽 JSON, 엔진 쪽 JSONL(`BDG_DUMP_WIDGETS`).
+    2. 브라우저 쪽: `design-system/project/components/*/preview.html`을 헤드리스 Edge(`msedge --headless --dump-dom`은 상자를 못 주므로) 대신 **Playwright(Apache-2.0)** 로 열어 `getBoundingClientRect()`로 `[data-bdg-id]` 요소 상자를 JSON으로 저장한다. preview.html 요소에 `data-bdg-id` 속성을 붙인다.
+    3. 엔진 쪽: 같은 id를 가진 갤러리 위젯을 만든다 (`Screens.cpp`의 `BuildGalleryScreen`에 부품별 미리보기와 같은 크기의 고정 레이아웃 추가). 창 크기를 브라우저와 같게 맞추는 `--size 800x600` 인자를 `Editor/main.cpp`에 추가.
+    4. 토큰 비교: 엔진에 `--dump-tokens 경로` 추가 (Theme의 모든 값을 JSON으로) → `tokens.json`과 값 비교.
+    5. 보고서는 텍스트: `tokens ✓ 64/64`, `layout max error 0.6px` 형식. 기준 초과 시 종료 코드 1.
+  - 완료 조건: 부품 8개에 대해 토큰 전부 일치, 레이아웃 오차 1px 이하 보고서가 나옴.
 
 ## M1 — 에디터 골격 (실제로 편집되는 에디터)
 
