@@ -1,9 +1,11 @@
 #pragma once
 // Minimal scene model (bootstrap for queue 1-3; extended in 2-1): objects with a persistent id ("g1"),
 // a name, a parent and reflected components. The command bus is the only code that edits it in the editor.
+#include "Core/Handle.h"
 #include "Core/Reflection.h"
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace bdg {
@@ -30,7 +32,11 @@ public:
   SceneObject* Find(std::string_view id);
   const SceneObject* Find(std::string_view id) const;
   const std::vector<std::string>& Roots() const { return roots_; }
-  size_t ObjectCount() const { return objects_.size(); }
+  size_t ObjectCount() const { return objects_.Count(); }
+  // Runtime handles (queue 1-4): invalid as soon as the object is destroyed, even if the id comes back.
+  Handle<SceneObject> HandleOf(std::string_view id) const;
+  SceneObject* Resolve(Handle<SceneObject> h, std::string* error = nullptr);
+  bool IsValid(Handle<SceneObject> h) const { return objects_.IsValid(h); }
 
   std::string NewId();                                         // "g<n>", never reused
   SceneObject* Create(std::string id, std::string name, std::string parent = {}, int index = -1);
@@ -47,7 +53,8 @@ public:
 
 private:
   std::vector<std::string>& Siblings(const std::string& parent);
-  std::vector<std::unique_ptr<SceneObject>> objects_;
+  Pool<SceneObject> objects_;
+  std::unordered_map<std::string, Handle<SceneObject>> ids_; // persistent id -> current handle
   std::vector<std::string> roots_;
   uint64_t nextId_ = 1;
 };

@@ -26,14 +26,22 @@ Component* SceneObject::Find(std::string_view typeName) {
 }
 
 Scene::~Scene() {
-  for (auto& o : objects_)
-    for (auto& c : o->components) if (c.type->destroy) c.type->destroy(c.data);
+  objects_.ForEach([](Handle<SceneObject>, SceneObject& o) {
+    for (auto& c : o.components) if (c.type->destroy) c.type->destroy(c.data);
+  });
 }
 
 SceneObject* Scene::Find(std::string_view id) {
-  for (auto& o : objects_) if (o->id == id) return o.get();
-  return nullptr;
+  auto it = ids_.find(std::string(id));
+  return it == ids_.end() ? nullptr : objects_.Get(it->second);
 }
+
+Handle<SceneObject> Scene::HandleOf(std::string_view id) const {
+  auto it = ids_.find(std::string(id));
+  return it == ids_.end() ? Handle<SceneObject>{} : it->second;
+}
+
+SceneObject* Scene::Resolve(Handle<SceneObject> h, std::string* error) { return objects_.Resolve(h, "SceneObject", error); }
 const SceneObject* Scene::Find(std::string_view id) const { return const_cast<Scene*>(this)->Find(id); }
 
 std::string Scene::NewId() {
@@ -55,15 +63,16 @@ SceneObject* Scene::Create(std::string id, std::string name, std::string parent,
     unsigned long long n = std::strtoull(id.c_str() + 1, &end, 10);
     if (end && !*end && n >= nextId_) nextId_ = n + 1;
   }
-  auto o = std::make_unique<SceneObject>();
+  Handle<SceneObject> h = objects_.Create();
+  SceneObject* o = objects_.Get(h);
   o->id = id;
   o->name = std::move(name);
   o->parent = parent;
+  ids_[id] = h;
   auto& sib = Siblings(parent);
   if (index < 0 || index > (int)sib.size()) index = (int)sib.size();
   sib.insert(sib.begin() + index, id);
-  objects_.push_back(std::move(o));
-  return objects_.back().get();
+  return o;
 }
 
 bool Scene::Destroy(std::string_view id) {
@@ -75,7 +84,10 @@ bool Scene::Destroy(std::string_view id) {
   auto& sib = Siblings(o->parent);
   sib.erase(std::remove(sib.begin(), sib.end(), o->id), sib.end());
   for (auto& c : o->components) if (c.type->destroy) c.type->destroy(c.data);
-  objects_.erase(std::find_if(objects_.begin(), objects_.end(), [&](auto& p) { return p.get() == o; }));
+  auto it = ids_.find(o->id);
+  Handle<SceneObject> h = it->second;
+  ids_.erase(it);
+  objects_.Destroy(h); // every handle to it is now invalid
   return true;
 }
 
