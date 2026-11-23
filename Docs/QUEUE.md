@@ -77,6 +77,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `tools/ui_compare/` | 디자인 일치 검사 (`compare.py`) |
 | `Engine/Core/Log.*`, `Image.*` | 텍스트 로그, PNG 저장 |
 | `Engine/Core/Reflection.*`, `Math.h` | 리플렉션 레지스트리(타입·필드·함수, 경로로 JSON 값 읽기/쓰기, 변경 추적), 값 타입 |
+| `Engine/Core/Space.*` | 좌표계·단위 규칙(오른손 Y-up, 앞 -Z, 1=1m, 각도 도), 오일러↔쿼터니언, TRS (GLM) |
 | `Engine/Core/Handle.h` | `Handle<T>{index, generation}` + `Pool<T>`(세대 비교, 주소 고정), 공통 오류 문구 |
 | `Engine/Core/Crash.*` | 크래시 처리기: 미니덤프·`crash.txt`·로그 → `BugReports/crash-<시간>/`, 다음 실행 때 제보 버튼 |
 | `Engine/Core/Guard.*` | `BDG_CHECK`(복구 가능한 검사), `GuardedCall`(SEH 가드) |
@@ -95,7 +96,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - 순서를 바꾸거나 항목을 추가하면 [decisions](planning/decisions.md)에 이유를 한 줄 남깁니다.
 - 외부 라이브러리는 MIT 호환 라이선스만 (MIT, BSD, zlib, Apache-2.0, ISC, FTL, 글꼴은 OFL). GPL·LGPL 금지.
 - 외부 라이브러리 타입을 `bdg_api.h`나 엔진 공개 헤더에 노출하지 않습니다.
-- 확정된 규칙: 생명주기 이름은 유니티식(`Awake` `Start` `Update(dt)` …), 좌표는 Y-up·1단위=1m(제안, M2 전 확정), 입력은 입력 액션만, 게임 구조는 컴포넌트 방식.
+- 확정된 규칙: 생명주기 이름은 유니티식(`Awake` `Start` `Update(dt)` …), 좌표는 오른손·Y-up·앞쪽 -Z·1단위=1m(2-0 확정, `Core/Space.h`), 입력은 입력 액션만, 게임 구조는 컴포넌트 방식.
 - 사용자는 한국어로 소통합니다. 문서는 한국어, 코드 주석과 커밋은 영어.
 
 ---
@@ -135,6 +136,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 1-5 단축키 시스템 + 프리셋 | `UI/Shortcuts.*`: 동작 15개(undo·redo·duplicate·delete·rename·save·play·도구 5개·focus·gallery·bug), 프리셋 `unity`(기본)·`unreal`(예: Play Ctrl+P ↔ Alt+P, Duplicate Ctrl+D ↔ Ctrl+W), 사용자 바인딩은 프리셋 위에 유지, 충돌 검사(로그 + 설정 목록), `ProjectSettings/Shortcuts.jsonl`(첫 줄 프리셋 + 바꾼 것만). 첫 실행 때 선택 줄, Project Settings에 프리셋 버튼과 동작별 키 목록. 키 입력 칸에서 글자를 칠 때는 Ctrl/Alt 조합과 F키만 단축키로. 키 전체(A~Z, 0~9, F1~F12, Alt). Duplicate는 명령 묶음(add + addcomp). 자동 테스트: `unity_play=1 unreal_play=0 objects=10`, 재시작 후 프리셋 유지. 단위 테스트 3개(총 28개·362개). CI 10번 | `c610361` |
 | 1-6 접근성 기초 | AccessKit 대신 Windows UI Automation 제공자 직접 구현(`Platform/Accessibility*`, 새 의존성·Rust 빌드 없음): 창 = 루트, 포커스 가능한 위젯 = 자식 요소(Tab 순서, 위젯 id로 찾아 패널이 다시 만들어져도 안전), 역할(Button·TabItem·Edit·ListItem·Group)·이름(장식 기호 ▶·+ 제외)·AutomationId·포커스 상태·화면 위치, 누르기(Invoke)·값(Value, 입력은 명령으로 확정) 패턴, 포커스 변경 알림(`UiaRaiseAutomationEvent`). Ctrl+F6 = 다음 도킹 패널의 첫 컨트롤로 이동(두 프리셋 공통, 단축키 동작 `view.nextPanel`). `BDG_A11Y=0`이면 끔. 자동 테스트: 다른 스레드의 UIA 클라이언트가 `focused_name=Add Component control=Button children=30`, Ctrl+F6 후 `next_panel=h.scene`. CI 11번. **내레이터가 실제로 읽는지는 사용자 수동 확인 필요** | (이 커밋) |
 | 1-7 네트워크·공동 편집 대비 점검 | 영구 ID·명령 직렬화·바뀐 필드 추적·결정성 4가지 확인 → [network-readiness](architecture/network-readiness.md). 발견해서 고침: 바뀐 필드 기록이 비워지지 않고 쌓이던 문제(`EditorModel::Update`가 매 프레임 비움). 결정성 테스트 3개: 무작위 편집 세션을 다른 버스에 줄마다 전달(2010줄), JSONL 재생, **다른 프로세스**(`BidulgiTests --replay-dump`) 재생(1734줄) → 씬 덤프·Undo 깊이 동일. 단위 테스트 31개·376개 검사 | `27d06d1` |
+| 2-0 좌표·단위 확정 | 오른손 좌표계, Y-up, 앞쪽 -Z(glTF·OpenGL·Godot·Maya와 같음), 1단위=1m·kg·초, 각도는 편집·파일에서 도(수학 코드는 라디안), 양의 회전은 오른손 법칙, 오일러 순서 Ry·Rx·Rz(유니티와 같은 순서), 앞면은 반시계 감김. GLM 1.0.1(MIT, 헤더만) 추가, `Core/Space.*`: 오일러↔쿼터니언(짐벌 처리), TRS, 점·방향 변환. 규칙을 고정하는 단위 테스트 4개(총 35개·397개) | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -147,9 +149,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ---
 
-## M2 — 씬과 에셋 (실제 데이터를 다룸)
+## M2 — 씬과 에셋 (실제 데이터를 다룸) — 진행 중
 
-- [ ] **2-0. 좌표·단위 확정** — Y-up, 1단위=1m, 오른손/왼손 결정 후 [decisions](planning/decisions.md)에 기록. 수학 라이브러리(GLM, MIT) 추가.
 - [ ] **2-1. 씬 모델** — 오브젝트(영구 ID, 이름, 부모, Transform) + 컴포넌트(리플렉션 타입). 계층 변경은 명령.
 - [ ] **2-2. JSONL 씬 저장/열기** — 형식은 [data-formats](features/data-formats.md): 머리 줄 `{"scene":..,"defaults":"1.0"}` + 한 줄에 오브젝트 하나, 기본값 생략, id 순 정렬(git diff 안정). yyjson으로 쓰기/읽기. 분할 저장(셀·오브젝트별)은 형식만 지원하고 UI는 나중.
   - 완료 조건: 저장 → 다시 열기 → 다시 저장 시 파일이 바이트 단위로 같음.
