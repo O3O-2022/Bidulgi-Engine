@@ -2,6 +2,7 @@
 #include "Assets/AssetDatabase.h"
 #include "bdg_test.h"
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 
@@ -109,4 +110,33 @@ TEST_CASE("assets: added, modified, removed, copies") {
   CHECK_EQ(db.OrphanMetas().size(), size_t(1)); // a.png.meta reported, not deleted
   CHECK(fs::exists(d / "a.png.meta"));
   fs::remove_all(d);
+}
+
+TEST_CASE("assets: the index cache skips unchanged files (queue 2-3b)") {
+  fs::path project = Fresh("bdg_assets_cache"), d = project / "Assets";
+  const char* env = std::getenv("BDG_PERF_ASSETS"); // measure big projects: BDG_PERF_ASSETS=10000
+  int count = env ? std::atoi(env) : 3000;
+  for (int i = 0; i < count; ++i) Write(d / ("Folder" + std::to_string(i % 40)) / ("asset_" + std::to_string(i) + ".png"), "data " + std::to_string(i));
+  std::string cache = (project / ".cache" / "assetdb.jsonl").string();
+  AssetDatabase first;
+  CHECK(first.Open(d.string(), nullptr, cache));
+  CHECK_EQ(first.LastScan().hashed, size_t(count));
+  double cold = first.LastScan().ms;
+  CHECK(fs::exists(cache));
+  AssetDatabase second; // next start: nothing changed, nothing is read or hashed
+  CHECK(second.Open(d.string(), nullptr, cache));
+  CHECK_EQ(second.Count(), size_t(count));
+  CHECK_EQ(second.LastScan().files, size_t(count));
+  CHECK_EQ(second.LastScan().hashed, size_t(0));
+  CHECK_EQ(second.LastScan().metasRead, size_t(0));
+  CHECK(second.ByPath("Folder3/asset_3.png")->guid == first.ByPath("Folder3/asset_3.png")->guid);
+  double warm = second.LastScan().ms;
+  Write(d / "Folder5/asset_5.png", "changed while the editor was closed");
+  fs::remove(d / "Folder6/asset_6.png");
+  AssetDatabase third;
+  CHECK(third.Open(d.string(), nullptr, cache));
+  CHECK_EQ(third.LastScan().hashed, size_t(1));
+  CHECK(!third.ByPath("Folder6/asset_6.png"));
+  std::printf("       %d assets: first scan %.0f ms, cached scan %.0f ms\n", count, cold, warm);
+  fs::remove_all(project);
 }

@@ -3,10 +3,13 @@
 #include <yyjson.h>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <random>
+#include <unordered_set>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -15,7 +18,25 @@ namespace fs = std::filesystem;
 
 namespace bdg {
 namespace {
-std::string Rel(const fs::path& root, const fs::path& p) { return fs::relative(p, root).generic_string(); }
+std::string Registry_Quote(const std::string& s) { // JSON string literal
+  std::string o = "\"";
+  for (char c : s) { if (c == '"' || c == '\\') o += '\\'; o += c; }
+  return o + "\"";
+}
+
+std::wstring Wide(const std::string& s) {
+  if (s.empty()) return {};
+  int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+  std::wstring w((size_t)n, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), w.data(), n);
+  return w;
+}
+std::string Utf8(const wchar_t* w) {
+  int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+  std::string s((size_t)(n > 0 ? n - 1 : 0), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+  return s;
+}
 
 uint64_t HashFile(const fs::path& p) {
   uint64_t h = 1469598103934665603ull;
@@ -42,34 +63,43 @@ std::string ReadGuid(const fs::path& meta) {
   return out;
 }
 
-bool IsAssetFile(const fs::directory_entry& e) {
-  if (!e.is_regular_file()) return false;
-  std::string name = e.path().filename().string();
-  if (name.empty() || name[0] == '.') return false;
-  std::string ext = e.path().extension().string();
-  return ext != ".meta" && ext != ".tmp";
-}
-
-// Walks the tree; hidden folders (".cache", ".git") are skipped.
-template <class F> void Walk(const fs::path& root, F&& f) {
-  std::error_code ec;
-  for (auto it = fs::recursive_directory_iterator(root, fs::directory_options::skip_permission_denied, ec);
-       it != fs::recursive_directory_iterator(); it.increment(ec)) {
-    if (ec) break;
-    if (it->is_directory() && it->path().filename().string().starts_with(".")) { it.disable_recursion_pending(); continue; }
-    f(*it);
-  }
-}
-
-long long MTime(const fs::path& p) {
+long long MTime(const fs::path& p) { // 100 ns ticks since 1601 (= FILETIME, = MSVC file_clock)
   std::error_code ec;
   auto t = fs::last_write_time(p, ec);
   return ec ? 0 : (long long)t.time_since_epoch().count();
 }
+
+// One pass over the tree with FindFirstFileEx: sizes and times come with the listing, so an unchanged project
+// costs one directory read per folder and no per-file system calls. Names starting with '.' are skipped
+// (.cache, .git, .DS_Store). Relative paths are UTF-8 with '/'.
+struct DiskFile { std::string rel; uint64_t size; long long mtime; };
+struct DiskTree {
+  std::vector<DiskFile> files;
+  std::unordered_map<std::string, long long> metas; // asset rel path -> .meta mtime
+};
+void ScanTree(const std::wstring& dir, const std::string& prefix, DiskTree& out) {
+  WIN32_FIND_DATAW fd;
+  HANDLE h = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+  if (h == INVALID_HANDLE_VALUE) return;
+  do {
+    if (fd.cFileName[0] == L'.') continue;
+    std::string name = Utf8(fd.cFileName), rel = prefix.empty() ? name : prefix + "/" + name;
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) ScanTree(dir + L"\\" + fd.cFileName, rel, out);
+      continue;
+    }
+    long long mtime = (long long)(((unsigned long long)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime);
+    uint64_t size = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+    if (rel.size() > 5 && rel.ends_with(".meta")) out.metas[rel.substr(0, rel.size() - 5)] = mtime;
+    else if (!rel.ends_with(".tmp")) out.files.push_back({rel, size, mtime});
+  } while (FindNextFileW(h, &fd));
+  FindClose(h);
+}
 }
 
 std::string AssetDatabase::ImporterFor(const std::string& path) {
-  std::string ext = fs::path(path).extension().string();
+  std::string ext;
+  if (size_t dot = path.find_last_of('.'); dot != std::string::npos && path.find('/', dot) == std::string::npos) ext = path.substr(dot);
   for (char& c : ext) c = (char)std::tolower((unsigned char)c);
   auto any = [&](std::initializer_list<const char*> l) { for (auto* e : l) if (ext == e) return true; return false; };
   if (any({".png", ".jpg", ".jpeg", ".tga", ".psd", ".exr", ".hdr", ".bmp", ".ktx2"})) return "texture";
@@ -91,97 +121,172 @@ std::string AssetDatabase::NewGuid() {
   return g;
 }
 
-bool AssetDatabase::Open(const std::string& root, std::string* error) {
+fs::path AssetDatabase::Abs(const std::string& rel) const {
+  std::wstring w = Wide(rel);
+  for (wchar_t& c : w) if (c == L'/') c = L'\\';
+  return fs::path(rootW_ + L"\\" + w);
+}
+
+bool AssetDatabase::LoadCache() {
+  std::FILE* f = cachePath_.empty() ? nullptr : std::fopen(cachePath_.c_str(), "rb");
+  if (!f) return false;
+  char line[2048];
+  bool ok = false;
+  if (std::fgets(line, sizeof line, f)) { // header: same version and same root, else start over
+    yyjson_doc* d = yyjson_read(line, std::strlen(line), 0);
+    yyjson_val* h = d ? yyjson_doc_get_root(d) : nullptr;
+    const char* r = yyjson_get_str(yyjson_obj_get(h, "root"));
+    ok = yyjson_get_int(yyjson_obj_get(h, "assetdb")) == 1 && r && root_ == r;
+    yyjson_doc_free(d);
+  }
+  while (ok && std::fgets(line, sizeof line, f)) {
+    yyjson_doc* d = yyjson_read(line, std::strlen(line), 0);
+    yyjson_val* o = d ? yyjson_doc_get_root(d) : nullptr;
+    const char* g = yyjson_get_str(yyjson_obj_get(o, "guid"));
+    const char* p = yyjson_get_str(yyjson_obj_get(o, "path"));
+    const char* imp = yyjson_get_str(yyjson_obj_get(o, "importer"));
+    if (g && p && imp) {
+      AssetRecord r{g, p, imp, yyjson_get_uint(yyjson_obj_get(o, "size")), yyjson_get_uint(yyjson_obj_get(o, "hash")),
+                    yyjson_get_sint(yyjson_obj_get(o, "mtime")), yyjson_get_sint(yyjson_obj_get(o, "metaMtime"))};
+      pathToGuid_[r.path] = r.guid;
+      byGuid_[r.guid] = std::move(r);
+    }
+    yyjson_doc_free(d);
+  }
+  std::fclose(f);
+  return ok;
+}
+
+bool AssetDatabase::SaveCache() const {
+  if (cachePath_.empty()) return false;
+  std::error_code ec;
+  fs::create_directories(fs::path(cachePath_).parent_path(), ec);
+  std::FILE* f = std::fopen(cachePath_.c_str(), "wb");
+  if (!f) return false;
+  std::fprintf(f, "{\"assetdb\":1,\"root\":%s}\n", Registry_Quote(root_).c_str());
+  for (auto& [g, r] : byGuid_)
+    std::fprintf(f, "{\"guid\":\"%s\",\"path\":%s,\"importer\":\"%s\",\"size\":%llu,\"hash\":%llu,\"mtime\":%lld,\"metaMtime\":%lld}\n",
+                 g.c_str(), Registry_Quote(r.path).c_str(), r.importer.c_str(), (unsigned long long)r.size,
+                 (unsigned long long)r.hash, r.mtime, r.metaMtime);
+  std::fclose(f);
+  return true;
+}
+
+bool AssetDatabase::Open(const std::string& root, std::string* error, const std::string& cachePath) {
   std::error_code ec;
   if (!fs::is_directory(root, ec)) {
     if (error) *error = std::format("asset folder not found: {}", root);
     return false;
   }
-  root_ = fs::absolute(root).string();
+  fs::path abs = fs::absolute(root);
+  rootW_ = abs.wstring();
+  while (!rootW_.empty() && (rootW_.back() == L'\\' || rootW_.back() == L'/')) rootW_.pop_back();
+  root_ = Utf8(rootW_.c_str());
   byGuid_.clear();
   pathToGuid_.clear();
-  opened_ = false;
+  cachePath_ = cachePath;
+  bool cached = LoadCache(); // known files come back from the cache; the scan only reads what changed
+  opened_ = cached;
   Changes c = Refresh();
   opened_ = true;
-  LogInfo("assets: {} ({} assets, {} new .meta files, {} orphaned .meta)", root_, Count(), c.added.size(), OrphanMetas().size());
+  SaveCache();
+  LogInfo("assets: {} ({} assets, {} new, {} removed since last run, {} orphaned .meta) scan {:.0f} ms: {} files, {} .meta read, {} hashed{}",
+          root_, Count(), c.added.size(), c.removed.size(), orphans_.size(), stats_.ms, stats_.files, stats_.metasRead,
+          stats_.hashed, cached ? " (index cache)" : "");
   return true;
 }
 
 AssetDatabase::Changes AssetDatabase::Refresh() {
   Changes ch;
-  fs::path root(root_);
-  std::unordered_map<std::string, bool> seen; // guid -> still on disk
-  std::vector<fs::path> noMeta;
-  Walk(root, [&](const fs::directory_entry& e) {
-    if (!IsAssetFile(e)) return;
-    std::string rel = Rel(root, e.path());
-    fs::path meta = e.path().string() + ".meta";
-    std::string guid = fs::exists(meta) ? ReadGuid(meta) : "";
-    if (guid.empty() || seen.count(guid)) { noMeta.push_back(e.path()); return; } // copied file with a copied .meta: new GUID
-    seen[guid] = true;
-    uint64_t size = (uint64_t)e.file_size();
-    long long mtime = MTime(e.path());
+  auto t0 = std::chrono::steady_clock::now();
+  stats_ = {};
+  auto hashFile = [&](const std::string& rel) { ++stats_.hashed; return HashFile(Abs(rel)); };
+  auto writeMeta = [&](const std::string& rel, const std::string& guid, const std::string& importer) {
+    if (std::FILE* f = _wfopen(Abs(rel + ".meta").c_str(), L"wb")) {
+      std::fprintf(f, "{\"guid\":\"%s\",\"importer\":\"%s\"}\n", guid.c_str(), importer.c_str());
+      std::fclose(f);
+    }
+    return MTime(Abs(rel + ".meta"));
+  };
+  DiskTree tree;
+  ScanTree(rootW_, "", tree);
+  std::unordered_set<std::string> seen;       // guids still on disk
+  std::unordered_set<std::string> filesOnDisk;
+  std::vector<const DiskFile*> noMeta;
+  for (const DiskFile& df : tree.files) {
+    ++stats_.files;
+    filesOnDisk.insert(df.rel);
+    auto mm = tree.metas.find(df.rel);
+    long long metaMtime = mm == tree.metas.end() ? 0 : mm->second;
+    std::string guid;
+    auto known = pathToGuid_.find(df.rel);
+    if (known != pathToGuid_.end() && metaMtime != 0 && byGuid_[known->second].metaMtime == metaMtime) guid = known->second; // .meta unchanged
+    else if (metaMtime != 0) { guid = ReadGuid(Abs(df.rel + ".meta")); ++stats_.metasRead; }
+    if (guid.empty() || seen.count(guid)) { noMeta.push_back(&df); continue; } // no .meta, or a copied one: new GUID
+    seen.insert(guid);
     auto it = byGuid_.find(guid);
-    if (it == byGuid_.end()) { // first time seen (e.g. opened project, or an asset added with its .meta)
-      byGuid_[guid] = {guid, rel, ImporterFor(rel), size, HashFile(e.path()), mtime};
-      pathToGuid_[rel] = guid;
-      if (opened_) ch.added.push_back(rel); // arrived with its own .meta
-      return;
+    if (it == byGuid_.end()) { // first time seen (opened project, or an asset that arrived with its .meta)
+      byGuid_[guid] = {guid, df.rel, ImporterFor(df.rel), df.size, hashFile(df.rel), df.mtime, metaMtime};
+      pathToGuid_[df.rel] = guid;
+      if (opened_) ch.added.push_back(df.rel);
+      continue;
     }
     AssetRecord& r = it->second;
-    if (r.path != rel) { // moved together with its .meta
-      ch.moved.emplace_back(r.path, rel);
+    r.metaMtime = metaMtime;
+    if (r.path != df.rel) { // moved together with its .meta
+      ch.moved.emplace_back(r.path, df.rel);
       pathToGuid_.erase(r.path);
-      pathToGuid_[rel] = guid;
-      r.path = rel;
+      pathToGuid_[df.rel] = guid;
+      r.path = df.rel;
     }
-    if (r.size != size || r.mtime != mtime) {
-      r.size = size;
-      r.mtime = mtime;
-      r.hash = HashFile(e.path());
-      ch.modified.push_back(rel);
+    if (r.size != df.size || r.mtime != df.mtime) {
+      r.size = df.size;
+      r.mtime = df.mtime;
+      r.hash = hashFile(df.rel);
+      ch.modified.push_back(df.rel);
     }
-  });
+  }
   // Records whose file is gone: maybe moved without its .meta (match by content), else removed.
   std::vector<std::string> gone;
   for (auto& [g, r] : byGuid_) if (!seen.count(g)) gone.push_back(g);
   std::sort(gone.begin(), gone.end());
-  for (const fs::path& p : noMeta) {
-    std::string rel = Rel(root, p);
-    uint64_t size = (uint64_t)fs::file_size(p), hash = HashFile(p);
-    auto match = std::find_if(gone.begin(), gone.end(), [&](const std::string& g) { return byGuid_[g].size == size && byGuid_[g].hash == hash; });
-    std::string guid;
-    fs::path meta = p.string() + ".meta";
+  for (const DiskFile* df : noMeta) {
+    uint64_t hash = hashFile(df->rel);
+    auto match = std::find_if(gone.begin(), gone.end(), [&](const std::string& g) { return byGuid_[g].size == df->size && byGuid_[g].hash == hash; });
     if (match != gone.end()) { // reattach: move the orphaned .meta next to the file, keep the GUID
-      guid = *match;
+      std::string guid = *match;
       AssetRecord& r = byGuid_[guid];
-      fs::path oldMeta = root / (r.path + ".meta");
       std::error_code ec;
-      if (fs::exists(oldMeta)) fs::rename(oldMeta, meta, ec);
-      if (ec || !fs::exists(meta)) { // could not move it: write a fresh one with the same GUID
-        if (std::FILE* f = _wfopen(meta.c_str(), L"wb")) { std::fprintf(f, "{\"guid\":\"%s\",\"importer\":\"%s\"}\n", guid.c_str(), r.importer.c_str()); std::fclose(f); }
-      }
-      LogInfo("assets: {} moved without its .meta; reattached to {} (GUID {})", r.path, rel, guid);
-      ch.moved.emplace_back(r.path, rel);
+      fs::rename(Abs(r.path + ".meta"), Abs(df->rel + ".meta"), ec);
+      if (ec) writeMeta(df->rel, guid, r.importer); // could not move it: same GUID in a fresh .meta
+      LogInfo("assets: {} moved without its .meta; reattached to {} (GUID {})", r.path, df->rel, guid);
+      ch.moved.emplace_back(r.path, df->rel);
       pathToGuid_.erase(r.path);
-      r.path = rel;
-      r.mtime = MTime(p);
-      pathToGuid_[rel] = guid;
+      tree.metas.erase(r.path);
+      r.path = df->rel;
+      r.mtime = df->mtime;
+      r.metaMtime = MTime(Abs(df->rel + ".meta"));
+      pathToGuid_[df->rel] = guid;
       gone.erase(match);
     } else { // new asset: its .meta is written once
-      guid = NewGuid();
-      std::string importer = ImporterFor(rel);
-      if (std::FILE* f = _wfopen(meta.c_str(), L"wb")) { std::fprintf(f, "{\"guid\":\"%s\",\"importer\":\"%s\"}\n", guid.c_str(), importer.c_str()); std::fclose(f); }
-      byGuid_[guid] = {guid, rel, importer, size, hash, MTime(p)};
-      pathToGuid_[rel] = guid;
-      ch.added.push_back(rel);
+      std::string guid = NewGuid(), importer = ImporterFor(df->rel);
+      long long metaMtime = writeMeta(df->rel, guid, importer);
+      byGuid_[guid] = {guid, df->rel, importer, df->size, hash, df->mtime, metaMtime};
+      pathToGuid_[df->rel] = guid;
+      ch.added.push_back(df->rel);
     }
+    tree.metas[df->rel] = 1;
   }
   for (const std::string& g : gone) {
     ch.removed.push_back(byGuid_[g].path);
     pathToGuid_.erase(byGuid_[g].path);
     byGuid_.erase(g);
   }
+  orphans_.clear();
+  for (auto& [rel, t] : tree.metas) if (!filesOnDisk.count(rel)) orphans_.push_back(rel + ".meta");
+  std::sort(orphans_.begin(), orphans_.end());
+  stats_.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  if (opened_ && !ch.Empty()) SaveCache();
   return ch;
 }
 
@@ -189,17 +294,20 @@ bool AssetDatabase::Move(const std::string& from, const std::string& to, std::st
   auto it = pathToGuid_.find(from);
   if (it == pathToGuid_.end()) { if (error) *error = std::format("no asset \"{}\"", from); return false; }
   if (pathToGuid_.count(to)) { if (error) *error = std::format("\"{}\" already exists", to); return false; }
-  fs::path root(root_), src = root / from, dst = root / to;
+  fs::path src = Abs(from), dst = Abs(to);
   std::error_code ec;
   fs::create_directories(dst.parent_path(), ec);
   fs::rename(src, dst, ec);
   if (ec) { if (error) *error = std::format("cannot move {}: {}", from, ec.message()); return false; }
-  fs::rename(src.string() + ".meta", dst.string() + ".meta", ec);
+  fs::rename(Abs(from + ".meta"), Abs(to + ".meta"), ec);
   if (ec) { fs::rename(dst, src, ec); if (error) *error = std::format("cannot move {}.meta", from); return false; }
   std::string guid = it->second;
   pathToGuid_.erase(it);
   pathToGuid_[to] = guid;
-  byGuid_[guid].path = to;
+  AssetRecord& r = byGuid_[guid];
+  r.path = to;
+  r.metaMtime = MTime(Abs(to + ".meta"));
+  SaveCache();
   return true;
 }
 
@@ -214,12 +322,12 @@ const AssetRecord* AssetDatabase::ByPath(const std::string& path) const {
 }
 
 std::vector<std::string> AssetDatabase::OrphanMetas() const {
+  DiskTree tree; // fresh look at the disk (the panel and `bdg validate` ask after outside changes)
+  ScanTree(rootW_, "", tree);
+  std::unordered_set<std::string> files;
+  for (auto& f : tree.files) files.insert(f.rel);
   std::vector<std::string> out;
-  fs::path root(root_);
-  Walk(root, [&](const fs::directory_entry& e) {
-    if (e.is_regular_file() && e.path().extension() == ".meta" && !fs::exists(fs::path(e.path()).replace_extension()))
-      out.push_back(Rel(root, e.path()));
-  });
+  for (auto& [rel, t] : tree.metas) if (!files.count(rel)) out.push_back(rel + ".meta");
   std::sort(out.begin(), out.end());
   return out;
 }
@@ -248,7 +356,7 @@ DWORD WINAPI WatchThread(LPVOID p) {
 bool FileWatcher::Start(const std::string& root, void (*onChange)(void*), void* user) {
   Stop();
   HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  auto* args = new WatchArgs{fs::path(root).wstring(), onChange, user, stop};
+  auto* args = new WatchArgs{Wide(root), onChange, user, stop};
   HANDLE t = CreateThread(nullptr, 0, WatchThread, args, 0, nullptr);
   if (!t) { delete args; CloseHandle(stop); return false; }
   thread_ = t;

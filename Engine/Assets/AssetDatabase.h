@@ -8,6 +8,7 @@
 //   - files moved outside the editor without their .meta are matched to the orphaned .meta by content
 //     (same size and hash) on the next Refresh(); unmatched .meta files are reported, never deleted.
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -17,7 +18,7 @@ namespace bdg {
 struct AssetRecord {
   std::string guid, path, importer; // path: relative to the root, '/' separators
   uint64_t size = 0, hash = 0;      // hash: FNV-1a of the content (matches moved files to their .meta)
-  long long mtime = 0;
+  long long mtime = 0, metaMtime = 0; // unchanged times = the scan reuses guid and hash without reading
 };
 
 class AssetDatabase {
@@ -28,7 +29,12 @@ public:
     bool Empty() const { return added.empty() && removed.empty() && modified.empty() && moved.empty(); }
   };
 
-  bool Open(const std::string& root, std::string* error = nullptr); // first scan (creates missing .meta files)
+  // First scan (creates missing .meta files). With a cache file (<project>/.cache/assetdb.jsonl) only files whose
+  // size or times changed since the last run are read again (queue 2-3b).
+  bool Open(const std::string& root, std::string* error = nullptr, const std::string& cachePath = {});
+  bool SaveCache() const;
+  struct ScanStats { size_t files = 0, metasRead = 0, hashed = 0; double ms = 0; };
+  const ScanStats& LastScan() const { return stats_; }
   Changes Refresh();                                                 // rescan and report what changed
   bool Move(const std::string& from, const std::string& to, std::string* error = nullptr); // relative paths
 
@@ -41,8 +47,14 @@ public:
 
 private:
   std::string NewGuid();
-  std::string root_;
+  std::string root_;     // UTF-8
+  std::wstring rootW_;
+  std::vector<std::string> orphans_; // from the last scan
+  std::filesystem::path Abs(const std::string& rel) const;
   bool opened_ = false; // after the first scan, files arriving with their own .meta count as added
+  std::string cachePath_;
+  ScanStats stats_;
+  bool LoadCache();
   std::unordered_map<std::string, AssetRecord> byGuid_;
   std::unordered_map<std::string, std::string> pathToGuid_;
 };

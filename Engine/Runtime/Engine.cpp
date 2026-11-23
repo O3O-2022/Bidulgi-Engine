@@ -525,10 +525,20 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
   e->showGallery = screen && std::string(screen) == "gallery";
+  // Start-up phases (queue 2-3b): one log line says where the time goes ("startup: window=.. gl=.. ...").
+  std::string phases;
+  auto lap = std::chrono::steady_clock::now();
+  auto mark = [&](const char* name) {
+    auto now = std::chrono::steady_clock::now();
+    phases += std::format("{}{}={:.0f}", phases.empty() ? "" : " ", name, std::chrono::duration<double, std::milli>(now - lap).count());
+    lap = now;
+  };
   if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height)) { delete e; return BDG_ERR_PLATFORM; }
+  mark("window");
   if (!e->rhi.Init(e->window)) { e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
   if (std::getenv("BDG_GL_ERROR_TEST")) e->rhi.DebugTriggerError(); // verifies GL debug output reaches the log
   if (!e->batch.Init(e->rhi)) { e->rhi.Shutdown(); e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
+  mark("gl");
   std::string fontPath = FindFont();
   e->hasFont = !fontPath.empty() && e->font.Load(e->rhi, fontPath.c_str());
   if (e->hasFont) {
@@ -539,12 +549,14 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       if (!mono.empty() && std::filesystem::exists(mono) && e->font.LoadMono(mono.c_str())) break;
   }
   else bdg::LogWarn("no font found: text is not drawn (set BDG_FONT)");
+  mark("fonts");
   std::string tokens = FindUp("BDG_TOKENS", {"design-system/project/tokens.json"});
   if (tokens.empty() || !e->theme.Load(tokens)) bdg::LogWarn("design tokens not found: colors show as magenta (set BDG_TOKENS)");
   if (desc->dump_tokens_path)
     bdg::LogInfo("token dump {}: {}", e->theme.DumpJSON(desc->dump_tokens_path) ? "saved" : "FAILED", desc->dump_tokens_path);
 
   bdg::Font* font = e->hasFont ? &e->font : nullptr;
+  mark("tokens");
   e->editor = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->editor->SetRoot(bdg::BuildEditorScreen());
   if (screen && std::string(screen).rfind("parity:", 0) == 0) { // design parity test: one component preview
@@ -571,6 +583,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       };
     }
   }
+  mark("ui");
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
@@ -590,9 +603,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       else bdg::LogError("replay failed: {}", err);
     }
   }
+  mark("scene");
   if (const char* assetsDir = std::getenv("BDG_ASSETS")) { // asset database + watcher (wakes the idle editor)
     std::string err;
-    e->assetsOpen = e->assets.Open(assetsDir, &err);
+    e->assetsOpen = e->assets.Open(assetsDir, &err, (std::filesystem::path(assetsDir).parent_path() / ".cache" / "assetdb.jsonl").string());
     if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
     else e->assetWatcher.Start(e->assets.Root(), [](void* p) {
       auto* eng = static_cast<bdg_engine*>(p);
@@ -613,6 +627,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       dock->dock->SelectPanel(names[std::clamp(std::atoi(tab), 0, 3)]);
     }
   }
+  mark("assets");
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
@@ -621,6 +636,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   for (bdg::UIContext* ui : {e->editor.get(), e->gallery.get()}) ui->SetFocusListener([](bdg::Widget*) { bdg::a11y::FocusChanged(); });
   if (const char* off = std::getenv("BDG_A11Y"); !off || std::string(off) != "0") // BDG_A11Y=0 turns the bridge off
     bdg::a11y::Attach(e->window, [e] { return e->showGallery ? e->gallery.get() : e->editor.get(); });
+  mark("rest");
+  bdg::LogInfo("startup: {} ms (create total {:.0f} ms)", phases,
+               std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - e->createdAt).count());
   *out = e;
   return BDG_OK;
 }
@@ -902,7 +920,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     }
     if (frames == 1) { // startup = engine create -> first frame on screen (target: < 1000 ms)
       double ms = msd(clock::now() - e->createdAt).count();
-      bdg::LogInfo("perf: startup_to_first_frame_ms={:.0f} (target < 1000)", ms);
+      bdg::LogInfo("perf: startup_to_first_frame_ms={:.0f} (target < 1000; first frame {:.0f} ms of work, {} glyphs made)", ms, workMs,
+                   e->hasFont ? e->font.GlyphCount() : 0);
     }
     if (last) break;
   }
