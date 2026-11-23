@@ -99,7 +99,8 @@ struct bdg_engine {
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
   bool shortcutBannerShown = false;
   bool dragTest = false;
-  bool inspectorTest = false;
+  bool inspectorTest = false, multiTest = false;
+  std::string multiTestValues[8];
   std::string inspectorTestValues[8];
   bdg::AssetDatabase assets; // project Assets folder (BDG_ASSETS until the project system exists)
   bdg::FileWatcher assetWatcher;
@@ -550,6 +551,7 @@ void InjectInspectorTest(bdg_engine* e, int frame, float scale) {
     c.name = "set"; c.target = "g6"; c.args = R"({"path":"Health.current","value":10})";
     m->bus.Execute(c);
   }
+  if (frame == 9) if (bdg::Widget* b = e->editor->Find("b.Health.Revive")) e->editor->ScrollIntoView(*b); // below the fold
   if (frame == 10) if (bdg::Widget* b = e->editor->Find("b.Health.Revive")) clickAt(b->x + b->w * 0.5f, b->y + b->h * 0.5f);
   if (frame == 12) { v[4] = value("g6", "Health", "current"); key(bdg::Key::Z, true); }
   if (frame == 14) { v[5] = value("g6", "Health", "current"); m->Select("g2"); }
@@ -560,6 +562,71 @@ void InjectInspectorTest(bdg_engine* e, int frame, float scale) {
     m->bus.Execute(c);
   }
   if (frame == 18) v[7] = e->editor->Find("f.Light.range") ? "1" : "0";
+}
+
+// Scripted multi-edit check (BDG_MULTI_TEST=1, BDG_PRESETS=<folder>): Ctrl-click Crystal + Player, edit a common
+// field once for both, undo; copy Player's Health, paste it as a new component on Crystal, save and apply a preset.
+void InjectMultiTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto value = [&](const char* id, const char* comp, const char* field) {
+    std::string v;
+    bdg::SceneObject* o = m->scene.Find(id);
+    if (bdg::Component* c = o ? o->Find(comp) : nullptr) bdg::Registry::Get(c->data, *c->type, field, v);
+    return v;
+  };
+  auto click = [&](const char* id, bool ctrl) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w) { bdg::LogError("multi test: no widget {}", id); return; }    float x = (w->x + w->w * 0.5f) * scale, y = (w->y + w->h * 0.5f) * scale;
+    bdg::InputEvent mv{T::MouseMove, x, y}, dn{T::MouseDown, x, y, 1}, up{T::MouseUp, x, y, 1};
+    dn.ctrl = up.ctrl = ctrl;
+    e->window.InjectEvent(mv); e->window.InjectEvent(dn); e->window.InjectEvent(up);
+  };
+  auto key = [&](bdg::Key k, bool ctrl) { bdg::InputEvent ev{T::KeyDown}; ev.key = k; ev.ctrl = ctrl; e->window.InjectEvent(ev); };
+  auto set = [&](const char* id, const char* args) { bdg::Command c; c.name = "set"; c.target = id; c.args = args; m->bus.Execute(c); };
+  auto* v = e->multiTestValues;
+  if (frame == 2) { click("h.g8", false); }
+  if (frame == 4) { click("h.g6", true); }
+  if (frame == 6) {
+    std::string common;
+    for (const char* c : {"Transform", "MeshRenderer", "PlayerMove", "Health"}) if (e->editor->Find(std::string("c.") + c)) common += (common.empty() ? "" : ",") + std::string(c);
+    v[0] = common;
+    bdg::Widget* mesh = e->editor->Find("f.MeshRenderer.mesh");
+    bdg::Widget* scaleF = e->editor->Find("f.Transform.scale");
+    v[1] = mesh && mesh->text2 == bdg::EditorModel::kMixed ? "1" : "0";
+    v[2] = scaleF && scaleF->text2 == "1, 1, 1" ? "1" : "0";
+    v[4] = std::to_string(m->bus.UndoDepth());
+    if (bdg::Widget* mat = e->editor->Find("f.MeshRenderer.material")) {
+      e->editor->Focus(mat);
+      key(bdg::Key::A, true);
+      bdg::InputEvent t{T::Text};
+      t.text = "M_Shared";
+      e->window.InjectEvent(t);
+      key(bdg::Key::Enter, false);
+    }
+  }
+  if (frame == 8) {
+    v[3] = value("g8", "MeshRenderer", "material") + "," + value("g6", "MeshRenderer", "material");
+    v[4] = std::to_string(m->bus.UndoDepth() - std::stoul(v[4]));
+    key(bdg::Key::Z, true);
+  }
+  if (frame == 10) {
+    v[5] = value("g8", "MeshRenderer", "material") + "," + value("g6", "MeshRenderer", "material");
+    set("g6", R"({"path":"Health.maxHealth","value":321})");
+    m->Select("g6");
+  }
+  if (frame == 11) if (bdg::Widget* insp = e->editor->Find("inspector")) { // wheel down over the Inspector
+    bdg::InputEvent wh{T::Wheel, (insp->x + 40) * scale, (insp->y + 200) * scale};
+    wh.wheel = -30;
+    e->window.InjectEvent(wh);
+  }
+  if (frame == 12) { click("cc.Health", false); m->Select("g8"); }
+  if (frame == 14) click("insp.pastenew", false);
+  if (frame == 16) { v[6] = value("g8", "Health", "maxHealth"); click("cs.Health", false); }
+  if (frame == 18) { set("g8", R"({"path":"Health.maxHealth","value":5})"); }
+  if (frame == 20) click("ca.Health", false);
+  if (frame == 22) v[7] = value("g8", "Health", "maxHealth");
 }
 
 extern "C" {
@@ -581,6 +648,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
   e->dragTest = std::getenv("BDG_DRAG_TEST") != nullptr;
   e->inspectorTest = std::getenv("BDG_INSPECTOR_TEST") != nullptr;
+  e->multiTest = std::getenv("BDG_MULTI_TEST") != nullptr;
   e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
@@ -677,6 +745,11 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     }, e);
   } else {
     bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
+  }
+  if (e->model) { // component presets: BDG_PRESETS, else <assets>/Presets, else ./Presets
+    const char* p = std::getenv("BDG_PRESETS");
+    e->model->presetDir = p ? p : e->assetsOpen ? (std::filesystem::path(e->assets.Root()) / "Presets").string()
+                                                 : (std::filesystem::current_path() / "Presets").string();
   }
   if (bdg::Widget* dock = e->editor->Find("dock"); dock && dock->dock) {
     // Per-user layout (.cache is git-ignored); BDG_LAYOUT overrides for tests.
@@ -799,6 +872,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
     if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
     if (e->inspectorTest && !e->showGallery) InjectInspectorTest(e, frames, scale);
+    if (e->multiTest && !e->showGallery) InjectMultiTest(e, frames, scale);
     if (e->dragTest && !e->showGallery && frames == 2 && e->model) { // BDG_DRAG_TEST: drag Weapon onto "Main"
       bdg::Widget* src = e->editor->Find("h.g7");
       bdg::Widget* dst = e->editor->Find("h.scene");
@@ -917,6 +991,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("asset test: knight_guid_kept={} player_mesh={} weapon_mesh={} watcher={} orphans={} assets={}",
                      k && k->guid == e->assetTestKnightGuid ? 1 : 0, field("g6"), field("g7"), e->assetWatcherFired ? 1 : 0,
                      e->assets.OrphanMetas().size(), e->assets.Count());
+      }
+      if (e->multiTest) {
+        auto* v = e->multiTestValues;
+        bdg::LogInfo("multi test: common={} mixed={} same={} shared={} undo_steps={} restored={} pasted={} preset={}",
+                     v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
       }
       if (e->inspectorTest) {
         auto* v = e->inspectorTestValues;

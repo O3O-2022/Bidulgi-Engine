@@ -45,6 +45,7 @@ struct Widget {
   bool primary = false, selected = false, focusable = false;
   bool collapsed = false;             // Card: body hidden, header still shown
   bool hidden = false;                // not laid out, drawn or hit (e.g. unselected dock tab)
+  float scrollY = 0;                  // dock panel content: scrolled distance (wheel, ScrollIntoView)
   std::shared_ptr<DockState> dock;    // Dock: split tree of tabbed panels (children = panel contents)
 
   Axis axis = Axis::Column;
@@ -101,6 +102,9 @@ public:
 
   void SetRoot(std::unique_ptr<Widget> root) { root_ = std::move(root); focused_ = nullptr; }
   void SetWindow(Window* window) { window_ = window; } // clipboard + IME candidate window placement
+  Window* GetWindow() const { return window_; }
+  bool ClickCtrl() const { return clickCtrl_; }        // modifiers of the click being handled (multi-select)
+  bool ClickShift() const { return clickShift_; }
   void SetScale(float scale) { scale_ = scale; }       // UI units -> drawable pixels (display scale)
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
@@ -109,6 +113,7 @@ public:
   void ForgetRemovedWidgets(); // call after replacing a subtree: drops hover/press/focus on removed widgets
   // Accessibility and keyboard navigation (queue 1-6).
   void Focus(Widget* w) { SetFocus(w); }             // nullptr clears focus
+  void ScrollIntoView(const Widget& w);              // scrolls its dock panel so it is fully visible (next layout)
   void Invoke(Widget& w) { Activate(w, -1, -1); }   // same as a click / Enter
   void SetFocusListener(std::function<void(Widget*)> f) { onFocus_ = std::move(f); }
   std::vector<Widget*> FocusOrder();                // visible focusable widgets in Tab order
@@ -157,6 +162,7 @@ private:
   Widget* dragSource_ = nullptr; // pressed draggable widget
   Widget* dropTarget_ = nullptr; // widget under the mouse that accepts the drop
   bool dragging_ = false;
+  bool clickCtrl_ = false, clickShift_ = false;
   Widget* sliderDrag_ = nullptr;
   void SliderSet(Widget& f, float mouseX);
   float pressX_ = 0, pressY_ = 0, dragX_ = 0, dragY_ = 0;

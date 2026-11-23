@@ -18,7 +18,16 @@ public:
 
   void Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Widget* history = nullptr);
   void Select(const std::string& id);
-  const std::string& Selected() const { return selected_; }
+  const std::string& Selected() const { return selected_; }          // primary (last clicked)
+  const std::vector<std::string>& Selection() const { return selection_; }
+  void SetSelection(std::vector<std::string> ids);                   // last one becomes primary
+  // Component values (queue 2-4b): copy / paste between objects, presets as <presetDir>/<Type>.preset
+  bool CopyComponent(const std::string& type);
+  bool SavePreset(const std::string& type);
+  bool LoadPreset(const std::string& type, std::string& valueJson) const;
+  std::string PresetPath(const std::string& type) const;
+  std::string presetDir;                                             // set by the engine (project Presets folder)
+  static const char* const kMixed;                                   // shown when selected objects differ: "—"
   bool Duplicate();                    // selected object + components, as one undo step
   bool DeleteSelected();
   size_t fieldChanges = 0;             // fields changed this session (drained from Registry each frame)
@@ -43,7 +52,7 @@ private:
   void BuildSampleScene();
   void Rebuild();
   void Refresh();
-  struct Binding { Widget* field; std::string target, path; FieldType type; };
+  struct Binding { Widget* field; std::vector<std::string> targets; std::string path; FieldType type; };
   UIContext* ui_ = nullptr;
   Widget* hierarchy_ = nullptr;
   Widget* inspector_ = nullptr;
@@ -54,6 +63,12 @@ private:
   std::vector<Binding> bindings_;
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type
   std::string selected_, pendingSelect_;
+  std::vector<std::string> selection_;
+  int pendingSelectMode_ = 0; // 0 replace, 1 toggle (Ctrl), 2 range (Shift)
+  std::string clipType_, clipValue_; // copied component values
+  void ApplySelection(const std::string& id, int mode);
+  std::string DisplayFor(const std::vector<std::string>& targets, const std::string& path, FieldType type) const;
+  static Command SetComp(const std::string& id, const std::string& type, const std::string& value);
   bool needRebuild_ = false, needRefresh_ = false;
   std::string showIfState_; // which ShowIf fields are visible; a change rebuilds the Inspector
   std::string ShowIfState() const;

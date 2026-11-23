@@ -278,6 +278,7 @@ void UIContext::ArrangeDock(Widget& w) {
   LayoutNode(d, d.root, {w.x, w.y, w.w, w.h});
   const float head = theme_.N("size-panel-header", 30), fs = theme_.FontSize("label", 12), s6 = theme_.N("space-6", 12);
   d.tabRects.clear();
+  d.bodyRects.clear();
   for (auto& n : d.nodes) {
     if (!n.alive || n.split) continue;
     float x = n.rect.x + 1;
@@ -294,7 +295,11 @@ void UIContext::ArrangeDock(Widget& w) {
     c->hidden = !shown;
     if (!shown) continue;
     const DockRect& r = d.nodes[leaf].rect;
-    Arrange(*c, r.x + 1, r.y + head, std::max(0.f, r.w - 2), std::max(0.f, r.h - head - 1));
+    float bw = std::max(0.f, r.w - 2), bh = std::max(0.f, r.h - head - 1);
+    d.bodyRects[c->id] = {r.x + 1, r.y + head, bw, bh};
+    float contentH = std::max(bh, c->prefH);            // taller content scrolls inside the body
+    c->scrollY = std::clamp(c->scrollY, 0.f, contentH - bh);
+    Arrange(*c, r.x + 1, r.y + head - c->scrollY, bw, contentH);
   }
 }
 

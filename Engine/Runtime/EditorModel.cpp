@@ -6,7 +6,9 @@
 #include <yyjson.h>
 #include <cctype>
 #include <format>
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 
@@ -98,6 +100,7 @@ void EditorModel::BuildSampleScene() {
   Add<Transform>(scene, "g9").position = {-2, 2.5f, 1};
   Add<Light>(scene, "g9").color = {1, 0.75f, 0.45f, 1};
   selected_ = "g6";
+  selection_ = {"g6"};
 }
 
 void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Widget* history) {
@@ -110,6 +113,7 @@ void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Wi
 
 void EditorModel::Select(const std::string& id) {
   pendingSelect_ = id;
+  pendingSelectMode_ = 0;
 }
 
 bool EditorModel::OpenScene(const std::string& path) {
@@ -126,6 +130,7 @@ bool EditorModel::OpenScene(const std::string& path) {
   scenePath = path;
   sceneName = name.empty() ? "Main" : name;
   selected_ = scene.Roots().empty() ? "" : scene.Roots().front();
+  selection_ = selected_.empty() ? std::vector<std::string>{} : std::vector<std::string>{selected_};
   needRebuild_ = true;
   LogInfo("scene: opened {} ({} objects)", path, scene.ObjectCount());
   return true;
@@ -178,6 +183,117 @@ bool EditorModel::Autosave() {
   ok = bus.SaveLog((dir / "commands.jsonl").string()) && ok;
   if (ok) LogInfo("autosave: {} ({} objects, {} commands)", dir.string(), scene.ObjectCount(), bus.Log().size());
   else LogError("autosave failed: {}", dir.string());
+  return ok;
+}
+
+const char* const EditorModel::kMixed = "—";
+
+void EditorModel::ApplySelection(const std::string& id, int mode) {
+  auto it = std::find(selection_.begin(), selection_.end(), id);
+  if (mode == 1) { // Ctrl: toggle
+    if (it != selection_.end()) { selection_.erase(it); selected_ = selection_.empty() ? "" : selection_.back(); return; }
+    selection_.push_back(id);
+  } else if (mode == 2 && !selected_.empty() && scene.Find(selected_)) { // Shift: range in Hierarchy order
+    std::vector<std::string> order, stack(scene.Roots().rbegin(), scene.Roots().rend());
+    while (!stack.empty()) {
+      std::string x = stack.back(); stack.pop_back();
+      order.push_back(x);
+      const SceneObject* o = scene.Find(x);
+      for (auto k = o->children.rbegin(); k != o->children.rend(); ++k) stack.push_back(*k);
+    }
+    auto a = std::find(order.begin(), order.end(), selected_), b = std::find(order.begin(), order.end(), id);
+    if (a > b) std::swap(a, b);
+    selection_.assign(a, b + 1);
+  } else {
+    selection_ = {id};
+  }
+  selected_ = id;
+}
+
+void EditorModel::SetSelection(std::vector<std::string> ids) {
+  selection_.clear();
+  for (auto& id : ids) if (scene.Find(id)) selection_.push_back(id);
+  selected_ = selection_.empty() ? "" : selection_.back();
+  needRebuild_ = true;
+}
+
+std::string EditorModel::DisplayFor(const std::vector<std::string>& targets, const std::string& path, FieldType type) const {
+  size_t dot = path.find('.');
+  std::string shown;
+  bool first = true;
+  for (auto& id : targets) {
+    const SceneObject* o = scene.Find(id);
+    Component* c = o ? const_cast<SceneObject*>(o)->Find(path.substr(0, dot)) : nullptr;
+    std::string json;
+    if (!c || !Registry::Get(c->data, *c->type, path.substr(dot + 1), json)) continue;
+    std::string d = ToDisplay(json, type);
+    if (first) { shown = d; first = false; }
+    else if (d != shown) return kMixed; // values differ
+  }
+  return shown;
+}
+
+Command EditorModel::SetComp(const std::string& id, const std::string& type, const std::string& value) {
+  Command cmd;
+  cmd.name = "setcomp";
+  cmd.target = id;
+  cmd.args = std::format("{{\"type\":{},\"value\":{}}}", Q(type), value);
+  return cmd;
+}
+
+bool EditorModel::CopyComponent(const std::string& type) {
+  const SceneObject* o = scene.Find(selected_);
+  Component* c = o ? const_cast<SceneObject*>(o)->Find(type) : nullptr;
+  if (!c) return false;
+  ValueType vt;
+  vt.type = FieldType::Struct;
+  vt.structType = c->type;
+  clipType_ = type;
+  clipValue_ = Registry::ToJson(c->data, vt);
+  if (ui_ && ui_->GetWindow()) // also on the system clipboard, as text an AI or the terminal can use
+    ui_->GetWindow()->SetClipboardText(std::format("{{\"bdgComponent\":{},\"value\":{}}}", Q(type), clipValue_));
+  LogInfo("copy: {} values of {}", type, o->name);
+  needRebuild_ = true; // "paste as new component" may appear
+  return true;
+}
+
+std::string EditorModel::PresetPath(const std::string& type) const {
+  return (std::filesystem::path(presetDir.empty() ? std::filesystem::current_path().string() : presetDir) / (type + ".preset")).string();
+}
+
+bool EditorModel::SavePreset(const std::string& type) {
+  const SceneObject* o = scene.Find(selected_);
+  Component* c = o ? const_cast<SceneObject*>(o)->Find(type) : nullptr;
+  if (!c) return false;
+  ValueType vt;
+  vt.type = FieldType::Struct;
+  vt.structType = c->type;
+  std::string path = PresetPath(type), text = std::format("{{\"preset\":1,\"type\":{},\"value\":{}}}\n", Q(type), Registry::ToJson(c->data, vt));
+  std::error_code ec;
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+  std::FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) { LogError("preset: cannot write {}", path); return false; }
+  std::fwrite(text.data(), 1, text.size(), f);
+  std::fclose(f);
+  LogInfo("preset: saved {}", path);
+  return true;
+}
+
+bool EditorModel::LoadPreset(const std::string& type, std::string& value) const {
+  std::string path = PresetPath(type), text;
+  std::FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) { LogInfo("preset: no {} preset yet ({})", type, path); return false; }
+  char buf[4096];
+  for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+  std::fclose(f);
+  yyjson_doc* d = yyjson_read(text.data(), text.size(), 0);
+  yyjson_val* r = d ? yyjson_doc_get_root(d) : nullptr;
+  const char* t = yyjson_get_str(yyjson_obj_get(r, "type"));
+  yyjson_val* v = yyjson_obj_get(r, "value");
+  bool ok = t && type == t && yyjson_is_obj(v);
+  if (ok) { char* s = yyjson_val_write(v, 0, nullptr); value = s ? s : "{}"; std::free(s); }
+  else LogWarn("preset: {} is not a {} preset", path, type);
+  yyjson_doc_free(d);
   return ok;
 }
 
@@ -237,11 +353,15 @@ void EditorModel::Update() {
   // layer consumes them, drain them every frame so they do not pile up for the whole session.
   fieldChanges += Registry::Instance().TakeChanges().size();
   if (!pendingSelect_.empty()) {
-    if (scene.Find(pendingSelect_)) selected_ = pendingSelect_;
+    if (scene.Find(pendingSelect_)) ApplySelection(pendingSelect_, pendingSelectMode_);
     pendingSelect_.clear();
+    pendingSelectMode_ = 0;
     needRebuild_ = true;
   }
-  if (!selected_.empty() && !scene.Find(selected_)) { selected_.clear(); needRebuild_ = true; } // deleted
+  size_t before = selection_.size(); // objects deleted: drop them from the selection
+  selection_.erase(std::remove_if(selection_.begin(), selection_.end(), [&](const std::string& id) { return !scene.Find(id); }), selection_.end());
+  if (!selected_.empty() && !scene.Find(selected_)) selected_ = selection_.empty() ? "" : selection_.back();
+  if (selection_.size() != before) needRebuild_ = true;
   if (pendingMove_) { // Hierarchy drop: reparent and keep the object where it is in the world (Unity's default)
     pendingMove_ = false;
     Command mv;
@@ -369,8 +489,11 @@ void EditorModel::Rebuild() {
         else if (c.type->name == "MeshRenderer" && kind.empty()) kind = "Mesh";
       }
     auto& row = hierarchy_->Add(MakeListRow("h." + id, o->name, kind, depth));
-    row.selected = id == selected_;
-    row.onClick = [this, id](Widget&) { pendingSelect_ = id; }; // applied in Update (never rebuild inside a click)
+    row.selected = std::find(selection_.begin(), selection_.end(), id) != selection_.end();
+    row.onClick = [this, id](Widget&) { // applied in Update (never rebuild inside a click); Ctrl toggles, Shift extends
+      pendingSelect_ = id;
+      pendingSelectMode_ = ui_ && ui_->ClickCtrl() ? 1 : ui_ && ui_->ClickShift() ? 2 : 0;
+    };
     row.draggable = true;
     row.onDrop = [this, id](Widget& w) {
       if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_ = id; pendingMove_ = true; }
@@ -379,30 +502,56 @@ void EditorModel::Rebuild() {
   };
   for (auto& r : scene.Roots()) addRow(r, 1);
 
-  // Inspector: one card per component, one field per editable property
+  // Inspector: one card per component, one field per editable property. With several objects selected only
+  // the components they all have are shown; a field whose values differ shows "—"; an edit sets it on every
+  // object as one undo step.
   inspector_->children.clear();
+  std::vector<std::string> targets;
+  for (auto& id : selection_) if (scene.Find(id)) targets.push_back(id);
   const SceneObject* o = scene.Find(selected_);
-  if (!o) {
+  if (!o || targets.empty()) {
     inspector_->Add(MakeLabel("Nothing selected")).variant = 1;
   } else {
+    bool multi = targets.size() > 1;
     auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
     nameRow.padR = 10; nameRow.padT = 2; nameRow.padB = 2;
     nameRow.crossAlign = Align::Center;
-    auto& name = nameRow.Add(MakeField("insp.name", "Name", o->name)); // F2 focuses it; Enter renames (command)
-    name.width = Length::Fill();
-    std::string id = o->id;
-    name.onCommit = [this, id](Widget& w) {
-      if (w.text2.empty() || !scene.Find(id) || scene.Find(id)->name == w.text2) { needRebuild_ = true; return; }
-      Command cmd;
-      cmd.name = "rename";
-      cmd.target = id;
-      cmd.args = std::format("{{\"name\":{}}}", Q(w.text2));
-      std::string err;
-      if (!bus.Execute(cmd, &err)) LogWarn("rename: {}", err);
+    if (multi) {
+      auto& l = nameRow.Add(MakeLabel(std::format("{} objects selected", targets.size())));
+      l.fontSize = 15;
+      nameRow.padL = 10;
+    } else {
+      auto& name = nameRow.Add(MakeField("insp.name", "Name", o->name)); // F2 focuses it; Enter renames (command)
+      name.width = Length::Fill();
+      std::string id = o->id;
+      name.onCommit = [this, id](Widget& w) {
+        if (w.text2.empty() || !scene.Find(id) || scene.Find(id)->name == w.text2) { needRebuild_ = true; return; }
+        Command cmd;
+        cmd.name = "rename";
+        cmd.target = id;
+        cmd.args = std::format("{{\"name\":{}}}", Q(w.text2));
+        std::string err;
+        if (!bus.Execute(cmd, &err)) LogWarn("rename: {}", err);
+      };
+      if (o->prefab) nameRow.Add(MakeBadge("Prefab"));
+    }
+    // Runs one command per target; several targets = one undo group.
+    auto runAll = [this, targets](const std::string& label, const std::function<Command(const std::string&)>& make) {
+      if (targets.size() > 1) bus.BeginGroup(label + std::format(" ({} objects)", targets.size()), "ui");
+      for (auto& t : targets) {
+        Command c = make(t);
+        if (c.name.empty()) continue;
+        std::string err;
+        if (!bus.Execute(c, &err)) LogWarn("{}: {}", label, err);
+      }
+      if (targets.size() > 1) bus.EndGroup();
+      needRefresh_ = true;
     };
-    if (o->prefab) nameRow.Add(MakeBadge("Prefab"));
     for (const Component& c : o->components) {
       const TypeInfo& t = *c.type;
+      bool everywhere = true;
+      for (auto& id : targets) everywhere = everywhere && scene.Find(id)->Find(t.name);
+      if (!everywhere) continue; // not common to the whole selection
       auto& card = inspector_->Add(MakeCard("c." + t.name, Pretty(t.name), LanguageBadge(t)));
       card.collapsed = collapsed_.count(t.name) ? collapsed_[t.name] : false;
       std::vector<const TypeInfo*> chain;
@@ -412,36 +561,30 @@ void EditorModel::Rebuild() {
           if (!(f.flags & kEdit)) continue;
           if (!f.meta.header.empty()) card.Add(MakeLabel(f.meta.header)).variant = 3; // section caption
           if (!ShowIfPasses(c, f.meta.showIf)) continue;                                // hidden until its condition holds
-          std::string json;
-          Registry::Get(c.data, t, f.name, json);
-          auto& field = card.Add(MakeField("f." + t.name + "." + f.name, Pretty(f.name), ToDisplay(json, f.value.type)));
-          std::string target = o->id, path = t.name + "." + f.name;
+          std::string path = t.name + "." + f.name;
           FieldType type = f.value.type;
+          auto& field = card.Add(MakeField("f." + path, Pretty(f.name), DisplayFor(targets, path, type)));
           bool numeric = type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double;
-          if (f.meta.hasRange && numeric) { // Range -> slider (drag edits merge into one undo step)
+          if (f.meta.hasRange && numeric && !multi) { // Range -> slider (drag edits merge into one undo step)
             field.slider = true;
             field.sliderInteger = type == FieldType::Int32;
             field.sliderMin = f.meta.rangeMin;
             field.sliderMax = f.meta.rangeMax;
           }
-          field.onChange = [this, target, path, type](Widget& w) {
-            Command cmd;
-            cmd.name = "set";
-            cmd.target = target;
-            cmd.args = std::format("{{\"path\":{},\"value\":{}}}", Q(path), FromDisplay(w.text2, type));
-            std::string err;
-            if (!bus.Execute(cmd, &err)) LogWarn("edit rejected: {}", err);
+          auto set = [this, targets, path, type, runAll](Widget& w) {
+            if (w.text2 == kMixed) return; // untouched "—"
+            std::string value = FromDisplay(w.text2, type);
+            runAll("Set " + path, [&](const std::string& id) {
+              Command cmd;
+              cmd.name = "set";
+              cmd.target = id;
+              cmd.args = std::format("{{\"path\":{},\"value\":{}}}", Q(path), value);
+              return cmd;
+            });
           };
-          field.onCommit = [this, target, path, type](Widget& w) {
-            Command cmd;
-            cmd.name = "set";
-            cmd.target = target;
-            cmd.args = std::format("{{\"path\":{},\"value\":{}}}", Q(path), FromDisplay(w.text2, type));
-            std::string err;
-            if (!bus.Execute(cmd, &err)) LogWarn("edit rejected: {}", err);
-            needRefresh_ = true; // show the value the model really holds
-          };
-          bindings_.push_back({&field, target, path, type});
+          field.onChange = set;
+          field.onCommit = set;
+          bindings_.push_back({&field, targets, path, type});
         }
       for (const TypeInfo* x : chain) // BFUNCTION(Button): one button per function, run as an undoable "call"
         for (const FunctionInfo& fn : x->functions) {
@@ -449,21 +592,54 @@ void EditorModel::Rebuild() {
           auto& row = card.Add(MakeBox(Axis::Row));
           row.padL = 12; row.padT = 4; row.padB = 4;
           auto& btn = row.Add(MakeButton("b." + t.name + "." + fn.name, Pretty(fn.name)));
-          std::string target = o->id, type = t.name, func = fn.name;
-          btn.onClick = [this, target, type, func](Widget&) {
-            Command cmd;
-            cmd.name = "call";
-            cmd.target = target;
-            cmd.args = std::format("{{\"type\":{},\"function\":{}}}", Q(type), Q(func));
-            std::string err;
-            if (!bus.Execute(cmd, &err)) LogWarn("call: {}", err);
+          std::string type = t.name, func = fn.name;
+          btn.onClick = [runAll, type, func](Widget&) {
+            runAll(type + "." + func, [&](const std::string& id) {
+              Command cmd;
+              cmd.name = "call";
+              cmd.target = id;
+              cmd.args = std::format("{{\"type\":{},\"function\":{}}}", Q(type), Q(func));
+              return cmd;
+            });
           };
         }
+      // Component tools: copy / paste values, save / apply the type's preset (no menus in the UI yet)
+      auto& tools = card.Add(MakeBox(Axis::Row, 4));
+      tools.padL = 12; tools.padT = 2; tools.padB = 4;
+      std::string type = t.name;
+      tools.Add(MakeButton("cc." + type, "값 복사")).onClick = [this, type](Widget&) { CopyComponent(type); };
+      auto& paste = tools.Add(MakeButton("cp." + type, "값 붙여넣기"));
+      paste.onClick = [this, type, runAll](Widget&) {
+        if (clipType_ != type) { LogInfo("paste: the copied values are a {}, not a {}", clipType_.empty() ? "nothing" : clipType_, type); return; }
+        std::string value = clipValue_;
+        runAll("Paste " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+      };
+      tools.Add(MakeButton("cs." + type, "프리셋 저장")).onClick = [this, type](Widget&) { SavePreset(type); };
+      tools.Add(MakeButton("ca." + type, "프리셋 적용")).onClick = [this, type, runAll](Widget&) {
+        std::string value;
+        if (!LoadPreset(type, value)) return;
+        runAll("Apply preset " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+      };
     }
-    auto& addRow2 = inspector_->Add(MakeBox(Axis::Row));
+    auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
     addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    bool missing = false; // "paste as new component" when some selected object does not have the copied type yet
+    for (auto& id : targets) missing = missing || (!clipType_.empty() && !scene.Find(id)->Find(clipType_));
+    if (missing) {
+      std::string type = clipType_, value = clipValue_;
+      addRow2.Add(MakeButton("insp.pastenew", "+  붙여넣기: " + Pretty(type))).onClick = [this, type, value, runAll](Widget&) {
+        runAll("Paste " + type + " as new", [&](const std::string& id) {
+          Command cmd;
+          if (scene.Find(id) && scene.Find(id)->Find(type)) return cmd; // already there: skip
+          cmd.name = "addcomp";
+          cmd.target = id;
+          cmd.args = std::format("{{\"type\":{},\"value\":{}}}", Q(type), value);
+          return cmd;
+        });
+      };
+    }
   }
   showIfState_ = ShowIfState();
   if (ui_) ui_->ForgetRemovedWidgets();
@@ -475,12 +651,7 @@ void EditorModel::Refresh() {
   if (ShowIfState() != showIfState_) { Rebuild(); return; } // a ShowIf condition flipped: fields appear or go away
   for (Binding& b : bindings_) {
     if (b.field->edited) continue; // the user is typing: do not overwrite
-    SceneObject* o = scene.Find(b.target);
-    size_t dot = b.path.find('.');
-    Component* c = o ? o->Find(b.path.substr(0, dot)) : nullptr;
-    std::string json;
-    if (!c || !Registry::Get(c->data, *c->type, b.path.substr(dot + 1), json)) continue;
-    b.field->text2 = ToDisplay(json, b.type);
+    b.field->text2 = DisplayFor(b.targets, b.path, b.type);
     b.field->cursor = std::min(b.field->cursor, b.field->text2.size());
     b.field->anchor = std::min(b.field->anchor, b.field->text2.size());
   }

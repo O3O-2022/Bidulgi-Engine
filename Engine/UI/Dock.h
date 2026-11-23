@@ -31,6 +31,7 @@ struct DockState {
   int root = -1;
   std::unordered_map<std::string, std::string> titles; // panel id -> tab label
   std::unordered_map<std::string, DockRect> tabRects;  // computed each layout
+  std::unordered_map<std::string, DockRect> bodyRects; // visible content area of each shown panel
   std::string layoutPath;                              // changes are saved here ("" = not saved)
 
   // Interaction state (mouse coordinates in UI units).

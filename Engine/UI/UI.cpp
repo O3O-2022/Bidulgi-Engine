@@ -1,4 +1,5 @@
 #include "UI/UI.h"
+#include "UI/Dock.h"
 #include "Core/Guard.h"
 #include "UI/Theme.h"
 #include "Render2D/Batch2D.h"
@@ -528,8 +529,17 @@ void UIContext::DrawWidget(Widget& w) {
   if (w.kind == WidgetKind::Dock) { // each panel's content stays inside its body
     for (auto& c : w.children) {
       if (c->hidden) continue;
-      b.PushClip(c->x, c->y, c->w, c->h);
+      auto body = w.dock->bodyRects.find(c->id);
+      if (body == w.dock->bodyRects.end()) continue;
+      const DockRect& r = body->second;
+      b.PushClip(r.x, r.y, r.w, r.h);
       DrawWidget(*c);
+      if (c->h > r.h + 0.5f) { // scroll bar: where the visible part is
+        float th = std::max(24.f, r.h * r.h / c->h), ty = r.y + (r.h - th) * (c->scrollY / (c->h - r.h));
+        Color bar = t.C("fg-faint");
+        bar.a = 0.5f;
+        b.Rect(r.x + r.w - 5, ty + 2, 3, th - 4, bar, 1.5f);
+      }
       b.PopClip();
     }
     return;
@@ -574,6 +584,26 @@ void UIContext::DrawDragOverlay() {
   Text(dragX_ + 22, dragY_ + 8 + (22 - fs) * 0.5f - 1, fs, t.C("fg"), label);
 }
 
+void UIContext::ScrollIntoView(const Widget& target) {
+  for (Widget* d : docks_)
+    for (auto& c : d->children) {
+      auto body = d->dock->bodyRects.find(c->id);
+      if (c->hidden || body == d->dock->bodyRects.end()) continue;
+      bool inside = false; // is target inside this panel's content?
+      std::vector<const Widget*> stack{c.get()};
+      while (!stack.empty() && !inside) {
+        const Widget* x = stack.back(); stack.pop_back();
+        inside = x == &target;
+        for (auto& k : x->children) stack.push_back(k.get());
+      }
+      if (!inside) continue;
+      const DockRect& r = body->second;
+      if (target.y < r.y) c->scrollY -= r.y - target.y + 4;
+      else if (target.y + target.h > r.y + r.h) c->scrollY += target.y + target.h - (r.y + r.h) + 4;
+      return;
+    }
+}
+
 void UIContext::Draw() {
   if (!root_) return;
   DrawWidget(*root_);
@@ -584,6 +614,15 @@ void UIContext::Draw() {
 // ---- Input ----------------------------------------------------------------------------------
 Widget* UIContext::HitTest(Widget& w, float x, float y) {
   if (w.hidden) return nullptr;
+  if (w.kind == WidgetKind::Dock && w.dock) { // only the visible body of each panel can be hit
+    if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
+    for (auto it = w.children.rbegin(); it != w.children.rend(); ++it) {
+      auto body = w.dock->bodyRects.find((*it)->id);
+      if ((*it)->hidden || body == w.dock->bodyRects.end() || !body->second.Contains(x, y)) continue;
+      if (Widget* hit = HitTest(**it, x, y)) return hit;
+    }
+    return nullptr;
+  }
   if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
   if (w.kind == WidgetKind::Card && y < w.y + 30) return &w;
   if (!w.collapsed)
@@ -667,7 +706,10 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
           if (pressed_) pressed_->pressed = false;
         } else if (pressed_) {
           pressed_->pressed = false;
+          clickCtrl_ = e.ctrl;
+          clickShift_ = e.shift;
           if (hit == pressed_) Activate(*hit, e.x, e.y);
+          clickCtrl_ = clickShift_ = false;
         }
         pressed_ = nullptr;
         dragSource_ = dropTarget_ = nullptr;
@@ -699,6 +741,12 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
       }
       case InputEvent::Type::Text:
         if (focused_ && focused_->kind == WidgetKind::Field) { focused_->composing.clear(); FieldInsert(*focused_, e.text); }
+        break;
+      case InputEvent::Type::Wheel: // scroll the dock panel under the mouse
+        for (Widget* d : docks_)
+          for (auto& c : d->children)
+            if (auto body = d->dock->bodyRects.find(c->id); !c->hidden && body != d->dock->bodyRects.end() && body->second.Contains(e.x, e.y))
+              c->scrollY -= e.wheel * 48.f; // clamped by the next layout
         break;
       case InputEvent::Type::TextEditing:
         if (focused_ && focused_->kind == WidgetKind::Field) focused_->composing = e.text;
@@ -732,6 +780,7 @@ void UIContext::SetFocus(Widget* w) {
   }
   focused_ = w;
   if (w && w->kind == WidgetKind::Field) { w->cursor = w->anchor = w->text2.size(); w->composing.clear(); }
+  if (w) ScrollIntoView(*w);
   if (onFocus_) onFocus_(w); // screen readers announce the new focus
 }
 

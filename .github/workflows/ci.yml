@@ -197,6 +197,13 @@ jobs:
           if ($log -notmatch 'inspector test: slider=25 undo_steps=1 after_undo=5 name=Hero revive=100 revive_undo=10 range_hidden=1 range_shown=1') { $errors += 'inspector test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 16) Multi-object editing (queue 2-4b): common components, "—" for differing values, one undo step for all,
+          #     copy -> paste as new component, preset save and apply; the Inspector scrolls with the wheel
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_MULTI_TEST = '1'; BDG_PRESETS = "$PWD/ci-presets" } 24
+          if ($log -notmatch 'multi test: common=Transform,MeshRenderer mixed=1 same=1 shared="M_Shared","M_Shared" undo_steps=1 restored="M_Gold","M_Knight" pasted=321 preset=321') { $errors += 'multi-object editing test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

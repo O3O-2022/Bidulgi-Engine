@@ -84,3 +84,28 @@ TEST_CASE("inspector: ShowIf conditions") {
   t->hp = 0;
   CHECK(!EditorModel::ShowIfPasses(tc, "hp"));
 }
+
+TEST_CASE("inspector: selection, copied values and presets (queue 2-4b)") {
+  EditorModel m; // sample scene, no UI attached
+  m.SetSelection({"g8", "g6", "g404"});
+  CHECK(m.Selection().size() == 2 && m.Selected() == "g6"); // unknown ids dropped, last is primary
+  auto dir = std::filesystem::temp_directory_path() / "bdg_presets_test";
+  std::filesystem::remove_all(dir);
+  m.presetDir = dir.string();
+  std::string value;
+  CHECK(!m.LoadPreset("Health", value)); // none yet
+  CHECK(m.SavePreset("Health"));
+  CHECK(std::filesystem::exists(dir / "Health.preset"));
+  CHECK(m.LoadPreset("Health", value));
+  CHECK(value.find("\"maxHealth\":100") != std::string::npos);
+  CHECK(!m.SavePreset("Camera"));        // Player has no Camera
+  CHECK(m.CopyComponent("Health"));
+  CHECK(!m.CopyComponent("Light"));
+  Command del;
+  del.name = "del";
+  del.target = "g6";
+  CHECK(m.bus.Execute(del));
+  m.Update();                            // the deleted object leaves the selection
+  CHECK(m.Selection().size() == 1 && m.Selected() == "g8");
+  std::filesystem::remove_all(dir);
+}

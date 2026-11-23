@@ -73,6 +73,7 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
     case SDL_EVENT_MOUSE_BUTTON_UP:
       ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? InputEvent::Type::MouseDown : InputEvent::Type::MouseUp;
       ev.x = e.button.x * density; ev.y = e.button.y * density; ev.button = e.button.button;
+      { SDL_Keymod m = SDL_GetModState(); ev.ctrl = (m & SDL_KMOD_CTRL) != 0; ev.shift = (m & SDL_KMOD_SHIFT) != 0; ev.alt = (m & SDL_KMOD_ALT) != 0; }
       out.push_back(ev); break;
     case SDL_EVENT_KEY_DOWN:
       ev.type = InputEvent::Type::KeyDown; ev.key = MapKey(e.key.key);
@@ -81,6 +82,10 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
       break;
     case SDL_EVENT_TEXT_INPUT:
       ev.type = InputEvent::Type::Text; ev.text = e.text.text;
+      out.push_back(ev); break;
+    case SDL_EVENT_MOUSE_WHEEL:
+      ev.type = InputEvent::Type::Wheel; ev.x = e.wheel.mouse_x * density; ev.y = e.wheel.mouse_y * density;
+      ev.wheel = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
       out.push_back(ev); break;
     case SDL_EVENT_TEXT_EDITING: // IME composition (e.g. Hangul jamo being combined)
       ev.type = InputEvent::Type::TextEditing; ev.text = e.edit.text ? e.edit.text : "";

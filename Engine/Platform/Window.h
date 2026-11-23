@@ -18,12 +18,13 @@ Key KeyFromName(std::string_view name); // inverse of KeyName (case-insensitive)
 
 // Platform-neutral input event. Coordinates are in drawable pixels (same space as rendering).
 struct InputEvent {
-  enum class Type { MouseMove, MouseDown, MouseUp, KeyDown, Text, TextEditing } type = Type::MouseMove;
+  enum class Type { MouseMove, MouseDown, MouseUp, KeyDown, Text, TextEditing, Wheel } type = Type::MouseMove;
   float x = 0, y = 0;
   int button = 0;     // 1 = left
   Key key = Key::None;
   bool shift = false, ctrl = false, alt = false;
   std::string text;   // Text: committed UTF-8 text. TextEditing: IME composition in progress ("" = cleared)
+  float wheel = 0;     // Wheel: notches, positive = away from the user (scroll up)
 };
 
 // Platform layer: window, GL context, events. Upper layers never see SDL.
