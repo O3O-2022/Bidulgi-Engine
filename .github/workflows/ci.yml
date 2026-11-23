@@ -120,8 +120,9 @@ jobs:
 
           # 7) Command bus (queue 1-3): Inspector edit -> Ctrl+Z -> Ctrl+Y, selection; the saved log replays to the same scene
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
-          $log = Invoke-Editor 'Release' @{ BDG_CMD_TEST = '1'; BDG_CMD_LOG = "$PWD/ci-commands.jsonl"; BDG_SCENE_DUMP = "$PWD/ci-scene1.jsonl" } 14
-          if ($log -notmatch 'cmd test: edit=\[3,4,5\] undo=\[0,1,0\] redo=\[3,4,5\] maxHealth=250 undo_depth=2 selected=g9 light_card=1') { $errors += 'command bus test failed' }
+          $log = Invoke-Editor 'Release' @{ BDG_CMD_TEST = '1'; BDG_CMD_LOG = "$PWD/ci-commands.jsonl"; BDG_SCENE_DUMP = "$PWD/ci-scene1.jsonl" } 18
+          if ($log -notmatch 'cmd test: edit=\[3,4,5\] undo=\[0,1,0\] redo=\[3,4,5\] maxHealth=100 undo_depth=1 selected=g9 light_card=1') { $errors += 'command bus test failed' }
+          if ($log -notmatch 'history: Player: Transform.position = \[3,4,5\] \| Player: Health.maxHealth = 250 \(undone\)') { $errors += 'history panel jump failed' }
           $env:BDG_SCENE_DUMP = "$PWD/ci-scene2.jsonl"
           Start-Process build/Release/BidulgiEditor.exe -ArgumentList '--frames', '3', '--replay', "$PWD/ci-commands.jsonl" -WorkingDirectory $PWD -Wait
           Remove-Item Env:BDG_SCENE_DUMP

@@ -108,9 +108,10 @@ std::string Quote(const std::string& s) {
 }
 
 std::string Num(double v) { return std::isfinite(v) ? std::format("{}", v) : "0"; }
+std::string NumF(float v) { return std::isfinite(v) ? std::format("{}", v) : "0"; } // shortest float text: 0.45, not 0.449999988
 std::string Floats(const float* f, int n) {
   std::string s = "[";
-  for (int i = 0; i < n; ++i) s += (i ? "," : "") + Num(f[i]);
+  for (int i = 0; i < n; ++i) s += (i ? "," : "") + NumF(f[i]);
   return s + "]";
 }
 
@@ -241,7 +242,7 @@ std::string Registry::ToJson(const void* p, const ValueType& vt) {
   switch (vt.type) {
     case FieldType::Bool: return *static_cast<const bool*>(p) ? "true" : "false";
     case FieldType::Int32: return std::to_string(*static_cast<const int32_t*>(p));
-    case FieldType::Float: return Num(*static_cast<const float*>(p));
+    case FieldType::Float: return NumF(*static_cast<const float*>(p));
     case FieldType::Double: return Num(*static_cast<const double*>(p));
     case FieldType::Vec2: case FieldType::Vec3: case FieldType::Vec4: case FieldType::Quat: case FieldType::Color:
       return Floats(static_cast<const float*>(p), Components(vt.type));

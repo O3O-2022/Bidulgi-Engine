@@ -33,7 +33,7 @@ public:
   bool CanUndo() const { return !undo_.empty(); }
   bool CanRedo() const { return !redo_.empty(); }
   size_t UndoDepth() const { return undo_.size(); }
-  void BeginGroup(std::string label); // commands until EndGroup undo as one step (e.g. one AI request)
+  void BeginGroup(std::string label, std::string source = "ai"); // until EndGroup: one undo step (one AI request)
   void EndGroup();
 
   // Continuous edits of the same field from the UI within this window merge into one undo step.
@@ -48,13 +48,23 @@ public:
 
   static bool IsStructural(const std::string& name) { return name != "set"; } // changes the object tree
 
+  // Undo history for the History panel: done steps (oldest first) then undone steps (future = true).
+  struct HistoryEntry {
+    std::string label, source; // source of the first command: ui, ai, script, terminal, replay
+    size_t commands = 0;       // > 1 for groups
+    bool future = false;
+  };
+  std::vector<HistoryEntry> History() const;
+  bool JumpTo(size_t depth, std::string* error = nullptr); // undo / redo until UndoDepth() == depth
+
 private:
   struct Entry {
     std::vector<Command> forward, inverse; // inverse in the order to apply (reverse of forward)
-    std::string label, mergeKey;
+    std::string label, mergeKey, source;
     double time = 0;
   };
   bool Apply(Command& cmd, Command& inverse, std::string* error);
+  std::string Label(const Command& cmd) const; // "Player: Transform.position = [3,4,5]"
   double Now() const;
   void Push(Entry e);
 

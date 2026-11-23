@@ -118,7 +118,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | `5fedfeb` |
 | 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | `36b1e5c` |
 | 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | `fb72d1a` |
-| 1-3 명령 버스 + Undo/Redo | `Core/Command.*`: 명령 `{cmd, target, args(JSON), source, t}` → 실행 + 역명령 기록, Undo/Redo, 묶음(AI 요청 하나 = Undo 한 번), UI의 같은 필드 연속 편집은 300ms 안이면 합침, JSONL 로그 저장·`--replay`. 대상이 될 최소 씬 모델(`Scene/*`, 2-1의 바탕)과 기본·샘플 컴포넌트. Inspector·Hierarchy를 씬·리플렉션에서 생성, 필드 확정 → `set` 명령, Ctrl+Z/Y 전역(필드 내부 Undo는 미확정 편집 중에만). 자동 테스트: `edit=[3,4,5] undo=[0,1,0] redo=[3,4,5]`, 재생한 씬 덤프 동일. 단위 테스트 14개·검사 214개. CI 7번 | (이 커밋) |
+| 1-3 명령 버스 + Undo/Redo | `Core/Command.*`: 명령 `{cmd, target, args(JSON), source, t}` → 실행 + 역명령 기록, Undo/Redo, 묶음(AI 요청 하나 = Undo 한 번), UI의 같은 필드 연속 편집은 300ms 안이면 합침, JSONL 로그 저장·`--replay`. 대상이 될 최소 씬 모델(`Scene/*`, 2-1의 바탕)과 기본·샘플 컴포넌트. Inspector·Hierarchy를 씬·리플렉션에서 생성, 필드 확정 → `set` 명령, Ctrl+Z/Y 전역(필드 내부 Undo는 미확정 편집 중에만). 자동 테스트: `edit=[3,4,5] undo=[0,1,0] redo=[3,4,5]`, 재생한 씬 덤프 동일. 단위 테스트 14개·검사 214개. CI 7번 | `7c761ba` |
+| 1-3b Undo 기록 패널 | 아래 도크에 History 탭: 단계마다 한 줄(`Player: Transform.position = [3,4,5]`), 현재 단계 강조, 되돌린 단계 흐리게, 클릭하면 그 시점으로 이동(`CommandBus::JumpTo`, 로그에는 undo/redo로 남아 재생도 같음), 출처 열(AI·Script·Terminal), 묶음은 한 줄 `(N edits)`로 접힘. float 값은 가장 짧은 표기(0.45), 긴 입력값은 칸 안에서 잘림. 자동 테스트: 기록 클릭 후 `maxHealth=100 undo_depth=1` | (이 커밋) |
 
 ---
 
@@ -130,7 +131,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-3b. Undo 기록 패널** — 명령 기록 목록, 클릭으로 그 시점 이동, AI·스크립트·사람 편집 구분, AI 묶음 접기 [convenience-features](planning/convenience-features.md)
 - [ ] **1-4. 핸들 기반 오브젝트 수명**
   - 구현: `Handle<T>{index:24, generation:8}` 또는 64비트(`index32 + gen32`). 오브젝트 풀은 세대 번호 비교로 `IsValid()`. 파괴된 대상 접근은 언어와 무관하게 같은 오류 메시지.
   - **안정 ID**: 씬 파일·명령·네트워크용으로 핸들과 별개인 영구 ID(문자열 `"g1"` 또는 64비트 UUID)를 둔다. 핸들은 실행 중 전용.

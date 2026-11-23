@@ -275,11 +275,11 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   // Main area: docked panels (drag splitters to resize, drag tabs to move; layout saved per user).
   auto state = std::make_shared<DockState>();
   state->titles = {{"hierarchy", "Hierarchy"}, {"scene", "Scene"}, {"game", "Game"}, {"project", "Project"},
-                   {"console", "Console"}, {"buildlog", "Build Log"}, {"profiler", "Profiler"},
+                   {"console", "Console"}, {"buildlog", "Build Log"}, {"profiler", "Profiler"}, {"history", "History"},
                    {"inspector", "Inspector"}, {"settings", "Project Settings"}};
   int hierLeaf = state->AddLeaf({"hierarchy"});
   int sceneLeaf = state->AddLeaf({"scene", "game"});
-  int bottomLeaf = state->AddLeaf({"project", "console", "buildlog", "profiler"});
+  int bottomLeaf = state->AddLeaf({"project", "console", "buildlog", "profiler", "history"});
   int inspLeaf = state->AddLeaf({"inspector", "settings"});
   int center = state->AddSplit(Axis::Column, 0.68f, sceneLeaf, bottomLeaf);
   int right = state->AddSplit(Axis::Row, 0.675f, center, inspLeaf);
@@ -310,6 +310,11 @@ std::unique_ptr<Widget> BuildEditorScreen() {
     tab->selectedIndex = i;
     dock.Add(MakeCustom(bottom[i], [tab](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, tab.get()); }));
   }
+
+  // History: every undo step; click one to go back or forward to it (EditorModel fills the rows)
+  auto& history = dock.Add(MakeBox(Axis::Column));
+  history.id = "history";
+  history.padT = 4;
 
   // Inspector: component cards (click a header to fold)
   auto& insp = dock.Add(MakeBox(Axis::Column, 4));

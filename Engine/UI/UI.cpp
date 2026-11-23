@@ -381,6 +381,7 @@ void UIContext::DrawWidget(Widget& w) {
       b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;
+      b.PushClip(ix + 1, iy, iw - 2, ih); // long values stay inside the box
       if (focus && w.cursor != w.anchor) { // selection
         size_t a = std::min(w.cursor, w.anchor), z = std::max(w.cursor, w.anchor);
         float sx = tx + Measure(fs, v.substr(0, a)), ex = tx + Measure(fs, v.substr(0, z));
@@ -401,6 +402,7 @@ void UIContext::DrawWidget(Widget& w) {
         if ((ms / kCaretBlinkMs) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
         if (window_) window_->SetTextInputArea(ix * scale_, iy * scale_, iw * scale_, ih * scale_, (int)((caretX - ix) * scale_));
       }
+      b.PopClip();
       break;
     }
     case WidgetKind::ListRow: {
@@ -429,7 +431,7 @@ void UIContext::DrawWidget(Widget& w) {
       } else {
         b.Rect(kx, ky, 11, 11, {0, 0, 0, 0}, 2, 1.5f, dim);
       }
-      Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
+      Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-faint") : t.C("fg"), w.text); // 1: dimmed (undone step)
       if (!w.text2.empty() && w.text2 != "Mesh") Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, t.C("fg-faint"), w.text2);
       break;
     }

@@ -174,6 +174,16 @@ void InjectCommandTest(bdg_engine* e, int frame, float scale) {
   if (frame == 4) { e->cmdTestValues[0] = position(); key(bdg::Key::Z, true); }
   if (frame == 6) { e->cmdTestValues[1] = position(); key(bdg::Key::Y, true); }
   if (frame == 8) { e->cmdTestValues[2] = position(); type("f.Health.maxHealth", "250"); }
+  if (frame == 12) { // History panel: click the first step (only the position edit stays applied)
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("history");
+  }
+  if (frame == 14)
+    if (bdg::Widget* row = e->editor->Find("history.1")) {
+      float x = (row->x + row->w * 0.5f) * scale, y = (row->y + row->h * 0.5f) * scale;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
   if (frame == 10) // select another object in the Hierarchy: the Inspector rebuilds for it
     if (bdg::Widget* row = e->editor->Find("h.g9")) {
       float x = (row->x + row->w * 0.5f) * scale, y = (row->y + row->h * 0.5f) * scale;
@@ -360,7 +370,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
-    e->model->Attach(*e->editor, *h, *i);
+    e->model->Attach(*e->editor, *h, *i, e->editor->Find("history"));
     bdg::EditorModel* model = e->model.get();
     e->editor->SetKeyHandler([model](const bdg::InputEvent& ev) { return model->HandleKey(ev); });
     if (desc->replay_path) {
@@ -541,6 +551,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           bdg::LogInfo("cmd test: edit={} undo={} redo={} maxHealth={} undo_depth={} selected={} light_card={}", e->cmdTestValues[0],
                        e->cmdTestValues[1], e->cmdTestValues[2], hp, e->model->bus.UndoDepth(), e->model->Selected(),
                        e->editor->Find("c.Light") ? 1 : 0);
+          auto history = e->model->bus.History();
+          std::string rows;
+          for (auto& step : history) rows += (rows.empty() ? "" : " | ") + step.label + (step.future ? " (undone)" : "");
+          bdg::LogInfo("history: {}", rows);
         }
         if (const char* log = std::getenv("BDG_CMD_LOG"))
           bdg::LogInfo("command log {}: {}", e->model->bus.SaveLog(log) ? "saved" : "FAILED", log);

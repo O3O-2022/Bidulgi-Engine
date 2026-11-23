@@ -182,8 +182,42 @@ void CommandBus::Push(Entry e) {
   undo_.push_back(std::move(e));
 }
 
+std::string CommandBus::Label(const Command& cmd) const {
+  Args a(cmd.args.empty() ? "{}" : cmd.args);
+  const SceneObject* o = scene_.Find(cmd.target);
+  std::string who = o ? o->name : cmd.target;
+  const std::string& n = cmd.name;
+  if (n == "set") {
+    std::string v = a.Raw("value");
+    if (v.size() > 24) v = v.substr(0, 21) + "...";
+    return std::format("{}: {} = {}", who, a.Str("path"), v);
+  }
+  if (n == "rename") return std::format("Rename {} to {}", who, a.Str("name"));
+  if (n == "add") return a.Get("snapshot") ? "Restore object" : "Add " + a.Str("name", "GameObject");
+  if (n == "del") return "Delete " + who;
+  if (n == "mv") return "Move " + who;
+  if (n == "addcomp") return std::format("Add {} to {}", a.Str("type"), who);
+  if (n == "rmcomp") return std::format("Remove {} from {}", a.Str("type"), who);
+  return n;
+}
+
+std::vector<CommandBus::HistoryEntry> CommandBus::History() const {
+  std::vector<HistoryEntry> out;
+  for (auto& e : undo_) out.push_back({e.label, e.source, e.forward.size(), false});
+  for (auto it = redo_.rbegin(); it != redo_.rend(); ++it) out.push_back({it->label, it->source, it->forward.size(), true});
+  return out;
+}
+
+bool CommandBus::JumpTo(size_t depth, std::string* error) {
+  if (depth > undo_.size() + redo_.size()) return Fail(error, std::format("no history step {}", depth));
+  while (undo_.size() > depth) if (!Undo(error)) return false;
+  while (undo_.size() < depth) if (!Redo(error)) return false;
+  return true;
+}
+
 bool CommandBus::Execute(Command cmd, std::string* error) {
   if (cmd.time < 0) cmd.time = Now();
+  std::string label = Label(cmd); // before applying: a deleted object still has its name
   Command inv;
   if (!Apply(cmd, inv, error)) return false;
   if (yyjson_doc* d = yyjson_read(cmd.args.data(), cmd.args.size(), 0)) { // canonical (minified) args in the log
@@ -194,7 +228,8 @@ bool CommandBus::Execute(Command cmd, std::string* error) {
   Entry e;
   e.forward = {cmd};
   e.inverse = {inv};
-  e.label = cmd.name;
+  e.label = cmd.name == "add" && label == "Add GameObject" ? Label(cmd) : label;
+  e.source = cmd.source;
   e.time = cmd.time;
   if (cmd.name == "set") {
     Args a(cmd.args);
@@ -206,6 +241,7 @@ bool CommandBus::Execute(Command cmd, std::string* error) {
     if (top.mergeKey == e.mergeKey && top.forward.size() == 1 && cmd.time - top.time <= mergeWindow) {
       top.forward[0] = cmd;
       top.time = cmd.time;
+      top.label = label; // shows the latest value
       if (onChanged) onChanged(cmd);
       return true;
     }
@@ -243,9 +279,9 @@ bool CommandBus::Redo(std::string* error) {
   return true;
 }
 
-void CommandBus::BeginGroup(std::string label) {
-  if (groupDepth_++ == 0) group_ = Entry{{}, {}, std::move(label), {}, Now()};
-  log_.push_back("{\"cmd\":\"begin\"}");
+void CommandBus::BeginGroup(std::string label, std::string source) {
+  if (groupDepth_++ == 0) group_ = Entry{{}, {}, label, {}, source, Now()};
+  log_.push_back(std::format("{{\"cmd\":\"begin\",\"label\":{},\"source\":{}}}", Q(label), Q(source)));
 }
 
 void CommandBus::EndGroup() {
@@ -273,7 +309,7 @@ bool CommandBus::ExecuteLine(std::string_view line, std::string* error) {
   std::string name = a.Str("cmd");
   if (name == "undo") return Undo(error);
   if (name == "redo") return Redo(error);
-  if (name == "begin") { BeginGroup(a.Str("label")); return true; }
+  if (name == "begin") { BeginGroup(a.Str("label"), a.Str("source", "ai")); return true; }
   if (name == "end") { EndGroup(); return true; }
   Command c;
   c.name = name;

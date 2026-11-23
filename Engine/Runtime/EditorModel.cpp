@@ -97,10 +97,11 @@ void EditorModel::BuildSampleScene() {
   selected_ = "g6";
 }
 
-void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector) {
+void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Widget* history) {
   ui_ = &ui;
   hierarchy_ = &hierarchy;
   inspector_ = &inspector;
+  history_ = history;
   Rebuild();
 }
 
@@ -129,8 +130,37 @@ void EditorModel::Update() {
     needRebuild_ = true;
   }
   if (!selected_.empty() && !scene.Find(selected_)) { selected_.clear(); needRebuild_ = true; } // deleted
+  if (pendingJump_ >= 0) {
+    std::string err;
+    if (!bus.JumpTo((size_t)pendingJump_, &err)) LogWarn("history: {}", err);
+    pendingJump_ = -1;
+  }
+  bool historyChanged = needRebuild_ || needRefresh_;
   if (needRebuild_) Rebuild();
   else if (needRefresh_) Refresh();
+  if (historyChanged) RebuildHistory();
+}
+
+void EditorModel::RebuildHistory() {
+  if (!history_) return;
+  history_->children.clear();
+  auto entries = bus.History();
+  size_t depth = bus.UndoDepth();
+  auto& start = history_->Add(MakeListRow("history.0", "Scene opened", ""));
+  start.selected = depth == 0;
+  start.onClick = [this](Widget&) { pendingJump_ = 0; };
+  for (size_t i = 0; i < entries.size(); ++i) {
+    const auto& e = entries[i];
+    std::string who = e.source == "ai" ? "AI" : e.source == "script" ? "Script" : e.source == "terminal" ? "Terminal"
+                    : e.source == "replay" ? "Replay" : "";
+    std::string label = e.commands > 1 ? std::format("{}  ({} edits)", e.label, e.commands) : e.label; // groups stay one row
+    auto& row = history_->Add(MakeListRow("history." + std::to_string(i + 1), label, who, 0));
+    row.selected = i + 1 == depth;
+    row.variant = e.future ? 1 : 0;
+    size_t target = i + 1;
+    row.onClick = [this, target](Widget&) { pendingJump_ = (long long)target; };
+  }
+  if (ui_) ui_->ForgetRemovedWidgets();
 }
 
 std::string EditorModel::ToDisplay(const std::string& json, FieldType type) {
@@ -227,6 +257,7 @@ void EditorModel::Rebuild() {
     addRow2.Add(MakeButton("insp.add", "+  Add Component"));
   }
   if (ui_) ui_->ForgetRemovedWidgets();
+  RebuildHistory();
 }
 
 void EditorModel::Refresh() {

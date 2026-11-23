@@ -16,7 +16,7 @@ public:
   Scene scene;
   CommandBus bus{scene};
 
-  void Attach(UIContext& ui, Widget& hierarchy, Widget& inspector);
+  void Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Widget* history = nullptr);
   void Select(const std::string& id);
   const std::string& Selected() const { return selected_; }
   bool HandleKey(const InputEvent& e); // global shortcuts: Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z
@@ -34,6 +34,9 @@ private:
   UIContext* ui_ = nullptr;
   Widget* hierarchy_ = nullptr;
   Widget* inspector_ = nullptr;
+  Widget* history_ = nullptr;
+  long long pendingJump_ = -1; // History row clicked: jump there in Update
+  void RebuildHistory();
   std::vector<Binding> bindings_;
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type
   std::string selected_, pendingSelect_;
