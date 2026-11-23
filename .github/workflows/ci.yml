@@ -130,6 +130,15 @@ jobs:
           if ((Get-Content ci-scene1.jsonl -Raw) -ne (Get-Content ci-scene2.jsonl -Raw)) { $errors += 'replayed command log gives a different scene' }
           Remove-Item Env:BDG_LAYOUT
 
+          # 8) Crash report (queue 1-4b): a deliberate crash writes a minidump; the next start offers to report it
+          $env:BDG_CRASH_TEST = '1'
+          $p = Start-Process build/Release/BidulgiEditor.exe -ArgumentList '--frames', '10' -WorkingDirectory $PWD -PassThru -Wait
+          Remove-Item Env:BDG_CRASH_TEST
+          $crash = Get-ChildItem BugReports -Directory -Filter 'crash-*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+          if (-not $crash -or -not (Test-Path "$($crash.FullName)/crash.dmp") -or -not (Test-Path BugReports/pending-crash.txt)) { $errors += "crash report not written (exit $($p.ExitCode))" }
+          $log = Invoke-Editor 'Release' @{} 5
+          if ($log -notmatch 'crash: the previous session crashed' -or $log -notmatch 'crash: report button shown') { $errors += 'crash not offered on the next start' }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

@@ -76,6 +76,7 @@ add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
   Engine/Core/Log.h        Engine/Core/Log.cpp
   Engine/Core/Math.h       Engine/Core/Handle.h
+  Engine/Core/Crash.h      Engine/Core/Crash.cpp
   Engine/Core/Reflection.h Engine/Core/Reflection.cpp
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
@@ -93,7 +94,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

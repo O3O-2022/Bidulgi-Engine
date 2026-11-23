@@ -1,5 +1,6 @@
 // C API hub implementation: every bdg_api.h function forwards into the C++ engine here.
 #include "bdg/bdg_api.h"
+#include "Core/Crash.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include "Platform/Window.h"
@@ -85,7 +86,8 @@ struct bdg_engine {
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
-  bool cmdTest = false;
+  bool cmdTest = false, crashTest = false;
+  std::string pendingCrash; // report folder of the previous session's crash
   std::string cmdTestValues[3];            // Transform.position after edit / undo / redo
   std::chrono::steady_clock::time_point createdAt;
   int clicks = 0;
@@ -336,6 +338,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->selfTest = std::getenv("BDG_UI_SELFTEST") != nullptr;
   e->dockTest = std::getenv("BDG_DOCK_TEST") != nullptr;
   e->cmdTest = std::getenv("BDG_CMD_TEST") != nullptr;
+  e->crashTest = std::getenv("BDG_CRASH_TEST") != nullptr;
+  bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
+  e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
   e->showGallery = screen && std::string(screen) == "gallery";
   if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height)) { delete e; return BDG_ERR_PLATFORM; }
@@ -367,6 +372,23 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   e->editor->SetWindow(&e->window);
   if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
+  if (!e->pendingCrash.empty()) { // previous session crashed: clean the log copy and offer to report it
+    namespace fs = std::filesystem;
+    fs::path log = fs::path(e->pendingCrash) / "Bidulgi.log";
+    std::string text = AnonymizeReportText(ReadTextFile(log));
+    WriteBytes(log, text.data(), text.size());
+    bdg::LogWarn("crash: the previous session crashed; report files in {}", AnonymizeReportText(e->pendingCrash));
+    if (bdg::Widget* b = e->editor->Find("status.crash")) {
+      b->hidden = false;
+      b->onClick = [e](bdg::Widget& w) {
+        std::string summary = ReadTextFile(std::filesystem::path(e->pendingCrash) / "crash.txt");
+        e->window.OpenURL("file:///" + std::filesystem::path(e->pendingCrash).generic_string());
+        e->window.OpenURL("https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml&title=" +
+                          UrlEncode("[Crash] ") + "&system=" + UrlEncode(AnonymizeReportText(summary)));
+        w.hidden = true;
+      };
+    }
+  }
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
@@ -496,6 +518,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->selfTest && e->showGallery) InjectSelfTest(e, frames, scale);
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
+    if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
     float lw = w / scale, lh = h / scale;
     e->rhi.BeginFrame(w, h, e->theme.C("win"));
     e->batch.Begin((int32_t)lw, (int32_t)lh);
@@ -543,6 +566,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
                        d.nodes[d.FindLeaf("hierarchy")].rect.w, d.nodes[d.FindLeaf("console")].tabs.size());
         bdg::LogInfo("dock final: {}", d.Describe());
       }
+      if (bdg::Widget* crash = e->editor->Find("status.crash"); crash && !crash->hidden) bdg::LogInfo("crash: report button shown");
       if (e->model) {
         if (e->cmdTest) {
           std::string hp;

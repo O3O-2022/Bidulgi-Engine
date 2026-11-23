@@ -341,6 +341,9 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   perf.id = "status.perf";
   status.Add(Spacer());
   status.Add(DimLabel("main  ·  UTF-8  ·  F1 갤러리", 10.5f));
+  auto& crash = status.Add(MakeButton("status.crash", "지난 실행이 비정상 종료됨 — 제보하기"));
+  crash.height = Length::Px(20);
+  crash.hidden = true; // shown by the engine when the previous session crashed
   auto& bug = status.Add(MakeButton("status.bug", "버그 제보 (Ctrl+Shift+B)"));
   bug.height = Length::Px(20);
   return root;

@@ -193,6 +193,7 @@ void UIContext::Measure(Widget& w) {
       float main = 0, cross = 0;
       int n = 0;
       for (auto& c : w.children) {
+        if (c->hidden) continue;
         float cw = c->width.mode == Length::Mode::Px ? c->width.value : c->prefW;
         float ch = c->height.mode == Length::Mode::Px ? c->height.value : c->prefH;
         main += w.axis == Axis::Row ? cw : ch;
@@ -230,14 +231,18 @@ void UIContext::Arrange(Widget& w, float x, float y, float width, float height) 
   bool row = w.axis == Axis::Row;
   float cx = x + w.padL, cy = y + w.padT;
   float cw = std::max(0.f, width - w.padL - w.padR), ch = std::max(0.f, height - w.padT - w.padB);
-  float avail = (row ? cw : ch) - w.gap * (float)(w.children.size() - 1), fillWeight = 0;
+  size_t shown = 0;
+  for (auto& c : w.children) shown += c->hidden ? 0 : 1;
+  float avail = (row ? cw : ch) - w.gap * (float)(shown ? shown - 1 : 0), fillWeight = 0;
   for (auto& c : w.children) {
+    if (c->hidden) continue;
     const Length& m = row ? c->width : c->height;
     if (m.mode == Length::Mode::Fill) fillWeight += m.value;
     else avail -= row ? c->prefW : c->prefH;
   }
   float pos = row ? cx : cy;
   for (auto& c : w.children) {
+    if (c->hidden) continue;
     const Length& m = row ? c->width : c->height;
     const Length& crossLen = row ? c->height : c->width;
     float mainSize = m.mode == Length::Mode::Fill ? std::max(0.f, avail) * (m.value / std::max(fillWeight, 1e-4f))
