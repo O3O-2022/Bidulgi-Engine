@@ -44,12 +44,14 @@ enum FieldFlags : uint32_t {
   kReplicated = 8,  // sent over the network (later: N-2)
   kAnimatable = 16, // can be keyed on the timeline
   kCallable = 32,   // BFUNCTION: callable from scripts, terminal and AI
+  kButton = 64,     // BFUNCTION(Button): a button in the Inspector (runs as a "call" command, undoable)
 };
 
 struct FieldMeta {
   bool hasRange = false;
   double rangeMin = 0, rangeMax = 0;
-  std::string tooltip, category, showIf;
+  std::string tooltip, category, showIf; // showIf: "flag", "!flag", "field == Value", "field != Value"
+  std::string header;                    // Inspector section title shown above this field
 };
 
 struct EnumInfo {

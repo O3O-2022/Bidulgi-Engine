@@ -36,6 +36,8 @@ public:
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
   static std::string ToDisplay(const std::string& json, FieldType type);
   static std::string FromDisplay(const std::string& text, FieldType type);
+  // BPROPERTY(ShowIf = ...): "flag", "!flag", "field == Value", "field != Value" (values as the Inspector shows them)
+  static bool ShowIfPasses(const Component& c, const std::string& condition);
 
 private:
   void BuildSampleScene();
@@ -53,5 +55,7 @@ private:
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type
   std::string selected_, pendingSelect_;
   bool needRebuild_ = false, needRefresh_ = false;
+  std::string showIfState_; // which ShowIf fields are visible; a change rebuilds the Inspector
+  std::string ShowIfState() const;
 };
 }

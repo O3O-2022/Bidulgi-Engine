@@ -175,6 +175,37 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
                            newTransform.empty() ? "" : ",\"transform\":" + oldTransform);
     return true;
   }
+  if (n == "call" || n == "setcomp") {
+    // call    {"type":"Health","function":"Revive","args":[...]}: runs a reflected function; undo puts the
+    //         component's values back (the function may change any of them)
+    // setcomp {"type":"Health","value":{...}}: sets every given field at once (the inverse of call)
+    std::string typeName = a.Str("type");
+    Component* c = o->Find(typeName);
+    if (!c) return Fail(error, std::format("{}: \"{}\" has no component \"{}\" (components: {})", n, o->name, typeName, ComponentNames(*o)));
+    ValueType vt;
+    vt.type = FieldType::Struct;
+    vt.structType = c->type;
+    std::string before = Registry::ToJson(c->data, vt);
+    if (n == "setcomp") {
+      if (!Registry::FromJson(c->data, vt, a.Raw("value"), error)) { Registry::FromJson(c->data, vt, before, nullptr); return false; }
+    } else {
+      std::vector<std::string> args;
+      if (yyjson_val* arr = a.Get("args")) {
+        size_t i, cnt;
+        yyjson_val* v;
+        yyjson_arr_foreach(arr, i, cnt, v) {
+          char* s = yyjson_val_write(v, 0, nullptr);
+          args.push_back(s ? s : "null");
+          std::free(s);
+        }
+      }
+      if (!Registry::Call(c->data, *c->type, a.Str("function"), args, nullptr, error)) return false;
+      if (Registry::ToJson(c->data, vt) == before) { /* nothing changed: still a command (it ran) */ }
+    }
+    inv.name = "setcomp";
+    inv.args = std::format("{{\"type\":{},\"value\":{}}}", Q(typeName), before);
+    return true;
+  }
   if (n == "addcomp") {
     std::string typeName = a.Str("type");
     const TypeInfo* t = Registry::Instance().Find(typeName);
@@ -202,7 +233,7 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     scene_.RemoveComponent(o->id, typeName);
     return true;
   }
-  return Fail(error, std::format("unknown command \"{}\" (set, rename, add, del, mv, addcomp, rmcomp)", n));
+  return Fail(error, std::format("unknown command \"{}\" (set, rename, add, del, mv, addcomp, rmcomp, call, setcomp)", n));
 }
 
 // ---- History ---------------------------------------------------------------------------------
@@ -232,6 +263,8 @@ std::string CommandBus::Label(const Command& cmd) const {
   if (n == "mv") return "Move " + who;
   if (n == "addcomp") return std::format("Add {} to {}", a.Str("type"), who);
   if (n == "rmcomp") return std::format("Remove {} from {}", a.Str("type"), who);
+  if (n == "call") return std::format("{}: {}.{}()", who, a.Str("type"), a.Str("function"));
+  if (n == "setcomp") return std::format("{}: {} values", who, a.Str("type"));
   return n;
 }
 

@@ -62,6 +62,10 @@ struct Widget {
   std::string composing;                      // IME composition shown at the cursor, not yet committed
   std::vector<std::string> undoStack, redoStack;
   std::function<void(Widget&)> onCommit;      // Enter pressed or focus left after edits
+  // Field as a slider (BPROPERTY Range): drag inside the box sets the value; typing still works.
+  bool slider = false, sliderInteger = false;
+  double sliderMin = 0, sliderMax = 1;
+  std::function<void(Widget&)> onChange;      // value changed while dragging (each step; edits merge into one undo)
   bool edited = false;
 
   // Computed each frame.
@@ -153,6 +157,8 @@ private:
   Widget* dragSource_ = nullptr; // pressed draggable widget
   Widget* dropTarget_ = nullptr; // widget under the mouse that accepts the drop
   bool dragging_ = false;
+  Widget* sliderDrag_ = nullptr;
+  void SliderSet(Widget& f, float mouseX);
   float pressX_ = 0, pressY_ = 0, dragX_ = 0, dragY_ = 0;
   Widget* DropTargetAt(float x, float y);
   void DrawDragOverlay();

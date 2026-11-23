@@ -300,6 +300,44 @@ std::string EditorModel::ToDisplay(const std::string& json, FieldType type) {
   return json;
 }
 
+bool EditorModel::ShowIfPasses(const Component& c, const std::string& condition) {
+  std::string cond = Trim(condition);
+  if (cond.empty()) return true;
+  size_t op = cond.find("==");
+  bool notEqual = false;
+  if (op == std::string::npos) { op = cond.find("!="); notEqual = op != std::string::npos; }
+  std::string name, want;
+  bool negate = false;
+  if (op == std::string::npos) {
+    negate = cond[0] == '!';
+    name = Trim(negate ? cond.substr(1) : cond);
+  } else {
+    name = Trim(cond.substr(0, op));
+    want = Trim(cond.substr(op + 2));
+    if (want.size() >= 2 && want.front() == '"' && want.back() == '"') want = want.substr(1, want.size() - 2);
+  }
+  const FieldInfo* f = c.type->FindField(name);
+  std::string json;
+  if (!f || !Registry::Get(c.data, *c.type, name, json)) return true; // unknown field: show rather than hide
+  if (op == std::string::npos) {
+    bool truthy = json != "false" && json != "0" && json != "\"\"" && json != "[]";
+    return truthy != negate;
+  }
+  bool equal = ToDisplay(json, f->value.type) == want;
+  return equal != notEqual;
+}
+
+std::string EditorModel::ShowIfState() const {
+  std::string s;
+  const SceneObject* o = scene.Find(selected_);
+  if (!o) return s;
+  for (const Component& c : o->components)
+    for (const TypeInfo* t = c.type; t; t = t->base)
+      for (const FieldInfo& f : t->fields)
+        if (!f.meta.showIf.empty()) s += ShowIfPasses(c, f.meta.showIf) ? '1' : '0';
+  return s;
+}
+
 std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
   std::string t = Trim(text);
   if (type == FieldType::String) return Q(text);
@@ -348,10 +386,20 @@ void EditorModel::Rebuild() {
     inspector_->Add(MakeLabel("Nothing selected")).variant = 1;
   } else {
     auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
-    nameRow.padL = 10; nameRow.padT = 4; nameRow.padB = 2;
+    nameRow.padR = 10; nameRow.padT = 2; nameRow.padB = 2;
     nameRow.crossAlign = Align::Center;
-    nameRow.Add(MakeLabel(o->name)).fontSize = 15;
-    nameRow.Add(MakeBox(Axis::Row)).width = Length::Fill();
+    auto& name = nameRow.Add(MakeField("insp.name", "Name", o->name)); // F2 focuses it; Enter renames (command)
+    name.width = Length::Fill();
+    std::string id = o->id;
+    name.onCommit = [this, id](Widget& w) {
+      if (w.text2.empty() || !scene.Find(id) || scene.Find(id)->name == w.text2) { needRebuild_ = true; return; }
+      Command cmd;
+      cmd.name = "rename";
+      cmd.target = id;
+      cmd.args = std::format("{{\"name\":{}}}", Q(w.text2));
+      std::string err;
+      if (!bus.Execute(cmd, &err)) LogWarn("rename: {}", err);
+    };
     if (o->prefab) nameRow.Add(MakeBadge("Prefab"));
     for (const Component& c : o->components) {
       const TypeInfo& t = *c.type;
@@ -362,11 +410,28 @@ void EditorModel::Rebuild() {
       for (const TypeInfo* x : chain)
         for (const FieldInfo& f : x->fields) {
           if (!(f.flags & kEdit)) continue;
+          if (!f.meta.header.empty()) card.Add(MakeLabel(f.meta.header)).variant = 3; // section caption
+          if (!ShowIfPasses(c, f.meta.showIf)) continue;                                // hidden until its condition holds
           std::string json;
           Registry::Get(c.data, t, f.name, json);
           auto& field = card.Add(MakeField("f." + t.name + "." + f.name, Pretty(f.name), ToDisplay(json, f.value.type)));
           std::string target = o->id, path = t.name + "." + f.name;
           FieldType type = f.value.type;
+          bool numeric = type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double;
+          if (f.meta.hasRange && numeric) { // Range -> slider (drag edits merge into one undo step)
+            field.slider = true;
+            field.sliderInteger = type == FieldType::Int32;
+            field.sliderMin = f.meta.rangeMin;
+            field.sliderMax = f.meta.rangeMax;
+          }
+          field.onChange = [this, target, path, type](Widget& w) {
+            Command cmd;
+            cmd.name = "set";
+            cmd.target = target;
+            cmd.args = std::format("{{\"path\":{},\"value\":{}}}", Q(path), FromDisplay(w.text2, type));
+            std::string err;
+            if (!bus.Execute(cmd, &err)) LogWarn("edit rejected: {}", err);
+          };
           field.onCommit = [this, target, path, type](Widget& w) {
             Command cmd;
             cmd.name = "set";
@@ -378,18 +443,36 @@ void EditorModel::Rebuild() {
           };
           bindings_.push_back({&field, target, path, type});
         }
+      for (const TypeInfo* x : chain) // BFUNCTION(Button): one button per function, run as an undoable "call"
+        for (const FunctionInfo& fn : x->functions) {
+          if (!(fn.flags & kButton) || !fn.params.empty()) continue;
+          auto& row = card.Add(MakeBox(Axis::Row));
+          row.padL = 12; row.padT = 4; row.padB = 4;
+          auto& btn = row.Add(MakeButton("b." + t.name + "." + fn.name, Pretty(fn.name)));
+          std::string target = o->id, type = t.name, func = fn.name;
+          btn.onClick = [this, target, type, func](Widget&) {
+            Command cmd;
+            cmd.name = "call";
+            cmd.target = target;
+            cmd.args = std::format("{{\"type\":{},\"function\":{}}}", Q(type), Q(func));
+            std::string err;
+            if (!bus.Execute(cmd, &err)) LogWarn("call: {}", err);
+          };
+        }
     }
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row));
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
     addRow2.Add(MakeButton("insp.add", "+  Add Component"));
   }
+  showIfState_ = ShowIfState();
   if (ui_) ui_->ForgetRemovedWidgets();
   RebuildHistory();
 }
 
 void EditorModel::Refresh() {
   needRefresh_ = false;
+  if (ShowIfState() != showIfState_) { Rebuild(); return; } // a ShowIf condition flipped: fields appear or go away
   for (Binding& b : bindings_) {
     if (b.field->edited) continue; // the user is typing: do not overwrite
     SceneObject* o = scene.Find(b.target);

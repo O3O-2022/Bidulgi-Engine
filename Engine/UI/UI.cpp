@@ -8,6 +8,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <format>
 
 namespace bdg {
 constexpr long long kCaretBlinkMs = 530; // text caret on/off period
@@ -401,6 +403,14 @@ void UIContext::DrawWidget(Widget& w) {
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;
       b.PushClip(ix + 1, iy, iw - 2, ih); // long values stay inside the box
+      if (w.slider && w.sliderMax > w.sliderMin) { // filled part of the range + thumb
+        double sv = std::strtod(w.text2.c_str(), nullptr);
+        float k = (float)std::clamp((sv - w.sliderMin) / (w.sliderMax - w.sliderMin), 0.0, 1.0);
+        Color fill = t.C("accent");
+        fill.a = 0.22f;
+        b.Rect(ix + 1, iy + 1, (iw - 2) * k, ih - 2, fill, rsm);
+        b.Rect(ix + 1 + (iw - 4) * k, iy + 2, 2, ih - 4, t.C("accent"));
+      }
       if (focus && w.cursor != w.anchor) { // selection
         size_t a = std::min(w.cursor, w.anchor), z = std::max(w.cursor, w.anchor);
         float sx = tx + Measure(fs, v.substr(0, a)), ex = tx + Measure(fs, v.substr(0, z));
@@ -543,6 +553,7 @@ void UIContext::ForgetRemovedWidgets() {
   if (!reachable(focused_)) focused_ = nullptr;
   if (!reachable(dragSource_)) { dragSource_ = nullptr; dragging_ = false; }
   if (!reachable(dropTarget_)) dropTarget_ = nullptr;
+  if (!reachable(sliderDrag_)) sliderDrag_ = nullptr;
 }
 
 Widget* UIContext::DropTargetAt(float x, float y) {
@@ -619,6 +630,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
     if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse
     switch (e.type) {
       case InputEvent::Type::MouseMove: {
+        if (sliderDrag_) { SliderSet(*sliderDrag_, e.x); break; }
         if (dragSource_) { // drag and drop: starts after 6 units so clicks stay clicks
           dragX_ = e.x; dragY_ = e.y;
           if (!dragging_ && std::hypot(e.x - pressX_, e.y - pressY_) > 6.f) dragging_ = true;
@@ -640,9 +652,15 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         pressX_ = dragX_ = e.x; pressY_ = dragY_ = e.y;
         SetFocus((pressed_ && pressed_->focusable) ? pressed_ : nullptr);
         if (focused_ && focused_->kind == WidgetKind::Field) focused_->cursor = focused_->anchor = FieldHit(*focused_, e.x);
+        if (focused_ && focused_->kind == WidgetKind::Field && focused_->slider) {
+          float ix, iy, iw, ih;
+          FieldInputBox(*focused_, ix, iy, iw, ih);
+          if (e.x >= ix && e.x < ix + iw && e.y >= iy && e.y < iy + ih) { sliderDrag_ = focused_; SliderSet(*focused_, e.x); }
+        }
         break;
       case InputEvent::Type::MouseUp: {
         if (e.button != 1) break;
+        if (sliderDrag_) { sliderDrag_ = nullptr; if (pressed_) pressed_->pressed = false; pressed_ = nullptr; break; }
         Widget* hit = HitTest(*root_, e.x, e.y);
         if (dragging_) { // a drop, not a click
           if (dropTarget_ && dropTarget_ != dragSource_ && dropTarget_->onDrop) dropTarget_->onDrop(*dragSource_);
@@ -754,6 +772,25 @@ std::string UIContext::AccessibleName(const Widget& w) {
       return name.empty() ? w.id : name;
     }
   }
+}
+
+void UIContext::SliderSet(Widget& f, float mouseX) {
+  float ix, iy, iw, ih;
+  FieldInputBox(f, ix, iy, iw, ih);
+  double k = std::clamp((double)(mouseX - ix - 2) / std::max(1.f, iw - 4), 0.0, 1.0);
+  double v = f.sliderMin + k * (f.sliderMax - f.sliderMin);
+  std::string text;
+  if (f.sliderInteger) text = std::to_string((long long)std::llround(v));
+  else {
+    text = std::format("{:.3f}", v);
+    while (text.back() == '0') text.pop_back();
+    if (text.back() == '.') text.pop_back();
+  }
+  if (text == f.text2) return;
+  f.text2 = text;
+  f.cursor = f.anchor = text.size();
+  f.edited = false; // the drag sends its own edits
+  if (f.onChange) f.onChange(f);
 }
 
 void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {

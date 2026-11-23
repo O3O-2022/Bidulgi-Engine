@@ -99,6 +99,8 @@ struct bdg_engine {
   int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
   bool shortcutBannerShown = false;
   bool dragTest = false;
+  bool inspectorTest = false;
+  std::string inspectorTestValues[8];
   bdg::AssetDatabase assets; // project Assets folder (BDG_ASSETS until the project system exists)
   bdg::FileWatcher assetWatcher;
   std::atomic<bool> assetsChanged{false};
@@ -439,7 +441,13 @@ void SetupShortcuts(bdg_engine* e) {
   s.Register("edit.redo", "Redo", [m] { std::string err; if (!m->bus.Redo(&err)) bdg::LogInfo("redo: {}", err); });
   s.Register("edit.duplicate", "Duplicate", [m] { m->Duplicate(); });
   s.Register("edit.delete", "Delete", [m] { m->DeleteSelected(); });
-  s.Register("edit.rename", "Rename", log("rename: in-place rename comes with the Hierarchy (queue 2-4)"));
+  s.Register("edit.rename", "Rename", [e] {
+    if (bdg::Widget* f = e->editor->Find("insp.name")) {
+      e->editor->Focus(f);
+      f->anchor = 0;
+      f->cursor = f->text2.size();
+    }
+  });
   s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
   s.Register("play.toggle", "Play / Stop", [e, m] {
     m->playing = !m->playing;
@@ -501,6 +509,59 @@ void InjectShortcutTest(bdg_engine* e, int frame, float scale) {
   if (frame == 12) e->shortcutTestValues[1] = e->model->playing ? 1 : 0;
 }
 
+// Scripted Inspector check (BDG_INSPECTOR_TEST=1): drag the PlayerMove.speed slider to the middle, undo,
+// rename with F2, press the Health "Revive" button and undo it, then watch Light.range follow its ShowIf.
+void InjectInspectorTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto value = [&](const char* id, const char* comp, const char* field) {
+    std::string v;
+    bdg::SceneObject* o = m->scene.Find(id);
+    if (bdg::Component* c = o ? o->Find(comp) : nullptr) bdg::Registry::Get(c->data, *c->type, field, v);
+    return v;
+  };
+  auto key = [&](bdg::Key k, bool ctrl) { bdg::InputEvent ev{T::KeyDown}; ev.key = k; ev.ctrl = ctrl; e->window.InjectEvent(ev); };
+  auto clickAt = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+  };
+  auto* v = e->inspectorTestValues;
+  if (frame == 2) if (bdg::Widget* f = e->editor->Find("f.PlayerMove.speed")) {
+    float labelW = std::max(80.f, f->w * 0.4f), ix = f->x + 12 + labelW + 8, iw = f->x + f->w - 10 - ix, y = f->y + f->h * 0.5f;
+    e->window.InjectEvent({T::MouseMove, (ix + 3) * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, (ix + 3) * scale, y * scale, 1});
+    for (int i = 1; i <= 8; ++i) e->window.InjectEvent({T::MouseMove, (ix + 2 + (iw - 4) * 0.5f * i / 8) * scale, y * scale});
+    e->window.InjectEvent({T::MouseUp, (ix + 2 + (iw - 4) * 0.5f) * scale, y * scale, 1});
+  }
+  if (frame == 4) { v[0] = value("g6", "PlayerMove", "speed"); v[1] = std::to_string(m->bus.UndoDepth()); key(bdg::Key::Z, true); }
+  if (frame == 6) {
+    v[2] = value("g6", "PlayerMove", "speed");
+    key(bdg::Key::F2, false);
+    bdg::InputEvent t{T::Text};
+    t.text = "Hero";
+    e->window.InjectEvent(t);
+    key(bdg::Key::Enter, false);
+  }
+  if (frame == 8) {
+    v[3] = m->scene.Find("g6") ? m->scene.Find("g6")->name : "?";
+    bdg::Command c;
+    c.name = "set"; c.target = "g6"; c.args = R"({"path":"Health.current","value":10})";
+    m->bus.Execute(c);
+  }
+  if (frame == 10) if (bdg::Widget* b = e->editor->Find("b.Health.Revive")) clickAt(b->x + b->w * 0.5f, b->y + b->h * 0.5f);
+  if (frame == 12) { v[4] = value("g6", "Health", "current"); key(bdg::Key::Z, true); }
+  if (frame == 14) { v[5] = value("g6", "Health", "current"); m->Select("g2"); }
+  if (frame == 16) {
+    v[6] = e->editor->Find("f.Light.range") ? "0" : "1"; // the Sun is Directional: range hidden
+    bdg::Command c;
+    c.name = "set"; c.target = "g2"; c.args = R"({"path":"Light.type","value":"Point"})";
+    m->bus.Execute(c);
+  }
+  if (frame == 18) v[7] = e->editor->Find("f.Light.range") ? "1" : "0";
+}
+
 extern "C" {
 
 bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
@@ -519,6 +580,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
   e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
   e->dragTest = std::getenv("BDG_DRAG_TEST") != nullptr;
+  e->inspectorTest = std::getenv("BDG_INSPECTOR_TEST") != nullptr;
   e->assetTest = std::getenv("BDG_ASSET_TEST") != nullptr;
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
@@ -736,6 +798,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
     if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
+    if (e->inspectorTest && !e->showGallery) InjectInspectorTest(e, frames, scale);
     if (e->dragTest && !e->showGallery && frames == 2 && e->model) { // BDG_DRAG_TEST: drag Weapon onto "Main"
       bdg::Widget* src = e->editor->Find("h.g7");
       bdg::Widget* dst = e->editor->Find("h.scene");
@@ -854,6 +917,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("asset test: knight_guid_kept={} player_mesh={} weapon_mesh={} watcher={} orphans={} assets={}",
                      k && k->guid == e->assetTestKnightGuid ? 1 : 0, field("g6"), field("g7"), e->assetWatcherFired ? 1 : 0,
                      e->assets.OrphanMetas().size(), e->assets.Count());
+      }
+      if (e->inspectorTest) {
+        auto* v = e->inspectorTestValues;
+        bdg::LogInfo("inspector test: slider={} undo_steps={} after_undo={} name={} revive={} revive_undo={} range_hidden={} range_shown={}",
+                     v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
       }
       if (e->shortcutTest)
         bdg::LogInfo("shortcut test: banner_shown={} unity_play={} unreal_play={} objects={} preset={} conflicts={} saved={}",

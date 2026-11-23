@@ -302,13 +302,15 @@ def generate(types, enums, include, stem):
             rng = m.get("Range")
             lo, hi = (rng.split(",") + ["0"])[:2] if rng else ("0", "0")
             meta = (f"::bdg::FieldMeta{{{'true' if rng else 'false'}, {lo.strip() or 0}, {hi.strip() or 0}, "
-                    f"{cpp_str(m.get('Tooltip', ''))}, {cpp_str(m.get('Category', ''))}, {cpp_str(m.get('ShowIf', ''))}}}")
+                    f"{cpp_str(m.get('Tooltip', ''))}, {cpp_str(m.get('Category', ''))}, {cpp_str(m.get('ShowIf', ''))}, "
+                    f"{cpp_str(m.get('Header', ''))}}}")
             out.append(f"    t.fields.push_back(::bdg::reflect::Field<decltype(Self::{f['name']})>({cpp_str(f['name'])}, "
                        f"offsetof(Self, {f['name']}), {' | '.join(flags) or '0u'}, {meta}));")
         for fn in t["functions"]:
             names = ", ".join(cpp_str(n) for n in fn["params"])
+            fflags = "::bdg::kCallable" + (" | ::bdg::kButton" if "Button" in fn["flags"] else "")
             out.append(f"    t.functions.push_back(::bdg::reflect::Function({cpp_str(fn['name'])}, &Self::{fn['name']}, "
-                       f"::bdg::kCallable, {{{names}}}));")
+                       f"{fflags}, {{{names}}}));")
         out += ["    return t;", "  }();", "  return info;", "}", ""]
     out.append(f"void bdg_reflect_register_{stem}() {{")
     out.append("  auto& r = ::bdg::Registry::Instance();")

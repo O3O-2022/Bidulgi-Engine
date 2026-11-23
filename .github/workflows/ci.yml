@@ -191,6 +191,12 @@ jobs:
           if ($log -notmatch 'asset test: knight_guid_kept=1 player_mesh="Characters/Knight.glb" weapon_mesh="Weapons/Sword.glb" watcher=1 orphans=0 assets=4') { $errors += 'asset database test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 15) Inspector (queue 2-4): Range slider drag + undo, F2 rename, Button as a command + undo, ShowIf
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_INSPECTOR_TEST = '1' } 20
+          if ($log -notmatch 'inspector test: slider=25 undo_steps=1 after_undo=5 name=Hero revive=100 revive_undo=10 range_hidden=1 range_shown=1') { $errors += 'inspector test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

@@ -9,7 +9,7 @@ BCLASS(Component, CSharp)
 struct PlayerMove {
   GENERATED_BODY()
 public:
-  BPROPERTY(Edit, Range = "0,50") float speed = 5.f;
+  BPROPERTY(Edit, Range = "0,50", Header = "Movement") float speed = 5.f;
   BPROPERTY(Edit, Range = "0,20") float jumpHeight = 4.5f;
 };
 
@@ -19,6 +19,8 @@ struct Health {
 public:
   BPROPERTY(Edit, Range = "1,10000") int32_t maxHealth = 100;
   BPROPERTY(Edit, Replicated) int32_t current = 100;
+
+  BFUNCTION(Button) void Revive() { current = maxHealth; } // Inspector button
 };
 
 BCLASS(Component, Lua)
