@@ -284,6 +284,16 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   int center = state->AddSplit(Axis::Column, 0.68f, sceneLeaf, bottomLeaf);
   int right = state->AddSplit(Axis::Row, 0.675f, center, inspLeaf);
   state->AddSplit(Axis::Row, 0.2f, hierLeaf, right);
+  // First run: choose the shortcut preset (hidden once a project shortcut file exists)
+  auto& banner = root->Add(MakeBox(Axis::Row, 8));
+  banner.id = "shortcut.banner";
+  banner.hidden = true;
+  banner.padL = 12; banner.padT = 4; banner.padB = 6;
+  banner.crossAlign = Align::Center;
+  banner.Add(MakeLabel("단축키를 어떤 방식으로 쓸까요? (Project Settings에서 언제든 바꿀 수 있습니다)"));
+  banner.Add(MakeButton("shortcut.unity", "Unity 방식", true));
+  banner.Add(MakeButton("shortcut.unreal", "Unreal 방식"));
+
   auto& dock = root->Add(MakeDock("dock", state));
   dock.height = Length::Fill();
 
@@ -328,8 +338,13 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   settings.Add(MakeLabel("Rendering")).variant = 2;
   settings.Add(MakeField("s.quality", "Quality", "Medium"));
   settings.Add(MakeField("s.vsync", "VSync", "Adaptive"));
-  settings.Add(MakeLabel("Editor")).variant = 2;
-  settings.Add(MakeField("s.shortcuts", "Shortcuts", "Unity"));
+  settings.Add(MakeLabel("Shortcuts")).variant = 2;
+  auto& presets = settings.Add(MakeBox(Axis::Row, 6));
+  presets.padL = 12; presets.padT = 4; presets.padB = 4;
+  presets.Add(MakeButton("shortcut.preset.unity", "Unity"));
+  presets.Add(MakeButton("shortcut.preset.unreal", "Unreal"));
+  auto& list = settings.Add(MakeBox(Axis::Column));
+  list.id = "settings.shortcuts"; // action rows, filled by the engine
 
   // Status bar: build state, live FPS / memory, branch, encoding
   auto& status = root->Add(MakeBox(Axis::Row, 10));

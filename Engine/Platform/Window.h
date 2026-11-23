@@ -1,12 +1,20 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct SDL_Window;
 
 namespace bdg {
-enum class Key { None, Tab, Enter, Space, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, F1, F12, A, B, C, V, X, Z, Y };
+enum class Key {
+  None, Tab, Enter, Space, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, PageUp, PageDown, Insert,
+  F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+  A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+  Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9
+};
+const char* KeyName(Key k);            // "A", "F5", "Delete", "0"
+Key KeyFromName(std::string_view name); // inverse of KeyName (case-insensitive); Key::None if unknown
 
 // Platform-neutral input event. Coordinates are in drawable pixels (same space as rendering).
 struct InputEvent {
@@ -14,7 +22,7 @@ struct InputEvent {
   float x = 0, y = 0;
   int button = 0;     // 1 = left
   Key key = Key::None;
-  bool shift = false, ctrl = false;
+  bool shift = false, ctrl = false, alt = false;
   std::string text;   // Text: committed UTF-8 text. TextEditing: IME composition in progress ("" = cleared)
 };
 

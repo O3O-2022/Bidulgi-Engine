@@ -9,3 +9,4 @@ build*.log
 /BugReports/
 __pycache__/
 /build-*/
+/ProjectSettings/

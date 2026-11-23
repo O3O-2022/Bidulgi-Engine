@@ -11,6 +11,7 @@
 #include "Runtime/Screens.h"
 #include "Text/Font.h"
 #include "UI/Dock.h"
+#include "UI/Shortcuts.h"
 #include "UI/Theme.h"
 #include "UI/UI.h"
 #include <algorithm>
@@ -87,7 +88,11 @@ struct bdg_engine {
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
-  bool cmdTest = false, crashTest = false, faultTest = false;
+  bool cmdTest = false, crashTest = false, faultTest = false, shortcutTest = false;
+  bdg::Shortcuts shortcuts;  // named actions <-> keys (queue 1-5)
+  std::string shortcutsPath; // ProjectSettings/Shortcuts.jsonl
+  int shortcutTestValues[2] = {-1, -1}; // playing after the Unity keys / after the Unreal keys
+  bool shortcutBannerShown = false;
   std::string pendingCrash; // report folder of the previous session's crash
   std::string cmdTestValues[3];            // Transform.position after edit / undo / redo
   std::chrono::steady_clock::time_point createdAt;
@@ -325,6 +330,97 @@ void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openB
                     UrlEncode("[Bug] ") + "&system=" + UrlEncode(sys));
 }
 
+// ---- Shortcuts (queue 1-5) ---------------------------------------------------------------------
+void RebuildShortcutList(bdg_engine* e) {
+  bdg::Widget* list = e->editor->Find("settings.shortcuts");
+  if (!list) return;
+  list->children.clear();
+  for (auto& a : e->shortcuts.Actions()) {
+    std::string keys = e->shortcuts.KeysOf(a.name);
+    list->Add(bdg::MakeListRow("shortcut." + a.name, a.label, keys.empty() ? "-" : keys));
+  }
+  for (auto& c : e->shortcuts.Conflicts()) // the same keys on two actions: only the first one runs
+    list->Add(bdg::MakeLabel(std::format("충돌: {} = {} / {}", c.combo, c.first, c.second))).variant = 1;
+  e->editor->ForgetRemovedWidgets();
+}
+
+void UsePreset(bdg_engine* e, const char* preset) {
+  e->shortcuts.ApplyPreset(preset);
+  e->shortcuts.Save(e->shortcutsPath);
+  bdg::LogInfo("shortcuts: preset {} saved to {}", preset, e->shortcutsPath);
+  if (bdg::Widget* b = e->editor->Find("shortcut.banner")) b->hidden = true;
+  RebuildShortcutList(e);
+}
+
+void SetupShortcuts(bdg_engine* e) {
+  bdg::EditorModel* m = e->model.get();
+  auto log = [](const char* what) { return [what] { bdg::LogInfo("{}", what); }; };
+  auto& s = e->shortcuts;
+  s.Register("edit.undo", "Undo", [m] { std::string err; if (!m->bus.Undo(&err)) bdg::LogInfo("undo: {}", err); });
+  s.Register("edit.redo", "Redo", [m] { std::string err; if (!m->bus.Redo(&err)) bdg::LogInfo("redo: {}", err); });
+  s.Register("edit.duplicate", "Duplicate", [m] { m->Duplicate(); });
+  s.Register("edit.delete", "Delete", [m] { m->DeleteSelected(); });
+  s.Register("edit.rename", "Rename", log("rename: in-place rename comes with the Hierarchy (queue 2-4)"));
+  s.Register("file.save", "Save Scene", log("save: scene files come with queue 2-2"));
+  s.Register("play.toggle", "Play / Stop", [e, m] {
+    m->playing = !m->playing;
+    if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
+    bdg::LogInfo("play: {}", m->playing ? "on" : "off");
+  });
+  for (const char* t : {"view", "select", "move", "rotate", "scale"})
+    s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
+  s.Register("view.focus", "Focus Selected", log("focus: needs the 3D scene view (queue 3-2)"));
+  s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
+  s.Register("help.bug", "Report a Bug", [e] { e->bugRequested = true; }); // F12 is Windows' debugger break key
+
+  const char* custom = std::getenv("BDG_SHORTCUTS");
+  e->shortcutsPath = custom ? custom : (std::filesystem::current_path() / "ProjectSettings" / "Shortcuts.jsonl").string();
+  std::string err;
+  if (s.Load(e->shortcutsPath, &err)) {
+    bdg::LogInfo("shortcuts: preset {} loaded from {}", s.Preset(), e->shortcutsPath);
+  } else {
+    if (std::filesystem::exists(e->shortcutsPath)) bdg::LogWarn("shortcuts: {}", err);
+    s.ApplyPreset("unity");
+    if (bdg::Widget* b = e->editor->Find("shortcut.banner")) { b->hidden = false; e->shortcutBannerShown = true; } // first run
+  }
+  for (auto& c : s.Conflicts()) bdg::LogWarn("shortcuts: {} is bound to both {} and {}", c.combo, c.first, c.second);
+  for (const char* p : {"unity", "unreal"}) {
+    for (std::string id : {std::string("shortcut.") + p, std::string("shortcut.preset.") + p})
+      if (bdg::Widget* b = e->editor->Find(id)) b->onClick = [e, p](bdg::Widget&) { UsePreset(e, p); };
+  }
+  e->editor->SetKeyHandler([e](const bdg::InputEvent& ev) { return e->shortcuts.Handle(ev); });
+  RebuildShortcutList(e);
+}
+
+// Scripted check (BDG_SHORTCUT_TEST=1 with BDG_SHORTCUTS pointing at a missing file): pick Unity on the
+// first-run banner, press Ctrl+P / Alt+P, switch to the Unreal preset in Project Settings, press them again
+// and Ctrl+W (Unreal's duplicate).
+void InjectShortcutTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  auto click = [&](const char* id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w || w->hidden) { bdg::LogError("shortcut test: {} not clickable", id); return; }
+    float x = (w->x + w->w * 0.5f) * scale, y = (w->y + w->h * 0.5f) * scale;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent({T::MouseDown, x, y, 1});
+    e->window.InjectEvent({T::MouseUp, x, y, 1});
+  };
+  auto key = [&](bdg::Key k, bool ctrl, bool alt) {
+    bdg::InputEvent ev{T::KeyDown};
+    ev.key = k; ev.ctrl = ctrl; ev.alt = alt;
+    e->window.InjectEvent(ev);
+  };
+  if (frame == 2) click("shortcut.unity");
+  if (frame == 4) { key(bdg::Key::P, true, false); key(bdg::Key::P, false, true); }
+  if (frame == 6) {
+    e->shortcutTestValues[0] = e->model->playing ? 1 : 0;
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings");
+  }
+  if (frame == 8) click("shortcut.preset.unreal");
+  if (frame == 10) { key(bdg::Key::P, false, true); key(bdg::Key::P, true, false); key(bdg::Key::W, true, false); }
+  if (frame == 12) e->shortcutTestValues[1] = e->model->playing ? 1 : 0;
+}
+
 extern "C" {
 
 bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
@@ -341,6 +437,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->cmdTest = std::getenv("BDG_CMD_TEST") != nullptr;
   e->crashTest = std::getenv("BDG_CRASH_TEST") != nullptr;
   e->faultTest = std::getenv("BDG_FAULT_TEST") != nullptr;
+  e->shortcutTest = std::getenv("BDG_SHORTCUT_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -396,7 +493,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     e->model = std::make_unique<bdg::EditorModel>();
     e->model->Attach(*e->editor, *h, *i, e->editor->Find("history"));
     bdg::EditorModel* model = e->model.get();
-    e->editor->SetKeyHandler([model](const bdg::InputEvent& ev) { return model->HandleKey(ev); });
+    SetupShortcuts(e);
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { model->Autosave(); }); // keep the work
     if (desc->replay_path) {
       std::string err;
@@ -420,6 +517,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
+  e->gallery->SetKeyHandler([e](const bdg::InputEvent& ev) { return e->shortcuts.Handle(ev); }); // F1 back, bug report
   *out = e;
   return BDG_OK;
 }
@@ -506,12 +604,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (onDemand && pending == 0) continue; // timer wake-up with nothing to redraw
     if (pending > 0) --pending;
 
-    for (const bdg::InputEvent& ev : e->window.Events())
-    {
-      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::F1) e->showGallery = !e->showGallery;
-      // Bug report: Ctrl+Shift+B (F12 is reserved by Windows for the debugger break).
-      if (ev.type == bdg::InputEvent::Type::KeyDown && ev.key == bdg::Key::B && ev.ctrl && ev.shift) e->bugRequested = true;
-    }
+    // Keys reach the shortcuts (F1, Ctrl+Shift+B, Ctrl+Z, ...) through the UI, so text fields get them first.
     int32_t w = 0, h = 0;
     e->window.GetDrawableSize(w, h);
     // UI works in logical units: drawable pixels / display scale (150% Windows scaling -> 1.5).
@@ -521,6 +614,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->selfTest && e->showGallery) InjectSelfTest(e, frames, scale);
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
+    if (e->shortcutTest && !e->showGallery) InjectShortcutTest(e, frames, scale);
     if (e->crashTest && frames == 3) bdg::CrashForTest(); // BDG_CRASH_TEST: the handler must write a report
     if (e->faultTest && frames == 2) { // BDG_FAULT_TEST: a crashing panel and a failed check must not stop the editor
       if (bdg::Widget* scene = e->editor->Find("scene"))
@@ -575,6 +669,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("dock final: {}", d.Describe());
       }
       if (bdg::Widget* crash = e->editor->Find("status.crash"); crash && !crash->hidden) bdg::LogInfo("crash: report button shown");
+      if (e->shortcutTest)
+        bdg::LogInfo("shortcut test: banner_shown={} unity_play={} unreal_play={} objects={} preset={} conflicts={} saved={}",
+                     e->shortcutBannerShown ? 1 : 0, e->shortcutTestValues[0], e->shortcutTestValues[1],
+                     e->model ? e->model->scene.ObjectCount() : 0, e->shortcuts.Preset(), e->shortcuts.Conflicts().size(),
+                     std::filesystem::exists(e->shortcutsPath) ? 1 : 0);
       if (e->faultTest)
         bdg::LogInfo("fault test: guard_failures={} check_failures={} frames={} survived=1", bdg::GuardFailureCount(),
                      bdg::CheckFailureCount(), frames);

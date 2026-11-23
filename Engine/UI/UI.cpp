@@ -622,7 +622,11 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
       }
       case InputEvent::Type::KeyDown: {
         if (focused_ && focused_->kind == WidgetKind::Field && FieldKey(*focused_, e)) break;
-        if (onKey_ && onKey_(e)) break; // global shortcuts (undo/redo, ...)
+        { // global shortcuts; while typing in a field only Ctrl/Alt combos and F-keys reach them (W stays a letter)
+          bool typing = focused_ && focused_->kind == WidgetKind::Field;
+          bool chord = e.ctrl || e.alt || (e.key >= Key::F1 && e.key <= Key::F12);
+          if (onKey_ && (!typing || chord) && onKey_(e)) break;
+        }
         if (e.key == Key::Tab) {
           std::vector<Widget*> list;
           CollectFocusable(*root_, list);

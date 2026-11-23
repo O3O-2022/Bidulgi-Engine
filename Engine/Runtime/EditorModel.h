@@ -19,7 +19,10 @@ public:
   void Attach(UIContext& ui, Widget& hierarchy, Widget& inspector, Widget* history = nullptr);
   void Select(const std::string& id);
   const std::string& Selected() const { return selected_; }
-  bool HandleKey(const InputEvent& e); // global shortcuts: Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z
+  bool Duplicate();                    // selected object + components, as one undo step
+  bool DeleteSelected();
+  bool playing = false;                // play mode comes with 3-6; for now the toggle and its button
+  std::string tool = "move";          // active scene tool (gizmos: 3-3)
   void Update();                       // once per frame after input: rebuild / refresh panels if needed
   bool Autosave();                     // scene + command log to .cache/autosave/ (after a guarded crash)
 

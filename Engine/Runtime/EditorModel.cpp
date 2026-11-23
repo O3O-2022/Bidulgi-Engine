@@ -126,18 +126,42 @@ bool EditorModel::Autosave() {
   return ok;
 }
 
-bool EditorModel::HandleKey(const InputEvent& e) {
-  if (e.type != InputEvent::Type::KeyDown || !e.ctrl) return false;
+bool EditorModel::Duplicate() {
+  const SceneObject* o = scene.Find(selected_);
+  if (!o) return false;
+  std::string id = scene.NewId(), name = o->name + " (1)", source = o->id;
+  bus.BeginGroup("Duplicate " + o->name, "ui");
+  Command add;
+  add.name = "add";
+  add.args = std::format("{{\"name\":{},\"parent\":{},\"index\":{},\"id\":{}}}", Q(name), Q(o->parent),
+                         scene.IndexInParent(o->id) + 1, Q(id));
   std::string err;
-  if (e.key == Key::Z && !e.shift) {
-    if (!bus.Undo(&err)) LogInfo("undo: {}", err);
-    return true;
+  bool ok = bus.Execute(add, &err);
+  for (const Component& c : scene.Find(source)->components) {
+    if (!ok) break;
+    ValueType vt;
+    vt.type = FieldType::Struct;
+    vt.structType = c.type;
+    Command comp;
+    comp.name = "addcomp";
+    comp.target = id;
+    comp.args = std::format("{{\"type\":{},\"value\":{}}}", Q(c.type->name), Registry::ToJson(c.data, vt));
+    ok = bus.Execute(comp, &err);
   }
-  if (e.key == Key::Y || (e.key == Key::Z && e.shift)) {
-    if (!bus.Redo(&err)) LogInfo("redo: {}", err);
-    return true;
-  }
-  return false;
+  bus.EndGroup();
+  if (!ok) { LogWarn("duplicate: {}", err); return false; }
+  pendingSelect_ = id;
+  return true;
+}
+
+bool EditorModel::DeleteSelected() {
+  if (selected_.empty()) return false;
+  Command del;
+  del.name = "del";
+  del.target = selected_;
+  std::string err;
+  if (!bus.Execute(del, &err)) { LogWarn("delete: {}", err); return false; }
+  return true;
 }
 
 void EditorModel::Update() {

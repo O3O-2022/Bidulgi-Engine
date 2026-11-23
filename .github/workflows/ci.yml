@@ -143,6 +143,16 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_FAULT_TEST = '1' } 10
           if ($log -notmatch 'fault test: guard_failures=1 check_failures=1 frames=10 survived=1' -or $log -notmatch 'autosave: ') { $errors += 'fault injection test failed' }
 
+          # 10) Shortcuts (queue 1-5): first-run banner -> Unity keys; Unreal preset -> other keys for the same actions
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $env:BDG_SHORTCUTS = "$PWD/ci-shortcuts.jsonl"
+          Remove-Item $env:BDG_SHORTCUTS -ErrorAction SilentlyContinue
+          $log = Invoke-Editor 'Release' @{ BDG_SHORTCUT_TEST = '1' } 14
+          if ($log -notmatch 'shortcut test: banner_shown=1 unity_play=1 unreal_play=0 objects=10 preset=unreal conflicts=0 saved=1') { $errors += 'shortcut test failed' }
+          $log = Invoke-Editor 'Release' @{} 3
+          if ($log -notmatch 'shortcuts: preset unreal loaded') { $errors += 'shortcut preset not kept' }
+          Remove-Item Env:BDG_SHORTCUTS, Env:BDG_LAYOUT
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 
