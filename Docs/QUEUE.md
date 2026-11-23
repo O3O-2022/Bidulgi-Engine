@@ -36,6 +36,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_DUMP_WIDGETS=경로.jsonl` | 위젯 상자(id, kind, x, y, w, h) 덤프 |
 | `BDG_SCREEN=gallery` | 부품 갤러리 화면으로 시작 (실행 중에는 F1) |
 | `BDG_DOCK_TEST=1`, `BDG_LAYOUT=경로` | 도킹 자동 테스트(경계선 +100, Console 탭 이동), 레이아웃 파일 경로 강제 |
+| `BDG_CMD_TEST=1`, `BDG_CMD_LOG=경로`, `BDG_SCENE_DUMP=경로`, `--replay 경로` | 명령 버스 자동 테스트(Inspector 입력 → Ctrl+Z → Ctrl+Y → 선택), 명령 로그·씬 덤프 저장, 로그 재생 |
 | `BDG_SCREEN=parity:Button` | 디자인 일치 검사용 부품 화면 (Panel·Tabs·Button·Field·ListRow·Badge·Node·Cover) |
 | `--size 800x600`, `--dump-tokens 경로` | 창 크기(UI 단위), 엔진이 쓰는 토큰 값 JSON 저장 |
 | `BDG_UI_SELFTEST=1` | 갤러리에서 클릭·Tab·한글 입력을 자동 주입하고 결과를 `ui:` 줄로 기록 |
@@ -70,6 +71,9 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `tools/ui_compare/` | 디자인 일치 검사 (`compare.py`) |
 | `Engine/Core/Log.*`, `Image.*` | 텍스트 로그, PNG 저장 |
 | `Engine/Core/Reflection.*`, `Math.h` | 리플렉션 레지스트리(타입·필드·함수, 경로로 JSON 값 읽기/쓰기, 변경 추적), 값 타입 |
+| `Engine/Core/Command.*` | 명령 버스: set·rename·add·del·mv·addcomp·rmcomp, Undo/Redo, 묶음, 연속 편집 합치기, JSONL 로그·재생 |
+| `Engine/Scene/*` | 최소 씬 모델(영구 ID·이름·부모·컴포넌트, 스냅샷), 기본 컴포넌트(Transform·MeshRenderer·Light·Camera)·샘플 컴포넌트 |
+| `Engine/Runtime/EditorModel.*` | 씬 + 명령 버스 + 선택, Hierarchy·Inspector를 씬·리플렉션에서 생성 |
 | `tools/bht/bht.py` | 헤더 도구: `BCLASS`/`BPROPERTY`… → `<File>.gen.cpp` (CMake `bdg_reflect()`) |
 | `Tests/` | 단위 테스트 (`BidulgiTests.exe`, 자체 최소 매크로 `bdg_test.h`) |
 | `Editor/main.cpp` | 에디터 실행 파일 진입점 (C API만 사용) |
@@ -113,7 +117,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 0-12b 글꼴 | `Assets/Fonts/` Pretendard Regular 1.3.9 + JetBrains Mono Regular 2.304 (OFL, 라이선스 파일 포함). 로그 `font: ...Pretendard` / `font (mono): ...JetBrains Mono`, 시작 689ms | `a397455` |
 | 0-10 디자인 일치 검사 1차 | `tools/ui_compare/compare.py`: 토큰 ✓ 72/72, 부품 8개 레이아웃 최대 오차 0.64px (기준 1px). 브라우저는 Playwright 대신 헤드리스 Edge `--dump-dom` + 측정 스크립트 주입(새 의존성 없음). 엔진 `BDG_SCREEN=parity:<부품>`, `--size`, `--dump-tokens`. 글자 폭을 힌팅 없는 진행폭으로 바꾸는 등 위젯 치수를 CSS에 맞춤. CI `Design parity` 단계 | `5fedfeb` |
 | 1-1 도킹·탭·패널 크기 조절 | `Engine/UI/Dock.*`: 분할 노드(축·비율)/잎(탭 묶음) 트리, 경계선 드래그(마우스 캡처·크기 조절 커서), 탭 끌기 → 위·아래·좌·우·가운데 미리보기 → 트리 수정, 사용자별 `.cache/EditorLayout.jsonl` 저장·불러오기(형식은 계획대로 한 줄에 노드 하나). Batch2D 정점별 잘라내기로 패널 밖 그리기 차단(드로우콜 1 유지). 자동 테스트: 폭 256→356, Console 이동, 재시작 후 같은 트리. CI 6번 | `36b1e5c` |
-| 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | (이 커밋) |
+| 1-2 리플렉션 + 헤더 도구 | `Core/Reflection.*`: TypeInfo/FieldInfo(플래그 Edit·Save·ReadOnly·Replicated·Animatable, 메타 Range·Tooltip·Category·ShowIf)/FunctionInfo, `Registry::Get/Set/Call`(경로 `a.b`, `items[2]`, `pos.x`, 값은 JSON 텍스트), 바뀐 필드 기록(`TakeChanges`). 지원 타입: bool·int32·float·double·Vec2/3/4·Quat·Color·string·enum·핸들·구조체·`std::vector<T>`. `tools/bht/bht.py`(Python, libclang 없음: 이름만 파싱하고 타입은 템플릿 추론), CMake `bdg_reflect()`가 바뀐 헤더만 다시 생성. 단위 테스트 7개·검사 137개 통과(`BTestComponent`: 필드 6종 + 함수 1개). CI `Unit tests` 단계 | `fb72d1a` |
+| 1-3 명령 버스 + Undo/Redo | `Core/Command.*`: 명령 `{cmd, target, args(JSON), source, t}` → 실행 + 역명령 기록, Undo/Redo, 묶음(AI 요청 하나 = Undo 한 번), UI의 같은 필드 연속 편집은 300ms 안이면 합침, JSONL 로그 저장·`--replay`. 대상이 될 최소 씬 모델(`Scene/*`, 2-1의 바탕)과 기본·샘플 컴포넌트. Inspector·Hierarchy를 씬·리플렉션에서 생성, 필드 확정 → `set` 명령, Ctrl+Z/Y 전역(필드 내부 Undo는 미확정 편집 중에만). 자동 테스트: `edit=[3,4,5] undo=[0,1,0] redo=[3,4,5]`, 재생한 씬 덤프 동일. 단위 테스트 14개·검사 214개. CI 7번 | (이 커밋) |
 
 ---
 
@@ -125,12 +130,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 > 순서가 중요합니다: 1-2(리플렉션) → 1-3(명령 버스) → 1-4(핸들)는 이후 모든 기능(씬, 스크립팅, 네트워크, 공동 편집)의 바탕입니다.
 
-- [ ] **1-3. 명령 버스 + Undo/Redo**
-  - 구현: `Engine/Core/Command.*`. 명령 = `{name, target(오브젝트 id), args(JSON), inverse(JSON)}`. `CommandBus::Execute(cmd)` → 실행 + Undo 스택에 push. 기본 명령: `set`(필드 값), `add`/`del`(오브젝트·컴포넌트), `mv`(부모 변경), `rename`.
-  - 모든 편집(UI·터미널·AI)은 명령만 사용. 연속 드래그는 하나로 합침(merge window 300ms).
-  - **직렬화 가능**: 명령을 JSON 한 줄로 저장·재생 (`--replay 파일.jsonl`) → 테스트·네트워크·공동 편집에 그대로 사용.
-  - Field 위젯의 `onCommit`을 `set` 명령으로 연결. Ctrl+Z/Y가 전역 Undo(필드 내부 Undo는 편집 중에만).
-  - 완료 조건: Inspector에서 값 변경 → Ctrl+Z로 되돌아감 → Ctrl+Y로 다시. 명령 로그를 재생하면 같은 결과(자동 테스트).
 - [ ] **1-3b. Undo 기록 패널** — 명령 기록 목록, 클릭으로 그 시점 이동, AI·스크립트·사람 편집 구분, AI 묶음 접기 [convenience-features](planning/convenience-features.md)
 - [ ] **1-4. 핸들 기반 오브젝트 수명**
   - 구현: `Handle<T>{index:24, generation:8}` 또는 64비트(`index32 + gen32`). 오브젝트 풀은 세대 번호 비교로 `IsValid()`. 파괴된 대상 접근은 언어와 무관하게 같은 오류 메시지.

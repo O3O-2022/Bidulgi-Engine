@@ -506,6 +506,22 @@ void UIContext::DrawWidget(Widget& w) {
   if (!w.collapsed) for (auto& c : w.children) DrawWidget(*c);
 }
 
+void UIContext::ForgetRemovedWidgets() {
+  auto reachable = [&](Widget* target) {
+    if (!target || !root_) return false;
+    std::vector<Widget*> stack{root_.get()};
+    while (!stack.empty()) {
+      Widget* w = stack.back(); stack.pop_back();
+      if (w == target) return true;
+      for (auto& c : w->children) stack.push_back(c.get());
+    }
+    return false;
+  };
+  if (!reachable(hovered_)) hovered_ = nullptr;
+  if (!reachable(pressed_)) pressed_ = nullptr;
+  if (!reachable(focused_)) focused_ = nullptr;
+}
+
 void UIContext::Draw() {
   if (!root_) return;
   DrawWidget(*root_);
@@ -586,6 +602,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
       }
       case InputEvent::Type::KeyDown: {
         if (focused_ && focused_->kind == WidgetKind::Field && FieldKey(*focused_, e)) break;
+        if (onKey_ && onKey_(e)) break; // global shortcuts (undo/redo, ...)
         if (e.key == Key::Tab) {
           std::vector<Widget*> list;
           CollectFocusable(*root_, list);
@@ -632,6 +649,8 @@ void UIContext::SetFocus(Widget* w) {
     focused_->composing.clear();
     if (focused_->edited && focused_->onCommit) focused_->onCommit(*focused_);
     focused_->edited = false;
+    focused_->undoStack.clear();
+    focused_->redoStack.clear();
   }
   focused_ = w;
   if (w && w->kind == WidgetKind::Field) { w->cursor = w->anchor = w->text2.size(); w->composing.clear(); }
@@ -699,6 +718,8 @@ bool UIContext::FieldKey(Widget& f, const InputEvent& e) {
     case Key::Enter:
       if (f.edited && f.onCommit) f.onCommit(f);
       f.edited = false;
+      f.undoStack.clear(); // committed: from here Ctrl+Z is the global (command bus) undo
+      f.redoStack.clear();
       return true;
     case Key::Escape: SetFocus(nullptr); return true;
     case Key::Space: return true; // arrives as a Text event too
@@ -713,9 +734,11 @@ bool UIContext::FieldKey(Widget& f, const InputEvent& e) {
       return true;
     case Key::V: if (window_) { std::string clip = window_->GetClipboardText(); if (!clip.empty()) FieldInsert(f, clip); } return true;
     case Key::Z:
+      if (!f.edited) return false; // nothing uncommitted: let the global undo handle it
       if (!f.undoStack.empty()) { f.redoStack.push_back(v); v = f.undoStack.back(); f.undoStack.pop_back(); f.cursor = f.anchor = v.size(); f.edited = true; }
       return true;
     case Key::Y:
+      if (!f.edited) return false;
       if (!f.redoStack.empty()) { f.undoStack.push_back(v); v = f.redoStack.back(); f.redoStack.pop_back(); f.cursor = f.anchor = v.size(); f.edited = true; }
       return true;
     default: return false;

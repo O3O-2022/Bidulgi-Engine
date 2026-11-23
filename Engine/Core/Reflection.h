@@ -97,6 +97,8 @@ struct TypeInfo {
   std::vector<std::string> tags; // BCLASS(...) / BSTRUCT(...) arguments, e.g. "Component"
   std::vector<FieldInfo> fields;
   std::vector<FunctionInfo> functions;
+  void* (*create)() = nullptr;      // new default instance (nullptr if not default-constructible)
+  void (*destroy)(void*) = nullptr; // deletes an instance made by create
   const FieldInfo* FindField(std::string_view n) const;       // searches base types too
   const FunctionInfo* FindFunction(std::string_view n) const; // searches base types too
   bool IsA(const TypeInfo& other) const;
@@ -189,6 +191,15 @@ template <class T> ValueType Describe() {
 template <class T> const ValueType& ValueTypeOf() {
   static const ValueType v = Describe<T>();
   return v;
+}
+
+template <class T> auto Creator() -> void* (*)() {
+  if constexpr (std::is_default_constructible_v<T>) return []() -> void* { return new T(); };
+  else return nullptr;
+}
+template <class T> auto Destroyer() -> void (*)(void*) {
+  if constexpr (std::is_destructible_v<T>) return [](void* p) { delete static_cast<T*>(p); };
+  else return nullptr;
 }
 
 template <class M> FieldInfo Field(const char* name, size_t offset, uint32_t flags, FieldMeta meta = {}) {

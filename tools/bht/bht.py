@@ -286,7 +286,9 @@ def generate(types, enums, include, stem):
                 f"    t.name = {cpp_str(t['name'])};",
                 "    t.size = sizeof(Self);",
                 f"    t.isStruct = {'true' if t['struct'] else 'false'};",
-                f"    t.tags = {{{', '.join(cpp_str(x) for x in t['tags'])}}};"]
+                f"    t.tags = {{{', '.join(cpp_str(x) for x in t['tags'])}}};",
+                "    t.create = ::bdg::reflect::Creator<Self>();",
+                "    t.destroy = ::bdg::reflect::Destroyer<Self>();"]
         if t["base"]:
             out.append(f"    t.base = ::bdg::reflect::BaseTypeOf<{t['base']}>();")
         for f in t["fields"]:

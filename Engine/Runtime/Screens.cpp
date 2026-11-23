@@ -291,16 +291,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto& hier = dock.Add(MakeBox(Axis::Column));
   hier.id = "hierarchy";
   hier.padT = 4;
-  hier.Add(MakeListRow("h.main", "Main", "Scene"));
-  hier.Add(MakeListRow("h.camera", "Main Camera", "Camera", 1));
-  hier.Add(MakeListRow("h.sun", "Sun", "Light", 1));
-  hier.Add(MakeListRow("h.sky", "Sky", "", 1));
-  hier.Add(MakeListRow("h.world", "World Settings", "", 1));
-  hier.Add(MakeListRow("h.ground", "Ground", "Mesh", 1));
-  hier.Add(MakeListRow("h.player", "Player", "Prefab", 1)).selected = true;
-  hier.Add(MakeListRow("h.weapon", "Weapon", "Mesh", 2));
-  hier.Add(MakeListRow("h.crystal", "Crystal", "Prefab", 1));
-  hier.Add(MakeListRow("h.lamp", "Lantern Light", "Light", 1));
+  // rows come from the scene (EditorModel)
 
   // Viewports
   dock.Add(MakeCustom("scene", DrawSceneViewV2));
@@ -324,31 +315,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto& insp = dock.Add(MakeBox(Axis::Column, 4));
   insp.id = "inspector";
   insp.padT = 4;
-  auto& nameRow = insp.Add(MakeBox(Axis::Row, 8));
-  nameRow.padL = 10; nameRow.padT = 4; nameRow.padB = 2;
-  nameRow.crossAlign = Align::Center;
-  nameRow.Add(MakeLabel("Player")).fontSize = 15;
-  nameRow.Add(Spacer());
-  nameRow.Add(MakeBadge("Prefab"));
-  auto& tr = insp.Add(MakeCard("c.transform", "Transform"));
-  tr.Add(MakeField("f.position", "Position", "0, 1, 0"));
-  tr.Add(MakeField("f.rotation", "Rotation", "0, 90, 0"));
-  tr.Add(MakeField("f.scale", "Scale", "1, 1, 1"));
-  auto& mr = insp.Add(MakeCard("c.mesh", "Mesh Renderer"));
-  mr.Add(MakeField("f.mesh", "Mesh", "Knight.glb"));
-  mr.Add(MakeField("f.mat", "Material", "M_Knight"));
-  auto& pm = insp.Add(MakeCard("c.move", "PlayerMove", "C#"));
-  pm.Add(MakeField("f.speed", "Speed", "5.0"));
-  pm.Add(MakeField("f.jump", "Jump Height", "4.5"));
-  auto& hp = insp.Add(MakeCard("c.health", "Health", "C++"));
-  hp.Add(MakeField("f.health", "Max Health", "100"));
-  auto& ql = insp.Add(MakeCard("c.quest", "QuestLogic", "Lua"));
-  ql.collapsed = true;
-  ql.Add(MakeField("f.quest", "Quest Id", "q_intro"));
-  auto& addRow = insp.Add(MakeBox(Axis::Row));
-  addRow.padL = 8; addRow.padT = 6;
-  addRow.crossAlign = Align::Center;
-  addRow.Add(MakeButton("insp.add", "+  Add Component"));
+  // cards come from the selected object's components by reflection (EditorModel)
 
   auto& settings = dock.Add(MakeBox(Axis::Column, 2));
   settings.id = "settings";

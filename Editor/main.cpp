@@ -3,6 +3,7 @@
 //   --frames N        quit after N frames (smoke test)
 //   --size WxH        window size in UI units (design parity test uses the browser's 800x600)
 //   --dump-tokens P   write the design token values the engine uses
+//   --replay P        execute a command log (JSONL) after start-up
 #include <bdg/bdg_api.h>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,7 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) desc.max_frames = std::atoi(argv[++i]);
     else if (std::strcmp(argv[i], "--dump-tokens") == 0 && i + 1 < argc) desc.dump_tokens_path = argv[++i];
+    else if (std::strcmp(argv[i], "--replay") == 0 && i + 1 < argc) desc.replay_path = argv[++i];
     else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
       char* end = nullptr;
       long w = std::strtol(argv[++i], &end, 10), h = (end && *end == 'x') ? std::strtol(end + 1, nullptr, 10) : 0;

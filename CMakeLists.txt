@@ -77,6 +77,9 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Log.h        Engine/Core/Log.cpp
   Engine/Core/Math.h
   Engine/Core/Reflection.h Engine/Core/Reflection.cpp
+  Engine/Core/Command.h    Engine/Core/Command.cpp
+  Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
+  Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/RHI/RHI.h         Engine/RHI/RHI_GL.cpp
   Engine/Render2D/Batch2D.h Engine/Render2D/Batch2D.cpp
@@ -86,8 +89,10 @@ add_library(BidulgiEngine STATIC
   Engine/UI/UI.h           Engine/UI/UI.cpp
   Engine/UI/Dock.h         Engine/UI/Dock.cpp
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
+  Engine/Runtime/EditorModel.h Engine/Runtime/EditorModel.cpp
   Engine/Runtime/Engine.cpp)
-target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine)
+target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
 target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
@@ -110,7 +115,7 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine)

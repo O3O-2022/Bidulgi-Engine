@@ -1,0 +1,246 @@
+#include "Runtime/EditorModel.h"
+#include "Core/Log.h"
+#include "Scene/Components.h"
+#include "Scene/SampleComponents.h"
+#include <yyjson.h>
+#include <cctype>
+#include <format>
+#include <functional>
+
+namespace bdg {
+namespace {
+std::string Q(const std::string& s) { return Registry::ToJson(&s, reflect::ValueTypeOf<std::string>()); }
+
+// "jumpHeight" -> "Jump Height", "MeshRenderer" -> "Mesh Renderer"
+std::string Pretty(const std::string& s) {
+  std::string out;
+  for (size_t i = 0; i < s.size(); ++i) {
+    char c = s[i];
+    if (i == 0) c = (char)std::toupper((unsigned char)c);
+    else if (std::isupper((unsigned char)c) && std::islower((unsigned char)s[i - 1])) out += ' ';
+    out += c;
+  }
+  return out;
+}
+
+const char* LanguageBadge(const TypeInfo& t) {
+  for (auto& tag : t.tags) {
+    if (tag == "CSharp") return "C#";
+    if (tag == "Cpp") return "C++";
+    if (tag == "Lua") return "Lua";
+    if (tag == "Python") return "Python";
+  }
+  return "";
+}
+
+std::string Trim(const std::string& s) {
+  size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
+  return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+}
+
+bool IsVectorLike(FieldType t) {
+  return t == FieldType::Vec2 || t == FieldType::Vec3 || t == FieldType::Vec4 || t == FieldType::Quat || t == FieldType::Color;
+}
+
+template <class T> T& Add(Scene& s, const std::string& id) {
+  return *static_cast<T*>(s.AddComponent(id, T::StaticType()));
+}
+}
+
+EditorModel::EditorModel() {
+  collapsed_["QuestLogic"] = true;
+  BuildSampleScene();
+  bus.onChanged = [this](const Command& c) {
+    if (CommandBus::IsStructural(c.name)) needRebuild_ = true;
+    else needRefresh_ = true;
+  };
+}
+
+void EditorModel::BuildSampleScene() {
+  // Loading a scene is not an edit: the sample is built directly, then every change goes through the bus.
+  auto obj = [&](const char* id, const char* name, const char* parent = "") { return scene.Create(id, name, parent); };
+  obj("g1", "Main Camera");
+  Add<Transform>(scene, "g1").position = {0, 2, -6};
+  Add<Camera>(scene, "g1");
+  obj("g2", "Sun");
+  Add<Transform>(scene, "g2").rotation = {50, -30, 0};
+  Light& sun = Add<Light>(scene, "g2");
+  sun.type = LightType::Directional;
+  sun.intensity = 3;
+  obj("g3", "Sky");
+  Add<Transform>(scene, "g3");
+  obj("g4", "World Settings");
+  Add<Transform>(scene, "g4");
+  obj("g5", "Ground");
+  Add<Transform>(scene, "g5").scale = {20, 1, 20};
+  MeshRenderer& ground = Add<MeshRenderer>(scene, "g5");
+  ground.mesh = "Plane.glb"; ground.material = "M_Ground";
+  obj("g6", "Player")->prefab = true;
+  Transform& pt = Add<Transform>(scene, "g6");
+  pt.position = {0, 1, 0}; pt.rotation = {0, 90, 0};
+  MeshRenderer& knight = Add<MeshRenderer>(scene, "g6");
+  knight.mesh = "Knight.glb"; knight.material = "M_Knight";
+  Add<PlayerMove>(scene, "g6");
+  Add<Health>(scene, "g6");
+  Add<QuestLogic>(scene, "g6");
+  obj("g7", "Weapon", "g6");
+  Add<Transform>(scene, "g7").position = {0.4f, 0.9f, 0.2f};
+  MeshRenderer& sword = Add<MeshRenderer>(scene, "g7");
+  sword.mesh = "Sword.glb"; sword.material = "M_Steel";
+  obj("g8", "Crystal")->prefab = true;
+  Add<Transform>(scene, "g8").position = {3, 0.5f, 2};
+  MeshRenderer& crystal = Add<MeshRenderer>(scene, "g8");
+  crystal.mesh = "Crystal.glb"; crystal.material = "M_Gold";
+  obj("g9", "Lantern Light");
+  Add<Transform>(scene, "g9").position = {-2, 2.5f, 1};
+  Add<Light>(scene, "g9").color = {1, 0.75f, 0.45f, 1};
+  selected_ = "g6";
+}
+
+void EditorModel::Attach(UIContext& ui, Widget& hierarchy, Widget& inspector) {
+  ui_ = &ui;
+  hierarchy_ = &hierarchy;
+  inspector_ = &inspector;
+  Rebuild();
+}
+
+void EditorModel::Select(const std::string& id) {
+  pendingSelect_ = id;
+}
+
+bool EditorModel::HandleKey(const InputEvent& e) {
+  if (e.type != InputEvent::Type::KeyDown || !e.ctrl) return false;
+  std::string err;
+  if (e.key == Key::Z && !e.shift) {
+    if (!bus.Undo(&err)) LogInfo("undo: {}", err);
+    return true;
+  }
+  if (e.key == Key::Y || (e.key == Key::Z && e.shift)) {
+    if (!bus.Redo(&err)) LogInfo("redo: {}", err);
+    return true;
+  }
+  return false;
+}
+
+void EditorModel::Update() {
+  if (!pendingSelect_.empty()) {
+    if (scene.Find(pendingSelect_)) selected_ = pendingSelect_;
+    pendingSelect_.clear();
+    needRebuild_ = true;
+  }
+  if (!selected_.empty() && !scene.Find(selected_)) { selected_.clear(); needRebuild_ = true; } // deleted
+  if (needRebuild_) Rebuild();
+  else if (needRefresh_) Refresh();
+}
+
+std::string EditorModel::ToDisplay(const std::string& json, FieldType type) {
+  if (type == FieldType::String || type == FieldType::Enum) {
+    yyjson_doc* d = yyjson_read(json.data(), json.size(), 0);
+    const char* s = d ? yyjson_get_str(yyjson_doc_get_root(d)) : nullptr;
+    std::string out = s ? s : json;
+    yyjson_doc_free(d);
+    return out;
+  }
+  if (IsVectorLike(type) && json.size() >= 2 && json.front() == '[') {
+    std::string out;
+    for (char c : json.substr(1, json.size() - 2)) out += c == ',' ? std::string(", ") : std::string(1, c);
+    return out;
+  }
+  return json;
+}
+
+std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
+  std::string t = Trim(text);
+  if (type == FieldType::String) return Q(text);
+  if (type == FieldType::Enum) return !t.empty() && t[0] == '"' ? t : Q(t);
+  if (IsVectorLike(type) && !t.empty() && t[0] != '[' && t[0] != '{' && t[0] != '"') return "[" + t + "]";
+  return t;
+}
+
+void EditorModel::Rebuild() {
+  needRebuild_ = needRefresh_ = false;
+  if (!hierarchy_ || !inspector_) return;
+  for (auto& c : inspector_->children) // keep fold state across rebuilds
+    if (c->kind == WidgetKind::Card && c->id.rfind("c.", 0) == 0) collapsed_[c->id.substr(2)] = c->collapsed;
+  bindings_.clear();
+
+  // Hierarchy: the scene tree in order
+  hierarchy_->children.clear();
+  hierarchy_->Add(MakeListRow("h.scene", "Main", "Scene"));
+  std::function<void(const std::string&, int)> addRow = [&](const std::string& id, int depth) {
+    const SceneObject* o = scene.Find(id);
+    std::string kind = o->prefab ? "Prefab" : "";
+    if (kind.empty())
+      for (auto& c : o->components) {
+        if (c.type->name == "Camera") kind = "Camera";
+        else if (c.type->name == "Light") kind = "Light";
+        else if (c.type->name == "MeshRenderer" && kind.empty()) kind = "Mesh";
+      }
+    auto& row = hierarchy_->Add(MakeListRow("h." + id, o->name, kind, depth));
+    row.selected = id == selected_;
+    row.onClick = [this, id](Widget&) { pendingSelect_ = id; }; // applied in Update (never rebuild inside a click)
+    for (auto& k : o->children) addRow(k, depth + 1);
+  };
+  for (auto& r : scene.Roots()) addRow(r, 1);
+
+  // Inspector: one card per component, one field per editable property
+  inspector_->children.clear();
+  const SceneObject* o = scene.Find(selected_);
+  if (!o) {
+    inspector_->Add(MakeLabel("Nothing selected")).variant = 1;
+  } else {
+    auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
+    nameRow.padL = 10; nameRow.padT = 4; nameRow.padB = 2;
+    nameRow.crossAlign = Align::Center;
+    nameRow.Add(MakeLabel(o->name)).fontSize = 15;
+    nameRow.Add(MakeBox(Axis::Row)).width = Length::Fill();
+    if (o->prefab) nameRow.Add(MakeBadge("Prefab"));
+    for (const Component& c : o->components) {
+      const TypeInfo& t = *c.type;
+      auto& card = inspector_->Add(MakeCard("c." + t.name, Pretty(t.name), LanguageBadge(t)));
+      card.collapsed = collapsed_.count(t.name) ? collapsed_[t.name] : false;
+      std::vector<const TypeInfo*> chain;
+      for (const TypeInfo* x = &t; x; x = x->base) chain.insert(chain.begin(), x);
+      for (const TypeInfo* x : chain)
+        for (const FieldInfo& f : x->fields) {
+          if (!(f.flags & kEdit)) continue;
+          std::string json;
+          Registry::Get(c.data, t, f.name, json);
+          auto& field = card.Add(MakeField("f." + t.name + "." + f.name, Pretty(f.name), ToDisplay(json, f.value.type)));
+          std::string target = o->id, path = t.name + "." + f.name;
+          FieldType type = f.value.type;
+          field.onCommit = [this, target, path, type](Widget& w) {
+            Command cmd;
+            cmd.name = "set";
+            cmd.target = target;
+            cmd.args = std::format("{{\"path\":{},\"value\":{}}}", Q(path), FromDisplay(w.text2, type));
+            std::string err;
+            if (!bus.Execute(cmd, &err)) LogWarn("edit rejected: {}", err);
+            needRefresh_ = true; // show the value the model really holds
+          };
+          bindings_.push_back({&field, target, path, type});
+        }
+    }
+    auto& addRow2 = inspector_->Add(MakeBox(Axis::Row));
+    addRow2.padL = 8; addRow2.padT = 6;
+    addRow2.crossAlign = Align::Center;
+    addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+  }
+  if (ui_) ui_->ForgetRemovedWidgets();
+}
+
+void EditorModel::Refresh() {
+  needRefresh_ = false;
+  for (Binding& b : bindings_) {
+    if (b.field->edited) continue; // the user is typing: do not overwrite
+    SceneObject* o = scene.Find(b.target);
+    size_t dot = b.path.find('.');
+    Component* c = o ? o->Find(b.path.substr(0, dot)) : nullptr;
+    std::string json;
+    if (!c || !Registry::Get(c->data, *c->type, b.path.substr(dot + 1), json)) continue;
+    b.field->text2 = ToDisplay(json, b.type);
+    b.field->cursor = std::min(b.field->cursor, b.field->text2.size());
+    b.field->anchor = std::min(b.field->anchor, b.field->text2.size());
+  }
+}
+}

@@ -99,6 +99,8 @@ public:
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
   Widget* Focused() const { return focused_; }
+  void SetKeyHandler(std::function<bool(const InputEvent&)> h) { onKey_ = std::move(h); } // keys no widget used
+  void ForgetRemovedWidgets(); // call after replacing a subtree: drops hover/press/focus on removed widgets
   int NextBlinkMs() const; // ms until the text caret toggles (-1 = no focused text field): idle wake-up timer
 
   void Layout(float width, float height);
@@ -136,6 +138,7 @@ private:
   void DrawDockOverlay(Widget& w);
   bool DockMouse(const InputEvent& e); // true = consumed (splitter or tab drag)
   std::vector<Widget*> docks_;         // filled by Layout
+  std::function<bool(const InputEvent&)> onKey_;
 
   Window* window_ = nullptr;
   float scale_ = 1.f;
