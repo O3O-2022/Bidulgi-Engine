@@ -104,12 +104,13 @@ TEST_CASE("commands: move, rename, components") {
   CHECK(bus.Execute(Cmd("rename", "g1", "{\"name\":\"Hero\"}"))); CHECK_EQ(s.Find("g1")->name, std::string("Hero"));
   CHECK(bus.Undo()); CHECK_EQ(s.Find("g1")->name, std::string("Root"));
   CHECK(bus.Execute(Set("g1", "Health.current", "42")));
-  CHECK(bus.Execute(Cmd("rmcomp", "g1", "{\"type\":\"Transform\"}")));
-  CHECK(s.Find("g1")->components.size() == 1 && s.Find("g1")->Find("Transform") == nullptr);
-  CHECK(bus.Undo());
-  CHECK(s.Find("g1")->components[0].type->name == "Transform"); // back in its old slot
+  CHECK(!bus.Execute(Cmd("rmcomp", "g1", "{\"type\":\"Transform\"}"), &err)); // every object keeps its Transform
+  CHECK(err.find("keeps its Transform") != std::string::npos);
+  CHECK(bus.Execute(Cmd("addcomp", "g1", "{\"type\":\"Light\"}")));
   CHECK(bus.Execute(Cmd("rmcomp", "g1", "{\"type\":\"Health\"}")));
+  CHECK(s.Find("g1")->Find("Health") == nullptr);
   CHECK(bus.Undo());
+  CHECK(s.Find("g1")->components[1].type->name == "Health"); // back in its old slot
   CHECK_EQ(Get(s, "g1", "Health", "current"), std::string("42")); // value restored
   CHECK(!bus.Execute(Cmd("addcomp", "g1", "{\"type\":\"Health\"}"), &err)); // already there
 }

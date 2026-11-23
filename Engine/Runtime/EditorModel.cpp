@@ -142,6 +142,19 @@ bool EditorModel::Duplicate() {
     ValueType vt;
     vt.type = FieldType::Struct;
     vt.structType = c.type;
+    if (scene.Find(id)->Find(c.type->name)) { // the new object already has it (Transform): copy the values
+      for (const FieldInfo& f : c.type->fields) {
+        std::string v;
+        Registry::Get(c.data, *c.type, f.name, v);
+        Command set;
+        set.name = "set";
+        set.target = id;
+        set.args = std::format("{{\"path\":{},\"value\":{}}}", Q(c.type->name + "." + f.name), v);
+        ok = bus.Execute(set, &err);
+        if (!ok) break;
+      }
+      continue;
+    }
     Command comp;
     comp.name = "addcomp";
     comp.target = id;

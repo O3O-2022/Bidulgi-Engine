@@ -3,6 +3,7 @@
 // a name, a parent and reflected components. The command bus is the only code that edits it in the editor.
 #include "Core/Handle.h"
 #include "Core/Reflection.h"
+#include "Core/Space.h"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,11 @@ public:
   std::string Snapshot(std::string_view id) const;
   bool Restore(std::string_view snapshotJson, std::string* error = nullptr);
   std::string Dump() const; // whole scene, deterministic order (tests compare dumps)
+
+  // Transforms (queue 2-1): local = the object's Transform (identity without one), world = parents' world * local.
+  glm::mat4 LocalMatrix(std::string_view id) const;
+  glm::mat4 WorldMatrix(std::string_view id) const;
+  Vec3 WorldPosition(std::string_view id) const;
 
 private:
   std::vector<std::string>& Siblings(const std::string& parent);

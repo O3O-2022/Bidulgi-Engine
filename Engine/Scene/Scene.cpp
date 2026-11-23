@@ -1,4 +1,5 @@
 #include "Scene/Scene.h"
+#include "Scene/Components.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
@@ -183,6 +184,22 @@ bool Scene::Restore(std::string_view snapshotJson, std::string* error) {
   yyjson_doc_free(doc);
   return ok;
 }
+
+glm::mat4 Scene::LocalMatrix(std::string_view id) const {
+  const SceneObject* o = Find(id);
+  const Component* c = o ? const_cast<SceneObject*>(o)->Find("Transform") : nullptr;
+  if (!c) return glm::mat4(1);
+  const auto* t = static_cast<const Transform*>(c->data);
+  return space::TRS(t->position, t->rotation, t->scale);
+}
+
+glm::mat4 Scene::WorldMatrix(std::string_view id) const {
+  glm::mat4 m(1);
+  for (const SceneObject* o = Find(id); o; o = o->parent.empty() ? nullptr : Find(o->parent)) m = LocalMatrix(o->id) * m;
+  return m;
+}
+
+Vec3 Scene::WorldPosition(std::string_view id) const { return space::TransformPoint(WorldMatrix(id), {}); }
 
 std::string Scene::Dump() const {
   std::string out;

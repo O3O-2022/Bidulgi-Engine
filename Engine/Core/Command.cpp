@@ -1,4 +1,7 @@
 #include "Core/Command.h"
+#include "Scene/Components.h"
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 #include <yyjson.h>
 #include <algorithm>
 #include <chrono>
@@ -90,6 +93,7 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
       SceneObject* o = scene_.Create(id, a.Str("name", "GameObject"), parent, a.Int("index", -1));
       if (!o) return Fail(error, "add: could not create the object");
       cmd.target = o->id;
+      scene_.AddComponent(o->id, Transform::StaticType()); // every object has a place in the scene (queue 2-1)
       // Logged with the id it got, so a replay creates the same ids.
       cmd.args = std::format("{{\"name\":{},\"parent\":{},\"index\":{},\"id\":{}}}", Q(o->name), Q(parent),
                              scene_.IndexInParent(o->id), Q(o->id));
@@ -133,14 +137,42 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     return true;
   }
   if (n == "mv") {
-    std::string oldParent = o->parent;
+    // {"keepWorld": true}: the object stays where it is on screen; the new local Transform is computed once and
+    // logged as "transform", so replays and the inverse apply exact values instead of recomputing them.
+    std::string oldParent = o->parent, newParent = a.Str("parent");
     int oldIndex = scene_.IndexInParent(o->id);
-    if (!scene_.Reparent(o->id, a.Str("parent"), a.Int("index", -1), error)) {
+    Component* tc = o->Find("Transform");
+    ValueType tvt;
+    tvt.type = FieldType::Struct;
+    tvt.structType = &Transform::StaticType();
+    std::string oldTransform = tc ? Registry::ToJson(tc->data, tvt) : "", newTransform = a.Raw("transform");
+    bool keepWorld = yyjson_get_bool(a.Get("keepWorld"));
+    glm::mat4 world = scene_.WorldMatrix(o->id);
+    if (!scene_.Reparent(o->id, newParent, a.Int("index", -1), error)) {
       if (error) *error = "mv: " + *error;
       return false;
     }
+    if (keepWorld && tc && newTransform.empty()) {
+      glm::mat4 local = (newParent.empty() ? glm::mat4(1) : glm::inverse(scene_.WorldMatrix(newParent))) * world;
+      glm::vec3 scale, pos, skew;
+      glm::vec4 persp;
+      glm::quat rot;
+      glm::decompose(local, scale, rot, pos, skew, persp);
+      Transform t;
+      t.position = space::FromGlm(pos);
+      t.rotation = space::QuatToEulerDegrees(rot);
+      t.scale = space::FromGlm(scale);
+      newTransform = Registry::ToJson(&t, tvt);
+    }
+    if (!newTransform.empty() && tc && !Registry::FromJson(tc->data, tvt, newTransform, error)) {
+      scene_.Reparent(o->id, oldParent, oldIndex);
+      return false;
+    }
+    cmd.args = std::format("{{\"parent\":{},\"index\":{}{}}}", Q(newParent), scene_.IndexInParent(o->id),
+                           newTransform.empty() ? "" : ",\"transform\":" + newTransform);
     inv.name = "mv";
-    inv.args = std::format("{{\"parent\":{},\"index\":{}}}", Q(oldParent), oldIndex);
+    inv.args = std::format("{{\"parent\":{},\"index\":{}{}}}", Q(oldParent), oldIndex,
+                           newTransform.empty() ? "" : ",\"transform\":" + oldTransform);
     return true;
   }
   if (n == "addcomp") {
@@ -159,6 +191,8 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     std::string typeName = a.Str("type");
     Component* c = o->Find(typeName);
     if (!c) return Fail(error, std::format("rmcomp: \"{}\" has no component \"{}\" (components: {})", o->name, typeName, ComponentNames(*o)));
+    if (typeName == "Transform")
+      return Fail(error, std::format("rmcomp: every object keeps its Transform (it places \"{}\" in the scene); delete the object instead", o->name));
     ValueType vt;
     vt.type = FieldType::Struct;
     vt.structType = c->type;
