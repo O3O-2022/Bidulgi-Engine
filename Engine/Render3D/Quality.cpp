@@ -37,6 +37,8 @@ QualitySettings QualityPreset(QualityTier t) {
       q.msaa = 4;
       q.bloom = true;
       q.viewDistance = t == QualityTier::Ultra ? 1.25f : 1.f;
+      q.shadowCascades = 3;       // cascaded shadow maps (3-5b)
+      q.shadowSoftness = 0.025f;  // rotated Poisson filter, the same width in every cascade
       break;
   }
   return q;
@@ -50,6 +52,8 @@ QualitySettings ReferenceQuality() {
   q.bloom = false;
   q.textureBias = 0;
   q.viewDistance = 1.f;
+  q.shadowCascades = 1; // the boards' shadow checks were made with one map and the 3x3 filter
+  q.shadowSoftness = 0;
   return q;
 }
 
@@ -127,6 +131,8 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "bias") q.textureBias = v;
     else if (key == "exposure") q.exposure = v;
     else if (key == "shadowmap") q.shadowMapSize = (int)v;
+    else if (key == "cascades") q.shadowCascades = std::clamp((int)v, 1, 4);
+    else if (key == "softness") q.shadowSoftness = std::max(v, 0.f);
     else if (key == "view") q.viewDistance = v;
     else if (key == "instancing") q.instancing = v != 0;
     else if (key == "culling") q.culling = v != 0;

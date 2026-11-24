@@ -374,6 +374,106 @@ std::string ReferenceBoard::CheckGI(Renderer3D& r, const std::vector<uint8_t>& r
                      r.BakedProbes(), r.VolumeProbes(), failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
+// Cascaded shadow board (3-5b): poles at these depths along -z, the camera at z = 6.
+const float kPoleZ[4] = {1.5f, -10.f, -30.f, -65.f}; // 6.5, 18, 38 and 73 m from the camera
+
+bool ReferenceBoard::InitShadows(RHI& rhi, Renderer3D& r) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  Material3D ground;
+  ground.baseColor = {0.6f, 0.6f, 0.6f, 1};
+  ground.roughness = 0.9f;
+  items_.push_back({&plane_, At({0, 0, -90}, 24, 1, 210), ground});
+  Material3D pole;
+  pole.baseColor = {0.7f, 0.3f, 0.2f, 1};
+  pole.roughness = 0.7f;
+  for (float z : kPoleZ) items_.push_back({&box_, At({-1, 1, z}, 0.25f, 2, 3), pole}); // walls along z: their shadows reach +x
+  camera.position = {0, 3, 8};
+  camera.target = {0, 0, -20};
+  camera.fovY = 50.f;
+  camera.farZ = 400.f;
+  light = {};
+  light.toLight = glm::normalize(glm::vec3(-1, 1.1f, 0)); // shadows fall toward +x, across the view
+  light.intensity = 3;
+  light.shadows = true;
+  light.sky = {0.08f, 0.09f, 0.11f, 1};
+  light.ground = {0.03f, 0.03f, 0.03f, 1};
+  labels_ = {{{-1, 2.3f, kPoleZ[0]}, "6.5 m"}, {{-1, 2.3f, kPoleZ[1]}, "18 m"}, {{-1, 2.3f, kPoleZ[2]}, "38 m"}, {{-1, 2.3f, kPoleZ[3]}, "73 m"},
+             {{-4, 4.5f, kPoleZ[0]}, "3-5b cascaded shadows · CheckShadows renders medium and high"}};
+  return true;
+}
+
+std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
+  RenderTargetHandle rt = rhi_->CreateRenderTarget(w, h, 1);
+  auto render = [&](QualityTier tier, DebugView view, std::vector<uint8_t>& px) {
+    QualitySettings q = QualityPreset(tier);
+    q.msaa = 1; // exact pixels to measure
+    q.fxaa = q.bloom = q.toneMap = false;
+    RenderExtras ex;
+    ex.view = view;
+    r.Render(rt, w, h, camera, light, items_, clear, &ex, &q);
+    int32_t rw = 0, rh = 0;
+    rhi_->ReadRenderTarget(rt, rw, rh, px);
+    return r.Stats().cascades;
+  };
+  auto pixel = [&](const std::vector<uint8_t>& px, const glm::vec3& p, glm::vec3& c) {
+    float x, y;
+    if (!ProjectToPixel(camera, w, h, p, x, y) || x < 0 || y < 0 || x >= w || y >= h) return false;
+    const uint8_t* q = &px[((size_t)y * w + (size_t)x) * 4];
+    c = {q[0], q[1], q[2]};
+    return true;
+  };
+  auto lum = [&](const std::vector<uint8_t>& px, const glm::vec3& p) {
+    glm::vec3 c;
+    return pixel(px, p, c) ? c.r * 0.2126f + c.g * 0.7152f + c.b * 0.0722f : -1.f;
+  };
+  struct Result { int cascades; float ratio[4]; float penumbra; };
+  auto measure = [&](QualityTier tier) {
+    std::vector<uint8_t> px;
+    Result res{};
+    res.cascades = render(tier, DebugView::Lit, px);
+    for (int i = 0; i < 4; ++i) { // ground in the pole's shadow vs beside it
+      float dark = lum(px, {0.f, 0, kPoleZ[i]}), lit = lum(px, {1.8f, 0, kPoleZ[i]});
+      res.ratio[i] = lit > 0 ? dark / lit : -1;
+    }
+    // Near wall: walk across the tip of its shadow (along x, across the screen); the width of the in-between values
+    // is the penumbra.
+    const int n = 240;
+    std::vector<float> prof;
+    for (int i = 0; i < n; ++i) prof.push_back(lum(px, {0.3f + 1.2f * i / (n - 1), 0, kPoleZ[0]}));
+    float lo = *std::min_element(prof.begin(), prof.end()), hi = *std::max_element(prof.begin(), prof.end());
+    int mid = 0;
+    for (float v : prof) mid += (v > lo + 0.2f * (hi - lo) && v < lo + 0.8f * (hi - lo)) ? 1 : 0;
+    res.penumbra = mid * 1.2f / (n - 1);
+    return res;
+  };
+  Result med = measure(QualityTier::Medium), high = measure(QualityTier::High);
+  std::vector<uint8_t> cv;
+  render(QualityTier::High, DebugView::Cascades, cv);
+  auto dominant = [&](const glm::vec3& p) { // 0 red, 1 green, 2 blue: which cascade the ground there uses
+    glm::vec3 c;
+    if (!pixel(cv, p, c)) return -1;
+    return c.r > c.g && c.r > c.b ? 0 : c.g > c.b ? 1 : 2;
+  };
+  int c0 = dominant({1.8f, 0, 2.5f}), c1 = dominant({1.8f, 0, -6}), c2 = dominant({1.8f, 0, -40});
+  rhi_->DestroyRenderTarget(rt);
+  std::string failed;
+  auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
+  bool cascadesOk = med.cascades == 1 && high.cascades == 3 && c0 == 0 && c1 == 1 && c2 == 2;
+  if (!cascadesOk) fail("cascades");
+  bool nearOk = med.ratio[0] < 0.6f && high.ratio[0] < 0.6f && high.penumbra < med.penumbra * 0.7f;
+  if (!nearOk) fail("near");
+  bool farOk = high.ratio[3] < 0.6f && med.ratio[3] > 0.9f; // 73 m: inside high's reach, beyond medium's
+  if (!farOk) fail("far");
+  return std::format("medium cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} penumbra={:.3f}m | high cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} "
+                     "penumbra={:.3f}m | cascade_view={},{},{} | cascades={} near={} far={} result={}",
+                     med.cascades, med.ratio[0], med.ratio[1], med.ratio[2], med.ratio[3], med.penumbra, high.cascades, high.ratio[0],
+                     high.ratio[1], high.ratio[2], high.ratio[3], high.penumbra, c0, c1, c2, cascadesOk ? "ok" : "bad", nearOk ? "ok" : "bad",
+                     farOk ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
+}
+
 bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {
   rhi_ = &rhi;
   renderer_ = &r;

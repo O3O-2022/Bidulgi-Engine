@@ -126,7 +126,7 @@ struct ProbeVolume3D {
 };
 
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
-enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect };
+enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades };
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
 
 struct RenderExtras {
@@ -151,6 +151,7 @@ struct RenderStats {
   size_t culled = 0;        // objects outside the camera frustum (not drawn)
   size_t shadowCulled = 0;  // opaque objects outside the light's frustum (not drawn into the shadow map)
   size_t lightmapped = 0;   // objects drawn with a baked lightmap
+  int cascades = 0;         // shadow cascades drawn (3-5b)
 };
 
 class Renderer3D {
@@ -218,8 +219,10 @@ private:
   // Editor passes: grid plane, selection mask (own target) and the outline drawn from it.
   PipelineHandle grid_, mask_, outline_, sky_, shadowPipe_;
   BufferHandle lightsUbo_;
-  RenderTargetHandle shadowRT_, noShadowRT_; // shadow map (size by tier); 1x1 stand-in when shadows are off
-  int32_t shadowSize_ = 0;
+  RenderTargetHandle shadowRT_, noShadowRT_; // shadow atlas (one tile per cascade, size by tier); 1x1 stand-in when off
+  int32_t shadowSize_ = 0, shadowTiles_ = 0;
+  glm::mat4 cascadeVP_[4]{};
+  BufferHandle shadowPassUbo_;
   // Post-processing: HDR scene, LDR copy for FXAA, bloom chain (half size down to 1/32).
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
   BufferHandle postUbo_;

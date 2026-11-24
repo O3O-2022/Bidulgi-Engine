@@ -102,10 +102,12 @@ public:
   // Depth only (shadow maps): a 32-bit float depth texture sampled with comparison (GLSL sampler2DShadow),
   // outside the map reads as lit. BeginRenderTarget clears it to the far plane.
   RenderTargetHandle CreateDepthTarget(int32_t size);
+  RenderTargetHandle CreateDepthTarget(int32_t w, int32_t h); // cascaded shadow atlas (one tile per cascade)
   TextureHandle RenderTargetDepth(RenderTargetHandle rt) const;
   TextureHandle RenderTargetColor(RenderTargetHandle rt) const;
   void          BeginRenderTarget(RenderTargetHandle rt, Color clear); // viewport = the whole target
   void          BeginRenderTargetKeep(RenderTargetHandle rt);           // same, keeping what is there
+  void          SetViewport(int32_t x, int32_t y, int32_t w, int32_t h); // part of the current target (atlas tiles)
   void          EndRenderTarget();                                     // resolve, back to the window
   void          ReadRenderTarget(RenderTargetHandle rt, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba); // bottom-up rows
 

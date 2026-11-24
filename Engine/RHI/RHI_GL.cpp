@@ -325,9 +325,14 @@ RenderTargetHandle RHI::CreateRenderTargetEx(int32_t w, int32_t h, int32_t sampl
   return {(uint32_t)targets_.size() - 1};
 }
 
-RenderTargetHandle RHI::CreateDepthTarget(int32_t size) {
+RenderTargetHandle RHI::CreateDepthTarget(int32_t size) { return CreateDepthTarget(size, size); }
+
+void RHI::SetViewport(int32_t x, int32_t y, int32_t w, int32_t h) { glViewport(x, y, w, h); }
+
+RenderTargetHandle RHI::CreateDepthTarget(int32_t w, int32_t h) {
   TargetGL t;
-  t.w = t.h = std::max(size, 1);
+  t.w = std::max(w, 1);
+  t.h = std::max(h, 1);
   glCreateTextures(GL_TEXTURE_2D, 1, &t.depthTex);
   glTextureStorage2D(t.depthTex, 1, GL_DEPTH_COMPONENT32F, t.w, t.h);
   glTextureParameteri(t.depthTex, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // linear + compare = 2x2 PCF per tap

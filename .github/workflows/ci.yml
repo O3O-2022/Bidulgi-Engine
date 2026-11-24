@@ -316,6 +316,11 @@ jobs:
           if ($log -notmatch 'gi: baked 1 probe\(s\), one more bounce') { $errors += 'GI re-bake from the chip missing' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
+          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok result=pass') { $errors += 'cascaded shadow test failed' }
+          if ($log -match '(shadow test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

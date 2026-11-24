@@ -23,7 +23,9 @@ struct QualitySettings {
   LightingMode lighting = LightingMode::Pixel;
   int maxLights = 8;           // point + spot
   bool shadows = true;
-  int shadowMapSize = 1024;
+  int shadowMapSize = 1024;   // per cascade
+  int shadowCascades = 1;     // 1..4 (3-5b): more = sharp near the camera and shadows further away
+  float shadowSoftness = 0;   // penumbra radius in metres (0 = the plain 3x3 filter)
   float textureBias = 1;       // mip bias: 1 = half resolution, 2 = quarter
   bool toneMap = true;         // ACES; false = clamp (the reference board keeps exact colours)
   float exposure = 1;

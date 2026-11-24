@@ -550,7 +550,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
           if (hit) {
-            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 8);
+            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 9);
             else if (hit->name == "wire") wireframe = !wireframe;
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
@@ -675,7 +675,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         if (e.key >= Key::Num1 && e.key <= Key::Num9 && hover_ && !textFocused && drag_ == Drag::None) {
           int n = (int)e.key - (int)Key::Num0;
-          if (e.alt) debugView = (DebugView)std::min(n - 1, 7);              // Alt + 1..8: what the picture shows
+          if (e.alt) debugView = (DebugView)std::min(n - 1, 8);              // Alt + 1..9: what the picture shows
           else if (e.ctrl) StoreBookmark(model, n);                       // Ctrl + 1..9: remember this view
           else if (!JumpToBookmark(model, n)) LogInfo("scene view: no camera bookmark {}", n);
           used = true;

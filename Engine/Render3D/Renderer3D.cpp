@@ -23,6 +23,10 @@ namespace {
 const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   mat4 uViewProj; mat4 uInvViewProj; mat4 uLightViewProj;
   vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; vec4 uZenith; vec4 uHorizon; vec4 uSun; vec4 uShadow; vec4 uCounts;
+  vec4 uCamFwd;                                  // camera forward (cascade choice by view depth)
+  mat4 uCascadeVP[4]; vec4 uCascadeSplit;        // cascaded shadows (3-5b): matrices, far view depth of each
+  vec4 uCascadeInfo[4];                          // per cascade: depth bias, normal offset, texels per metre, -
+  vec4 uShadow2;                                 // cascades, softness (m), blend band (share of a split), -
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -209,16 +213,53 @@ vec3 Brdf(vec3 N, vec3 V, vec3 L, vec3 diffuse, vec3 f0, float a) {
 vec3 Irradiance(vec3 n) { // light from the whole sky hemisphere above n (ground below)
   return mix(uGround.rgb, mix(uHorizon.rgb, uZenith.rgb, 0.6), clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
 }
-float ShadowFactor(vec3 world, vec3 n) { // 1 = lit; 3x3 taps of 2x2 hardware PCF
-  if (uShadow.x < 0.5) return 1.0;
-  vec4 c = uLightViewProj * vec4(world + n * uShadow.z, 1.0); // normal offset against acne
-  vec3 s = c.xyz / c.w * 0.5 + 0.5;
+// Cascaded shadow map (3-5b): the cascades sit side by side in one depth atlas. Taps stay inside their tile.
+const vec2 kPoisson[12] = vec2[](vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
+                                 vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
+                                 vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598));
+float ShadowTap(int c, vec2 uv, float depth) {
+  float tiles = uShadow2.x, t = 1.0 / uShadow.w;
+  uv = clamp(uv, vec2(t * 0.5), vec2(1.0 - t * 0.5));
+  return textureLod(uShadowMap, vec3((float(c) + uv.x) / tiles, uv.y, depth), 0.0);
+}
+float CascadeShadow(int c, vec3 world, vec3 n, bool last) {
+  vec4 p = uCascadeVP[c] * vec4(world + n * uCascadeInfo[c].y, 1.0); // normal offset against acne
+  vec3 s = p.xyz / p.w * 0.5 + 0.5;
   if (s.z >= 1.0) return 1.0;
-  float t = 1.0 / uShadow.w, sum = 0.0;
-  for (int y = -1; y <= 1; ++y)
-    for (int x = -1; x <= 1; ++x) sum += textureLod(uShadowMap, vec3(s.xy + vec2(x, y) * t, s.z - uShadow.y), 0.0);
-  float edge = smoothstep(0.85, 1.0, max(abs(s.x * 2.0 - 1.0), abs(s.y * 2.0 - 1.0))); // fade at the map's edge
-  return mix(sum / 9.0, 1.0, edge);
+  float t = 1.0 / uShadow.w, depth = s.z - uCascadeInfo[c].x, sum = 0.0;
+  if (uShadow2.y <= 0.0) { // 3x3 taps of 2x2 hardware PCF
+    for (int y = -1; y <= 1; ++y)
+      for (int x = -1; x <= 1; ++x) sum += ShadowTap(c, s.xy + vec2(x, y) * t, depth);
+    sum /= 9.0;
+  } else { // soft: 12 Poisson taps, turned per pixel, radius in metres -> texels of this cascade
+    float a = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+    float r = clamp(uShadow2.y * uCascadeInfo[c].z, 1.0, 8.0) * t;
+    for (int i = 0; i < 12; ++i) sum += ShadowTap(c, s.xy + rot * kPoisson[i] * r, depth);
+    sum /= 12.0;
+  }
+  if (!last) return sum;
+  float edge = smoothstep(0.85, 1.0, max(abs(s.x * 2.0 - 1.0), abs(s.y * 2.0 - 1.0))); // fade at the last map's edge
+  return mix(sum, 1.0, edge);
+}
+float CascadeSplit(int c) { return c == 0 ? uCascadeSplit.x : c == 1 ? uCascadeSplit.y : c == 2 ? uCascadeSplit.z : uCascadeSplit.w; }
+int ShadowCascade(vec3 world) {
+  float z = dot(world - uCamPos.xyz, uCamFwd.xyz);
+  int count = int(uShadow2.x + 0.5), c = 0;
+  for (int i = 0; i < 3; ++i)
+    if (i < count - 1 && z > CascadeSplit(i)) c = i + 1;
+  return c;
+}
+float ShadowFactor(vec3 world, vec3 n) { // 1 = lit
+  if (uShadow.x < 0.5) return 1.0;
+  int count = int(uShadow2.x + 0.5), c = ShadowCascade(world);
+  float s = CascadeShadow(c, world, n, c == count - 1);
+  if (c < count - 1) { // blend into the next cascade over the last part of this one (no visible seam)
+    float z = dot(world - uCamPos.xyz, uCamFwd.xyz), split = CascadeSplit(c), band = split * uShadow2.z;
+    float f = smoothstep(split - band, split, z);
+    if (f > 0.0) s = mix(s, CascadeShadow(c + 1, world, n, c + 1 == count - 1), f);
+  }
+  return s;
 }
 vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) {
   vec3 toL = uLPos[i].xyz - world;
@@ -242,7 +283,7 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect
+  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
   if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
   if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
@@ -286,6 +327,9 @@ void main() {
     vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
            : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
            : view == 7 ? ambient / (1.0 + ambient)                                                   // indirect light, compressed
+           : view == 8 ? (uShadow.x < 0.5 ? vec3(0.3)
+                          : vec3[](vec3(1.0, 0.35, 0.3), vec3(0.35, 1.0, 0.35), vec3(0.35, 0.5, 1.0), vec3(1.0, 0.9, 0.3))[ShadowCascade(vWorld)]
+                            * (0.4 + 0.6 * ShadowFactor(vWorld, ng)))                              // shadow cascades, darkened in shadow
            : vec3(ShadowFactor(vWorld, ng));
     oColor = vec4(pow(d, vec3(2.2)), 1.0); // data, not colour: undo the display curve applied in post
     return;
@@ -431,7 +475,8 @@ const char* kShadowVS = R"(#version 450 core
 layout(location = 0) in vec3 aPos;
 layout(location = 2) in vec2 aUV;
 out vec2 vUV;
-void main() { vObject = int(aObject + 0.5); vUV = aUV; gl_Position = uLightViewProj * (uModel * vec4(aPos, 1.0)); }
+layout(std140, binding = 2) uniform ShadowPass3D { mat4 uShadowVP; }; // the cascade being drawn
+void main() { vObject = int(aObject + 0.5); vUV = aUV; gl_Position = uShadowVP * (uModel * vec4(aPos, 1.0)); }
 )";
 const char* kShadowFS = R"(#version 450 core
 #OBJECTS_FS
@@ -552,6 +597,8 @@ void main() {
 struct FrameData {
   float viewProj[16], invViewProj[16], lightViewProj[16];
   float camPos[4], toLight[4], light[4], sky[4], ground[4], zenith[4], horizon[4], sun[4], shadow[4], counts[4];
+  float camFwd[4];
+  float cascadeVP[4][16], cascadeSplit[4], cascadeInfo[4][4], shadow2[4];
 };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
 struct PostData { float post[4]; float post2[4]; };
@@ -563,9 +610,9 @@ void Put(float* dst, Color c, float scale = 1) { dst[0] = c.r * scale; dst[1] = 
 
 // Orthographic light camera around the bounding sphere of the view slice [near, distance]; the centre snaps to
 // whole shadow texels so the map does not shimmer while the camera moves.
-glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight, float distance, int mapSize, float& texelWorld,
-                    float& depthRange) {
-  float nearZ = cam.nearZ, farZ = std::min(cam.farZ, distance);
+glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight, float sliceNear, float distance, int mapSize,
+                    float& texelWorld, float& depthRange) {
+  float nearZ = std::max(cam.nearZ, sliceNear), farZ = std::min(cam.farZ, distance);
   float ty = std::tan(glm::radians(cam.fovY * 0.5f)), tx = ty * aspect;
   glm::vec3 f = glm::normalize(cam.target - cam.position), r = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
   if (!std::isfinite(r.x)) r = {1, 0, 0};
@@ -709,6 +756,7 @@ bool Renderer3D::Init(RHI& rhi) {
   for (TimerFrame& t : timers_)
     for (uint32_t& q : t.q) q = rhi.CreateQuery();
   lightsUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(LightsData), true);
+  shadowPassUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(float) * 16, true);
   postUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PostData), true);
   probesUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(ProbesData), true);
   prefilterUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PrefilterData), true);
@@ -771,6 +819,7 @@ void Renderer3D::Shutdown() {
   for (TimerFrame& t : timers_)
     for (uint32_t& q : t.q) rhi_->DestroyQuery(q);
   rhi_->DestroyBuffer(postUbo_);
+  rhi_->DestroyBuffer(shadowPassUbo_);
   rhi_->DestroyBuffer(probesUbo_);
   rhi_->DestroyBuffer(prefilterUbo_);
   rhi_->DestroyTexture(envArray_);
@@ -975,14 +1024,35 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     ld.cone[i][1] = l.spot ? 1.f : 0.f;
   }
   rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
-  float texelWorld = 0, depthRange = 1;
+  Put(f.camFwd, glm::normalize(cam.target - cam.position));
+  const int cascades = std::clamp(q.shadowCascades, 1, 4);
   if (light.shadows && q.shadows && q.lighting == LightingMode::Pixel && light.intensity > 0) {
-    shadowMatrix_ = FitShadow(cam, aspect, light.toLight, light.shadowDistance * q.viewDistance, q.shadowMapSize, texelWorld, depthRange);
+    // Cascades (3-5b): view depth split between uniform and logarithmic (practical split, lambda 0.8); more cascades
+    // also reach further (2.5x). Each cascade is fitted to its slice, starting a blend band early.
+    const float farZ = std::min(cam.farZ, light.shadowDistance * q.viewDistance * (cascades > 1 ? 2.5f : 1.f));
+    const float nearZ = std::max(cam.nearZ, 0.05f), band = 0.1f;
+    float prev = 0;
+    for (int c = 0; c < cascades; ++c) {
+      const float k = (float)(c + 1) / cascades;
+      const float split = c == cascades - 1 ? farZ : 0.8f * nearZ * std::pow(farZ / nearZ, k) + 0.2f * (nearZ + (farZ - nearZ) * k);
+      float texelWorld = 0, depthRange = 1;
+      cascadeVP_[c] = FitShadow(cam, aspect, light.toLight, prev * (1.f - band), split, q.shadowMapSize, texelWorld, depthRange);
+      std::memcpy(f.cascadeVP[c], glm::value_ptr(cascadeVP_[c]), sizeof(f.cascadeVP[c]));
+      f.cascadeSplit[c] = split;
+      f.cascadeInfo[c][0] = 0.02f / depthRange;  // 2 cm in depth
+      f.cascadeInfo[c][1] = texelWorld * 1.5f;   // normal offset
+      f.cascadeInfo[c][2] = 1.f / texelWorld;    // texels per metre (softness)
+      prev = split;
+    }
+    shadowMatrix_ = cascadeVP_[0];
     std::memcpy(f.lightViewProj, glm::value_ptr(shadowMatrix_), sizeof(f.lightViewProj));
     f.shadow[0] = 1.f;
-    f.shadow[1] = 0.02f / depthRange;   // 2 cm in depth
-    f.shadow[2] = texelWorld * 1.5f;    // normal offset
+    f.shadow[1] = f.cascadeInfo[0][0];
+    f.shadow[2] = f.cascadeInfo[0][1];
     f.shadow[3] = (float)q.shadowMapSize;
+    f.shadow2[0] = (float)cascades;
+    f.shadow2[1] = q.shadowSoftness;
+    f.shadow2[2] = band;
   }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
@@ -1042,18 +1112,20 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   const size_t opaqueRuns = runs.size();
   for (const Run& r : buildRuns(blendList, runKey, false)) runs.push_back(r);
   // shadow pass: opaque and masked objects inside the light's frustum
-  std::vector<Run> shadowRuns;
+  std::vector<Run> shadowRuns[4];
   size_t shadowCulled = 0;
   if (f.shadow[0] > 0.5f) {
-    const Frustum lightFrustum = Frustum::FromMatrix(shadowMatrix_);
-    std::vector<size_t> casters;
-    for (size_t i = 0; i < items.size(); ++i) {
-      if (!drawable[i] || items[i].material.alpha == Material3D::Alpha::Blend) continue;
-      if (inside(lightFrustum, i)) casters.push_back(i);
-      else ++shadowCulled;
+    for (int c = 0; c < cascades; ++c) {
+      const Frustum lightFrustum = Frustum::FromMatrix(cascadeVP_[c]);
+      std::vector<size_t> casters;
+      for (size_t i = 0; i < items.size(); ++i) {
+        if (!drawable[i] || items[i].material.alpha == Material3D::Alpha::Blend) continue;
+        if (inside(lightFrustum, i)) casters.push_back(i);
+        else ++shadowCulled;
+      }
+      std::stable_sort(casters.begin(), casters.end(), [&](size_t x, size_t y) { return shadowKey(x) < shadowKey(y); });
+      shadowRuns[c] = buildRuns(casters, shadowKey, true);
     }
-    std::stable_sort(casters.begin(), casters.end(), [&](size_t x, size_t y) { return shadowKey(x) < shadowKey(y); });
-    shadowRuns = buildRuns(casters, shadowKey, true);
   }
   // selection mask: each outlined object on its own
   std::vector<Run> maskRuns;
@@ -1118,17 +1190,23 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindStorageBuffer(1, volumeBuffer_);
   rhi_->BindTexture(7, lightmapTex_.Valid() ? lightmapTex_ : white_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
-    if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize) {
+    if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize || shadowTiles_ != cascades) { // one tile per cascade
       rhi_->DestroyRenderTarget(shadowRT_);
-      shadowRT_ = rhi_->CreateDepthTarget(q.shadowMapSize);
+      shadowRT_ = rhi_->CreateDepthTarget(q.shadowMapSize * cascades, q.shadowMapSize);
       shadowSize_ = q.shadowMapSize;
+      shadowTiles_ = cascades;
     }
     rhi_->BeginRenderTarget(shadowRT_, {0, 0, 0, 0});
-    for (const Run& r : shadowRuns) { // alike casters in one draw too
-      const Material3D& m = items[r.item].material;
-      rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
-      drawRun(shadowPipe_, r);
-      stats_.shadowCasters += r.count;
+    for (int c = 0; c < cascades; ++c) {
+      rhi_->SetViewport(c * q.shadowMapSize, 0, q.shadowMapSize, q.shadowMapSize);
+      rhi_->UpdateBuffer(shadowPassUbo_, glm::value_ptr(cascadeVP_[c]), sizeof(float) * 16);
+      rhi_->BindUniformBuffer(2, shadowPassUbo_);
+      for (const Run& r : shadowRuns[c]) { // alike casters in one draw too
+        const Material3D& m = items[r.item].material;
+        rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
+        drawRun(shadowPipe_, r);
+        stats_.shadowCasters += r.count;
+      }
     }
     rhi_->EndRenderTarget();
     if (timing) Mark(timer, "shadow");
@@ -1136,6 +1214,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
   stats_ = RenderStats{w, h, std::clamp(q.msaa, 1, 8), f.shadow[0] > 0.5f ? q.shadowMapSize : 0, locals, stats_.shadowCasters, 0, 0,
                        q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
+  stats_.cascades = f.shadow[0] > 0.5f ? cascades : 0;
   bool outline = extras && !extras->outlined.empty();
   if (outline) { // selection mask first (its own target, no depth: the outline shows through other objects)
     if (!maskRT_.Valid() || maskW_ != w || maskH_ != h) {
@@ -1621,6 +1700,7 @@ const char* DebugViewName(DebugView v) {
     case DebugView::Depth: return "Depth";
     case DebugView::Shadow: return "Shadow";
     case DebugView::Indirect: return "Indirect";
+    case DebugView::Cascades: return "Cascades";
   }
   return "Lit";
 }
@@ -1637,8 +1717,8 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={}", s.w, s.h,
                      s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
-                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0);
+                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades);
 }
 }

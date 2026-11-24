@@ -27,6 +27,11 @@ public:
   // rough white sphere, one box-projected reflection probe in the room. CheckGI() reads the probe and the picture.
   bool InitGI(RHI& rhi, Renderer3D& renderer);
   std::string CheckGI(Renderer3D& renderer, const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const;
+  // Cascaded shadows (3-5b): a 200 m ground, walls 6.5 / 18 / 38 / 73 m from the camera, a sun from the side
+  // throwing their shadows across the view. CheckShadows() renders medium and high itself and compares near edge sharpness, far reach
+  // and the cascade debug view.
+  bool InitShadows(RHI& rhi, Renderer3D& renderer);
+  std::string CheckShadows(Renderer3D& renderer, int32_t w, int32_t h);
   std::vector<ReflectionProbe3D> probes; // baked by the engine before the first frame
   std::vector<ProbeVolume3D> volumes;    // the room's probe grid (GI Tier 0-B), baked with the probes
   bool lightmaps = false;                // bake lightmaps for the items marked lightmapped (GI Tier 0-C) first
