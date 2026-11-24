@@ -30,7 +30,9 @@ struct InputEvent {
 // Platform layer: window, GL context, events. Upper layers never see SDL.
 class Window {
 public:
-  bool Create(const char* title, int32_t w, int32_t h);
+  // hidden: never shown (automated runs); the caller draws into an offscreen frame (RHI::SetOffscreenFrame).
+  bool Create(const char* title, int32_t w, int32_t h, bool hidden = false);
+  bool Hidden() const { return hidden_; }
   void Destroy();
   // false = quit requested. waitMs > 0: sleep in the OS until an event arrives or the timeout passes
   // (idle editor uses ~0% CPU/GPU instead of redrawing thousands of times per second).
@@ -61,6 +63,7 @@ public:
   void SetClipboardText(const std::string& text);
 
 private:
+  bool hidden_ = false;
   std::vector<InputEvent> events_;
   SDL_Window* window_ = nullptr;
   void* glContext_ = nullptr;

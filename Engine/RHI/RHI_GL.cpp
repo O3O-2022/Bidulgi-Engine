@@ -77,13 +77,36 @@ void RHI::Shutdown() {
   for (uint32_t i = 1; i < targets_.size(); ++i) DestroyRenderTarget({i});
   if (texFbo_) glDeleteFramebuffers(1, &texFbo_);
   texFbo_ = 0;
+  if (mainFbo_) {
+    glDeleteFramebuffers(1, &mainFbo_);
+    glDeleteRenderbuffers(1, &mainColor_);
+    glDeleteRenderbuffers(1, &mainDepth_);
+  }
+  mainFbo_ = mainColor_ = mainDepth_ = 0;
 }
 
 void RHI::BeginFrame(int32_t w, int32_t h, Color c) {
   drawCalls_ = 0;
   frameW_ = w;
   frameH_ = h;
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  if (offscreenFrame_ && (!mainFbo_ || mainW_ != w || mainH_ != h)) { // the frame's own colour + depth (hidden window)
+    if (mainFbo_) {
+      glDeleteFramebuffers(1, &mainFbo_);
+      glDeleteRenderbuffers(1, &mainColor_);
+      glDeleteRenderbuffers(1, &mainDepth_);
+    }
+    glCreateRenderbuffers(1, &mainColor_);
+    glNamedRenderbufferStorage(mainColor_, GL_RGBA8, std::max(w, 1), std::max(h, 1));
+    glCreateRenderbuffers(1, &mainDepth_);
+    glNamedRenderbufferStorage(mainDepth_, GL_DEPTH24_STENCIL8, std::max(w, 1), std::max(h, 1));
+    glCreateFramebuffers(1, &mainFbo_);
+    glNamedFramebufferRenderbuffer(mainFbo_, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, mainColor_);
+    glNamedFramebufferRenderbuffer(mainFbo_, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mainDepth_);
+    if (glCheckNamedFramebufferStatus(mainFbo_, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) LogError("rhi: offscreen frame is incomplete");
+    mainW_ = w;
+    mainH_ = h;
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, mainFbo_);
   glViewport(0, 0, w, h);
   glDepthMask(GL_TRUE); // glClear honours the depth write mask
   glClearColor(c.r, c.g, c.b, c.a);
@@ -233,7 +256,7 @@ void RHI::BeginTextureTarget(TextureHandle t, int32_t level, int32_t layer) {
 }
 
 void RHI::EndTextureTarget() {
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, mainFbo_);
   glViewport(0, 0, frameW_, frameH_);
 }
 
@@ -308,7 +331,12 @@ void RHI::BindTexture(uint32_t slot, TextureHandle t) { glBindTextureUnit(slot, 
 void RHI::ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba) {
   rgba.resize((size_t)w * h * 4);
   glPixelStorei(GL_PACK_ALIGNMENT, 1);
-  glReadBuffer(GL_BACK);
+  if (mainFbo_) { // offscreen frame
+    glNamedFramebufferReadBuffer(mainFbo_, GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, mainFbo_);
+  } else {
+    glReadBuffer(GL_BACK);
+  }
   glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
 }
 
@@ -443,7 +471,7 @@ void RHI::EndRenderTarget() {
     if (t.samples > 1) glBlitNamedFramebuffer(t.msFbo, t.fbo, 0, 0, t.w, t.h, 0, 0, t.w, t.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
   }
   currentTarget_ = 0;
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, mainFbo_);
   glViewport(0, 0, frameW_, frameH_);
 }
 

@@ -4,7 +4,8 @@
 #include <cctype>
 
 namespace bdg {
-bool Window::Create(const char* title, int32_t w, int32_t h) {
+bool Window::Create(const char* title, int32_t w, int32_t h, bool hidden) {
+  hidden_ = hidden;
   SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");       // window/taskbar icon from the exe resource
   SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON_SMALL, "1");
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) { LogError("SDL_Init failed: {}", SDL_GetError()); return false; }
@@ -15,7 +16,8 @@ bool Window::Create(const char* title, int32_t w, int32_t h) {
 #ifdef BDG_DEBUG
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG); // GL errors reported via KHR_debug
 #endif
-  window_ = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+  window_ = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                             (hidden ? SDL_WINDOW_HIDDEN : 0));
   if (!window_) { LogError("window creation failed: {}", SDL_GetError()); return false; }
   // Requested size is in UI units: grow it by the display scale, but keep it inside the usable screen area.
   float scale = SDL_GetWindowDisplayScale(window_);
@@ -169,7 +171,9 @@ Key KeyFromName(std::string_view name) {
   return Key::None;
 }
 
-void Window::Present() { SDL_GL_SwapWindow(window_); }
+void Window::Present() {
+  if (!hidden_) SDL_GL_SwapWindow(window_); // a hidden window shows nothing (its frames are offscreen)
+}
 void Window::SetCursor(Cursor c) {
   static SDL_Cursor* cursors[3] = {};
   static const SDL_SystemCursor ids[3] = {SDL_SYSTEM_CURSOR_DEFAULT, SDL_SYSTEM_CURSOR_EW_RESIZE, SDL_SYSTEM_CURSOR_NS_RESIZE};

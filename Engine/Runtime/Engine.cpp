@@ -1726,9 +1726,16 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     phases += std::format("{}{}={:.0f}", phases.empty() ? "" : " ", name, std::chrono::duration<double, std::milli>(now - lap).count());
     lap = now;
   };
-  if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height)) { delete e; return BDG_ERR_PLATFORM; }
+  // Automated runs (--frames N, the idle test) keep the window hidden and draw offscreen: tests never pop up or take the focus,
+  // and stray mouse or key input on the desktop cannot reach them. BDG_SHOW_WINDOW=1 shows it (watching a test);
+  // BDG_HIDDEN=1 hides any run.
+  const bool automated = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST"); // the idle test runs without a frame count
+  const bool hidden = (automated && !std::getenv("BDG_SHOW_WINDOW")) || std::getenv("BDG_HIDDEN") != nullptr;
+  if (!e->window.Create(desc->title ? desc->title : "Bidulgi Engine", desc->width, desc->height, hidden)) { delete e; return BDG_ERR_PLATFORM; }
   mark("window");
   if (!e->rhi.Init(e->window)) { e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
+  e->rhi.SetOffscreenFrame(hidden);
+  if (hidden) bdg::LogInfo("platform: hidden window, frames drawn offscreen (BDG_SHOW_WINDOW=1 shows it)");
   if (std::getenv("BDG_GL_ERROR_TEST")) e->rhi.DebugTriggerError(); // verifies GL debug output reaches the log
   if (!e->batch.Init(e->rhi)) { e->rhi.Shutdown(); e->window.Destroy(); delete e; return BDG_ERR_GRAPHICS; }
   mark("gl");

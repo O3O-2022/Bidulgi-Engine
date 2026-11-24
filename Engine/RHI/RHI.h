@@ -141,6 +141,10 @@ public:
 
   Color ReadPixel(int32_t x, int32_t y); // test hook (slow): reads the back buffer
   void  ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba); // whole back buffer, bottom-up rows
+  // Frames go to an offscreen framebuffer instead of the window's (a hidden window: automated test runs that
+  // must not pop up or take the focus). Screenshots and pixel reads see the same picture either way.
+  void  SetOffscreenFrame(bool on) { offscreenFrame_ = on; }
+  bool  OffscreenFrame() const { return offscreenFrame_; }
   void  DebugTriggerError();             // test hook: issues an invalid GL call to verify debug output
   uint32_t DrawCallsThisFrame() const { return drawCalls_; }
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
@@ -154,6 +158,9 @@ private:
   std::unordered_map<uint32_t, TexInfo> texInfo_; // cubemaps (render-to-face sizes)
   uint32_t texFbo_ = 0;
   bool nvxMemory_ = false;
+  bool offscreenFrame_ = false;
+  uint32_t mainFbo_ = 0, mainColor_ = 0, mainDepth_ = 0; // offscreen frame (0 = the window)
+  int32_t mainW_ = 0, mainH_ = 0;
   float maxAniso_ = 1;
   std::unordered_map<uint32_t, float> texAniso_;
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
