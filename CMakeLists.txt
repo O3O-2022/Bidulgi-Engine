@@ -99,6 +99,13 @@ file(GLOB MESHOPT_SOURCES ThirdParty/meshoptimizer/src/*.cpp)
 add_library(meshoptimizer STATIC ${MESHOPT_SOURCES})
 target_include_directories(meshoptimizer SYSTEM PUBLIC ThirdParty/meshoptimizer/src)
 set_target_properties(meshoptimizer PROPERTIES FOLDER ThirdParty)
+# ---- External: bc7enc + rgbcx (MIT / public domain): BC7, BC4, BC5 texture compression ----
+add_library(bc7enc STATIC ThirdParty/bc7enc/bc7enc.cpp ThirdParty/bc7enc/rgbcx.cpp ThirdParty/bc7enc/bc7decomp.cpp)
+target_include_directories(bc7enc SYSTEM PUBLIC ThirdParty/bc7enc)
+if(MSVC)
+  target_compile_options(bc7enc PRIVATE /W0)
+endif()
+set_target_properties(bc7enc PROPERTIES FOLDER ThirdParty)
 
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
@@ -115,6 +122,8 @@ add_library(BidulgiEngine STATIC
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp
+  Engine/Assets/TextureCooker.h Engine/Assets/TextureCooker.cpp
+  Engine/Assets/MaterialFile.h Engine/Assets/MaterialFile.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp
@@ -133,10 +142,11 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/EditorModel.h Engine/Runtime/EditorModel.cpp Engine/Runtime/ProjectPanel.cpp
   Engine/Runtime/SceneView.h Engine/Runtime/SceneView.cpp
   Engine/Runtime/Gizmo.h Engine/Runtime/Gizmo.cpp
+  Engine/Runtime/MaterialLibrary.h Engine/Runtime/MaterialLibrary.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
@@ -158,7 +168,7 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

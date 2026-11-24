@@ -1,6 +1,7 @@
 #include "Assets/AssetDatabase.h"
 #include "Core/Log.h"
 #include <yyjson.h>
+#include "Assets/TextureCooker.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -203,7 +204,9 @@ AssetDatabase::Changes AssetDatabase::Refresh() {
   auto hashFile = [&](const std::string& rel) { ++stats_.hashed; return HashFile(Abs(rel)); };
   auto writeMeta = [&](const std::string& rel, const std::string& guid, const std::string& importer) {
     if (std::FILE* f = _wfopen(Abs(rel + ".meta").c_str(), L"wb")) {
-      std::fprintf(f, "{\"guid\":\"%s\",\"importer\":\"%s\"}\n", guid.c_str(), importer.c_str());
+      // Textures start with the import settings their file name suggests (queue 3-1b); users edit them later.
+      std::string extra = importer == "texture" ? TextureMetaFields(DefaultTextureSettings(rel)) : std::string();
+      std::fprintf(f, "{\"guid\":\"%s\",\"importer\":\"%s\"%s}\n", guid.c_str(), importer.c_str(), extra.c_str());
       std::fclose(f);
     }
     return MTime(Abs(rel + ".meta"));

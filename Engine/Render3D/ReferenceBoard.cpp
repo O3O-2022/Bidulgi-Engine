@@ -169,8 +169,64 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
   return true;
 }
 
+bool ReferenceBoard::InitAssets(RHI& rhi, Renderer3D& r, const std::filesystem::path& dir) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  assetMode_ = true;
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  Material3D ground;
+  ground.baseColor = {0.2f, 0.2f, 0.21f, 1};
+  ground.roughness = 0.9f;
+  items_.push_back({&plane_, At({0, 0, 0}, 40, 1, 40), ground});
+  camera.position = {0, 1.7f, 9.f};
+  camera.target = {0, 1.1f, 0};
+  camera.fovY = 40.f;
+  light.toLight = {-0.4f, 0.8f, 0.45f};
+  light.intensity = 2.6f;
+  const char* names[4] = {"MetalRoughSpheres", "NormalTangentMirrorTest", "TextureCoordinateTest", "AlphaBlendModeTest"};
+  assets_.resize(4);
+  bool all = true;
+  for (int i = 0; i < 4; ++i) {
+    AssetModel& a = assets_[i];
+    a.name = names[i];
+    ImportedModel im;
+    std::string err;
+    std::filesystem::path file = dir / (a.name + ".glb");
+    if (!ImportGltf(file, im, &err)) {
+      LogError("render-assets: {} did not import ({}): run `python tools/testassets.py fetch`", a.name, err);
+      all = false;
+      continue;
+    }
+    // Facts the renderer depends on, read from the file (they tell whether the import kept what matters).
+    int mr = 0, normals = 0, base = 0, tangents = 0, modes[3] = {0, 0, 0};
+    for (const ImportedMaterial& m : im.materials) {
+      mr += m.metalRoughTex >= 0;
+      normals += m.normalTex >= 0;
+      base += m.baseColorTex >= 0;
+      ++modes[(int)m.alpha];
+    }
+    for (const ImportedPrimitive& p : im.primitives)
+      if (!p.mesh.vertices.empty() && p.mesh.vertices[0].tw != 0) ++tangents;
+    a.facts = std::format("{}:mats={},base={},mr={},normal={},tangents={},opaque={},mask={},blend={}", a.name, im.materials.size(), base,
+                          mr, normals, tangents, modes[0], modes[1], modes[2]);
+    a.model = r.UploadModel(im);
+    glm::vec3 size = a.model.boundsMax - a.model.boundsMin, mid = (a.model.boundsMin + a.model.boundsMax) * 0.5f;
+    float s = 2.2f / std::max({size.x, size.y, 1e-4f}); // fit width and height (they face +Z, toward the camera)
+    glm::vec3 slot{-4.2f + 2.8f * i, 0.f, 0.f};
+    glm::mat4 place = glm::translate(glm::mat4(1.f), slot) * glm::scale(glm::mat4(1.f), glm::vec3(s)) *
+                      glm::translate(glm::mat4(1.f), {-mid.x, -a.model.boundsMin.y, -mid.z});
+    Renderer3D::AppendModel(a.model, place, items_);
+    a.center = slot + glm::vec3(0, size.y * s * 0.5f, 0);
+    a.ok = true;
+    labels_.push_back({slot + glm::vec3(-1.1f, -0.35f, 1.2f), a.name});
+  }
+  return all;
+}
+
 void ReferenceBoard::Shutdown() {
   if (!renderer_) return;
+  for (AssetModel& a : assets_) renderer_->DestroyModel(a.model);
+  assets_.clear();
   for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_}) renderer_->DestroyMesh(*m);
   rhi_->DestroyTexture(letters_);
   renderer_->DestroyModel(probe_);
@@ -257,6 +313,26 @@ std::string ReferenceBoard::ProbeGltf(std::vector<uint8_t>* externalBin) {
 
 std::string ReferenceBoard::Check(const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const {
   std::string out, failed;
+  if (assetMode_) { // stage 2: every model imported, drawn over its slot, and its file facts
+    int bg[3] = {(int)std::lround(clear.r * 255), (int)std::lround(clear.g * 255), (int)std::lround(clear.b * 255)};
+    for (const AssetModel& a : assets_) {
+      float x = 0, y = 0;
+      bool drawn = false;
+      if (a.ok && ProjectToPixel(camera, w, h, a.center, x, y) && x >= 0 && y >= 0 && x < w && y < h) {
+        int covered = 0; // 9 points around the centre: at least 5 must be something other than the background
+        for (int dy = -1; dy <= 1; ++dy)
+          for (int dx = -1; dx <= 1; ++dx) {
+            int px = std::clamp((int)x + dx * 12, 0, w - 1), py = std::clamp((int)y + dy * 12, 0, h - 1);
+            const uint8_t* q = &rgba[((size_t)py * w + px) * 4];
+            covered += std::abs(q[0] - bg[0]) + std::abs(q[1] - bg[1]) + std::abs(q[2] - bg[2]) > 9;
+          }
+        drawn = covered >= 5;
+      }
+      out += std::format("{}{} drawn={}", out.empty() ? "" : " ", a.ok ? a.facts : a.name + ":missing", drawn ? 1 : 0);
+      if (!drawn) failed += (failed.empty() ? "" : ",") + a.name;
+    }
+    return out + (failed.empty() ? " result=pass" : " result=FAIL(" + failed + ")");
+  }
   auto fail = [&](const char* key) { failed += failed.empty() ? key : std::string(",") + key; };
   auto at = [&](const glm::vec3& p, int c[3]) {
     float x = 0, y = 0;

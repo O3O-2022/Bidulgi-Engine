@@ -231,6 +231,22 @@ jobs:
           if ($log -notmatch 'gizmo test: move=1 undo=1 plane=1 cancel=1 rotate=1 scale=1 snap=1 local=1') { $errors += 'gizmo test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 21) Materials and cooked textures (queue 3-1b): .material + .matinst + BC7/BC5 DDS, cooked once then reused
+          Remove-Item -Recurse -Force "$PWD/ci-mat" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-mat/Assets" | Out-Null
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/ci-mat/Assets"; BDG_MATERIAL_TEST = '1' } 8
+          if ($log -notmatch 'material test: red=1 blue=1 texture=1 presets=default,normal cooked=2 reused=2 formats=BC7_SRGBx7,BC5x7 undo=3') { $errors += 'material test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
+          # 22) Standard Khronos test models (queue 3-1b): fetched by tools/testassets.py (licences in Tests/testassets.lock.json)
+          python tools/testassets.py fetch
+          if ($LASTEXITCODE -ne 0) { $errors += 'test assets could not be fetched' }
+          else {
+            $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-assets'; BDG_RENDER_TEST = '1' } 5
+            if ($log -notmatch 'render test: .*AlphaBlendModeTest:mats=6,base=6,mr=1,normal=1,tangents=9,opaque=2,mask=3,blend=1 drawn=1 result=pass') { $errors += 'standard test models failed' }
+          }
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

@@ -11,6 +11,8 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
+#include "Runtime/MaterialLibrary.h"
+#include "Assets/TextureCooker.h"
 #include "Scene/Components.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
@@ -127,6 +129,9 @@ struct bdg_engine {
   int32_t viewW = 0, viewH = 0;
   bool renderTest = false;
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
+  bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
+  bool materialTest = false;
+  std::string materialTestValues[8];
   bool sceneViewTest = false, gizmoTest = false;
   std::string gizmoTestValues[8];
   std::string sceneViewTestValues[10];
@@ -797,6 +802,116 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 24) v[9] = m->Selected();
 }
 
+// Scripted material check (BDG_MATERIAL_TEST=1 with BDG_ASSETS = an empty folder, queue 3-1b): writes a small project
+// (two materials, an instance, two textures), assigns them through commands and reads the rendered colours back.
+void InjectMaterialTest(bdg_engine* e, int frame) {
+  namespace fs = std::filesystem;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m || !e->assetsOpen) return;
+  auto* v = e->materialTestValues;
+  fs::path root = fs::path(std::u8string((const char8_t*)e->assets.Root().c_str()));
+  auto write = [&](const char* rel, const std::string& text) {
+    fs::create_directories((root / rel).parent_path());
+    std::FILE* f = _wfopen((root / rel).c_str(), L"wb");
+    if (f) { std::fwrite(text.data(), 1, text.size(), f); std::fclose(f); }
+  };
+  // 64x64 picture in 4 quadrants (top-left first) and a gently bumpy normal map.
+  static const uint8_t quad[4][3] = {{230, 60, 160}, {60, 200, 220}, {250, 150, 30}, {120, 90, 230}};
+  auto set = [&](const char* id, const char* material) {
+    bdg::Command c;
+    c.name = "set";
+    c.target = id;
+    c.args = std::format(R"({{"path":"MeshRenderer.material","value":"{}"}})", material);
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("material test: {}", err);
+  };
+  auto pixel = [&](glm::vec3 world, int rgb[3]) {
+    int32_t w, h;
+    std::vector<uint8_t> px;
+    sv->ReadPixels(w, h, px);
+    float x, y;
+    rgb[0] = rgb[1] = rgb[2] = -1;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), w, h, world, x, y) || x < 0 || y < 0 || x >= w || y >= h) return;
+    const uint8_t* p = &px[((size_t)y * w + (size_t)x) * 4];
+    rgb[0] = p[0]; rgb[1] = p[1]; rgb[2] = p[2];
+  };
+  auto close = [](const int a[3], int r, int g, int b, int tol) {
+    return std::abs(a[0] - r) <= tol && std::abs(a[1] - g) <= tol && std::abs(a[2] - b) <= tol;
+  };
+  static size_t undo0;
+  if (frame == 2) {
+    std::vector<uint8_t> img(64 * 64 * 4), nrm(64 * 64 * 4);
+    for (int y = 0; y < 64; ++y)
+      for (int x = 0; x < 64; ++x) {
+        const uint8_t* c = quad[(y / 32) * 2 + x / 32];
+        uint8_t* p = &img[(y * 64 + x) * 4];
+        p[0] = c[0]; p[1] = c[1]; p[2] = c[2]; p[3] = 255;
+        float nx = 0.3f * std::sin(x * 0.4f), ny = 0.3f * std::cos(y * 0.4f), nz = std::sqrt(1 - nx * nx - ny * ny);
+        uint8_t* q = &nrm[(y * 64 + x) * 4];
+        q[0] = (uint8_t)std::lround((nx * 0.5f + 0.5f) * 255); q[1] = (uint8_t)std::lround((ny * 0.5f + 0.5f) * 255);
+        q[2] = (uint8_t)std::lround((nz * 0.5f + 0.5f) * 255); q[3] = 255;
+      }
+    std::vector<uint8_t> png;
+    bdg::EncodePNG(64, 64, img.data(), false, png);
+    write("Textures/T_Check_D.png", std::string(png.begin(), png.end()));
+    bdg::EncodePNG(64, 64, nrm.data(), false, png);
+    write("Textures/T_Bumps_N.png", std::string(png.begin(), png.end()));
+    write("Materials/M_TestRed.material", "{\"material\":\"M_TestRed\",\"shading\":\"unlit\",\"blend\":\"opaque\"}\n"
+                                           "{\"param\":\"BaseColor\",\"type\":\"color\",\"value\":\"#d02020\"}\n");
+    write("Materials/MI_TestBlue.matinst", "{\"instance\":\"MI_TestBlue\",\"parent\":\"M_TestRed\"}\n"
+                                            "{\"set\":\"BaseColor\",\"value\":\"#2050e0\"}\n");
+    write("Materials/M_Textured.material", "{\"material\":\"M_Textured\",\"shading\":\"unlit\"}\n"
+                                            "{\"param\":\"BaseColorMap\",\"type\":\"texture\",\"value\":\"Textures/T_Check_D.png\"}\n"
+                                            "{\"param\":\"NormalMap\",\"type\":\"texture\",\"value\":\"Textures/T_Bumps_N.png\"}\n");
+    e->assets.Refresh();
+    e->materials.Invalidate();
+    undo0 = m->bus.UndoDepth();
+    set("g8", "M_TestRed");
+    set("g6", "MI_TestBlue");
+    set("g5", "Materials/M_Textured.material");
+  }
+  if (frame == 4) {
+    int c[3];
+    glm::vec3 center;
+    float r;
+    sv->ObjectCenter(*m, "g8", center, r);
+    pixel(center, c);
+    v[0] = std::format("{}", close(c, 208, 32, 32, 3) ? 1 : 0);
+    sv->ObjectCenter(*m, "g6", center, r);
+    pixel(center + glm::vec3(0, -0.25f, 0), c); // below the Weapon child
+    v[1] = std::format("{}", close(c, 32, 80, 224, 3) ? 1 : 0);
+    int tl[3], br[3]; // ground plane: picture top-left at (-x, -z), bottom-right at (+x, +z)
+    pixel({-4.5f, 0, -4.5f}, tl); // cell centres: the 1 m grid lines are drawn over the ground
+    pixel({1.5f, 0, 3.5f}, br);
+    bool texOk = close(tl, quad[0][0], quad[0][1], quad[0][2], 8) && close(br, quad[3][0], quad[3][1], quad[3][2], 8);
+    v[2] = texOk ? "1" : std::format("0(tl={},{},{} br={},{},{})", tl[0], tl[1], tl[2], br[0], br[1], br[2]);
+    auto preset = [&](const char* rel) {
+      std::vector<uint8_t> b;
+      bdg::ReadFileBytes(root / (std::string(rel) + ".meta"), b);
+      return std::string(bdg::PresetName(bdg::ParseTextureSettings(std::string(b.begin(), b.end()), rel).preset));
+    };
+    v[3] = preset("Textures/T_Check_D.png") + "," + preset("Textures/T_Bumps_N.png");
+    v[4] = std::format("{}", e->materials.Cooker().GetStats().cooked);
+    e->materials.Shutdown(); // drop the GPU copies: the next lookups read the cooked DDS files
+    e->materials.Invalidate();
+  }
+  if (frame == 6) {
+    v[5] = std::format("{}", e->materials.Cooker().GetStats().loaded);
+    std::string formats;
+    for (const char* rel : {"Textures/T_Check_D.png", "Textures/T_Bumps_N.png"}) {
+      const bdg::AssetRecord* r = e->assets.ByPath(rel);
+      bdg::CookedTexture t;
+      for (auto& f : fs::directory_iterator(root.parent_path() / ".cache" / "cooked"))
+        if (r && f.path().filename().string().starts_with(r->guid)) bdg::ReadDDS(f.path(), t);
+      formats += std::string(formats.empty() ? "" : ",") + (t.format == bdg::CookedFormat::BC7_SRGB ? "BC7_SRGB" : t.format == bdg::CookedFormat::BC5 ? "BC5" : "?");
+      formats += std::format("x{}", t.mips.size());
+    }
+    v[6] = formats;
+    v[7] = std::format("{}", m->bus.UndoDepth() - undo0);
+  }
+}
+
 // Scripted gizmo check (BDG_GIZMO_TEST=1, queue 3-3) on the Crystal (g8, at 3, 0.5, 2): real mouse drags on the
 // handles through the scene view, each drag one undo step, Esc cancels, W/E/R switch tools, Ctrl snaps, X local axes.
 void InjectGizmoTest(bdg_engine* e, int frame, float scale) {
@@ -995,6 +1110,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->renderTest = std::getenv("BDG_RENDER_TEST") != nullptr;
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
+  e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -1038,10 +1154,13 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (auto parity = bdg::BuildParityScreen(component)) e->editor->SetRoot(std::move(parity));
     else bdg::LogError("unknown parity component: {}", component);
   }
-  if (!screen || std::string(screen) != "render-ref") { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
+  const bool boardScreen = screen && (std::string(screen) == "render-ref" || std::string(screen) == "render-assets");
+  if (!boardScreen) { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
     e->r3d = std::make_unique<bdg::Renderer3D>();
     e->sceneView = std::make_unique<bdg::SceneView>();
     if (e->r3d->Init(e->rhi) && e->sceneView->Init(e->rhi, *e->r3d)) {
+      e->materials.Init(e->rhi);
+      e->sceneView->SetMaterials(&e->materials);
       if (bdg::Widget* scene = e->editor->Find("scene"))
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
     } else {
@@ -1058,6 +1177,17 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       e->editor->SetRoot(BuildRenderReferenceScreen(e));
     }
     else { bdg::LogError("render-ref: the 3D renderer did not start"); e->board.reset(); }
+  }
+  if (screen && std::string(screen) == "render-assets") { // standard test models (queue 3-1b)
+    const char* custom = std::getenv("BDG_TESTASSETS"); // the folder itself; otherwise .cache/testassets above the working folder
+    std::string credits = custom ? std::string() : FindUp("BDG_NO_SUCH_VARIABLE", {".cache/testassets/CREDITS.txt"});
+    std::filesystem::path dir = custom ? std::filesystem::path(custom) : credits.empty() ? std::filesystem::path(".cache/testassets") : std::filesystem::path(credits).parent_path();
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->board = std::make_unique<bdg::ReferenceBoard>();
+    if (e->r3d->Init(e->rhi)) {
+      e->board->InitAssets(e->rhi, *e->r3d, dir); // missing files are logged; the screen still opens
+      e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    } else { bdg::LogError("render-assets: the 3D renderer did not start"); e->board.reset(); }
   }
   e->editor->SetWindow(&e->window);
   if (bdg::Widget* bug = e->editor->Find("status.bug")) bug->onClick = [e](bdg::Widget&) { e->bugRequested = true; };
@@ -1103,11 +1233,14 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     std::string err;
     e->assetsOpen = e->assets.Open(assetsDir, &err, (std::filesystem::path(assetsDir).parent_path() / ".cache" / "assetdb.jsonl").string());
     if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
-    else e->assetWatcher.Start(e->assets.Root(), [](void* p) {
-      auto* eng = static_cast<bdg_engine*>(p);
-      eng->assetsChanged = true;
-      eng->window.Wake();
-    }, e);
+    else {
+      e->materials.SetAssets(&e->assets);
+      e->assetWatcher.Start(e->assets.Root(), [](void* p) {
+        auto* eng = static_cast<bdg_engine*>(p);
+        eng->assetsChanged = true;
+        eng->window.Wake();
+      }, e);
+    }
   } else {
     bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
   }
@@ -1259,11 +1392,13 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
+    if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
       for (auto& [from, to] : ch.moved) if (e->model) e->model->RetargetAssetPath(from, to);
       if (e->model && !ch.Empty()) e->model->ProjectChanged();
+      if (!ch.Empty()) e->materials.Invalidate();
       if (!ch.Empty())
         bdg::LogInfo("assets: {} added, {} removed, {} modified, {} moved", ch.added.size(), ch.removed.size(), ch.modified.size(),
                      ch.moved.size());
@@ -1417,6 +1552,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::LogInfo("sceneview test: drawn={} pick={} outline={} orbit={} zoom={} frame={} pan={} fly={} deselect={} icon={}",
                      v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
       }
+      if (e->materialTest) {
+        auto* v = e->materialTestValues;
+        bdg::LogInfo("material test: red={} blue={} texture={} presets={} cooked={} reused={} formats={} undo={}", v[0], v[1], v[2], v[3],
+                     v[4], v[5], v[6], v[7]);
+      }
       if (e->gizmoTest) {
         auto* v = e->gizmoTestValues;
         bdg::LogInfo("gizmo test: move={} undo={} plane={} cancel={} rotate={} scale={} snap={} local={}", v[0], v[1], v[2], v[3], v[4],
@@ -1508,6 +1648,7 @@ void bdg_engine_destroy(bdg_engine* e) {
   e->editor.reset();
   e->gallery.reset();
   if (e->board) e->board->Shutdown();
+  e->materials.Shutdown();
   if (e->sceneView) e->sceneView->Shutdown();
   e->rhi.DestroyRenderTarget(e->viewRT);
   if (e->r3d) e->r3d->Shutdown();

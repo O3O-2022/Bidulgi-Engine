@@ -1,0 +1,110 @@
+{
+  "source": "https://github.com/KhronosGroup/glTF-Sample-Assets",
+  "commit": "e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea",
+  "files": [
+    {
+      "name": "MetalRoughSpheres",
+      "kind": "model",
+      "file": "MetalRoughSpheres.glb",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/MetalRoughSpheres/glTF-Binary/MetalRoughSpheres.glb",
+      "bytes": 11221356,
+      "sha256": "450c05557b0823a10835e32c05caf77a7b175eba94516555c1c9bb084f563f01",
+      "purpose": "metal/rough texture, PBR spheres against the procedural matrix",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2017"
+    },
+    {
+      "name": "MetalRoughSpheres",
+      "kind": "screenshot",
+      "file": "MetalRoughSpheres.screenshot.png",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/MetalRoughSpheres/screenshot/screenshot.png",
+      "bytes": 125869,
+      "sha256": "365b62345ecf8253e9e25acf605e424b42b4f4805ff3171096888bf7eefd2272",
+      "purpose": "metal/rough texture, PBR spheres against the procedural matrix",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2017"
+    },
+    {
+      "name": "NormalTangentMirrorTest",
+      "kind": "model",
+      "file": "NormalTangentMirrorTest.glb",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/NormalTangentMirrorTest/glTF-Binary/NormalTangentMirrorTest.glb",
+      "bytes": 1567084,
+      "sha256": "31ce5f3c873fc55531a17ccacf001e3d1d482a508695aa826fa79cc196e0ce78",
+      "purpose": "normal maps with tangents and mirrored UVs",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2018"
+    },
+    {
+      "name": "NormalTangentMirrorTest",
+      "kind": "screenshot",
+      "file": "NormalTangentMirrorTest.screenshot.png",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/NormalTangentMirrorTest/screenshot/screenshot.png",
+      "bytes": 48545,
+      "sha256": "a48ffbf6ae64687843ea5728a167ba4eee09b923512d63c3cbece6dc8cd7a206",
+      "purpose": "normal maps with tangents and mirrored UVs",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2018"
+    },
+    {
+      "name": "TextureCoordinateTest",
+      "kind": "model",
+      "file": "TextureCoordinateTest.glb",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/TextureCoordinateTest/glTF-Binary/TextureCoordinateTest.glb",
+      "bytes": 14232,
+      "sha256": "fe75a63a0423c9a682bf46c3045b6328ae9c55abefc9a50adf3ec1d6dc6ea3b9",
+      "purpose": "UV origin and direction",
+      "license": "CC0-1.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2017"
+    },
+    {
+      "name": "TextureCoordinateTest",
+      "kind": "screenshot",
+      "file": "TextureCoordinateTest.screenshot.png",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/TextureCoordinateTest/screenshot/screenshot.png",
+      "bytes": 10039,
+      "sha256": "beb0d7f1f3a2edbb9b95ac205e5be31a6a7aff57b8ea188639aa6fbdf8bf3958",
+      "purpose": "UV origin and direction",
+      "license": "CC0-1.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2017"
+    },
+    {
+      "name": "AlphaBlendModeTest",
+      "kind": "model",
+      "file": "AlphaBlendModeTest.glb",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/AlphaBlendModeTest/glTF-Binary/AlphaBlendModeTest.glb",
+      "bytes": 2978812,
+      "sha256": "37c3577d143071b42dd46e9d942b157837eb25c6340112171d7faecaa987b14e",
+      "purpose": "OPAQUE / MASK / BLEND and alpha cutoff",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2018"
+    },
+    {
+      "name": "AlphaBlendModeTest",
+      "kind": "screenshot",
+      "file": "AlphaBlendModeTest.screenshot.png",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/AlphaBlendModeTest/screenshot/screenshot.png",
+      "bytes": 51631,
+      "sha256": "856768a419da4be144fbaa3bf49c9fa456d63d916218d11e981c0a053a6ea42f",
+      "purpose": "OPAQUE / MASK / BLEND and alpha cutoff",
+      "license": "CC-BY-4.0",
+      "artist": "Ed Mackey",
+      "owner": "Analytical Graphics, Inc.",
+      "year": "2018"
+    }
+  ]
+}

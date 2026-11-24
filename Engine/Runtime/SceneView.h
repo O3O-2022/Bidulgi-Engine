@@ -9,11 +9,12 @@
 //
 // Meshes: MeshRenderer.mesh names a project asset (.gltf / .glb through the importer) or a built-in shape by its
 // file stem: Plane (1 x 1), Cube, Sphere, Cylinder, Cone (1 m). Anything else shows a placeholder cube.
-// Materials by name until material files exist (3-1b): M_Ground, M_Gold, M_Steel, M_Copper, M_Glass; others get
-// a stable colour from their name.
+// Materials: a project .material / .matinst asset (path, guid: or file stem); without one, temporary rules by name
+// (M_Ground, M_Gold, M_Steel, M_Copper, M_Glass; others a stable colour from the name).
 #include "Platform/Window.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/Gizmo.h"
+#include "Runtime/MaterialLibrary.h"
 #include <memory>
 #include <set>
 #include <string>
@@ -39,6 +40,7 @@ struct EditorCamera {
 class SceneView {
 public:
   bool Init(RHI& rhi, Renderer3D& renderer);
+  void SetMaterials(MaterialLibrary* lib) { materials_ = lib; } // the project's .material / .matinst assets
   void Shutdown();
 
   // Takes the events that belong to the view out of `events` (UI units). dt: seconds since the last frame.
@@ -73,11 +75,12 @@ private:
     bool isModel = false, missing = false;
   };
   const MeshEntry* Resolve(const std::string& name, const AssetDatabase* assets);
-  Material3D MaterialFor(const std::string& name) const;
+  Material3D MaterialFor(const std::string& name); // project material asset first, then the name rules
   void BuildItems(EditorModel& model, const AssetDatabase* assets);
 
   RHI* rhi_ = nullptr;
   Renderer3D* r_ = nullptr;
+  MaterialLibrary* materials_ = nullptr;
   RenderTargetHandle rt_;
   int32_t pw_ = 0, ph_ = 0;
   float vx_ = 0, vy_ = 0, vw_ = 1, vh_ = 1; // last view rect (UI units)

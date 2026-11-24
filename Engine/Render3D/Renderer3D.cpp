@@ -82,7 +82,9 @@ void main() {
   if (!gl_FrontFacing) { t = -t; b = -b; ng = -ng; }
   vec3 N = ng;
   if (uMaps.z > 0.5) {
-    vec3 tn = nTex.xyz * 2.0 - 1.0;
+    vec3 tn;
+    tn.xy = nTex.xy * 2.0 - 1.0; // X and Y from the map; Z rebuilt so BC5 (two channel) maps work too
+    tn.z = sqrt(max(1.0 - dot(tn.xy, tn.xy), 0.0));
     tn.xy *= uEmissive.w;
     N = normalize(mat3(t, b, ng) * tn);
   }

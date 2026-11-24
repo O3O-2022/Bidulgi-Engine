@@ -122,6 +122,39 @@ TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
   return {t};
 }
 
+TextureHandle RHI::CreateTextureMips(const TextureDesc& d, const std::vector<const void*>& levels, const std::vector<size_t>& sizes) {
+  if (levels.empty() || levels.size() != sizes.size()) return {};
+  GLenum internal = 0;
+  switch (d.format) {
+    case TextureFormat::BC7: internal = GL_COMPRESSED_RGBA_BPTC_UNORM; break;
+    case TextureFormat::BC7_SRGB: internal = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM; break;
+    case TextureFormat::BC5: internal = GL_COMPRESSED_RG_RGTC2; break;
+    case TextureFormat::BC4: internal = GL_COMPRESSED_RED_RGTC1; break;
+    case TextureFormat::SRGBA8: internal = GL_SRGB8_ALPHA8; break;
+    case TextureFormat::RGBA8: internal = GL_RGBA8; break;
+    case TextureFormat::R8: internal = GL_R8; break;
+  }
+  const bool block = d.format == TextureFormat::BC7 || d.format == TextureFormat::BC7_SRGB || d.format == TextureFormat::BC5 ||
+                     d.format == TextureFormat::BC4;
+  GLuint t = 0;
+  glCreateTextures(GL_TEXTURE_2D, 1, &t);
+  glTextureStorage2D(t, (GLsizei)levels.size(), internal, d.w, d.h);
+  glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, levels.size() > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, d.nearest ? GL_NEAREST : GL_LINEAR);
+  GLint wrap = d.repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+  glTextureParameteri(t, GL_TEXTURE_WRAP_S, wrap);
+  glTextureParameteri(t, GL_TEXTURE_WRAP_T, wrap);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  for (size_t m = 0; m < levels.size(); ++m) {
+    GLsizei w = std::max(1, d.w >> m), h = std::max(1, d.h >> m);
+    if (block)
+      glCompressedTextureSubImage2D(t, (GLint)m, 0, 0, w, h, internal, (GLsizei)sizes[m], levels[m]);
+    else
+      glTextureSubImage2D(t, (GLint)m, 0, 0, w, h, d.format == TextureFormat::R8 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, levels[m]);
+  }
+  return {t};
+}
+
 TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const void* pixels) {
   GLuint t = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &t);

@@ -15,6 +15,9 @@ public:
   struct Label { glm::vec3 position; std::string text; };
 
   bool Init(RHI& rhi, Renderer3D& renderer);
+  // Stage 2 (queue 3-1b): the standard Khronos test models from `tools/testassets.py fetch` side by side instead
+  // of the procedural board. Check() then reports import facts and coverage per model.
+  bool InitAssets(RHI& rhi, Renderer3D& renderer, const std::filesystem::path& dir);
   // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes
   // (x = -2.0, z = 1.6), clear of every probe Check() reads.
   bool AddModel(const std::filesystem::path& gltf);
@@ -38,6 +41,9 @@ private:
   Renderer3D* renderer_ = nullptr;
   Mesh3D plane_, sphere_, quad_, quadCW_, cylinder_, cone_;
   Model3D probe_, model_;
+  struct AssetModel { std::string name; Model3D model; glm::vec3 center{0}; std::string facts; bool ok = false; };
+  std::vector<AssetModel> assets_;
+  bool assetMode_ = false;
   bool probeLoaded_ = false;
   TextureHandle letters_;
   std::vector<DrawItem3D> items_;

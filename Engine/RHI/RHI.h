@@ -18,7 +18,7 @@ struct RenderTargetHandle { uint32_t id = 0; bool Valid() const { return id != 0
 
 enum class BufferUsage { Vertex, Index, Uniform };
 // SRGBA8: 8-bit sRGB-encoded colour, decoded to linear when sampled (albedo textures, colour pictures).
-enum class TextureFormat { R8, RGBA8, SRGBA8 };
+enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4 }; // BCn: 4x4 blocks (cooked textures)
 enum class CullMode { None, Back };
 
 struct TextureDesc {
@@ -64,6 +64,8 @@ public:
 
   TextureHandle CreateTexture2D(int32_t w, int32_t h, TextureFormat format, const void* pixels = nullptr);
   TextureHandle CreateTexture(const TextureDesc& desc, const void* pixels); // pixels: level 0, top row first
+  // Every mip level given (level 0 first, top row first); block formats take ceil(w/4) x ceil(h/4) blocks.
+  TextureHandle CreateTextureMips(const TextureDesc& desc, const std::vector<const void*>& levels, const std::vector<size_t>& sizes);
   void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
   void          DestroyTexture(TextureHandle t);
   void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D

@@ -1,7 +1,7 @@
 #pragma once
 // Asset database (queue 2-3). Every asset file under the project's Assets folder gets a sidecar
 // "<file>.meta" (one JSON line, created once, never rewritten by the scanner):
-//   {"guid":"7f3a9c21e4b84d0f","importer":"texture"}
+//   {"guid":"7f3a9c21e4b84d0f","importer":"texture","preset":"default","srgb":true,...} (textures: settings, 3-1b)
 // plus whatever the user adds later (import settings, "source":{author,url,license}). The GUID follows the
 // file when it is renamed or moved, so references survive:
 //   - Move() moves the file and its .meta together (what the editor and `bdg mv` use);

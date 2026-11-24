@@ -131,8 +131,9 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
   return &builtins_["cube"];
 }
 
-Material3D SceneView::MaterialFor(const std::string& name) const {
+Material3D SceneView::MaterialFor(const std::string& name) {
   Material3D m;
+  if (materials_ && !name.empty() && materials_->Find(name, m)) return m;
   std::string n = Lower(name);
   auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
   if (has("ground")) { m.baseColor = {0.26f, 0.27f, 0.28f, 1}; m.roughness = 0.95f; }

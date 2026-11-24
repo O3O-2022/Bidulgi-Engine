@@ -48,6 +48,8 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_MULTI_TEST=1`, `BDG_PRESETS=폴더` | 여러 오브젝트 편집·값 복사/붙여넣기·프리셋 자동 테스트, 프리셋 폴더 강제 |
 | `BDG_SCREEN=render-ref` | 렌더링 기준판(3D) 전체 화면 |
 | `BDG_RENDER_TEST=1` | 기준판 렌더 결과 자동 판정(`render-ref`와 함께) |
+| `BDG_MATERIAL_TEST=1` | 머티리얼 자동 테스트(빈 `BDG_ASSETS`에 머티리얼·인스턴스·텍스처를 만들어 색·쿠킹·재사용 확인) |
+| `BDG_SCREEN=render-assets` | Khronos 표준 모델 4개(먼저 `python tools/testassets.py fetch`, 다른 폴더는 `BDG_TESTASSETS`) |
 | `BDG_GIZMO_TEST=1` | 기즈모 자동 테스트(축·평면 이동, 되돌리기 1번, Esc 취소, 회전 고리, 크기, Ctrl 스냅, 로컬 축) |
 | `BDG_SCENEVIEW_TEST=1` | 씬 뷰 자동 테스트(그리기·클릭 선택·외곽선·궤도·확대·맞추기·이동·비행·선택 해제·아이콘) |
 | `BDG_MODEL=<.gltf/.glb>` | `render-ref` 기준판 왼쪽에 모델 표시(2.2 m로 맞춤) |
@@ -81,6 +83,10 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `Engine/RHI/RHI.h`, `RHI_GL.cpp` | 그래픽 추상화. 버퍼·텍스처·파이프라인·그리기 (GL 4.5 DSA) |
 | `Engine/Render2D/Batch2D.*` | 2D 일괄 그리기 (SDF 둥근 사각형, 선, SDF 글자, RGBA 이미지) |
 | `Engine/Assets/GltfImport.*` | glTF 2.0 임포트(cgltf) + meshoptimizer 최적화 → `ImportedModel` |
+| `Engine/Assets/MaterialFile.*` | `.material`/`.matinst` 읽기·쓰기·부모 체인 해석 |
+| `Engine/Assets/TextureCooker.*` | 텍스처 프리셋·`.meta` 설정, 밉, BC7/BC5/BC4, DDS, 쿠킹 캐시 |
+| `Engine/Runtime/MaterialLibrary.*` | 프로젝트 머티리얼 → GPU(텍스처 쿠킹·업로드 캐시) |
+| `tools/testassets.py` | 표준 테스트 에셋 받기·확인(`Tests/testassets.lock.json`) |
 | `Engine/Runtime/Gizmo.*` | 이동·회전·크기 기즈모: 핸들 히트 테스트, 드래그 계산, 그리기 (씬과 명령은 모름) |
 | `Engine/Runtime/SceneView.*` | Scene 패널 3D: 씬 → 그리기 항목, 메시 캐시, 에디터 카메라, 피킹, 오버레이 |
 | `Engine/Render3D/*` | 3D: 절차 메시(`MeshGen`), 전방 렌더러(`Renderer3D`, GGX + 방향광 + 반구 환경), 렌더링 기준판(`ReferenceBoard`) |
@@ -122,7 +128,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 아래 번호 순서대로 진행합니다. 목록의 위치보다 **이 순서가 우선**입니다. 다 끝나면 이 절을 지우고 남은 항목을 위에서부터 진행합니다.
 
-1. **3-1b** 머티리얼 파일(`.material`/`.matinst`)·텍스처 쿠킹·표준 에셋
+1. ~~**3-1b** 머티리얼 파일·텍스처 쿠킹·표준 에셋~~ (2026-11-24 완료)
 2. **3-4** 조명·그림자 (방향광 그림자 맵, 점·스폿광, 하늘·환경광)
 3. **3-5** 품질 단계 감자~중사양 (+ 톤매핑·FXAA·Bloom 등 단계별 포스트 프로세스)
 4. **3-8** 렌더 기준 씬 + 디버그 도구 (재질 매트릭스·조명/그림자·투명·포스트 구역, 렌더 패스 뷰어, 카메라 북마크)
@@ -177,7 +183,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 3-0 렌더링 기준판 1단계 | **첫 3D 렌더링.** RHI: 오프스크린 렌더 타깃(RGBA8 + 깊이24, MSAA 4× → 해석), 깊이 테스트·후면 컬링(CCW 앞면), sRGB 텍스처 형식, UBO 구간 바인딩. Batch2D: RGBA 이미지 사각형(모드 3) — UI 안에 3D 화면·썸네일을 그리는 길. `Render3D/`: 절차 메시(사각형·평면·상자·구·원기둥·원뿔, 모두 바깥에서 CCW), 전방 렌더러(GGX 금속/거칠기, 방향광 1 + 하늘/땅 반구 환경, 선형 계산 → sRGB 출력, 톤매핑 없음), 기준판(바닥, 구 7×7 거칠기×금속, 축 화살표, 18% 회색 카드, ColorChecker 24칸, 글자 텍스처 판, 와인딩·깊이 탐침). `BDG_SCREEN=render-ref` 화면, `BDG_RENDER_TEST=1`이 렌더 결과를 읽어 8가지 판정 → 회색 118, 체커 오차 0, 축·오른손·CCW·깊이·위쪽 조명·UV 모두 통과. 단위 테스트 2개(총 55개·587개), CI 18번. **MetalRoughSpheres glTF와 `bdg testassets fetch`는 3-1로**(glTF 로더와 내려받기 승인이 필요) | `153d3b4` |
 | 3-1 glTF 임포트·PBR 맵 | cgltf 1.15·meshoptimizer 1.3(둘 다 MIT, 사용자 승인) 추가. `Assets/GltfImport.*`: .gltf(외부·data URI 버퍼)·.glb, 유니코드 경로(cgltf 파일 콜백), 노드 계층 → 월드 행렬, 삼각형 프리미티브(노멀 없으면 생성, 인덱스 없으면 생성), 머티리얼(금속/거칠기·노멀·AO·발광·발광 세기·알파 마스크/블렌드·양면·KHR_materials_unlit), 이미지(내장·data URI·파일, 용도별 sRGB/선형, 샘플러 NEAREST·CLAMP), meshoptimizer(중복 제거·버텍스 캐시·오버드로·페치 순서). 렌더러: 맵 5종, 탄젠트 없으면 화면 미분으로 탄젠트(glTF 샘플 뷰어 방식), 불투명 → 반투명(뒤에서 앞) 순서, 양면·블렌드 파이프라인, 밉맵. 기준판에 **glTF 탐침**(직접 만든 glTF가 실제 임포터를 거쳐 그려짐) → 렌더 검사 9번째 `gltf=ok`. `BDG_MODEL=<파일>`로 아무 glTF나 기준판 옆에 표시(사용자 로컬 파일로 4만 삼각형 모델 확인, 저장소·CI에는 넣지 않음). 단위 테스트 2개(총 57개·612개). 머티리얼 파일·텍스처 쿠킹·표준 에셋 검증은 3-1b로 | `6601ed3` |
 | 3-2 씬 뷰 실제 3D | Scene 패널이 열린 씬을 실제 3D로 그림(`Runtime/SceneView.*`): 오프스크린 MSAA 타깃 → 패널 이미지, 오버레이(칩, Draw·Tris·ms, 카메라 방향을 따르는 축 위젯, 조명·카메라 아이콘, 조작 안내). **에디터 카메라**: Alt+왼쪽 드래그 궤도, 가운데 드래그 이동, 휠 확대, 오른쪽 드래그 둘러보기 + WASDQE 비행(휠 = 속도), F 선택에 맞추기. **클릭 선택**(삼각형 레이 피킹, 아이콘 클릭, Ctrl/Shift 추가·제거, 빈 곳 클릭 = 선택 해제). **선택 외곽선**(마스크 타깃 + 2px 외곽선, 가려져도 보임, 자식 포함). **그리드**(1 m/10 m, X 빨강·Z 파랑 축선, 거리 페이드, 바닥 위로 살짝). 메시: 프로젝트 에셋 glTF(해시가 바뀌면 다시 임포트) 또는 내장 도형(Plane·Cube·Sphere·Cylinder·Cone), 없으면 자리표시 상자 + 경고. 머티리얼은 3-1b 전까지 이름으로(M_Ground·M_Gold·M_Steel·M_Copper·M_Glass, 그 외 이름 해시 색). 첫 방향광이 태양. 샘플 씬 Sun 회전을 이 엔진 규칙(양의 pitch = 위)에 맞게 (-50, -30, 0)으로. 키 뗌 이벤트(`KeyUp`) 추가. 프레임 통계에 `ui_draws`·`draws3d` 분리. `BDG_SCENEVIEW_TEST=1` 10개 판정 통과, CI 19번, 로컬에서 CI 스모크 전체 통과. **Project 패널 썸네일은 3-2b로** | `3958640` |
-| 3-3 기즈모 | 사용자 요청으로 우선순위 절보다 먼저. `Runtime/Gizmo.*`(계산만, 단위 테스트 가능) + 씬 뷰 연결. **이동**: X·Y·Z 화살표(광선-축 최근접점), XY·YZ·XZ 평면 사각형(광선-평면), 가운데(화면 평면). **회전**: X·Y·Z 고리 + 바깥 화면 고리(화면 각도, 오른손 규칙 부호). **크기**: 축 + 상자, 가운데 균일. 화면에서 늘 같은 크기(110px), 마우스 아래 핸들 노란색, 뒤쪽 고리 반 흐리게. W/E/R 도구(기존 단축키 프리셋), **X 월드/로컬 축**, **Ctrl 스냅**(1 m·15°·0.1), **Esc 취소**. 드래그 하나 = **명령 그룹 하나 = 되돌리기 한 번**(`set Transform.*`), 여러 선택은 맨 위 오브젝트만 (부모가 선택된 자식 제외), 회전은 주 선택을 중심으로. 명령 버스: `CancelGroup()`(되돌리기·다시 하기 모두 남기지 않음), 그룹 안 명령은 커밋 때만 다시 하기 기록을 지움. Batch2D `Quad`, 마우스 이동 이벤트에 Ctrl/Shift/Alt. `view.focus`(F) 단축키가 씬 뷰 맞추기에 연결. 단위 테스트 2개(총 59개·649개), `BDG_GIZMO_TEST=1` 8개 판정 통과, CI 20번 | (이 커밋) |
+| 3-3 기즈모 | 사용자 요청으로 우선순위 절보다 먼저. `Runtime/Gizmo.*`(계산만, 단위 테스트 가능) + 씬 뷰 연결. **이동**: X·Y·Z 화살표(광선-축 최근접점), XY·YZ·XZ 평면 사각형(광선-평면), 가운데(화면 평면). **회전**: X·Y·Z 고리 + 바깥 화면 고리(화면 각도, 오른손 규칙 부호). **크기**: 축 + 상자, 가운데 균일. 화면에서 늘 같은 크기(110px), 마우스 아래 핸들 노란색, 뒤쪽 고리 반 흐리게. W/E/R 도구(기존 단축키 프리셋), **X 월드/로컬 축**, **Ctrl 스냅**(1 m·15°·0.1), **Esc 취소**. 드래그 하나 = **명령 그룹 하나 = 되돌리기 한 번**(`set Transform.*`), 여러 선택은 맨 위 오브젝트만 (부모가 선택된 자식 제외), 회전은 주 선택을 중심으로. 명령 버스: `CancelGroup()`(되돌리기·다시 하기 모두 남기지 않음), 그룹 안 명령은 커밋 때만 다시 하기 기록을 지움. Batch2D `Quad`, 마우스 이동 이벤트에 Ctrl/Shift/Alt. `view.focus`(F) 단축키가 씬 뷰 맞추기에 연결. 단위 테스트 2개(총 59개·649개), `BDG_GIZMO_TEST=1` 8개 판정 통과, CI 20번 | `393c0ac` |
+| 3-1b 머티리얼 파일·텍스처 쿠킹·표준 에셋 | **표준 에셋**: `tools/testassets.py fetch`가 Khronos glTF-Sample-Assets(커밋 고정 e124e8d)의 MetalRoughSpheres·NormalTangentMirrorTest·TextureCoordinateTest·AlphaBlendModeTest + 기준 스크린샷을 `.cache/testassets/`로 받고 SHA-256 확인(`Tests/testassets.lock.json`에 URL·크기·해시·라이선스 CC-BY-4.0/CC0·저작자, CREDITS.txt). `BDG_SCREEN=render-assets` 4개 모델 나란히: 알파(불투명·블렌드·컷오프 0.25/0.5/0.75)와 노멀맵 미러 UV가 Khronos 기준 스크린샷과 일치. **머티리얼**: `Assets/MaterialFile.*` `.material`(고정 파라미터: BaseColor·BaseColorMap·Metallic·Roughness·ORMMap·NormalMap·NormalStrength·AOStrength·Emissive·EmissiveStrength·EmissiveMap·Opacity, shading lit/unlit, blend opaque/masked/translucent, twoSided, cutoff) + `.matinst`(부모 체인, 덮어쓰기, 없는 부모·순환 오류). `Runtime/MaterialLibrary.*`: 경로·guid:·파일 이름으로 찾고 MeshRenderer.material에 연결(없으면 이전 이름 규칙). **텍스처**: `Assets/TextureCooker.*` 이름으로 프리셋(default·normal·masks·grayscale·ui) → `.meta`에 기록, 최대 크기 축소, 밉(sRGB는 선형 평균, 노멀은 재정규화), **BC7(sRGB)/BC5/BC4** 압축(bc7enc·rgbcx, MIT) → DDS(DX10)로 `<프로젝트>/.cache/cooked/`, 다음부터 DDS만 읽음. RHI 압축 텍스처·밉 업로드, 셰이더 노멀 Z 복원(BC5). 단위 테스트 3개(BC7 PSNR>38dB, BC5 오차≤6, sRGB 밉 188, DDS 왕복 등, 총 62개·693개), `BDG_MATERIAL_TEST=1`, CI 21·22번 | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -201,7 +208,6 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 ## M3 — 3D 렌더링과 플레이 모드 — **지금 진행** (3-0 → 3-1 → 3-2 → 3-3 → 3-4)
 
-- [ ] **3-1b. 머티리얼 파일·텍스처 쿠킹·표준 에셋** — 언리얼식 `.material` + `.matinst`(파라미터만), 텍스처 용도별 프리셋·`.meta`·BC7/BC5 쿠킹 ([materials-and-textures](features/materials-and-textures.md)). `bdg testassets fetch`(Khronos MetalRoughSpheres·NormalTangentTest·TextureCoordinateTest·AlphaBlendModeTest, 라이선스 기록, `.cache/testassets/`)로 노멀맵·알파 모드를 실제 에셋으로 검증 — **내려받기 승인 필요**. 탄젠트 없는 메시의 MikkTSpace 생성 검토
 - [ ] **3-2b. Project 패널 썸네일 표시** — 2-5t 캐시(64×64 PNG)를 텍스처로 올려 Project 패널 타일에 그림(Batch2D 이미지 모드 사용). 모델 썸네일은 Renderer3D로 오프스크린 렌더 후 같은 캐시에
 - [ ] **3-3b. 스냅·정렬·측정** — 그리드·꼭짓점·표면 스냅, 정렬·간격 맞추기, 거리 측정 [convenience-features](planning/convenience-features.md)
 - [ ] **3-3c. 그레이박스(블록아웃) 도구** — 상자·계단·경사로, 면 밀고 당기기, 메시+충돌체 [convenience-features](planning/convenience-features.md)
