@@ -90,6 +90,12 @@ public:
   bool ObjectBounds(const EditorModel& model, const std::string& id, glm::vec3& lo, glm::vec3& hi) const;
   const Measure* CurrentMeasure() const { return hasMeasure_ ? &measure_ : nullptr; } // the ruler (Measure tool)
   bool SnapTarget(glm::vec3& p) const { p = snapTarget_; return hasSnapTarget_; }    // vertex / surface under the drag
+  // Game view (queue 3-6): the scene seen by its first Camera component, no editor overlays. `playTime` < 0: not
+  // playing (the corner badge says so).
+  void RenderGame(EditorModel& model, const AssetDatabase* assets, const Widget& view, float scale);
+  void DrawGame(Widget& w, UIContext& ui, double playTime);
+  uint64_t GameFrames() const { return gameFrames_; } // test hook: game views rendered
+  void ReadGamePixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
   // Greybox (3-3c): adds a block where the view looks (on the surface there, on the grid), selected; one undo step.
   std::string CreateBlock(EditorModel& model, int shape); // BlockoutShape as int; returns the new object's id
   // Face handle of the selected block: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (test hook; false: none there).
@@ -127,6 +133,10 @@ private:
   std::unordered_map<std::string, MeshEntry> builtins_;
   std::unordered_map<std::string, MeshEntry> blocks_; // greybox meshes by shape and size (unused ones are dropped)
   TextureHandle gridTex_;                             // the greybox 1 m grid
+  RenderTargetHandle gameRT_;                         // Game view (3-6)
+  int32_t gameW_ = 0, gameH_ = 0;
+  uint64_t gameFrames_ = 0;
+  bool gameCamera_ = false;
   const MeshEntry* BlockMesh(int shape, const glm::vec3& size, int steps);
   struct FaceHandle { int face; glm::vec3 center, normal; };
   std::vector<FaceHandle> FaceHandles(const EditorModel& model) const; // of the primary selection's block

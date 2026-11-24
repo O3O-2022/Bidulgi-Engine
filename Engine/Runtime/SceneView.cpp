@@ -117,6 +117,7 @@ void SceneView::Shutdown() {
   builtins_.clear();
   meshes_.clear();
   rhi_->DestroyRenderTarget(rt_);
+  rhi_->DestroyRenderTarget(gameRT_);
   r_ = nullptr;
 }
 
@@ -1224,6 +1225,59 @@ bool SceneView::ChipCenter(const std::string& name, float& x, float& y) const {
 }
 
 void SceneView::ReadPixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) { rhi_->ReadRenderTarget(rt_, w, h, rgba); }
+void SceneView::ReadGamePixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) { rhi_->ReadRenderTarget(gameRT_, w, h, rgba); }
+
+void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, const Widget& v, float scale) {
+  const int32_t pw = std::max(1, (int32_t)std::lround(v.w * scale)), ph = std::max(1, (int32_t)std::lround(v.h * scale));
+  // The first Camera component in hierarchy order
+  std::string camId;
+  const Camera* cam = nullptr;
+  std::vector<std::string> stack(model.scene.Roots().rbegin(), model.scene.Roots().rend());
+  while (!stack.empty() && !cam) {
+    const SceneObject* o = model.scene.Find(stack.back());
+    stack.pop_back();
+    if (!o) continue;
+    for (auto c = o->children.rbegin(); c != o->children.rend(); ++c) stack.push_back(*c);
+    for (const Component& c : o->components)
+      if (c.type == &Camera::StaticType()) { cam = static_cast<const Camera*>(c.data); camId = o->id; break; }
+  }
+  gameCamera_ = cam != nullptr;
+  if (!cam) return;
+  if (!gameRT_.Valid() || gameW_ != pw || gameH_ != ph) {
+    rhi_->DestroyRenderTarget(gameRT_);
+    gameRT_ = rhi_->CreateRenderTarget(pw, ph, 1);
+    gameW_ = pw;
+    gameH_ = ph;
+  }
+  BuildItems(model, assets); // the Scene view may be hidden behind the Game tab
+  const glm::mat4 w = model.scene.WorldMatrix(camId);
+  Camera3D c;
+  c.position = glm::vec3(w[3]);
+  glm::vec3 fwd = -glm::vec3(w[2]), up = glm::vec3(w[1]); // objects look along -Z (Core/Space.h)
+  c.target = c.position + (glm::length(fwd) > 1e-6f ? glm::normalize(fwd) : glm::vec3(0, 0, -1));
+  c.up = glm::length(up) > 1e-6f ? glm::normalize(up) : glm::vec3(0, 1, 0);
+  c.fovY = std::clamp(cam->fov, 1.f, 179.f);
+  c.nearZ = std::max(cam->nearClip, 0.001f);
+  c.farZ = std::max(cam->farClip, c.nearZ * 2);
+  r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, nullptr, &quality);
+  ++gameFrames_;
+}
+
+void SceneView::DrawGame(Widget& w, UIContext& ui, double playTime) {
+  const Theme& t = ui.Tokens();
+  Batch2D& b = ui.Batch();
+  if (!gameCamera_ || !gameRT_.Valid()) {
+    b.Rect(w.x, w.y, w.w, w.h, t.C("ground"));
+    const char* msg = "Game view: the scene has no Camera";
+    ui.Text(w.x + (w.w - ui.Measure(12, msg)) * 0.5f, w.y + w.h * 0.5f - 12, 12, t.C("fg-faint"), msg);
+    return;
+  }
+  b.Image(w.x, w.y, w.w, w.h, rhi_->RenderTargetColor(gameRT_), 0, 1, 1, 0);
+  const std::string badge = playTime >= 0 ? std::format("▶ Playing  {:.1f} s", playTime) : std::string("Game view (press Play)");
+  const float bw = ui.Measure(11, badge) + 18;
+  b.Rect(w.x + 10, w.y + 8, bw, 22, WithAlpha(playTime >= 0 ? t.C("accent") : t.C("win"), 0.85f), 11, 1, t.C("line"));
+  ui.Text(w.x + 19, w.y + 12, 11, playTime >= 0 ? Color{1, 1, 1, 1} : t.C("fg-dim"), badge);
+}
 
 void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   const Theme& t = ui.Tokens();

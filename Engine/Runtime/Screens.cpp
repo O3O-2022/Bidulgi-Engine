@@ -296,6 +296,16 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   banner.Add(MakeButton("shortcut.unity", "Unity 방식", true));
   banner.Add(MakeButton("shortcut.unreal", "Unreal 방식"));
 
+  // After play mode: keep the values changed while playing? (queue 3-6)
+  auto& keep = root->Add(MakeBox(Axis::Row, 8));
+  keep.id = "play.keep.banner";
+  keep.hidden = true;
+  keep.padL = 12; keep.padT = 4; keep.padB = 6;
+  keep.crossAlign = Align::Center;
+  keep.Add(MakeLabel("")).id = "play.keep.text";
+  keep.Add(MakeButton("play.keep", "유지", true));
+  keep.Add(MakeButton("play.discard", "버리기"));
+
   auto& dock = root->Add(MakeDock("dock", state));
   dock.height = Length::Fill();
 

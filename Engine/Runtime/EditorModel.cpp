@@ -65,7 +65,9 @@ void EditorModel::BuildSampleScene() {
   // Loading a scene is not an edit: the sample is built directly, then every change goes through the bus.
   auto obj = [&](const char* id, const char* name, const char* parent = "") { return scene.Create(id, name, parent); };
   obj("g1", "Main Camera");
-  Add<Transform>(scene, "g1").position = {0, 2, -6};
+  Transform& camT = Add<Transform>(scene, "g1");
+  camT.position = {0, 2, -6};
+  camT.rotation = {-12, 180, 0}; // objects look along -Z: turn around to face the scene, a little down (Game view, 3-6)
   Add<Camera>(scene, "g1");
   obj("g2", "Sun");
   Add<Transform>(scene, "g2").rotation = {-50, -30, 0}; // pitch -50: shining down (positive pitch looks up)

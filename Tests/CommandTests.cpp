@@ -199,3 +199,26 @@ TEST_CASE("commands: a cancelled group leaves no undo or redo step (queue 3-3)")
   CHECK(bus.CancelGroup());
   CHECK(bus.UndoDepth() == depth + 1);
 }
+
+TEST_CASE("command bus: a history layer for play mode keeps the edit history apart (queue 3-6)") {
+  Scene s;
+  Fill(s);
+  CommandBus bus(s);
+  CHECK(bus.Execute(Set("g1", "Transform.position", "[1,0,0]", 0)));
+  CHECK(bus.Execute(Set("g2", "Transform.position", "[2,0,0]", 1)));
+  CHECK(bus.Undo()); // one redo step waiting below the layer
+  const size_t logBefore = bus.Log().size();
+  bus.PushLayer();
+  CHECK(bus.Layers() == 1 && bus.UndoDepth() == 0 && !bus.CanRedo()); // a fresh history
+  CHECK(bus.Execute(Set("g1", "Health.current", "10", 10)));
+  CHECK(bus.Execute(Set("g1", "Health.maxHealth", "500", 11)));
+  CHECK(bus.Execute(Set("g1", "Health.current", "20", 20))); // a later step: not merged (time apart)
+  CHECK(bus.Undo());                                         // undone steps are not "done"
+  std::vector<Command> done = bus.LayerCommands();
+  CHECK(done.size() == 2 && done[0].args.find("current") != std::string::npos && done[1].args.find("maxHealth") != std::string::npos);
+  CHECK(bus.PopLayer());
+  CHECK(bus.Layers() == 0 && bus.UndoDepth() == 1 && bus.CanRedo()); // the history below is back, redo included
+  CHECK(bus.Log().size() == logBefore);                             // the layer's lines are gone from the log
+  CHECK(!bus.PopLayer());
+  CHECK(bus.Redo() && Get(s, "g2", "Transform", "position") == "[2,0,0]");
+}

@@ -329,6 +329,13 @@ jobs:
           if ($log -notmatch 'blockout test: create=1 push=1 top=1 cancel=1 undo=1 shapes=3 pick=1') { $errors += 'greybox test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 3-6 play mode: a copy of the world runs (Rotator), edits inside play undo among themselves, Stop restores
+          # the edited world and its history, the kept values are one undo step, the Game view renders the camera
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_PLAY_TEST = '1' } 18
+          if ($log -notmatch 'play test: start=1 runs=1 history=1 restored=1 pending=2 keep=1 undo=1 game=1') { $errors += 'play mode test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

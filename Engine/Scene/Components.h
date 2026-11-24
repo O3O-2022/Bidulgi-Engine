@@ -94,6 +94,15 @@ public:
   BPROPERTY(Edit, Range = "0,10", Tooltip = "Sun disk size in degrees (0 = no disk)") float sunSize = 1.5f;
 };
 
+// Turns its object while the game is playing (queue 3-6): the first built-in behaviour, so play mode has
+// something to run before the script hosts (M4) exist.
+BCLASS(Component)
+struct Rotator {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Degrees per second around X, Y and Z while playing") Vec3 speed{0, 45, 0};
+};
+
 // Greybox block (queue 3-3c): a box, stairs, ramp or cylinder built from its size, for laying out a level before
 // the art exists. The pivot is the bottom centre. In the scene view's Blockout tool (B) its faces have handles:
 // drag one to push or pull that face (the opposite face stays). Physics will use it as a collider (M6).

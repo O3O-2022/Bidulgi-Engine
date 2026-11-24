@@ -50,6 +50,14 @@ public:
   bool Replay(const std::string& path, std::string* error = nullptr, size_t* count = nullptr);
   void Reset(); // forget history and log (a different scene was opened: old commands do not apply to it)
 
+  // Play mode (queue 3-6): a fresh history on top of the current one. Edits inside it can be undone among
+  // themselves but never join or clear the history below; popping the layer brings that history back and drops
+  // the layer's log lines (they changed a world that is gone).
+  void PushLayer();
+  bool PopLayer(); // false: no layer
+  size_t Layers() const { return layers_.size(); }
+  std::vector<Command> LayerCommands() const; // forward commands of the layer's done steps, oldest first
+
   static bool IsStructural(const std::string& name) { return name != "set"; } // changes the object tree
 
   // Undo history for the History panel: done steps (oldest first) then undone steps (future = true).
@@ -77,6 +85,8 @@ private:
   std::vector<std::string> log_;
   int groupDepth_ = 0;
   Entry group_;
+  struct Layer { std::vector<Entry> undo, redo; size_t log = 0; };
+  std::vector<Layer> layers_;
   double start_ = -1;
 };
 }

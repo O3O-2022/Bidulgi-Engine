@@ -25,6 +25,8 @@
 #include "UI/Theme.h"
 #include "UI/UI.h"
 #include "UI/IconAtlas.h"
+#include "Runtime/PlayMode.h"
+#include "Scene/SampleComponents.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -97,6 +99,9 @@ struct bdg_engine {
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
+  bdg::PlayMode play;   // queue 3-6
+  bool playTest = false;
+  std::string playTestValues[8];
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
@@ -485,6 +490,8 @@ void RebuildShortcutList(bdg_engine* e) {
   e->editor->ForgetRemovedWidgets();
 }
 
+void TogglePlay(bdg_engine* e); // play mode (3-6), below
+
 void UsePreset(bdg_engine* e, const char* preset) {
   e->shortcuts.ApplyPreset(preset);
   e->shortcuts.Save(e->shortcutsPath);
@@ -576,11 +583,7 @@ void SetupShortcuts(bdg_engine* e) {
     }
   });
   s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
-  s.Register("play.toggle", "Play / Stop", [e, m] {
-    m->playing = !m->playing;
-    if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
-    bdg::LogInfo("play: {}", m->playing ? "on" : "off");
-  });
+  s.Register("play.toggle", "Play / Stop", [e, m] { TogglePlay(e); });
   for (const char* t : {"view", "select", "move", "rotate", "scale", "measure", "blockout"})
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
   s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->Frame(*m); });
@@ -1253,6 +1256,116 @@ void InjectMaterialTest(bdg_engine* e, int frame) {
 // handles through the scene view, each drag one undo step, Esc cancels, W/E/R switch tools, Ctrl snaps, X local axes.
 // Scripted check of 3-3b (BDG_SNAP_TEST=1): three cubes added by command; grid snap from the Snap chip, vertex
 // snap (V), surface snap (Ctrl+Shift), align and distribute from the chips, the ruler of the Measure tool.
+// Scripted check of 3-6 (BDG_PLAY_TEST=1): a Rotator added in the edited world turns the Crystal while playing;
+// edits made while playing (a move, a value) can be undone among themselves; Stop restores the edited world and
+// its history; the banner keeps the two changed values as one undo step; the Game view renders from the camera.
+void TogglePlay(bdg_engine* e);
+void InjectPlayTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->sceneView) return;
+  auto* v = e->playTestValues;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("play test: {} {}: {}", name, target, err);
+  };
+  auto transform = [&](const char* id) -> bdg::Transform* {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    return c ? static_cast<bdg::Transform*>(c->data) : nullptr;
+  };
+  auto health = [&]() -> int {
+    bdg::SceneObject* o = m->scene.Find("g6");
+    bdg::Component* c = o ? o->Find("Health") : nullptr;
+    return c ? static_cast<const bdg::Health*>(c->data)->current : -1;
+  };
+  auto click = [&](const char* id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w || w->hidden) { bdg::LogError("play test: {} is not clickable", id); return; }
+    const float s = e->editor->Scale();
+    e->window.InjectEvent({T::MouseMove, (w->x + w->w * 0.5f) * s, (w->y + w->h * 0.5f) * s});
+    e->window.InjectEvent({T::MouseDown, (w->x + w->w * 0.5f) * s, (w->y + w->h * 0.5f) * s, 1});
+    e->window.InjectEvent({T::MouseUp, (w->x + w->w * 0.5f) * s, (w->y + w->h * 0.5f) * s, 1});
+  };
+  static bdg::Vec3 rot0, pos0;
+  static size_t depth0;
+  static uint64_t game0;
+  if (frame == 2) {
+    run("addcomp", "g8", R"({"type":"Rotator","value":{"speed":[0,90,0]}})");
+    rot0 = transform("g8")->rotation;
+    pos0 = transform("g8")->position;
+    depth0 = m->bus.UndoDepth();
+    game0 = e->sceneView->GameFrames();
+    TogglePlay(e);
+    v[0] = std::format("{}", e->play.Playing() && m->playing && m->bus.UndoDepth() == 0 ? 1 : 0);
+  }
+  if (frame == 8) {
+    const bdg::Vec3 r = transform("g8")->rotation;
+    v[1] = std::format("{}", r.y != rot0.y && e->play.Frames() >= 5 ? 1 : 0);
+    run("set", "g8", R"({"path":"Transform.position","value":[3,2,2]})");
+    run("set", "g6", R"({"path":"Health.current","value":10})");
+    run("set", "g6", R"({"path":"Health.maxHealth","value":500})");
+    std::string err;
+    m->bus.Undo(&err); // maxHealth back to 100: undo works inside play mode
+  }
+  if (frame == 10) {
+    v[2] = std::format("{}", health() == 10 && m->bus.UndoDepth() == 2 ? 1 : 0);
+    TogglePlay(e);
+  }
+  if (frame == 12) {
+    const bdg::Transform* t = transform("g8");
+    bdg::Widget* banner = e->editor->Find("play.keep.banner");
+    v[3] = std::format("{}", t && t->rotation.y == rot0.y && t->position.y == pos0.y && health() == 100 && m->bus.UndoDepth() == depth0 &&
+                                     !m->playing ? 1 : 0);
+    v[4] = std::format("{}", banner && !banner->hidden ? e->play.Pending().size() : 0);
+    v[7] = std::format("{}", e->sceneView->GameFrames() > game0 + 3 ? 1 : 0);
+    click("play.keep");
+  }
+  if (frame == 14) {
+    const bdg::Transform* t = transform("g8");
+    bdg::Widget* banner = e->editor->Find("play.keep.banner");
+    v[5] = std::format("{}", t && t->position.y == 2 && health() == 10 && m->bus.UndoDepth() == depth0 + 1 && banner && banner->hidden ? 1 : 0);
+    std::string err;
+    m->bus.Undo(&err); // the kept values are one step
+  }
+  if (frame == 16) {
+    const bdg::Transform* t = transform("g8");
+    v[6] = std::format("{}", t && t->position.y == pos0.y && health() == 100 ? 1 : 0);
+  }
+}
+
+// Play mode (queue 3-6): Start / Stop on the play world; after Stop a banner offers the values changed while playing.
+void TogglePlay(bdg_engine* e) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  bdg::Widget* dw = e->editor->Find("dock");
+  bdg::Widget* banner = e->editor->Find("play.keep.banner");
+  if (!e->play.Playing()) {
+    e->play.DiscardPending();
+    if (banner) banner->hidden = true;
+    e->play.Start(*m);
+    if (dw && dw->dock) dw->dock->SelectPanel("game");
+  } else {
+    e->play.Stop(*m);
+    if (dw && dw->dock) dw->dock->SelectPanel("scene");
+    const auto& pending = e->play.Pending();
+    if (banner && !pending.empty()) {
+      std::string names;
+      for (size_t i = 0; i < pending.size() && i < 3; ++i) names += (i ? ", " : "") + pending[i].label;
+      if (pending.size() > 3) names += std::format(" 외 {}개", pending.size() - 3);
+      if (bdg::Widget* text = e->editor->Find("play.keep.text"))
+        text->text = std::format("실행 중에 바꾼 값 {}개를 편집 중인 장면에 남길까요? ({})", pending.size(), names);
+      banner->hidden = false;
+    }
+  }
+  if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
+  bdg::LogInfo("play: {}", m->playing ? "on" : "off");
+}
+
 void InjectSnapTest(bdg_engine* e, int frame, float scale) {
   using T = bdg::InputEvent::Type;
   bdg::SceneView* sv = e->sceneView.get();
@@ -1735,6 +1848,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   e->snapTest = std::getenv("BDG_SNAP_TEST") != nullptr;
+  e->playTest = std::getenv("BDG_PLAY_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -1845,6 +1959,15 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       }
       if (bdg::Widget* scene = e->editor->Find("scene"))
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
+      if (bdg::Widget* game = e->editor->Find("game")) // the scene from its camera (3-6)
+        game->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->DrawGame(w, ui, e->play.Playing() ? e->play.Time() : -1.0); };
+      for (const char* id : {"play.keep", "play.discard"})
+        if (bdg::Widget* b = e->editor->Find(id))
+          b->onClick = [e, id](bdg::Widget&) {
+            if (std::string(id) == "play.keep") e->play.KeepPending(*e->model);
+            else e->play.DiscardPending();
+            if (bdg::Widget* banner = e->editor->Find("play.keep.banner")) banner->hidden = true;
+          };
     } else {
       bdg::LogError("scene view: the 3D renderer did not start; the Scene panel shows a placeholder");
       e->sceneView.reset();
@@ -2128,6 +2251,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->snapTest && !e->showGallery) InjectSnapTest(e, frames, scale);
+    if (e->playTest && !e->showGallery) InjectPlayTest(e, frames);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
@@ -2290,6 +2414,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto nowFrame = std::chrono::steady_clock::now();
         double dt = std::chrono::duration<double>(nowFrame - lastFrame).count();
         lastFrame = nowFrame;
+        if (e->play.Playing() && e->model) e->play.Tick(*e->model, std::clamp(dt, 0.0, 0.1)); // game time (3-6)
         bdg::Widget* focused = ui.Focused();
         if (sceneWidget)
           e->sceneView->HandleEvents(events, *sceneWidget, *e->model, dt, focused && focused->kind == bdg::WidgetKind::Field);
@@ -2304,11 +2429,15 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);
       if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2)
         e->sceneView->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, *sceneWidget, scale);
+      if (bdg::Widget* game = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("game") : nullptr;
+          game && !game->hidden && game->w >= 2 && game->h >= 2)
+        e->sceneView->RenderGame(*e->model, e->assetsOpen ? &e->assets : nullptr, *game, scale);
       ui.Draw();
     }
     e->batch.End();
     e->rhi.EndFrame();
     if (e->sceneView && e->sceneView->Animating()) pending = std::max(pending, 2); // flying: keep drawing
+    if (e->play.Playing()) pending = std::max(pending, 2);                         // the game runs every frame
     ++frames;
     if (idleMeasuring) {
       ++idleFrames;
@@ -2448,6 +2577,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->playTest) {
+        auto* v = e->playTestValues;
+        bdg::LogInfo("play test: start={} runs={} history={} restored={} pending={} keep={} undo={} game={}", v[0], v[1], v[2], v[3], v[4], v[5],
+                     v[6], v[7]);
       }
       if (e->snapTest) {
         auto* v = e->snapTestValues;

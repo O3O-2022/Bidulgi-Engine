@@ -372,9 +372,34 @@ bool CommandBus::CancelGroup(std::string* error) {
 }
 
 // ---- Log / replay ------------------------------------------------------------------------------
+void CommandBus::PushLayer() {
+  layers_.push_back({std::move(undo_), std::move(redo_), log_.size()});
+  undo_.clear();
+  redo_.clear();
+}
+
+bool CommandBus::PopLayer() {
+  if (layers_.empty()) return false;
+  Layer l = std::move(layers_.back());
+  layers_.pop_back();
+  undo_ = std::move(l.undo);
+  redo_ = std::move(l.redo);
+  if (log_.size() > l.log) log_.resize(l.log);
+  groupDepth_ = 0;
+  group_ = {};
+  return true;
+}
+
+std::vector<Command> CommandBus::LayerCommands() const {
+  std::vector<Command> out;
+  for (const Entry& e : undo_) out.insert(out.end(), e.forward.begin(), e.forward.end());
+  return out;
+}
+
 void CommandBus::Reset() {
   undo_.clear();
   redo_.clear();
+  layers_.clear();
   log_.clear();
   groupDepth_ = 0;
   group_ = {};
