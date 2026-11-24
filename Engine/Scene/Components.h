@@ -108,6 +108,29 @@ public:
   float exposure = 1.f;
 };
 
+// Post Process Volume (queue E-6, Unreal's): camera effects for the whole scene (unbound) or inside a box around
+// the object (size, fading over blendRadius metres outside it). Several blend by weight in priority order.
+BCLASS(Component)
+struct PostProcessVolume {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Header = "Volume", Tooltip = "Applies everywhere (off: only inside the box)") bool unbound = true;
+  BPROPERTY(Edit, ShowIf = "!unbound", Tooltip = "Box size in metres, centred on the object") Vec3 size{10, 10, 10};
+  BPROPERTY(Edit, Range = "0,50", ShowIf = "!unbound", Tooltip = "Metres outside the box over which the effect fades out") float blendRadius = 2.f;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "How much of this volume applies") float blendWeight = 1.f;
+  BPROPERTY(Edit, Range = "-100,100", Tooltip = "Higher priority volumes apply over lower ones") int32_t priority = 0;
+  BPROPERTY(Edit, Header = "Exposure", Range = "-5,5", Tooltip = "Exposure compensation in stops") float exposureCompensation = 0.f;
+  BPROPERTY(Edit, Tooltip = "Eye adaptation: the picture's average brightness is brought to middle grey") bool autoExposure = false;
+  BPROPERTY(Edit, Range = "-8,8", ShowIf = "autoExposure", Tooltip = "Most it may darken (stops)") float autoMinEV = -2.f;
+  BPROPERTY(Edit, Range = "-8,8", ShowIf = "autoExposure", Tooltip = "Most it may brighten (stops)") float autoMaxEV = 2.f;
+  BPROPERTY(Edit, Range = "0.1,10", ShowIf = "autoExposure", Tooltip = "How fast the eye adapts") float adaptationSpeed = 2.f;
+  BPROPERTY(Edit, Header = "Bloom", Range = "0,4", Tooltip = "Times the quality tier's bloom") float bloomIntensity = 1.f;
+  BPROPERTY(Edit, Header = "Lens", Range = "0,1") float vignette = 0.f;
+  BPROPERTY(Edit, Range = "0,1", ShowIf = "vignette") float vignetteSmoothness = 0.5f;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "Red and blue split toward the edges") float chromaticAberration = 0.f;
+  BPROPERTY(Edit, Range = "0,1") float filmGrain = 0.f;
+};
+
 // Turns its object while the game is playing (queue 3-6): the first built-in behaviour, so play mode has
 // something to run before the script hosts (M4) exist.
 BCLASS(Component)

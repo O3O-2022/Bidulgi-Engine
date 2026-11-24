@@ -211,6 +211,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   light_.shadows = true;
   light_.background.draw = true; // default sky until a Sky component says otherwise
   bool sun = false, skySet = false, worldSet = false;
+  postVolumes_.clear();
   hasGrading_ = false;
   const Scene& scene = model.scene;
   std::set<std::string> selected(model.Selection().begin(), model.Selection().end());
@@ -328,6 +329,27 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         }
         grading_.lutSize = lutCacheSize_;
         grading_.lut = lutCache_;
+      }
+      if (c.type == &PostProcessVolume::StaticType()) { // E-6
+        const PostProcessVolume& pv = *static_cast<const PostProcessVolume*>(c.data);
+        PostVolume3D v;
+        v.world = world;
+        v.size = space::ToGlm(pv.size);
+        v.unbound = pv.unbound;
+        v.blendRadius = pv.blendRadius;
+        v.weight = pv.blendWeight;
+        v.priority = pv.priority;
+        v.fx.exposureEV = pv.exposureCompensation;
+        v.fx.autoExposure = pv.autoExposure;
+        v.fx.autoMinEV = pv.autoMinEV;
+        v.fx.autoMaxEV = pv.autoMaxEV;
+        v.fx.adaptSpeed = pv.adaptationSpeed;
+        v.fx.bloomScale = pv.bloomIntensity;
+        v.fx.vignette = pv.vignette;
+        v.fx.vignetteSmooth = pv.vignetteSmoothness;
+        v.fx.aberration = pv.chromaticAberration;
+        v.fx.grain = pv.filmGrain;
+        postVolumes_.push_back(v);
       }
       if (c.type == &WorldSettings::StaticType() && !worldSet) { // fog and exposure (2-6)
         const WorldSettings& ws = *static_cast<const WorldSettings*>(c.data);
@@ -495,6 +517,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     }
     firstBake_ = bakeRequested_ = false;
   }
+  light_.post = PostAt(camera.ToCamera().position);
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   { // platform budget (3-7): what this view drew, and its heaviest objects
     const RenderStats& st = r_->Stats();
@@ -1485,6 +1508,7 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
   c.fovY = std::clamp(cam->fov, 1.f, 179.f);
   c.nearZ = std::max(cam->nearClip, 0.001f);
   c.farZ = std::max(cam->farClip, c.nearZ * 2);
+  light_.post = PostAt(c.position);
   r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, nullptr, &quality);
   ++gameFrames_;
 }

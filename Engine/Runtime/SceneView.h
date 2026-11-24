@@ -200,6 +200,10 @@ private:
   size_t lightmapItems_ = 0;                        // items marked bakeLightmap (GI Tier 0-C)
   uint64_t lightmapKey_ = 0, bakedLightmapKey_ = 0; // their meshes and placements now / at the last bake
   int reimports_ = 0;
+  std::vector<PostVolume3D> postVolumes_; // post-process volumes of the scene (E-6), blended at each view's camera
+public:
+  PostEffects3D PostAt(const glm::vec3& viewPos) const { return BlendPostVolumes(postVolumes_, viewPos); }
+private:
   uint64_t lastLoadTry_ = 0;                        // lightmap key last looked up in .cache/gi
   ColorGrading3D grading_;                          // from the first ColorGrading component (3-5b)
   bool hasGrading_ = false;

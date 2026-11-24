@@ -473,6 +473,12 @@ jobs:
           if ($log -match 'did not import') { $errors += 'a model did not import' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-6a post process volume: vignette, grain, chromatic aberration, exposure, auto exposure, bounded, removed
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_POSTFX_TEST = '1'; BDG_QUALITY = 'high' } 28
+          if ($log -notmatch 'postfx test: vignette=1 grain=1 aberration=1 exposure=1 auto=1 bounded=1 restore=1') { $errors += 'post process volume test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

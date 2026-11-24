@@ -600,27 +600,76 @@ out vec2 vUV;
 void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); }
 )";
 // uPost = (exposure, bloom intensity, tone map on, bloom on)
-const char* kToneMapFS = R"(#version 450 core
-layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; }; // uPost2.x: linear output (probe capture)
+// uPost3 = (vignette, vignette smoothness, chromatic aberration, film grain), uPost4 = (auto exposure on, min EV,
+// max EV, grain seed), uPost5 = (adaptation step 0..1, first frame, aspect w/h, -)   (post-process volumes, E-6)
+#define POST_UBO "layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; vec4 uPost3; vec4 uPost4; vec4 uPost5; };\n"
+const char* kToneMapFS = "#version 450 core\n" POST_UBO R"(
 layout(binding = 0) uniform sampler2D uHdr;
 layout(binding = 1) uniform sampler2D uBloom;
 layout(binding = 2) uniform sampler3D uGrading; // 32^3 colour grading table (3-5b), uPost2.y = on
+layout(binding = 3) uniform sampler2D uAdapted; // 1x1: average log2 luminance the eye has adapted to (E-6)
 in vec2 vUV;
 out vec4 oColor;
+float Hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 vec3 ACES(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); } // Narkowicz fit
 vec3 ToSrgb(vec3 c) {
   c = clamp(c, 0.0, 1.0);
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
 }
 void main() {
-  vec3 c = texture(uHdr, vUV).rgb;
+  vec3 c;
+  if (uPost3.z > 0.0) { // chromatic aberration: red and blue pulled apart toward the edges
+    vec2 off = (vUV - 0.5) * uPost3.z * 0.012;
+    c = vec3(texture(uHdr, vUV + off).r, texture(uHdr, vUV).g, texture(uHdr, vUV - off).b);
+  } else c = texture(uHdr, vUV).rgb;
   if (uPost.w > 0.5) c += texture(uBloom, vUV).rgb * (uPost.y / 5.0); // the chain sums 5 levels: average them
-  c *= uPost.x;
+  float exposure = uPost.x;
+  if (uPost4.x > 0.5) { // eye adaptation: bring the adapted average to middle grey, within the volume's range
+    float avgLog = texelFetch(uAdapted, ivec2(0), 0).r;
+    exposure *= exp2(clamp(log2(0.18) - avgLog, uPost4.y, uPost4.z));
+  }
+  c *= exposure;
   if (uPost.z > 0.5) c = ACES(c);
   if (uPost2.x > 0.5) { oColor = vec4(c, 1.0); return; } // linear capture: no display curve, no grading
   c = ToSrgb(c);
   if (uPost2.y > 0.5) c = textureLod(uGrading, c * (31.0 / 32.0) + 0.5 / 32.0, 0.0).rgb;
+  if (uPost3.x > 0.0) { // vignette: darker toward the corners, round whatever the aspect (r = 1 at a corner)
+    vec2 d = (vUV - 0.5) * vec2(uPost5.z, 1.0);
+    float r = length(d) / length(vec2(uPost5.z, 1.0) * 0.5);
+    c *= 1.0 - uPost3.x * smoothstep(mix(0.8, 0.15, uPost3.y), 1.05, r);
+  }
+  if (uPost3.w > 0.0) c += (Hash(gl_FragCoord.xy + vec2(uPost4.w * 7.13, uPost4.w * 3.71)) - 0.5) * uPost3.w * 0.16; // film grain
   oColor = vec4(c, 1.0); // opaque: the UI draws this picture with alpha blending
+}
+)";
+// Auto exposure, pass 1: log2 luminance of the HDR picture on a 32x32 target (16 samples per texel).
+const char* kLumFS = "#version 450 core\n" POST_UBO R"(
+layout(binding = 0) uniform sampler2D uHdr;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  float sum = 0.0;
+  for (int y = 0; y < 4; ++y)
+    for (int x = 0; x < 4; ++x) {
+      vec2 uv = (floor(gl_FragCoord.xy) + (vec2(x, y) + 0.5) / 4.0) / 32.0;
+      vec3 c = textureLod(uHdr, uv, 0.0).rgb;
+      sum += log2(max(dot(c, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+    }
+  oColor = vec4(sum / 16.0, 0.0, 0.0, 1.0);
+}
+)";
+// Auto exposure, pass 2 (1x1): the picture's average, approached from last frame's at the adaptation speed.
+const char* kAdaptFS = "#version 450 core\n" POST_UBO R"(
+layout(binding = 0) uniform sampler2D uLum;  // 32x32 log luminance
+layout(binding = 1) uniform sampler2D uPrev; // 1x1 last adapted value
+out vec4 oColor;
+void main() {
+  float sum = 0.0;
+  for (int y = 0; y < 32; ++y)
+    for (int x = 0; x < 32; ++x) sum += texelFetch(uLum, ivec2(x, y), 0).r;
+  float avg = sum / 1024.0;
+  float prev = texelFetch(uPrev, ivec2(0), 0).r;
+  oColor = vec4(uPost5.y > 0.5 ? avg : mix(prev, avg, uPost5.x), 0.0, 0.0, 1.0);
 }
 )";
 // FXAA (the compact NVIDIA FXAA 2 kernel): blends along the local edge direction where contrast is high.
@@ -714,7 +763,7 @@ struct FrameData {
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
-struct PostData { float post[4]; float post2[4]; };
+struct PostData { float post[4]; float post2[4]; float post3[4]; float post4[4]; float post5[4]; };
 struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4], volMin[4], volMax[4], volCount[4]; };
 struct PrefilterData { float p[4]; };
 
@@ -907,6 +956,13 @@ bool Renderer3D::Init(RHI& rhi) {
   pp.fragmentSource = kBloomDownFS;
   pp.debugName = "post.bloom.down";
   bloomDown_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kLumFS;
+  pp.debugName = "post.lum";
+  lum_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kAdaptFS;
+  pp.debugName = "post.adapt";
+  adapt_ = rhi.CreatePipeline(pp);
+  if (!lum_.Valid() || !adapt_.Valid()) return false;
   const std::string ssaoFS = Src(kSsaoFS);
   pp.fragmentSource = ssaoFS.c_str();
   pp.debugName = "ssao";
@@ -965,6 +1021,12 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(objectBuffer_);
   rhi_->DestroyBuffer(instanceIds_);
   rhi_->DestroyTexture(white_);
+  for (auto& [id, a] : adapt_s)
+    for (RenderTargetHandle r : a.rt) rhi_->DestroyRenderTarget(r);
+  adapt_s.clear();
+  if (lumRT_.Valid()) rhi_->DestroyRenderTarget(lumRT_);
+  for (PipelineHandle p : {lum_, adapt_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
   for (TimerFrame& t : timers_)
@@ -1630,8 +1692,47 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     if (timing) Mark(timer, "bloom");
   }
   const bool grading = gradingLut_.Valid() && !(extras && extras->linearOutput) && view == DebugView::Lit;
-  PostData pd{{q.exposure * std::max(light.exposure, 0.f), q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
-              {extras && extras->linearOutput ? 1.f : 0.f, grading ? 1.f : 0.f, 0, 0}};
+  // Post-process volumes (E-6): not on captures (lighting, not the view) or debug views
+  const bool camFx = !(extras && extras->linearOutput) && view == DebugView::Lit;
+  const PostEffects3D fx = camFx ? light.post : PostEffects3D{};
+  ++postFrame_;
+  PostData pd{{q.exposure * std::max(light.exposure, 0.f) * std::exp2(fx.exposureEV), q.bloomIntensity * std::max(fx.bloomScale, 0.f),
+               q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
+              {extras && extras->linearOutput ? 1.f : 0.f, grading ? 1.f : 0.f, 0, 0},
+              {std::clamp(fx.vignette, 0.f, 1.f), std::clamp(fx.vignetteSmooth, 0.f, 1.f), std::clamp(fx.aberration, 0.f, 1.f), std::clamp(fx.grain, 0.f, 1.f)},
+              {fx.autoExposure ? 1.f : 0.f, std::min(fx.autoMinEV, fx.autoMaxEV), std::max(fx.autoMinEV, fx.autoMaxEV), (float)(postFrame_ % 997)},
+              {0, 0, (float)w / (float)std::max(h, 1), 0}};
+  TextureHandle adapted = white_;
+  if (fx.autoExposure) { // average log luminance now, then step the adapted value toward it
+    if (!lumRT_.Valid()) lumRT_ = rhi_->CreateRenderTargetEx(32, 32, 1, true, false);
+    Adapt& a = adapt_s[rt.id];
+    if (!a.rt[0].Valid())
+      for (RenderTargetHandle& r : a.rt) r = rhi_->CreateRenderTargetEx(1, 1, 1, true, false);
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const double dt = a.primed ? std::clamp(now - a.last, 0.0, 0.5) : 0.0;
+    a.last = now;
+    pd.post5[0] = (float)(1.0 - std::exp(-dt * std::max(fx.adaptSpeed, 0.01f)));
+    pd.post5[1] = a.primed ? 0.f : 1.f;
+    a.primed = true;
+    rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
+    rhi_->BindUniformBuffer(4, postUbo_);
+    rhi_->BeginRenderTarget(lumRT_, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->Draw(lum_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    const int next = 1 - a.cur;
+    rhi_->BeginRenderTarget(a.rt[next], {0, 0, 0, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(lumRT_));
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(a.rt[a.cur]));
+    rhi_->Draw(adapt_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    a.cur = next;
+    adapted = rhi_->RenderTargetColor(a.rt[a.cur]);
+    draws_ += 2;
+  } else if (auto it = adapt_s.find(rt.id); it != adapt_s.end()) {
+    it->second.primed = false; // turned off: start fresh next time
+  }
+  rhi_->BindTexture(3, adapted);
   stats_.grading = grading;
   if (grading) rhi_->BindTexture(2, gradingLut_);
   rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));

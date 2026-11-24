@@ -107,6 +107,8 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
+  bool postTest = false;
+  std::string postTestValues[7];
   std::string inspectTestValues[7];
   bool hierarchyKeys = false; // the Hierarchy was clicked last: arrow keys move in it (E-4b)
   std::string uiTestValues[7];
@@ -1146,6 +1148,133 @@ void InjectInspect2Test(bdg_engine* e, int frame) {
     if (v[5] != "1")
       bdg::LogError("inspect2 test: keys {} (hierarchy keys {}, focused {})", trail, e->hierarchyKeys,
                     e->editor->Focused() ? e->editor->Focused()->id : std::string("-"));
+  }
+}
+
+// Scripted check of E-6a (BDG_POSTFX_TEST=1): a Post Process Volume added by commands; on the Scene view's own
+// picture: vignette darkens the corners, grain changes a flat patch between frames, chromatic aberration changes
+// the edges but not the centre, +2 stops brightens, auto exposure brings an over-exposed picture back down, a
+// bounded volume far from the camera does nothing, and removing the volume gives the first picture back.
+void InjectPostFxTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  auto* v = e->postTestValues;
+  struct Shot { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+  auto grab = [&] { Shot s; sv->ReadPixels(s.w, s.h, s.px); return s; };
+  auto mean = [](const Shot& s, float fx, float fy, int r) { // average brightness of a patch (fx, fy from the top-left)
+    double sum = 0;
+    int n = 0;
+    const int cx = (int)(fx * s.w), cy = s.h - 1 - (int)(fy * s.h);
+    for (int y = cy - r; y <= cy + r; ++y)
+      for (int x = cx - r; x <= cx + r; ++x)
+        if (x >= 0 && y >= 0 && x < s.w && y < s.h) {
+          const uint8_t* p = &s.px[((size_t)y * s.w + x) * 4];
+          sum += (p[0] + p[1] + p[2]) / 3.0;
+          ++n;
+        }
+    return n ? sum / n : 0.0;
+  };
+  auto differ = [](const Shot& a, const Shot& b, float fx0, float fx1) { // pixels that changed in a vertical band
+    int n = 0;
+    if (a.px.size() != b.px.size()) return -1;
+    for (int y = 0; y < a.h; ++y)
+      for (int x = (int)(fx0 * a.w); x < (int)(fx1 * a.w); ++x) {
+        const size_t i = ((size_t)y * a.w + x) * 4;
+        n += std::abs(a.px[i] - b.px[i]) + std::abs(a.px[i + 1] - b.px[i + 1]) + std::abs(a.px[i + 2] - b.px[i + 2]) > 24;
+      }
+    return n;
+  };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("postfx test: {}", err);
+  };
+  auto set = [&](const char* field, const std::string& value) {
+    run("set", "pp", std::format(R"({{"path":"PostProcessVolume.{}","value":{}}})", field, value));
+  };
+  static Shot base, a, b;
+  if (frame == 3) {
+    base = grab();
+    run("add", "", R"({"id":"pp","name":"Post Process Volume"})");
+    run("addcomp", "pp", R"({"type":"PostProcessVolume"})");
+    set("vignette", "1");
+    set("vignetteSmoothness", "0.2");
+  }
+  if (frame == 6) {
+    const Shot s = grab();
+    const double c0 = mean(base, 0.97f, 0.96f, 4), c1 = mean(s, 0.97f, 0.96f, 4), m0 = mean(base, 0.5f, 0.5f, 4), m1 = mean(s, 0.5f, 0.5f, 4);
+    v[0] = std::format("{}", c1 < c0 * 0.6 && std::abs(m1 - m0) < 6 ? 1 : 0);
+    if (v[0] != "1") bdg::LogError("postfx test: vignette corner {:.1f} -> {:.1f}, centre {:.1f} -> {:.1f}", c0, c1, m0, m1);
+    set("vignette", "0");
+    set("filmGrain", "1");
+  }
+  if (frame == 8) a = grab();
+  if (frame == 9) {
+    b = grab();
+    const int n = differ(a, b, 0.4f, 0.6f);
+    v[1] = std::format("{}", n > 200 ? 1 : 0);
+    if (v[1] != "1") bdg::LogError("postfx test: grain changed {} pixels", n);
+    set("filmGrain", "0");
+  }
+  if (frame == 11) { // aberration samples red and blue apart and leaves green where it was
+    a = grab();
+    set("chromaticAberration", "1");
+  }
+  if (frame == 13) {
+    const Shot s = grab();
+    int green = 0, redBlue = 0;
+    for (size_t i = 0; s.px.size() == a.px.size() && i < s.px.size(); i += 4) {
+      green += std::abs(s.px[i + 1] - a.px[i + 1]) > 3;
+      redBlue += std::abs(s.px[i] - a.px[i]) + std::abs(s.px[i + 2] - a.px[i + 2]) > 24;
+    }
+    v[2] = std::format("{}", s.px.size() == a.px.size() && redBlue > 200 && green < redBlue / 20 ? 1 : 0);
+    if (v[2] != "1") bdg::LogError("postfx test: aberration red/blue {} green {}", redBlue, green);
+    set("chromaticAberration", "0");
+    set("exposureCompensation", "2");
+  }
+  static double saturated = 0;
+  if (frame == 15) {
+    const Shot s = grab();
+    const double bright = mean(s, 0.5f, 0.75f, 6), before = mean(base, 0.5f, 0.75f, 6);
+    v[3] = std::format("{}", bright > before + 25 ? 1 : 0);
+    if (v[3] != "1") bdg::LogError("postfx test: exposure {:.1f} -> {:.1f}", before, bright);
+    set("exposureCompensation", "0");
+    run("set", "g2", R"({"path":"Light.intensity","value":48})"); // the sun 16 times brighter: the picture burns out
+  }
+  if (frame == 17) {
+    saturated = mean(grab(), 0.5f, 0.75f, 6);
+    set("autoExposure", "true"); // the eye adapts down
+    set("adaptationSpeed", "10");
+    set("autoMinEV", "-8");
+  }
+  if (frame == 20) {
+    const double adapted = mean(grab(), 0.5f, 0.75f, 6);
+    v[4] = std::format("{}", adapted < saturated - 25 ? 1 : 0);
+    if (v[4] != "1") bdg::LogError("postfx test: auto exposure {:.1f} (burnt out: {:.1f})", adapted, saturated);
+    run("set", "g2", R"({"path":"Light.intensity","value":3})");
+    set("autoExposure", "false");
+    set("vignette", "1");
+    set("unbound", "false");
+    set("size", "[1,1,1]");
+    set("blendRadius", "1");
+  }
+  if (frame == 23) {
+    const Shot s = grab();
+    const double c0 = mean(base, 0.97f, 0.96f, 4), c1 = mean(s, 0.97f, 0.96f, 4);
+    const bdg::PostEffects3D inside = sv->PostAt(glm::vec3(m->scene.WorldMatrix("pp")[3]));
+    v[5] = std::format("{}", std::abs(c1 - c0) < 6 && inside.vignette == 1.f ? 1 : 0);
+    if (v[5] != "1") bdg::LogError("postfx test: bounded corner {:.1f} vs {:.1f}, inside vignette {}", c0, c1, inside.vignette);
+    run("del", "pp", "{}");
+  }
+  if (frame == 26) {
+    const Shot s = grab();
+    const int n = differ(base, s, 0.0f, 1.0f);
+    v[6] = std::format("{}", n >= 0 && n < 50 ? 1 : 0);
+    if (v[6] != "1") bdg::LogError("postfx test: after removing, {} pixels differ", n);
   }
 }
 
@@ -3127,6 +3256,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->uiTest = std::getenv("BDG_UIEDIT_TEST") != nullptr;
   e->inspectTest = std::getenv("BDG_INSPECT2_TEST") != nullptr;
   e->fbxTest = std::getenv("BDG_FBX_TEST") != nullptr;
+  e->postTest = std::getenv("BDG_POSTFX_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3587,6 +3717,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->uiTest && !e->showGallery) InjectUiEditTest(e, frames);
     if (e->inspectTest && !e->showGallery) InjectInspect2Test(e, frames);
     if (e->fbxTest && !e->showGallery) InjectFbxTest(e, frames);
+    if (e->postTest && !e->showGallery) InjectPostFxTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3965,6 +4096,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->postTest) {
+        auto* v = e->postTestValues;
+        bdg::LogInfo("postfx test: vignette={} grain={} aberration={} exposure={} auto={} bounded={} restore={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->fbxTest) {
         auto* v = e->fbxTestValues;

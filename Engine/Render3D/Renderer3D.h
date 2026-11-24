@@ -5,6 +5,7 @@
 // image. Editor overlays (grid, selection outline) go on top of the final picture with the scene's depth.
 #include "Render3D/MeshGen.h"
 #include "Render3D/ColorGrading.h"
+#include "Render3D/PostVolume.h"
 #include "Render3D/Quality.h"
 #include "RHI/RHI.h"
 #include <glm/glm.hpp>
@@ -82,6 +83,7 @@ struct Light3D {
   float fogDensity = 0, fogStart = 0;
   Color fogColor{0.62f, 0.70f, 0.80f, 1}; // linear
   float exposure = 1;                     // times the quality tier's exposure
+  PostEffects3D post;                     // post-process volumes at the camera (E-6)
 };
 constexpr int kMaxLocalLights = 16;        // per-vertex lighting (low tier), uniform buffer
 constexpr int kMaxClusteredLights = 1024;  // per-pixel lighting, storage buffer (Forward+, 3-5b)
@@ -241,6 +243,13 @@ private:
   BufferHandle shadowPassUbo_;
   // Post-processing: HDR scene, LDR copy for FXAA, bloom chain (half size down to 1/32).
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
+  // Auto exposure (E-6): the picture's log luminance on a 32x32 target, then per output target a 1x1 average that
+  // moves toward it over time (two 1x1 targets swapped each frame).
+  PipelineHandle lum_, adapt_;
+  RenderTargetHandle lumRT_;
+  struct Adapt { RenderTargetHandle rt[2]; int cur = 0; double last = 0; bool primed = false; };
+  std::unordered_map<uint32_t, Adapt> adapt_s;
+  uint32_t postFrame_ = 0; // grain seed
   // SSAO (3-5b): normals + view depth of opaque objects (full size), occlusion and its blur (half size).
   PipelineHandle prepass_, prepassTwo_, ssao_, aoBlur_;
   RenderTargetHandle geoRT_, aoRT_[2];
