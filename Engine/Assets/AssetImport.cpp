@@ -1,4 +1,5 @@
 #include "Assets/AssetImport.h"
+#include "Assets/ModelImport.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include <yyjson.h>
@@ -95,8 +96,8 @@ ImportResult ImportExternal(const AssetDatabase& db, const std::vector<fs::path>
       return {};
     }
     r.added.push_back(rel(to));
-    if (Lower(src.extension().string()) == ".gltf") // bring the buffers and images it names
-      for (const std::string& dep : GltfDependencies(src)) {
+    if (Lower(src.extension().string()) == ".gltf" || Lower(src.extension().string()) == ".obj") // bring what it names
+      for (const std::string& dep : ModelDependencies(src)) {
         const fs::path from = src.parent_path() / U8(dep), target = dir / U8(dep);
         if (!fs::exists(from, ec)) { r.errors.push_back(std::format("{}: {}이(가) 없음", Utf8(src.filename()), dep)); continue; }
         if (fs::exists(target, ec)) {

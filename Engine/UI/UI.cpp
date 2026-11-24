@@ -639,7 +639,13 @@ void UIContext::ForgetRemovedWidgets() {
   };
   if (!reachable(hovered_)) hovered_ = nullptr;
   if (!reachable(pressed_)) pressed_ = nullptr;
-  if (!reachable(focused_)) focused_ = nullptr;
+  // A rebuilt panel can put a new widget at the freed address of the focused one: check the id too, and keep the
+  // focus on the new widget with the same id (a rebuild should not move the keyboard focus elsewhere).
+  if (focused_ && (!reachable(focused_) || focused_->id != focusedId_)) {
+    focused_ = nullptr;
+    if (!focusedId_.empty()) focused_ = Find(focusedId_);
+    if (!focused_) focusedId_.clear();
+  }
   if (!reachable(dragSource_)) { dragSource_ = nullptr; dragging_ = false; }
   if (!reachable(dropTarget_)) dropTarget_ = nullptr;
   if (!reachable(sliderDrag_)) sliderDrag_ = nullptr;
@@ -982,6 +988,7 @@ void UIContext::SetFocus(Widget* w) {
     focused_->redoStack.clear();
   }
   focused_ = w;
+  focusedId_ = w ? w->id : std::string();
   if (w && w->kind == WidgetKind::Field) { w->cursor = w->anchor = w->text2.size(); w->composing.clear(); }
   if (w) ScrollIntoView(*w);
   if (onFocus_) onFocus_(w); // screen readers announce the new focus

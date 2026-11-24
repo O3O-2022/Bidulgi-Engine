@@ -444,6 +444,35 @@ jobs:
           if ($log -notmatch 'inspect2 test: scrub=1 axis=1 select=1 color=1 drop=1 keys=1') { $errors += 'inspector fields test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-5 FBX / OBJ import (ufbx): an OBJ with .mtl and texture, an ASCII FBX in centimetres
+          Remove-Item -Recurse -Force "$PWD/ci-fbx" -ErrorAction SilentlyContinue
+          $fbx = "$PWD/ci-fbx/Assets"
+          New-Item -ItemType Directory -Force "$fbx/tex" | Out-Null
+          [IO.File]::WriteAllText("$fbx/Quad.obj", "mtllib Quad.mtl`nv 0 0 0`nv 2 0 0`nv 2 2 0`nv 0 2 0`nvt 0 0`nvt 1 0`nvt 1 1`nvt 0 1`nvn 0 0 1`nusemtl Red`nf 1/1/1 2/2/1 3/3/1 4/4/1`n")
+          [IO.File]::WriteAllText("$fbx/Quad.mtl", "newmtl Red`nKd 1 0.2 0.2`nmap_Kd tex/red.png`n")
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 8, 8
+          $gfx = [System.Drawing.Graphics]::FromImage($bmp); $gfx.Clear([System.Drawing.Color]::OrangeRed); $gfx.Dispose()
+          $bmp.Save("$fbx/tex/red.png", [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+          $fbxText = @(
+            '; FBX 7.4.0 project file', 'FBXHeaderExtension:  {', ' FBXHeaderVersion: 1003', ' FBXVersion: 7400', '}',
+            'GlobalSettings:  {', ' Version: 1000', ' Properties70:  {',
+            '  P: "UpAxis", "int", "Integer", "",1', '  P: "UpAxisSign", "int", "Integer", "",1',
+            '  P: "FrontAxis", "int", "Integer", "",2', '  P: "FrontAxisSign", "int", "Integer", "",1',
+            '  P: "CoordAxis", "int", "Integer", "",0', '  P: "CoordAxisSign", "int", "Integer", "",1',
+            '  P: "UnitScaleFactor", "double", "Number", "",1', ' }', '}',
+            'Objects:  {', ' Geometry: 1000, "Geometry::Tri", "Mesh" {', '  Vertices: *9 {', '   a: 0,0,0,100,0,0,0,100,0', '  }',
+            '  PolygonVertexIndex: *3 {', '   a: 0,1,-3', '  }', ' }', ' Model: 2000, "Model::Tri", "Mesh" {', '  Version: 232', ' }',
+            ' Material: 3000, "Material::Red", "" {', '  ShadingModel: "phong"', '  Properties70:  {',
+            '   P: "DiffuseColor", "Color", "", "A",0.2,0.6,1', '  }', ' }', '}',
+            'Connections:  {', ' C: "OO",2000,0', ' C: "OO",1000,2000', ' C: "OO",3000,2000', '}') -join "`n"
+          [IO.File]::WriteAllText("$fbx/Tri.fbx", $fbxText + "`n")
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_FBX_TEST = '1'; BDG_ASSETS = $fbx } 40
+          if ($log -notmatch 'fbx test: thumbs=1 pictures=1 placed=1 inspect=1') { $errors += 'FBX / OBJ import test failed' }
+          if ($log -match 'did not import') { $errors += 'a model did not import' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

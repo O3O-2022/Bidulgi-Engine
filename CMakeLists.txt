@@ -114,6 +114,14 @@ if(MSVC)
 endif()
 set_target_properties(xatlas PROPERTIES FOLDER ThirdParty)
 
+# ---- External: ufbx (MIT / public domain): FBX and OBJ loading (queue E-5) ----
+add_library(ufbx STATIC ThirdParty/ufbx/ufbx.c)
+target_include_directories(ufbx SYSTEM PUBLIC ThirdParty/ufbx)
+if(MSVC)
+  target_compile_options(ufbx PRIVATE /W0)
+endif()
+set_target_properties(ufbx PROPERTIES FOLDER ThirdParty)
+
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
@@ -128,7 +136,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
-  Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp
+  Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp Engine/Assets/ModelImport.h Engine/Assets/ModelImport.cpp
   Engine/Assets/TextureCooker.h Engine/Assets/TextureCooker.cpp
   Engine/Assets/AssetRefs.h Engine/Assets/AssetRefs.cpp Engine/Assets/AssetImport.h Engine/Assets/AssetImport.cpp Engine/Runtime/AssetPreviews.h Engine/Runtime/AssetPreviews.cpp Engine/Assets/MaterialFile.h Engine/Assets/MaterialFile.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
@@ -160,7 +168,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

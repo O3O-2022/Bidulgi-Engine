@@ -105,7 +105,8 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
-  bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false;
+  bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
+  std::string fbxTestValues[4];
   std::string inspectTestValues[7];
   bool hierarchyKeys = false; // the Hierarchy was clicked last: arrow keys move in it (E-4b)
   std::string uiTestValues[7];
@@ -1142,7 +1143,59 @@ void InjectInspect2Test(bdg_engine* e, int frame) {
   if (frame == 33) {
     trail += m->Selected();
     v[5] = std::format("{}", trail == "FOg7g6g7" ? 1 : 0);
-    if (v[5] != "1") bdg::LogError("inspect2 test: keys {}", trail);
+    if (v[5] != "1")
+      bdg::LogError("inspect2 test: keys {} (hierarchy keys {}, focused {})", trail, e->hierarchyKeys,
+                    e->editor->Focused() ? e->editor->Focused()->id : std::string("-"));
+  }
+}
+
+// Scripted check of E-5 (BDG_FBX_TEST=1, BDG_ASSETS = a project with Quad.obj + .mtl + texture and an ASCII
+// Tri.fbx): both get rendered thumbnails that show something, both are placed in the scene and drawn (the
+// Scene view's triangle count grows), and the Inspector calls the FBX a Model.
+void InjectFbxTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen || !e->previewsReady || !e->sceneView || !e->r3d) return;
+  auto* v = e->fbxTestValues;
+  const std::filesystem::path cache = std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / ".cache" / "thumbnails";
+  static int ready = 0;
+  static uint64_t tris0 = 0;
+  if (frame > 2 && !ready && frame < 60) {
+    bool all = true;
+    for (const char* p : {"Quad.obj", "Tri.fbx"})
+      if (const bdg::AssetRecord* r = e->assets.ByPath(p)) all = all && e->previews.Thumbnail(*r).Valid();
+      else all = false;
+    if (all) {
+      ready = frame;
+      v[0] = "1";
+      bool shows = true;
+      for (const char* p : {"Quad.obj", "Tri.fbx"}) {
+        const bdg::AssetRecord* r = e->assets.ByPath(p);
+        int32_t w = 0, h = 0;
+        std::vector<uint8_t> px;
+        int differ = 0;
+        if (r && bdg::LoadImageRGBA(cache / std::format("{}-{:016x}-r1.png", r->guid, r->hash), w, h, px) && w == 64)
+          for (int i = 0; i < 64 * 64; ++i)
+            differ += std::abs(px[i * 4] - px[0]) + std::abs(px[i * 4 + 1] - px[1]) + std::abs(px[i * 4 + 2] - px[2]) > 30;
+        shows = shows && differ > 40;
+        if (differ <= 40) bdg::LogError("fbx test: {} thumbnail shows {} pixels", p, differ);
+      }
+      v[1] = shows ? "1" : "0";
+      tris0 = e->r3d->TrianglesLastFrame();
+      if (bdg::Widget* sw = e->editor->Find("scene")) {
+        e->sceneView->PlaceModel(*m, "Quad.obj", sw->x + sw->w * 0.4f, sw->y + sw->h * 0.6f);
+        e->sceneView->PlaceModel(*m, "Tri.fbx", sw->x + sw->w * 0.6f, sw->y + sw->h * 0.6f);
+      }
+    }
+  }
+  if (ready && frame == ready + 4) {
+    const uint64_t tris1 = e->r3d->TrianglesLastFrame();
+    v[2] = std::format("{}", tris1 >= tris0 + 3 ? 1 : 0); // the quad's 2 triangles and the FBX's 1 (shadow passes add more)
+    if (v[2] != "1") bdg::LogError("fbx test: triangles {} -> {}", tris0, tris1);
+    m->InspectAsset("Tri.fbx");
+  }
+  if (ready && frame == ready + 6) {
+    bdg::Widget* kind = e->editor->Find("insp.asset.종류");
+    v[3] = std::format("{}", kind && kind->text2 == "Model" && e->editor->Find("insp.preview") ? 1 : 0);
   }
 }
 
@@ -3073,6 +3126,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->sceneIconTest = std::getenv("BDG_SCENEICON_TEST") != nullptr;
   e->uiTest = std::getenv("BDG_UIEDIT_TEST") != nullptr;
   e->inspectTest = std::getenv("BDG_INSPECT2_TEST") != nullptr;
+  e->fbxTest = std::getenv("BDG_FBX_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3532,6 +3586,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->sceneIconTest && !e->showGallery) InjectSceneIconTest(e, frames);
     if (e->uiTest && !e->showGallery) InjectUiEditTest(e, frames);
     if (e->inspectTest && !e->showGallery) InjectInspect2Test(e, frames);
+    if (e->fbxTest && !e->showGallery) InjectFbxTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3910,6 +3965,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->fbxTest) {
+        auto* v = e->fbxTestValues;
+        bdg::LogInfo("fbx test: thumbs={} pictures={} placed={} inspect={}", v[0], v[1], v[2], v[3]);
       }
       if (e->inspectTest) {
         auto* v = e->inspectTestValues;

@@ -1,6 +1,7 @@
 // Asset database tests (queue 2-3).
 #include "Assets/AssetDatabase.h"
 #include "Assets/AssetImport.h"
+#include "Assets/ModelImport.h"
 #include "Assets/AssetRefs.h"
 #include "Assets/Thumbnails.h"
 #include "Core/Image.h"
@@ -290,4 +291,89 @@ TEST_CASE("assets: importing dropped files, glTF dependencies and asset rules (q
   CHECK(!rules.Load(d / "ProjectSettings/AssetRules.json", &err) && !err.empty());
   fs::remove_all(outside);
   fs::remove_all(d);
+}
+
+TEST_CASE("assets: FBX and OBJ import through ufbx (queue E-5)") {
+  fs::path d = Fresh("bdg_model_import");
+  // OBJ: a quad (two triangles) 2 m wide, a .mtl with a red diffuse and a texture map in a sub-folder
+  Write(d / "Quad.obj", "mtllib Quad.mtl\nv 0 0 0\nv 2 0 0\nv 2 2 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nusemtl Red\nf 1/1/1 2/2/1 3/3/1 4/4/1\n");
+  Write(d / "Quad.mtl", "newmtl Red\nKd 1 0 0\nmap_Kd tex/red.png\n");
+  std::vector<uint8_t> px(4 * 4 * 4, 255);
+  fs::create_directories(d / "tex");
+  CHECK(WritePNG((d / "tex/red.png").string().c_str(), 4, 4, px.data(), false));
+  const std::vector<std::string> deps = ModelDependencies(d / "Quad.obj");
+  CHECK(deps.size() == 2 && deps[0] == "Quad.mtl" && deps[1] == "tex/red.png");
+  ImportedModel m;
+  std::string err;
+  CHECK(IsModelFile("Quad.OBJ") && IsModelFile(".fbx") && !IsModelFile("a.png"));
+  CHECK(ImportModel(d / "Quad.obj", m, &err));
+  CHECK_EQ(m.stats.triangles, size_t(2));
+  CHECK(m.primitives.size() == 1 && m.instances.size() == 1);
+  CHECK(std::abs(m.boundsMax.x - 2) < 1e-4f && std::abs(m.boundsMax.y - 2) < 1e-4f);
+  CHECK(m.materials.size() == 1 && m.primitives[0].material == 0);
+  CHECK(m.materials[0].baseColorTex == 0 && m.textures.size() == 1 && m.textures[0].w == 4 && m.textures[0].srgb);
+  bool flipped = false; // the corner with vt (0,0) at the bottom gets v = 1 (rows from the top)
+  for (const Vertex3D& v : m.primitives[0].mesh.vertices)
+    if (std::abs(v.px) < 1e-4f && std::abs(v.py) < 1e-4f) flipped = std::abs(v.v - 1) < 1e-4f && std::abs(v.nz - 1) < 1e-4f;
+  CHECK(flipped);
+
+  // ASCII FBX in centimetres (UnitScaleFactor 1): a 100 cm triangle becomes 1 m; a Phong red material
+  Write(d / "Tri.fbx", R"(; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",1
+	}
+}
+Objects:  {
+	Geometry: 1000, "Geometry::Tri", "Mesh" {
+		Vertices: *9 {
+			a: 0,0,0,100,0,0,0,100,0
+		}
+		PolygonVertexIndex: *3 {
+			a: 0,1,-3
+		}
+	}
+	Model: 2000, "Model::Tri", "Mesh" {
+		Version: 232
+	}
+	Material: 3000, "Material::Red", "" {
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A",1,0,0
+		}
+	}
+}
+Connections:  {
+	C: "OO",2000,0
+	C: "OO",1000,2000
+	C: "OO",3000,2000
+}
+)");
+  CHECK(ImportModel(d / "Tri.fbx", m, &err));
+  if (!err.empty()) std::printf("fbx: %s\n", err.c_str());
+  CHECK_EQ(m.stats.triangles, size_t(1));
+  CHECK(std::abs(m.boundsMax.x - 1) < 1e-3f && std::abs(m.boundsMax.y - 1) < 1e-3f);
+  CHECK(m.materials.size() == 1 && m.materials[0].baseColor[0] > 0.9f && m.materials[0].baseColor[1] < 0.1f && m.materials[0].metallic == 0);
+  CHECK(m.instances.size() == 1 && m.instances[0].node == "Tri");
+  CHECK(!ImportModel(d / "missing.fbx", m, &err) && !err.empty());
+
+  // dragging the OBJ into a project brings its .mtl and texture
+  fs::path proj = Fresh("bdg_model_import_proj");
+  AssetDatabase db;
+  CHECK(db.Open(proj.string()));
+  const ImportResult r = ImportExternal(db, {d / "Quad.obj"}, "");
+  CHECK(fs::exists(proj / "Quad.mtl") && fs::exists(proj / "tex/red.png") && r.added.size() == 3);
+  fs::remove_all(d);
+  fs::remove_all(proj);
 }

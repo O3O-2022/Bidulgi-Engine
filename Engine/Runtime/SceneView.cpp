@@ -1,5 +1,6 @@
 #include "Runtime/SceneView.h"
 #include "Assets/AssetImport.h"
+#include "Assets/ModelImport.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
 #include "Core/Command.h"
@@ -125,7 +126,7 @@ void SceneView::Shutdown() {
 const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const AssetDatabase* assets) {
   if (name.empty()) return nullptr;
   std::string ext = Lower(fs::path(name).extension().string());
-  const AssetRecord* rec = assets && (ext == ".glb" || ext == ".gltf") ? assets->ByPath(name) : nullptr;
+  const AssetRecord* rec = assets && IsModelFile(ext) ? assets->ByPath(name) : nullptr;
   auto it = meshes_.find(name);
   if (it != meshes_.end() && (!rec || it->second.hash == rec->hash)) return it->second.missing ? &builtins_["cube"] : &it->second;
   if (it != meshes_.end()) { r_->DestroyModel(it->second.model); meshes_.erase(it); } // the file changed: import again
@@ -134,15 +135,15 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
     ImportedModel im;
     std::string err;
     fs::path full = fs::path(std::u8string((const char8_t*)assets->Root().c_str())) / fs::path(std::u8string((const char8_t*)name.c_str()));
-    if (ImportGltf(full, im, &err)) {
+    if (ImportModel(full, im, &err)) {
       e.isModel = true;
       e.hash = rec->hash;
       e.model = r_->UploadModel(im);
       for (ImportedPrimitive& p : im.primitives) e.cpuPrims.push_back(std::move(p.mesh));
-      if (ext == ".gltf") { // its buffers and images: a change to one of them re-imports the model
+      if (ext == ".gltf" || ext == ".obj") { // its buffers / .mtl and images: a change to one of them re-imports the model
         const size_t slash = name.find_last_of('/');
         const std::string dir = slash == std::string::npos ? std::string() : name.substr(0, slash + 1);
-        for (const std::string& d : GltfDependencies(full)) e.deps.push_back((fs::path(dir) / d).lexically_normal().generic_string());
+        for (const std::string& d : ModelDependencies(full)) e.deps.push_back((fs::path(dir) / d).lexically_normal().generic_string());
       }
       return &(meshes_[name] = std::move(e));
     }

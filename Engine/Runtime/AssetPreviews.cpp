@@ -1,6 +1,7 @@
 #include "Runtime/AssetPreviews.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
+#include "Assets/ModelImport.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include "Render3D/MeshGen.h"
@@ -42,7 +43,7 @@ std::vector<uint8_t> HalveFlip(const std::vector<uint8_t>& px, int32_t size) {
 AssetPreviews::Kind AssetPreviews::KindOf(const AssetRecord& r) {
   if (ThumbnailCache::Supported(r)) return Kind::Image;
   const std::string e = ExtOf(r.path);
-  if (e == ".glb" || e == ".gltf") return Kind::Model;
+  if (IsModelFile(e)) return Kind::Model;
   if (e == ".material" || e == ".matinst") return Kind::Material;
   return Kind::None;
 }
@@ -158,7 +159,7 @@ bool AssetPreviews::Prepare(const AssetRecord& r) {
   if (k == Kind::Model) {
     ImportedModel im;
     std::string err;
-    if (!ImportGltf(Full(r.path), im, &err)) {
+    if (!ImportModel(Full(r.path), im, &err)) {
       LogWarn("preview: {}: {}", r.path, err);
       return false;
     }

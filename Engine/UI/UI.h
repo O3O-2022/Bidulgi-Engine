@@ -204,6 +204,7 @@ private:
   bool dragging_ = false;
   bool clickCtrl_ = false, clickShift_ = false, clickAlt_ = false;
   std::vector<MenuItem> menu_;
+  std::string focusedId_;  // id of focused_ (a rebuild may reuse its address)
   Widget* scrub_ = nullptr; // label drag in progress (E-4b)
   int scrubAxis_ = -1;
   double scrubStart_ = 0;

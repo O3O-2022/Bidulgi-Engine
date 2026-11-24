@@ -295,6 +295,8 @@ bool ImportGltfMemory(const void* bytes, size_t size, const fs::path& baseDir, I
   return ok;
 }
 
+std::pair<float, float> OptimizeMesh(MeshData& m) { return Optimize(m); }
+
 bool ImportGltf(const fs::path& path, ImportedModel& out, std::string* error) {
   std::vector<uint8_t> bytes;
   if (!ReadFileBytes(path, bytes)) {

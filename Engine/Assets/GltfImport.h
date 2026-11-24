@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -48,6 +49,8 @@ struct ImportedModel {
 };
 
 bool ImportGltf(const std::filesystem::path& path, ImportedModel& out, std::string* error = nullptr);
+// meshoptimizer pass every importer uses: dedup, vertex cache, overdraw, fetch order. Returns ACMR {before, after}.
+std::pair<float, float> OptimizeMesh(MeshData& m);
 // Same from bytes already in memory (.gltf text or .glb); relative URIs resolve against baseDir.
 bool ImportGltfMemory(const void* data, size_t size, const std::filesystem::path& baseDir, ImportedModel& out, std::string* error = nullptr);
 }
