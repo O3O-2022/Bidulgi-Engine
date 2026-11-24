@@ -276,7 +276,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   speed.width = Length::Px(150);
   ws.Add(Spacer());
   ws.Add(MakeBadge("중사양")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
-  ws.Add(MakeBadge("Windows"));
+  ws.Add(MakeBadge("Windows")).id = "tool.platform"; // target platform of the budget bars; a click steps (3-7)
   ws.Add(MakeButton("tool.build", "Build"));
 
   // Main area: docked panels (drag splitters to resize, drag tabs to move; layout saved per user).

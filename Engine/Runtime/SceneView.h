@@ -25,6 +25,7 @@
 #include "Platform/Window.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/Gizmo.h"
+#include "Runtime/Budget.h"
 #include "Runtime/Snapping.h"
 #include "Runtime/MaterialLibrary.h"
 #include <memory>
@@ -90,6 +91,16 @@ public:
   bool ObjectBounds(const EditorModel& model, const std::string& id, glm::vec3& lo, glm::vec3& hi) const;
   const Measure* CurrentMeasure() const { return hasMeasure_ ? &measure_ : nullptr; } // the ruler (Measure tool)
   bool SnapTarget(glm::vec3& p) const { p = snapTarget_; return hasSnapTarget_; }    // vertex / surface under the drag
+  // Platform budget (queue 3-7): the Budget chip opens bars for the target platform at the shown tier, from the
+  // last render; over budget the chip turns to the warning colour and the heaviest objects can be picked.
+  int budgetPlatform = 0;                                  // PlatformName index (the toolbar badge)
+  bool budgetPanel = false;
+  std::array<BudgetLimits, kBudgetPlatforms> budgetMedium{DefaultBudget(0), DefaultBudget(1), DefaultBudget(2), DefaultBudget(3)};
+  std::vector<BudgetBar> BudgetBars() const;              // of the last render
+  bool BudgetOver() const;
+  struct Culprit { std::string id, name; double triangles = 0; int draws = 0; };
+  std::vector<Culprit> BudgetCulprits() const;            // heaviest objects of the last render (3 at most)
+  std::string DescribeBudget() const;                     // "Android · 중사양 · Draw 11 / 200 · ..." (log, bdg budget)
   // Game view (queue 3-6): the scene seen by its first Camera component, no editor overlays. `playTime` < 0: not
   // playing (the corner badge says so).
   void RenderGame(EditorModel& model, const AssetDatabase* assets, const Widget& view, float scale);
@@ -134,6 +145,8 @@ private:
   std::unordered_map<std::string, MeshEntry> blocks_; // greybox meshes by shape and size (unused ones are dropped)
   TextureHandle gridTex_;                             // the greybox 1 m grid
   RenderTargetHandle gameRT_;                         // Game view (3-6)
+  BudgetUse budgetUse_;                               // measured in the last scene view render (3-7)
+  std::vector<Culprit> culprits_;
   int32_t gameW_ = 0, gameH_ = 0;
   uint64_t gameFrames_ = 0;
   bool gameCamera_ = false;

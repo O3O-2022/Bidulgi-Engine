@@ -451,6 +451,33 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     firstBake_ = bakeRequested_ = false;
   }
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
+  { // platform budget (3-7): what this view drew, and its heaviest objects
+    const RenderStats& st = r_->Stats();
+    budgetUse_.draws = st.sceneDraws;
+    budgetUse_.triangles = 0;
+    std::unordered_map<std::string, Culprit> by;
+    for (size_t i = 0; i < items_.size(); ++i) {
+      if (!items_[i].mesh) continue;
+      const double tris = items_[i].mesh->indexCount / 3.0;
+      budgetUse_.triangles += tris;
+      Culprit& c = by[info_[i].owner];
+      c.id = info_[i].owner;
+      c.triangles += tris;
+      ++c.draws;
+    }
+    budgetUse_.textureMB = rhi_->Memory().textures / (1024.0 * 1024.0);
+    budgetUse_.lights = st.localLights + (light_.intensity > 0 ? 1 : 0);
+    budgetUse_.shadowLights = st.shadowMap > 0 ? 1 : 0;
+    culprits_.clear();
+    for (auto& [id, c] : by) {
+      const SceneObject* o = model.scene.Find(id);
+      if (!o) continue;
+      c.name = o->name;
+      culprits_.push_back(c);
+    }
+    std::sort(culprits_.begin(), culprits_.end(), [](const Culprit& a, const Culprit& b) { return a.triangles > b.triangles; });
+    if (culprits_.size() > 3) culprits_.resize(3);
+  }
   renderMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -642,6 +669,24 @@ std::string SceneView::CreateBlock(EditorModel& model, int shape) {
   return id;
 }
 
+std::vector<BudgetBar> SceneView::BudgetBars() const {
+  return EvaluateBudget(budgetUse_, BudgetForTier(budgetMedium[std::clamp(budgetPlatform, 0, kBudgetPlatforms - 1)], quality.tier));
+}
+
+bool SceneView::BudgetOver() const {
+  for (const BudgetBar& b : BudgetBars())
+    if (b.level == 2) return true;
+  return false;
+}
+
+std::vector<SceneView::Culprit> SceneView::BudgetCulprits() const { return culprits_; }
+
+std::string SceneView::DescribeBudget() const {
+  std::string s = std::format("{} · {}", PlatformName(budgetPlatform), TierLabel(quality.tier));
+  for (const BudgetBar& b : BudgetBars()) s += std::format(" · {} {}{}", b.label, b.text, b.level == 2 ? " OVER" : b.level == 1 ? " near" : "");
+  return s;
+}
+
 bool SceneView::AlignSelection(EditorModel& model, int axis, AlignMode mode) {
   std::set<std::string> sel(model.Selection().begin(), model.Selection().end());
   std::vector<std::string> ids;
@@ -814,6 +859,8 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
             else if (hit->name == "gi") bakeRequested_ = true;
+            else if (hit->name == "budget") budgetPanel = !budgetPanel;
+            else if (hit->name.starts_with("bud.sel.")) model.Select(hit->name.substr(8)); // the heavy object
             else if (hit->name == "snap") { // Off -> 0.1 -> 0.25 -> 0.5 -> 1 -> 2 m -> Off
               const size_t n = std::size(kSnapSteps);
               size_t at = 0;
@@ -1314,7 +1361,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
       DrawGizmo(b, t, mode, frame, gv, drag_ == Drag::Gizmo ? gizmo_.Handle() : hot_);
   }
   // Chips (top-left) and stats (top-right).
-  float px = w.x + 10;
+  float px = w.x + 10, rowY = w.y + 8; // chips flow onto more rows when the view is narrow
   std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
                        : model->tool == "scale" ? "Scale (R)" : model->tool == "measure" ? "Measure (M)"
                        : model->tool == "blockout" ? "Blockout (B)" : "Select";
@@ -1326,6 +1373,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   struct ChipDef { std::string name, text; bool on; };
   const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
                           {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
+                          {"budget", BudgetOver() ? "Budget ⚠" : "Budget", budgetPanel},
                           {probes_.empty() && !hasVolume_ && !lightmapItems_ ? "" : "gi",
                            probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
                                : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0) + lightmapItems_),
@@ -1340,14 +1388,20 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     const std::string icon = chip.text == toolChip ? toolIcon : chip.name == "snap" ? "tool-snap" : ""; // Assets/Icons
     const float iw = !icon.empty() && ui.HasIcon(icon) ? 17.f : 0.f;
     float cw = ui.Measure(11, chip.text) + 18 + iw;
-    b.Rect(px, w.y + 8, cw, 22, chip.on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-    if (iw > 0) ui.Icon(icon, px + 7, w.y + 11.5f, 15);
-    ui.Text(px + 9 + iw, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
-    if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, w.y + 8, cw, 22});
+    const bool warn = chip.name == "budget" && BudgetOver();
+    if (px + cw > w.x + w.w - 10 && px > w.x + 10) {
+      px = w.x + 10;
+      rowY += 28;
+    }
+    b.Rect(px, rowY, cw, 22, warn ? WithAlpha(t.C("warn"), 0.9f) : chip.on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1,
+           t.C("line"));
+    if (iw > 0) ui.Icon(icon, px + 7, rowY + 3.5f, 15);
+    ui.Text(px + 9 + iw, rowY + 4, 11, chip.on || warn ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
+    if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, rowY, cw, 22});
     px += cw + 6;
   }
   if (model && model->tool == "blockout") { // greybox (3-3c): add blocks; handles on the selected block's faces
-    float bx2 = w.x + 10, by2 = w.y + (several && alignOpen_ ? 62 : 36);
+    float bx2 = w.x + 10, by2 = rowY + (several && alignOpen_ ? 54 : 28);
     for (int s = 0; s < 4; ++s) {
       static const char* labels[] = {"+ Box", "+ Stairs", "+ Ramp", "+ Cylinder"};
       const float cw = ui.Measure(11, labels[s]) + 16;
@@ -1370,9 +1424,9 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
       for (const char* m : {"min", "mid", "max", "dist"}) {
         const std::string name = std::format("al.{}.{}", axis, m), text = std::format("{} {}", (char)std::toupper(axis[0]), m);
         const float cw = ui.Measure(11, text) + 14;
-        b.Rect(ax2, w.y + 36, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("line"));
-        ui.Text(ax2 + 7, w.y + 39, 11, t.C("fg"), text);
-        chips_.push_back({name, ax2, w.y + 36, cw, 20});
+        b.Rect(ax2, rowY + 28, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("line"));
+        ui.Text(ax2 + 7, rowY + 31, 11, t.C("fg"), text);
+        chips_.push_back({name, ax2, rowY + 28, cw, 20});
         ax2 += cw + (m[0] == 'd' ? 12 : 4);
       }
   }
@@ -1416,9 +1470,41 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     lines.push_back(st.passes.empty() ? std::string("GPU timings: waiting for the GPU") : std::format("{:<14} {:6.3f} ms", "GPU total", total));
     float pw = 0;
     for (const std::string& l : lines) pw = std::max(pw, ui.Measure(11, l, true));
-    float bx = w.x + 10, by = w.y + 38;
+    float bx = w.x + 10, by = rowY + 30;
     b.Rect(bx, by, pw + 20, lines.size() * 16.f + 12, WithAlpha(t.C("win"), 0.88f), 6, 1, t.C("line"));
     for (size_t i = 0; i < lines.size(); ++i) ui.Text(bx + 10, by + 6 + i * 16.f, 11, t.C("fg"), lines[i], true);
+  }
+  if (budgetPanel) { // platform budget bars (3-7), bottom-left above the axis widget
+    const std::vector<BudgetBar> bars = BudgetBars();
+    const float pw = 330, rowH = 20, ph = 30 + bars.size() * rowH + (culprits_.empty() ? 0 : 26);
+    const float bx = w.x + 10, by = w.y + w.h - 78 - ph;
+    b.Rect(bx, by, pw, ph, WithAlpha(t.C("win"), 0.9f), 6, 1, t.C("line"));
+    ui.Text(bx + 10, by + 7, 11, t.C("fg"), std::format("{} · {} 예산", PlatformName(budgetPlatform), TierLabel(quality.tier)));
+    for (size_t i = 0; i < bars.size(); ++i) {
+      const BudgetBar& bar = bars[i];
+      const float y = by + 28 + i * rowH;
+      ui.Text(bx + 10, y, 11, t.C("fg-dim"), bar.label);
+      const float barX = bx + 60, barW = 130;
+      b.Rect(barX, y + 3, barW, 9, t.C("sunk"), 4);
+      const Color fill = bar.level == 2 ? t.C("warn") : bar.level == 1 ? WithAlpha(t.C("warn"), 0.65f) : t.C("ok");
+      b.Rect(barX, y + 3, barW * std::min(bar.fraction, 1.f), 9, fill, 4);
+      ui.Text(barX + barW + 8, y, 11, bar.level == 2 ? t.C("warn") : t.C("fg"), bar.text + (bar.level == 2 ? "  ⚠" : ""));
+    }
+    if (!culprits_.empty()) { // the heaviest objects: a click selects one
+      float cx = bx + 10;
+      const float cy = by + 28 + bars.size() * rowH + 2;
+      ui.Text(cx, cy + 3, 10, t.C("fg-faint"), "무거운 것");
+      cx += ui.Measure(10, "무거운 것") + 8;
+      for (const Culprit& c : culprits_) {
+        const std::string label = std::format("{} {}", c.name, FormatCount(c.triangles));
+        const float cw = ui.Measure(10, label) + 14;
+        if (cx + cw > bx + pw - 6) break;
+        b.Rect(cx, cy, cw, 18, WithAlpha(t.C("raise"), 0.95f), 9, 1, t.C("line"));
+        ui.Text(cx + 7, cy + 3, 10, t.C("fg"), label);
+        chips_.push_back({"bud.sel." + c.id, cx, cy, cw, 18});
+        cx += cw + 4;
+      }
+    }
   }
   if (noteFrames_ > 0) { // the bookmark just jumped to
     --noteFrames_;
@@ -1428,7 +1514,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   }
   std::string stats = std::format("Draw {}  ·  Tris {}  ·  {:.2f} ms", r_->DrawsLastFrame(), r_->TrianglesLastFrame(), renderMs_);
   float sw = ui.Measure(11, stats) + 18;
-  float sy = px + 10 > w.x + w.w - sw - 10 ? w.y + 34 : w.y + 8; // a second row when the chips need the width
+  float sy = px + 10 > w.x + w.w - sw - 10 ? rowY + 26 : rowY; // below the chips when they need the width
   b.Rect(w.x + w.w - sw - 10, sy, sw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
   ui.Text(w.x + w.w - sw - 1, sy + 4, 11, t.C("fg-dim"), stats);
   // Axis widget (bottom-left): world axes turned by the view.

@@ -155,7 +155,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp
   Engine/Runtime/EditorModel.h Engine/Runtime/EditorModel.cpp Engine/Runtime/ProjectPanel.cpp
   Engine/Runtime/SceneView.h Engine/Runtime/SceneView.cpp
-  Engine/Runtime/Gizmo.h Engine/Runtime/Gizmo.cpp Engine/Runtime/Snapping.h Engine/Runtime/Snapping.cpp Engine/Runtime/PlayMode.h Engine/Runtime/PlayMode.cpp
+  Engine/Runtime/Gizmo.h Engine/Runtime/Gizmo.cpp Engine/Runtime/Snapping.h Engine/Runtime/Snapping.cpp Engine/Runtime/PlayMode.h Engine/Runtime/PlayMode.cpp Engine/Runtime/Budget.h Engine/Runtime/Budget.cpp
   Engine/Runtime/MaterialLibrary.h Engine/Runtime/MaterialLibrary.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})

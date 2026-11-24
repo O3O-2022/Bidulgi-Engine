@@ -4,6 +4,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Assets/GltfImport.h"
 #include "Runtime/Gizmo.h"
+#include "Runtime/Budget.h"
 #include "Render3D/Quality.h"
 #include "Core/ImageCompare.h"
 #include "Render3D/Culling.h"
@@ -454,4 +455,28 @@ TEST_CASE("render: greybox blocks are closed, sized from the bottom centre, with
   for (const Vertex3D& v : box.vertices)
     if (v.ny > 0.99f) { umin = std::min(umin, v.u); umax = std::max(umax, v.u); }
   CHECK(std::abs((umax - umin) - 2.f) < 1e-4f);
+}
+
+TEST_CASE("editor: platform budgets, tiers, project overrides and bars (queue 3-7)") {
+  const BudgetLimits android = DefaultBudget(1);
+  CHECK(std::string(PlatformName(1)) == "Android" && android.draws == 200 && android.triangles == 1.0e6);
+  const BudgetLimits low = BudgetForTier(android, QualityTier::Low), high = BudgetForTier(android, QualityTier::High);
+  CHECK(low.draws == 100 && high.draws == 400 && BudgetForTier(android, QualityTier::Potato).lights == 0);
+  std::array<BudgetLimits, kBudgetPlatforms> medium{DefaultBudget(0), DefaultBudget(1), DefaultBudget(2), DefaultBudget(3)};
+  std::string err;
+  CHECK(ParseBudgets(R"({"Android":{"draws":250,"shadowLights":1},"Web":{"textureMB":256}})", medium, &err));
+  CHECK(medium[1].draws == 250 && medium[1].shadowLights == 1 && medium[1].triangles == 1.0e6 && medium[3].textureMB == 256);
+  CHECK(!ParseBudgets(R"({"Switch":{"draws":1}})", medium, &err) && err.find("Switch") != std::string::npos);
+  CHECK(!ParseBudgets(R"({"Android":{"draws":"many"}})", medium, &err));
+  CHECK(!ParseBudgets(R"({"Android":{"polys":1}})", medium, &err) && err.find("polys") != std::string::npos);
+  BudgetUse use{182, 1.18e6, 310, 3, 1};
+  std::vector<BudgetBar> bars = EvaluateBudget(use, DefaultBudget(1));
+  CHECK(bars.size() == 4);
+  CHECK(bars[0].level == 1 && bars[0].text == "182 / 200");  // 91 %: near
+  CHECK(bars[1].level == 2 && bars[1].text == "1.2M / 1M");   // over
+  CHECK(bars[2].level == 0 && bars[2].text == "310 / 512 MB");
+  CHECK(bars[3].level == 0 && bars[3].text == "3 / 8 (그림자 1 / 2)");
+  use.shadowLights = 3; // more shadowed lights than allowed: the light bar is over even with few lights
+  CHECK(EvaluateBudget(use, DefaultBudget(1))[3].level == 2);
+  CHECK(FormatCount(980) == "980" && FormatCount(12400) == "12.4k");
 }

@@ -101,7 +101,8 @@ struct bdg_engine {
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
-  bool playTest = false;
+  bool playTest = false, budgetTest = false;
+  std::string budgetTestValues[8];
   std::string playTestValues[13];
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
@@ -1379,6 +1380,52 @@ void InjectPlayTest(bdg_engine* e, int frame) {
   }
 }
 
+// Scripted check of 3-7 (BDG_BUDGET_TEST=1): the Budget chip opens the bars, the toolbar badge switches the platform
+// to Android, the bars hold the last render's numbers against Android's medium budget; a tight project budget
+// turns the chip to its warning and the heaviest object can be selected from the panel.
+void InjectBudgetTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->budgetTestValues;
+  const float s = e->editor->Scale();
+  auto clickAt = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * s, y * s});
+    e->window.InjectEvent({T::MouseDown, x * s, y * s, 1});
+    e->window.InjectEvent({T::MouseUp, x * s, y * s, 1});
+  };
+  if (frame == 2) {
+    float x, y;
+    if (sv->ChipCenter("budget", x, y)) clickAt(x, y);
+    if (bdg::Widget* b = e->editor->Find("tool.platform")) clickAt(b->x + b->w * 0.5f, b->y + b->h * 0.5f); // Windows -> Android
+  }
+  if (frame == 5) {
+    const auto bars = sv->BudgetBars();
+    const bdg::RenderStats& st = e->r3d->Stats();
+    bdg::Widget* badge = e->editor->Find("tool.platform");
+    v[0] = std::format("{}", sv->budgetPanel ? 1 : 0);
+    v[1] = std::string(bdg::PlatformName(sv->budgetPlatform)) + (badge && badge->text == "Android" ? "" : "(badge)");
+    v[2] = std::format("{}", bars.size());
+    const bdg::BudgetLimits lim = bdg::BudgetForTier(bdg::DefaultBudget(1), sv->quality.tier);
+    v[3] = std::format("{}", bars.size() == 4 && bars[0].used == st.sceneDraws && bars[0].limit == lim.draws && bars[1].limit == lim.triangles &&
+                                     bars[1].used > 0 && !sv->BudgetOver() ? 1 : 0);
+    sv->budgetMedium[1].draws = 1; // a tight project budget for Android (instancing keeps this scene at 2 draws)
+  }
+  if (frame == 8) {
+    float x = 0, y = 0;
+    v[4] = std::format("{}", sv->BudgetOver() && sv->BudgetBars()[0].level == 2 ? 1 : 0);
+    v[5] = std::format("{}", sv->ChipCenter("budget", x, y) ? 1 : 0);
+    for (const auto& c : sv->BudgetCulprits()) // one that is not selected yet: the click must select it
+      if (c.id != m->Selected() && sv->ChipCenter("bud.sel." + c.id, x, y)) {
+        v[6] = c.id;
+        clickAt(x, y);
+        break;
+      }
+  }
+  if (frame == 10) v[6] = std::format("{}", !v[6].empty() && m->Selected() == v[6] ? 1 : 0);
+}
+
 // Play mode tools (queue 3-6b): pause (lights the button), one frame, the time scale field.
 void SetPlayPaused(bdg_engine* e, bool paused) {
   e->play.SetPaused(paused);
@@ -1903,6 +1950,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   e->snapTest = std::getenv("BDG_SNAP_TEST") != nullptr;
   e->playTest = std::getenv("BDG_PLAY_TEST") != nullptr;
+  e->budgetTest = std::getenv("BDG_BUDGET_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2025,6 +2073,21 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
         };
         f->onChange = apply;
         f->onCommit = apply;
+      }
+      if (bdg::Widget* badge = e->editor->Find("tool.platform")) { // target platform for the budget bars (3-7)
+        badge->text = bdg::PlatformName(e->sceneView->budgetPlatform);
+        badge->onClick = [e](bdg::Widget& w) {
+          e->sceneView->budgetPlatform = (e->sceneView->budgetPlatform + 1) % bdg::kBudgetPlatforms;
+          w.text = bdg::PlatformName(e->sceneView->budgetPlatform);
+          bdg::LogInfo("budget: platform {}", w.text);
+        };
+      }
+      {
+        std::vector<uint8_t> text;
+        std::string err;
+        if (bdg::ReadFileBytes(std::filesystem::current_path() / "ProjectSettings" / "Budgets.json", text) &&
+            !bdg::ParseBudgets(std::string(text.begin(), text.end()), e->sceneView->budgetMedium, &err))
+          bdg::LogWarn("budget: ProjectSettings/Budgets.json: {}", err);
       }
       for (const char* id : {"play.keep", "play.discard"})
         if (bdg::Widget* b = e->editor->Find(id))
@@ -2317,6 +2380,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->snapTest && !e->showGallery) InjectSnapTest(e, frames, scale);
     if (e->playTest && !e->showGallery) InjectPlayTest(e, frames);
+    if (e->budgetTest && !e->showGallery) InjectBudgetTest(e, frames);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
@@ -2657,6 +2721,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->budgetTest) {
+        auto* v = e->budgetTestValues;
+        bdg::LogInfo("budget test: panel={} platform={} bars={} values={} over={} chip={} culprit={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+        if (e->sceneView) bdg::LogInfo("budget: {}", e->sceneView->DescribeBudget());
       }
       if (e->playTest) {
         auto* v = e->playTestValues;
