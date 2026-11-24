@@ -1,6 +1,7 @@
 // Scene model tests (queue 2-1): every object has a Transform, world matrices follow the parent chain,
 // and moving under a new parent can keep the object where it is.
 #include "Core/Command.h"
+#include "Runtime/EditorModel.h"
 #include "Scene/Components.h"
 #include "bdg_test.h"
 #include <cmath>
@@ -98,4 +99,12 @@ TEST_CASE("scene: keep-world moves replay exactly") {
   CHECK(busB.Replay(path, &err));
   CHECK_EQ(b.Dump(), a.Dump());
   std::filesystem::remove(path);
+}
+
+TEST_CASE("editor: batch rename patterns (queue 2-5b)") {
+  CHECK(EditorModel::ApplyNamePattern("Tree_##", "Cube", 3) == "Tree_03");
+  CHECK(EditorModel::ApplyNamePattern("Tree_#", "Cube", 12) == "Tree_12");
+  CHECK(EditorModel::ApplyNamePattern("Old_*", "Lamp", 1) == "Old_Lamp");
+  CHECK(EditorModel::ApplyNamePattern("*_LOD#", "Rock", 2) == "Rock_LOD2");
+  CHECK(EditorModel::ApplyNamePattern("Wall", "Cube", 5) == "Wall");
 }

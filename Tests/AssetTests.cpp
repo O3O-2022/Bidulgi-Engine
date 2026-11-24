@@ -1,5 +1,6 @@
 // Asset database tests (queue 2-3).
 #include "Assets/AssetDatabase.h"
+#include "Assets/AssetRefs.h"
 #include "Assets/Thumbnails.h"
 #include "Core/Image.h"
 #include "bdg_test.h"
@@ -171,4 +172,50 @@ TEST_CASE("assets: thumbnails are made once and cached (queue 2-5t)") {
   const AssetRecord* bad = db.ByPath("Textures/broken.png");
   CHECK(bad && !cache.Get(*bad, d / bad->path, t) && cache.GetStats().failed == 1);
   fs::remove_all(project);
+}
+
+TEST_CASE("assets: references, unused assets and replacing one asset by another (queue 2-5b)") {
+  fs::path d = Fresh("bdg_refs_test");
+  // a scene naming a model by file name and a material by stem; the material naming a texture by path;
+  // a script naming a sound by quoted path; one texture and one model nobody uses
+  Write(d / "Scenes/Level.scene", "{\"v\":1,\"scene\":\"Level\"}\n"
+                                  "{\"id\":\"g1\",\"name\":\"Rock\",\"MeshRenderer\":{\"mesh\":\"Rock.glb\",\"material\":\"M_Rock\"}}\n");
+  Write(d / "Materials/M_Rock.material", "{\"material\":\"M_Rock\"}\n{\"param\":\"BaseColorMap\",\"type\":\"texture\",\"value\":\"Textures/Rock_D.png\"}\n");
+  Write(d / "Materials/M_Moss.material", "{\"material\":\"M_Moss\"}\n");
+  Write(d / "Textures/Rock_D.png", "png-bytes-1");
+  Write(d / "Textures/Unused.png", "png-bytes-2");
+  Write(d / "Models/Rock.glb", "glb-bytes");
+  Write(d / "Models/Old.glb", "glb-bytes-2");
+  Write(d / "Audio/Hit.wav", "wav");
+  Write(d / "Scripts/Hit.cs", "class Hit { string clip = \"Audio/Hit.wav\"; }\n");
+  AssetDatabase db;
+  std::string err;
+  CHECK(db.Open(d.string(), &err));
+  AssetRefIndex index;
+  index.Build(db);
+  std::vector<AssetRef> model = index.RefsTo("Models/Rock.glb");
+  CHECK(model.size() == 1 && model[0].from == "Scenes/Level.scene" && model[0].where == "g1 Rock · MeshRenderer.mesh" && model[0].token == "Rock.glb");
+  std::vector<AssetRef> mat = index.RefsTo("Materials/M_Rock.material");
+  CHECK(mat.size() == 1 && mat[0].token == "M_Rock");
+  std::vector<AssetRef> tex = index.RefsTo("Textures/Rock_D.png");
+  CHECK(tex.size() == 1 && tex[0].from == "Materials/M_Rock.material" && tex[0].where == "BaseColorMap · value");
+  std::vector<AssetRef> wav = index.RefsTo("Audio/Hit.wav");
+  CHECK(wav.size() == 1 && wav[0].from == "Scripts/Hit.cs" && wav[0].where == "line 1");
+  // unused: reachable from neither the scene nor the script (the texture through the material counts as used)
+  std::vector<std::string> unused = index.Unused();
+  CHECK(unused == std::vector<std::string>({"Materials/M_Moss.material", "Models/Old.glb", "Textures/Unused.png"}));
+  // an open document (the editor's unsaved scene) is a root too
+  index.Build(db, {{"open", "{\"id\":\"g9\",\"MeshRenderer\":{\"mesh\":\"Old.glb\"}}\n"}});
+  CHECK(index.RefsTo("Models/Old.glb").size() == 1 && index.Unused().size() == 2);
+  // replace: the same kind of name, only exact strings, the rest of the file untouched
+  const std::string before = Read(d / "Scenes/Level.scene");
+  int count = 0;
+  std::vector<std::string> files = ReplaceReferencesOnDisk(db, "Materials/M_Rock.material", "Materials/M_Moss.material", &count);
+  CHECK(files == std::vector<std::string>({"Scenes/Level.scene"}) && count == 1);
+  std::string after = Read(d / "Scenes/Level.scene");
+  CHECK(after.find("\"material\":\"M_Moss\"") != std::string::npos && after.size() == before.size());
+  CHECK(Read(d / "Materials/M_Rock.material").find("M_Rock") != std::string::npos); // its own file is left alone
+  ReplaceReferencesOnDisk(db, "Textures/Rock_D.png", "Textures/Unused.png", &count);
+  CHECK(count == 1 && Read(d / "Materials/M_Rock.material").find("\"Textures/Unused.png\"") != std::string::npos);
+  fs::remove_all(d);
 }

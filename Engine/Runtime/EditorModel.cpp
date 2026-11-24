@@ -529,10 +529,13 @@ void EditorModel::Rebuild() {
     auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
     nameRow.padR = 10; nameRow.padT = 2; nameRow.padB = 2;
     nameRow.crossAlign = Align::Center;
-    if (multi) {
-      auto& l = nameRow.Add(MakeLabel(std::format("{} objects selected", targets.size())));
-      l.fontSize = 15;
-      nameRow.padL = 10;
+    if (multi) { // batch rename (2-5b): '#' numbers, '*' the current name
+      auto& name = nameRow.Add(MakeField("insp.name", std::format("{}개 이름", targets.size()), kMixed));
+      name.width = Length::Fill();
+      name.onCommit = [this](Widget& w) {
+        if (w.text2.empty() || w.text2 == kMixed) { needRebuild_ = true; return; }
+        RenameSelection(w.text2);
+      };
     } else {
       auto& name = nameRow.Add(MakeField("insp.name", "Name", o->name)); // F2 focuses it; Enter renames (command)
       name.width = Length::Fill();

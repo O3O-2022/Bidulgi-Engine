@@ -2,6 +2,7 @@
 // Editor data side: the open scene, the command bus, the selection, and the Hierarchy / Inspector panels
 // built from them by reflection. Panels never write the scene directly: a committed field becomes a "set"
 // command; Ctrl+Z / Ctrl+Y undo and redo through the bus. (Temporary home until the editor module exists.)
+#include "Assets/AssetRefs.h"
 #include "Core/Command.h"
 #include "Scene/Scene.h"
 #include "UI/UI.h"
@@ -56,6 +57,24 @@ public:
   void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
   AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
+  // References (queue 2-5b, Assets/AssetRefs): on disk plus the open scene (as "열린 장면").
+  std::vector<AssetRef> FindReferences(const std::string& assetPath);
+  std::vector<std::string> FindUnused();
+  // Deletes the selected Project item (files and .meta to the recycle bin). In use somewhere and not `force`:
+  // nothing happens, the panel shows the warning and the places, and a second press deletes.
+  bool DeleteProjectItem(bool force = false);
+  // Every reference to `from` becomes the same kind of name for `to`: the open scene through commands (one undo
+  // step), the other project files on disk. Returns the number of references changed.
+  int ReplaceReferences(const std::string& from, const std::string& to);
+  // Renames the selected objects from a pattern (one undo step): '#' runs are numbers from 1 ("Tree_##" -> Tree_01,
+  // Tree_02 ...), '*' is the current name ("Old_*", "*_LOD0"); anything else is the same name for all.
+  int RenameSelection(const std::string& pattern);
+  static std::string ApplyNamePattern(const std::string& pattern, const std::string& current, int number);
+  enum class ProjectView { Files, References, Unused };
+  ProjectView projectView = ProjectView::Files; // what the Project panel lists under its tools
+  void ShowProjectView(ProjectView v) { projectView = v; needProject_ = true; }
+  void SelectProjectItem(const std::string& path) { projectSelected_ = path; needProject_ = true; }
+  bool DeleteWarningShown() const { return !deleteWarning_.empty(); }
   std::string scenePath, sceneName = "Main";
 
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
@@ -87,6 +106,9 @@ private:
   std::string DisplayFor(const std::vector<std::string>& targets, const std::string& path, FieldType type) const;
   static Command SetComp(const std::string& id, const std::string& type, const std::string& value);
   bool needRebuild_ = false, needRefresh_ = false, needProject_ = false;
+  std::string deleteWarning_;                 // the item the last delete warned about (second press deletes)
+  std::vector<AssetRef> shownRefs_;           // References view
+  std::vector<std::string> shownUnused_;      // Unused view
   Widget* project_ = nullptr;
   std::string projectFolder_, projectSelected_; // current folder; selected item (path, or folder/stem of a C++ pair)
   std::string showIfState_; // which ShowIf fields are visible; a change rebuilds the Inspector

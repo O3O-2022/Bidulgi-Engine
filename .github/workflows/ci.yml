@@ -343,6 +343,22 @@ jobs:
           if ($log -match '(budget: Android[^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 2-5b references: a small project (a model and a material the open scene uses, a texture the material uses,
+          # unused files), find references, unused, delete warning, delete, replace in the open scene, batch rename
+          Remove-Item -Recurse -Force "$PWD/ci-refs" -ErrorAction SilentlyContinue
+          $refs = "$PWD/ci-refs/Assets"
+          foreach ($d in 'Characters','Materials','Textures','Models') { New-Item -ItemType Directory -Force "$refs/$d" | Out-Null }
+          Set-Content -Path "$refs/Characters/Knight.glb" -Value 'knight' -NoNewline
+          Set-Content -Path "$refs/Characters/Other.glb" -Value 'other' -NoNewline
+          Set-Content -Path "$refs/Models/Unused.glb" -Value 'unused' -NoNewline
+          Set-Content -Path "$refs/Textures/knight.png" -Value 'png1' -NoNewline
+          Set-Content -Path "$refs/Textures/old.png" -Value 'png2' -NoNewline
+          [IO.File]::WriteAllText("$refs/Materials/M_Knight.material", "{`"material`":`"M_Knight`"}`n{`"param`":`"BaseColorMap`",`"type`":`"texture`",`"value`":`"Textures/knight.png`"}`n")
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_REFS_TEST = '1'; BDG_ASSETS = $refs } 28
+          if ($log -notmatch 'refs test: refs=1 jump=1 unused=1 warn=1 delete=1 replace=1 undo=1 rename=1') { $errors += 'references / unused / replace test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

@@ -101,7 +101,8 @@ struct bdg_engine {
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
-  bool playTest = false, budgetTest = false;
+  bool playTest = false, budgetTest = false, refsTest = false;
+  std::string refsTestValues[8];
   std::string budgetTestValues[8];
   std::string playTestValues[13];
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
@@ -1380,6 +1381,88 @@ void InjectPlayTest(bdg_engine* e, int frame) {
   }
 }
 
+// Scripted check of 2-5b (BDG_REFS_TEST=1, BDG_ASSETS = the small project CI writes): references of the knight
+// model (from the open scene), a click on one selects the object, the unused list (a texture reached through the
+// material counts as used), a delete warning for a used asset, deleting an unused one, replacing the model in the
+// open scene (one undo step) and a batch rename of two objects.
+void InjectRefsTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen) return;
+  auto* v = e->refsTestValues;
+  const float s = e->editor->Scale();
+  auto click = [&](const std::string& id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("refs test: {} is not clickable", id); return; }
+    const float x = (w->x + w->w * 0.5f) * s, y = (w->y + w->h * 0.5f) * s;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent({T::MouseDown, x, y, 1});
+    e->window.InjectEvent({T::MouseUp, x, y, 1});
+  };
+  auto mesh = [&](const char* id) {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("MeshRenderer") : nullptr;
+    return c ? static_cast<const bdg::MeshRenderer*>(c->data)->mesh : std::string();
+  };
+  static size_t depth0;
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("project");
+    m->SelectProjectItem("Characters/Knight.glb");
+    m->Select("g8");
+  }
+  if (frame == 4) click("p.refs");
+  if (frame == 6) {
+    const auto refs = m->FindReferences("Characters/Knight.glb");
+    v[0] = std::format("{}", refs.size() == 1 && refs[0].from == "열린 장면" && refs[0].where == "g6 Player · MeshRenderer.mesh" ? 1 : 0);
+    click("p.ref.0"); // selects the Player
+  }
+  if (frame == 8) {
+    v[1] = std::format("{}", m->Selected() == "g6" ? 1 : 0);
+    click("p.unused");
+  }
+  if (frame == 10) {
+    const auto unused = m->FindUnused();
+    auto has = [&](const char* p) { return std::find(unused.begin(), unused.end(), p) != unused.end(); };
+    v[2] = std::format("{}", has("Textures/old.png") && has("Models/Unused.glb") && !has("Textures/knight.png") && !has("Characters/Knight.glb") &&
+                                     e->editor->Find("p.unused.Models/Unused.glb") ? 1 : 0);
+    m->ShowProjectView(bdg::EditorModel::ProjectView::Files);
+    m->SelectProjectItem("Characters/Knight.glb");
+  }
+  if (frame == 12) click("p.delete"); // used: only a warning
+  if (frame == 14) {
+    v[3] = std::format("{}", m->DeleteWarningShown() && e->assets.ByPath("Characters/Knight.glb") ? 1 : 0);
+    m->SelectProjectItem("Models/Unused.glb");
+  }
+  if (frame == 16) click("p.delete"); // unused: deleted at once
+  if (frame == 18) {
+    v[4] = std::format("{}", !e->assets.ByPath("Models/Unused.glb") && !std::filesystem::exists(std::filesystem::path(e->assets.Root()) / "Models/Unused.glb")
+                                 ? 1 : 0);
+    depth0 = m->bus.UndoDepth();
+    m->ReplaceReferences("Characters/Knight.glb", "Characters/Other.glb");
+  }
+  if (frame == 20) {
+    v[5] = std::format("{}", mesh("g6") == "Other.glb" && m->bus.UndoDepth() == depth0 + 1 ? 1 : 0);
+    std::string err;
+    m->bus.Undo(&err);
+  }
+  if (frame == 22) {
+    v[6] = std::format("{}", mesh("g6") == "Knight.glb" ? 1 : 0);
+    m->SetSelection({"g6", "g8"});
+  }
+  if (frame == 24) {
+    bdg::Widget* name = e->editor->Find("insp.name");
+    if (name && name->onCommit) {
+      name->text2 = "Hero_##";
+      name->onCommit(*name);
+    }
+  }
+  if (frame == 26) {
+    const bdg::SceneObject* a = m->scene.Find("g6");
+    const bdg::SceneObject* b = m->scene.Find("g8");
+    v[7] = std::format("{}", a && b && a->name == "Hero_01" && b->name == "Hero_02" ? 1 : 0);
+  }
+}
+
 // Scripted check of 3-7 (BDG_BUDGET_TEST=1): the Budget chip opens the bars, the toolbar badge switches the platform
 // to Android, the bars hold the last render's numbers against Android's medium budget; a tight project budget
 // turns the chip to its warning and the heaviest object can be selected from the panel.
@@ -1951,6 +2034,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->snapTest = std::getenv("BDG_SNAP_TEST") != nullptr;
   e->playTest = std::getenv("BDG_PLAY_TEST") != nullptr;
   e->budgetTest = std::getenv("BDG_BUDGET_TEST") != nullptr;
+  e->refsTest = std::getenv("BDG_REFS_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2381,6 +2465,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->snapTest && !e->showGallery) InjectSnapTest(e, frames, scale);
     if (e->playTest && !e->showGallery) InjectPlayTest(e, frames);
     if (e->budgetTest && !e->showGallery) InjectBudgetTest(e, frames);
+    if (e->refsTest && !e->showGallery) InjectRefsTest(e, frames);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
@@ -2721,6 +2806,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->refsTest) {
+        auto* v = e->refsTestValues;
+        bdg::LogInfo("refs test: refs={} jump={} unused={} warn={} delete={} replace={} undo={} rename={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
       }
       if (e->budgetTest) {
         auto* v = e->budgetTestValues;
