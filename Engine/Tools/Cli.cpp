@@ -8,6 +8,7 @@
 #include "Core/Log.h"
 #include "Core/Reflection.h"
 #include "Scene/DefaultScene.h"
+#include "Scene/GraphLibrary.h"
 #include "Scene/SceneFile.h"
 #include <yyjson.h>
 #include <algorithm>
@@ -522,6 +523,37 @@ int CmdRefs(Ctx& c, bool unused) {
   return 0;
 }
 
+// Graph nodes from reflection (E-8): bdg nodes [filter]
+int CmdNodes(Ctx& c) {
+  const auto lib = BuildGraphNodeLibrary(c.pos.empty() ? "" : c.pos[0]);
+  for (const GraphNodeDesc& n : lib) {
+    const char* kind = n.kind == GraphNodeDesc::Kind::Call ? "call" : n.kind == GraphNodeDesc::Kind::Pure ? "pure"
+                     : n.kind == GraphNodeDesc::Kind::Get ? "get" : "set";
+    c.out += std::format("{:<5} {}\n", kind, n.Signature());
+  }
+  c.out += std::format("{} nodes\n", lib.size());
+  return 0;
+}
+
+// bdg call <target> <Node.Id> [args...]: runs a node like the Graph will (calls and sets are undoable commands)
+int CmdCall(Ctx& c) {
+  if (c.pos.size() < 2) { c.err += "사용법: bdg call <target> <Component.Function | Component.Set field | ...> [인자...]\n"; return 2; }
+  Project pr;
+  if (!Load(c, pr, "")) return 1;
+  const auto lib = BuildGraphNodeLibrary();
+  const GraphNodeDesc* node = FindGraphNode(lib, c.pos[1]);
+  if (!node) { c.err += std::format("오류: 노드 '{}'가 없음 → `bdg nodes {}`로 찾아보세요\n", c.pos[1], c.pos[1]); return 1; }
+  std::vector<std::string> args;
+  for (size_t i = 2; i < c.pos.size(); ++i) args.push_back(ToJsonValue(c.pos[i]));
+  const std::string before = WriteSceneText(pr.scene, pr.sceneName);
+  CommandBus bus(pr.scene);
+  std::string result, error;
+  if (!RunGraphNode(bus, pr.scene, *node, c.pos[0], args, &result, &error)) { c.err += "오류: " + error + "\n"; return 1; }
+  if (!result.empty()) c.out += result + "\n";
+  const bool changes = node->kind == GraphNodeDesc::Kind::Call || node->kind == GraphNodeDesc::Kind::Set;
+  return !changes || Save(c, pr, bus, before) ? 0 : 1;
+}
+
 int CmdNew(Ctx& c) {
   if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty]\n"; return 2; }
   SceneTemplate t = SceneTemplate::Basic3D;
@@ -544,6 +576,7 @@ const char* kHelp =
     "  set <target> path=value ... [--dry-run] | add <id> [--name N] [--parent P] [--pos x,y,z] [--comp Type]\n"
     "  del <id>... | addcomp <id> <Type> | rmcomp <id> <Type>\n"
     "  validate [scene] | refs <asset> | unused\n"
+    "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
     "공통: --project <dir> --scene <이름 또는 경로>\n";
 
 } // namespace
@@ -572,6 +605,8 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   if (cmd == "refs") return CmdRefs(c, false);
   if (cmd == "unused") return CmdRefs(c, true);
   if (cmd == "new") return CmdNew(c);
+  if (cmd == "nodes") return CmdNodes(c);
+  if (cmd == "call") return CmdCall(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;

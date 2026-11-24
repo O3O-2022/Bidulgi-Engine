@@ -45,6 +45,7 @@ enum FieldFlags : uint32_t {
   kAnimatable = 16, // can be keyed on the timeline
   kCallable = 32,   // BFUNCTION: callable from scripts, terminal and AI
   kButton = 64,     // BFUNCTION(Button): a button in the Inspector (runs as a "call" command, undoable)
+  kPure = 128,      // BFUNCTION(Pure): only computes a value (const, no side effects): a Graph node without exec pins (E-8)
 };
 
 struct FieldMeta {

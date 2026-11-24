@@ -308,7 +308,11 @@ def generate(types, enums, include, stem):
                        f"offsetof(Self, {f['name']}), {' | '.join(flags) or '0u'}, {meta}));")
         for fn in t["functions"]:
             names = ", ".join(cpp_str(n) for n in fn["params"])
-            fflags = "::bdg::kCallable" + (" | ::bdg::kButton" if "Button" in fn["flags"] else "")
+            unknown = [x for x in fn["flags"] if x not in ("Callable", "Button", "Pure")]
+            if unknown:
+                raise ParseError(f"{path}: {t['name']}.{fn['name']}: unknown BFUNCTION flag {unknown[0]} (use Callable, Button, Pure)")
+            fflags = ("::bdg::kCallable" + (" | ::bdg::kButton" if "Button" in fn["flags"] else "")
+                      + (" | ::bdg::kPure" if "Pure" in fn["flags"] else ""))
             out.append(f"    t.functions.push_back(::bdg::reflect::Function({cpp_str(fn['name'])}, &Self::{fn['name']}, "
                        f"{fflags}, {{{names}}}));")
         out += ["    return t;", "  }();", "  return info;", "}", ""]

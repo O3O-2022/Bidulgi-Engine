@@ -120,3 +120,22 @@ TEST_CASE("cli: refs and unused over the project's assets and scenes (queue 2-7)
   CHECK(Cli(p, {"validate"}).code == 0);
   fs::remove_all(base);
 }
+
+TEST_CASE("cli: nodes and call run Graph nodes on a saved scene (queue E-8)") {
+  const fs::path base = Fresh(u8"bdg_cli_nodes");
+  CHECK(Cli(base, {"new", "p"}).code == 0);
+  const fs::path p = base / "p";
+  Run r = Cli(p, {"nodes", "Health."});
+  CHECK(r.code == 0 && Has(r.out, "call  Health.Damage(exec, target: object, amount: int) -> exec, result: int") && Has(r.out, "pure  Health.Ratio("));
+  CHECK(Cli(p, {"add", "hero", "--comp", "Health"}).code == 0);
+  r = Cli(p, {"call", "hero", "Health.Damage", "30"});
+  CHECK(r.code == 0 && r.out == "70\n");
+  r = Cli(p, {"call", "hero", "Health.Ratio"});
+  CHECK(r.code == 0 && r.out == "0.7\n");
+  CHECK(Cli(p, {"call", "hero", "Health.Set current", "5"}).code == 0);
+  r = Cli(p, {"query", "hero", "-f", "Health.current"});
+  CHECK(Has(r.out, "hero\thero\t5\n"));
+  CHECK(Cli(p, {"call", "hero", "Health.Nope"}).code == 1);
+  CHECK(Cli(p, {"call", "hero", "Health.Damage"}).code == 1); // missing argument
+  fs::remove_all(base);
+}

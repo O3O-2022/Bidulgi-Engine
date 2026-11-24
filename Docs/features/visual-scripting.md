@@ -168,6 +168,22 @@ on Update:
 - 패널 배치는 언리얼과 같아서 익숙하고, 겉모양은 엔진 다른 화면과 같습니다.
 - 캔버스 아래 Text 탭에서 지금 그래프가 어떤 텍스트로 저장되는지 바로 봅니다.
 
+## 코드에서 노드로: 함수·변수 노출 (2026-11-25, E-8)
+
+언리얼에서 액터를 C++ 클래스로 만들고 `UFUNCTION(BlueprintCallable)`로 블루프린트에 내보내듯, **무거운 계산은 코드(C++·C#·Lua)로, 조립은 Graph로** 합니다. 어느 언어로 만들든 같은 리플렉션 레지스트리에 등록되고, Graph 노드 목록은 거기서 만들어집니다(`Scene/GraphLibrary.*`).
+
+| 코드 | 노드 | 실행 |
+|---|---|---|
+| C++ `BFUNCTION(Callable) int Damage(int amount);` (C# `[Callable]`, Lua `bdg.export`) | `Health.Damage` — exec 입출력, target, amount → result | 명령 버스의 `call` 명령: **Undo 한 번**, 로그에 남음 |
+| C++ `BFUNCTION(Pure) float Ratio() const;` (C# `[Pure]`) | `Health.Ratio` — exec 핀 없는 값 노드 | 읽기만(명령 없음) |
+| `BFUNCTION(Button)` | 인스펙터 버튼이면서 Callable 노드 | `call` 명령 |
+| `BPROPERTY(Edit)` 필드 | `Health.Get current` · `Health.Set current` | Set은 `set` 명령(Undo) |
+| `BPROPERTY(ReadOnly)` 필드 | Get만 | |
+
+- 상속: 컴포넌트가 다른 리플렉션 타입을 상속하면 부모의 함수·필드도 노드가 됩니다(언리얼의 부모 클래스 함수와 같음).
+- 노드 이름·핀 타입은 `bdg nodes [검색어]`로 텍스트 목록을 볼 수 있고, `bdg call <물체> Health.Damage 30`으로 에디터 없이 한 노드를 실행해 볼 수 있습니다(AI가 노드를 쓰기 전에 확인하는 길).
+- C#(M4 4-3)과 Lua(M5 5-3)는 각각의 속성/선언을 같은 `TypeInfo`·`FunctionInfo`로 등록합니다. Graph VM(5-1)은 이 목록과 `RunGraphNode`를 그대로 씁니다.
+
 ## 다른 시스템과의 관계
 
 > 코드와 서로 부르는 방법(상속, 함수·변수·이벤트 노출, 인터페이스, 생성되는 프록시)은 [interop](../architecture/interop.md)에 정리했습니다.

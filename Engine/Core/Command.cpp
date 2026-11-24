@@ -200,7 +200,8 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
           std::free(s);
         }
       }
-      if (!Registry::Call(c->data, *c->type, a.Str("function"), args, nullptr, error)) return false;
+      lastResult_.clear();
+      if (!Registry::Call(c->data, *c->type, a.Str("function"), args, &lastResult_, error)) return false;
       if (Registry::ToJson(c->data, vt) == before) { /* nothing changed: still a command (it ran) */ }
     }
     inv.name = "setcomp";

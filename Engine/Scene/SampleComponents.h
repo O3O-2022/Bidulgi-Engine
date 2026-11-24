@@ -21,6 +21,9 @@ public:
   BPROPERTY(Edit, Replicated) int32_t current = 100;
 
   BFUNCTION(Button) void Revive() { current = maxHealth; } // Inspector button
+  // Graph nodes (E-8): a callable with a parameter and a result, and a pure value
+  BFUNCTION(Callable) int32_t Damage(int32_t amount) { current = current > amount ? current - amount : 0; return current; }
+  BFUNCTION(Pure) float Ratio() const { return maxHealth > 0 ? (float)current / (float)maxHealth : 0.f; }
 };
 
 BCLASS(Component, Lua)

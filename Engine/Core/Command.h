@@ -45,6 +45,8 @@ public:
   std::function<void(const Command&)> onChanged; // after every execute / undo / redo (UI refresh)
 
   const std::vector<std::string>& Log() const { return log_; }
+  // The JSON return value of the last "call" command ("" for void functions): what a Graph node outputs (E-8).
+  const std::string& LastResult() const { return lastResult_; }
   bool SaveLog(const std::string& path) const;
   bool ExecuteLine(std::string_view jsonLine, std::string* error = nullptr);
   bool Replay(const std::string& path, std::string* error = nullptr, size_t* count = nullptr);
@@ -70,6 +72,7 @@ public:
   bool JumpTo(size_t depth, std::string* error = nullptr); // undo / redo until UndoDepth() == depth
 
 private:
+  std::string lastResult_;
   struct Entry {
     std::vector<Command> forward, inverse; // inverse in the order to apply (reverse of forward)
     std::string label, mergeKey, source;

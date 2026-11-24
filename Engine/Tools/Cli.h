@@ -12,6 +12,8 @@
 //   bdg del <id>...   bdg addcomp <id> <Type>   bdg rmcomp <id> <Type>
 //   bdg validate                                   scene, references, orphan .meta, asset rules; exit 1 on errors
 //   bdg refs <asset>   bdg unused                  2-5b
+//   bdg nodes [filter]                             Graph nodes the reflected components offer (E-8)
+//   bdg call <target> <Node.Id> [args...]          run one: Health.Damage 10, Health.Ratio, Health.Set current 5
 // Common options: --project <dir> (default: the working folder), --scene <name or path> (default Scenes/Main.scene).
 // Writes save the scene and append the commands to <project>/.cache/bdg-commands.jsonl.
 #include <filesystem>
