@@ -75,6 +75,22 @@ std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, U
 }
 
 // ---- Helpers -------------------------------------------------------------------------------
+void UIContext::SetIcons(const IconAtlas* icons) {
+  icons_ = icons;
+  batch_.SetIconAtlas(icons ? icons->texture : TextureHandle{});
+}
+
+bool UIContext::HasIcon(const std::string& name) const { return icons_ && icons_->uv.count(name) > 0; }
+
+bool UIContext::Icon(const std::string& name, float x, float y, float size, Color tint) {
+  if (!icons_ || name.empty()) return false;
+  auto it = icons_->uv.find(name);
+  if (it == icons_->uv.end()) return false;
+  const auto& uv = it->second;
+  batch_.Icon(x, y, size, size, uv[0], uv[1], uv[2], uv[3], tint);
+  return true;
+}
+
 float UIContext::Text(float x, float y, float size, Color c, const std::string& s, bool mono) { return font_ ? font_->DrawText(batch_, x, y, size, c, s, mono) : 0.f; }
 float UIContext::Measure(float size, const std::string& s, bool mono) const { return font_ ? font_->Measure(size, s, mono) : s.size() * size * 0.55f; }
 float UIContext::MeasureSpaced(float size, const std::string& s, float ls) const {
@@ -331,7 +347,7 @@ void UIContext::DrawWidget(Widget& w) {
       float cx = w.x + 16, cy = w.y + 16;
       if (w.collapsed) { b.Line(cx - 2, cy - 4, cx + 2, cy, 1.5f, t.C("fg-dim")); b.Line(cx + 2, cy, cx - 2, cy + 4, 1.5f, t.C("fg-dim")); }
       else { b.Line(cx - 4, cy - 2, cx, cy + 2, 1.5f, t.C("fg-dim")); b.Line(cx, cy + 2, cx + 4, cy - 2, 1.5f, t.C("fg-dim")); }
-      b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
+      if (!Icon(w.text2.empty() ? ComponentIconName(w.text) : "comp-script", w.x + 25, w.y + 8, 16)) // a language badge: a script b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
       Text(w.x + 44, w.y + (32 - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
       if (!w.text2.empty()) {
         std::string key = w.text2 == "C#" ? "lang-cs" : w.text2 == "C++" ? "lang-cpp" : w.text2 == "Lua" ? "lang-lua"
@@ -442,7 +458,10 @@ void UIContext::DrawWidget(Widget& w) {
       float kx = w.x + s5 + w.indent * 12.f;
       float ky = w.y + (w.h - 11) * 0.5f;
       Color dim = t.C("fg-dim");
-      if (w.text2 == "Camera") {
+      const char* rowIcon = w.text2 == "Camera" ? "comp-camera" : w.text2 == "Light" ? "comp-light" : w.text2 == "Prefab" ? "obj-prefab"
+                          : w.text2 == "Scene" ? "obj-scene" : w.text2 == "Mesh" ? "comp-mesh" : "obj-object";
+      if (Icon(rowIcon, kx - 2, w.y + (w.h - 15) * 0.5f, 15)) {
+      } else if (w.text2 == "Camera") {
         b.Rect(kx, ky + 2, 8, 7, {0, 0, 0, 0}, 1.5f, 1.5f, dim);
         b.Line(kx + 8, ky + 5.5f, kx + 11, ky + 3, 1.5f, dim); b.Line(kx + 8, ky + 5.5f, kx + 11, ky + 8, 1.5f, dim);
       } else if (w.text2 == "Light") {

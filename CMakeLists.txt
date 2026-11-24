@@ -149,6 +149,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/ImageCompare.h Engine/Core/ImageCompare.cpp
   Engine/UI/Theme.h        Engine/UI/Theme.cpp
   Engine/UI/UI.h           Engine/UI/UI.cpp
+  Engine/UI/IconAtlas.h    Engine/UI/IconAtlas.cpp
   Engine/UI/Dock.h         Engine/UI/Dock.cpp
   Engine/UI/Shortcuts.h    Engine/UI/Shortcuts.cpp
   Engine/Runtime/Screens.h Engine/Runtime/Screens.cpp

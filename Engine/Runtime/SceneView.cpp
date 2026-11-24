@@ -1278,11 +1278,17 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
                            lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_},
                           {"", toolChip, false}, {"", spaceChip, false}, {"snap", snapChip, snap.always},
                           {several ? "align" : "", several ? "Align" : "", alignOpen_}};
+  const std::string toolIcon = !model ? "" : model->tool == "move" ? "tool-move" : model->tool == "rotate" ? "tool-rotate"
+                             : model->tool == "scale" ? "tool-scale" : model->tool == "measure" ? "tool-measure"
+                             : model->tool == "blockout" ? "tool-blockout" : model->tool == "view" ? "tool-view" : "tool-select";
   for (const ChipDef& chip : defs) {
     if (chip.text.empty()) continue;
-    float cw = ui.Measure(11, chip.text) + 18;
+    const std::string icon = chip.text == toolChip ? toolIcon : chip.name == "snap" ? "tool-snap" : ""; // Assets/Icons
+    const float iw = !icon.empty() && ui.HasIcon(icon) ? 17.f : 0.f;
+    float cw = ui.Measure(11, chip.text) + 18 + iw;
     b.Rect(px, w.y + 8, cw, 22, chip.on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-    ui.Text(px + 9, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
+    if (iw > 0) ui.Icon(icon, px + 7, w.y + 11.5f, 15);
+    ui.Text(px + 9 + iw, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
     if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, w.y + 8, cw, 22});
     px += cw + 6;
   }

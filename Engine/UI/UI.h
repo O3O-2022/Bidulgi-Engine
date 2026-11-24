@@ -1,6 +1,7 @@
 #pragma once
 #include "Platform/Window.h"
 #include "RHI/RHI.h"
+#include "UI/IconAtlas.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -131,11 +132,17 @@ public:
   Batch2D& Batch() { return batch_; }
   const Theme& Tokens() const { return theme_; }
   float Text(float x, float y, float size, Color c, const std::string& s, bool mono = false);
+  // Editor icons (UI/IconAtlas). Icon() draws one by name in a size x size box; false when there is no such icon
+  // (the caller draws its fallback).
+  void SetIcons(const IconAtlas* icons);
+  bool Icon(const std::string& name, float x, float y, float size, Color tint = {1, 1, 1, 1});
+  bool HasIcon(const std::string& name) const;
   float Measure(float size, const std::string& s, bool mono = false) const;
   float MeasureSpaced(float size, const std::string& s, float letterSpacingEm) const; // + CSS letter-spacing per character
   float NormalLineHeight(float size) const;
 
 private:
+  const IconAtlas* icons_ = nullptr;
   void Measure(Widget& w);
   void Arrange(Widget& w, float x, float y, float width, float height);
   void DrawWidget(Widget& w);

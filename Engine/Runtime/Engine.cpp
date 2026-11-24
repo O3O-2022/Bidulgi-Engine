@@ -24,6 +24,7 @@
 #include "UI/Shortcuts.h"
 #include "UI/Theme.h"
 #include "UI/UI.h"
+#include "UI/IconAtlas.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -95,6 +96,7 @@ struct bdg_engine {
   bdg::Font font;
   bdg::Theme theme;
   std::unique_ptr<bdg::UIContext> editor, gallery;
+  bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bool showGallery = false, selfTest = false, stress = false, hasFont = false, dockTest = false;
   float dockTestW0 = 0; // hierarchy width before the splitter drag
   std::unique_ptr<bdg::EditorModel> model; // scene + command bus behind the editor panels
@@ -1755,9 +1757,19 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   if (desc->dump_tokens_path)
     bdg::LogInfo("token dump {}: {}", e->theme.DumpJSON(desc->dump_tokens_path) ? "saved" : "FAILED", desc->dump_tokens_path);
 
+  { // editor icons: Assets/Icons (tools/make_icons.py draws them with PhotoCraft); BDG_ICONS = another folder
+    const char* iconEnv = std::getenv("BDG_ICONS");
+    std::filesystem::path iconDir = iconEnv ? std::filesystem::path(iconEnv)
+                                            : std::filesystem::path(FindUp("BDG_NO_SUCH_VARIABLE", {"Assets/Icons/folder.png"})).parent_path();
+    std::string iconErr;
+    if (!iconDir.empty() && bdg::BuildIconAtlas(e->rhi, iconDir, e->icons, &iconErr))
+      bdg::LogInfo("icons: {} loaded ({}x{} atlas)", e->icons.uv.size(), e->icons.w, e->icons.h);
+    else bdg::LogWarn("icons not found: plain shapes are drawn instead ({})", iconErr.empty() ? "no Assets/Icons" : iconErr);
+  }
   bdg::Font* font = e->hasFont ? &e->font : nullptr;
   mark("tokens");
   e->editor = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
+  if (!(screen && std::string(screen).rfind("parity:", 0) == 0)) e->editor->SetIcons(&e->icons); // parity: the design's shapes
   e->editor->SetRoot(bdg::BuildEditorScreen());
   if (screen && std::string(screen).rfind("parity:", 0) == 0) { // design parity test: one component preview
     std::string component = std::string(screen).substr(7);
@@ -1952,6 +1964,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   mark("assets");
   e->gallery = std::make_unique<bdg::UIContext>(e->batch, font, e->theme);
+  e->gallery->SetIcons(&e->icons);
   e->gallery->SetRoot(bdg::BuildGalleryScreen(&e->clicks));
   e->gallery->SetWindow(&e->window);
   e->gallery->SetKeyHandler([e](const bdg::InputEvent& ev) { return e->shortcuts.Handle(ev); }); // F1 back, bug report
@@ -2513,6 +2526,7 @@ void bdg_engine_destroy(bdg_engine* e) {
   if (e->sceneView) e->sceneView->Shutdown();
   e->rhi.DestroyRenderTarget(e->viewRT);
   if (e->r3d) e->r3d->Shutdown();
+  e->rhi.DestroyTexture(e->icons.texture);
   e->font.Shutdown();
   e->batch.Shutdown();
   e->rhi.Shutdown();

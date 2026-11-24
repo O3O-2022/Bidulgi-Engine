@@ -1,6 +1,7 @@
 #include "Runtime/Screens.h"
 #include "Render2D/Batch2D.h"
 #include "UI/Dock.h"
+#include "UI/IconAtlas.h"
 #include "UI/Theme.h"
 #include <algorithm>
 #include <cstdio>
@@ -116,6 +117,7 @@ void DrawSceneViewV2(Widget& w, UIContext& ui) {
 
 // File-type icon: page with a coloured language strip, or a thumbnail-like swatch for assets.
 void DrawFileIcon(UIContext& ui, float x, float y, float s, const std::string& name) {
+  if (ui.Icon(FileIconName(name), x + s * 0.08f, y + s * 0.08f, s * 0.84f)) return; // PhotoCraft icon set (Assets/Icons)
   const Theme& t = ui.Tokens();
   Batch2D& b = ui.Batch();
   std::string ext = name.substr(name.find_last_of('.') == std::string::npos ? name.size() : name.find_last_of('.') + 1);
