@@ -4,6 +4,7 @@
 // reference zone: axis arrows, an unlit 18% grey card, a ColorChecker, a letter texture board, a winding probe
 // (one counter-clockwise and one clockwise quad) and a depth probe. Check() reads the rendered pixels back and
 // tells whether coordinates, winding, depth, gamma and UV direction behave as Core/Space.h says.
+// Stage 1b (queue 3-4): a floating box over the ground (sun shadow), a red point light and a white spot light.
 #include "Render3D/Renderer3D.h"
 #include <filesystem>
 #include <string>
@@ -39,7 +40,7 @@ public:
 private:
   RHI* rhi_ = nullptr;
   Renderer3D* renderer_ = nullptr;
-  Mesh3D plane_, sphere_, quad_, quadCW_, cylinder_, cone_;
+  Mesh3D plane_, sphere_, quad_, quadCW_, cylinder_, cone_, box_;
   Model3D probe_, model_;
   struct AssetModel { std::string name; Model3D model; glm::vec3 center{0}; std::string facts; bool ok = false; };
   std::vector<AssetModel> assets_;

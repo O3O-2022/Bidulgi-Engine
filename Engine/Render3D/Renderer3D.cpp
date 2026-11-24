@@ -4,13 +4,36 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace bdg {
 namespace {
+// Frame constants shared by every 3D shader (std140; FrameData below matches it).
+//   uSun = (cos of half the sun disk angle, 1 = no disk, -, -); uShadow = (on, depth bias, normal offset, map size)
+const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
+  mat4 uViewProj; mat4 uInvViewProj; mat4 uLightViewProj;
+  vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; vec4 uZenith; vec4 uHorizon; vec4 uSun; vec4 uShadow; vec4 uCounts;
+};
+)";
+// Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
+const char* kSkyFn = R"(vec3 SkyColor(vec3 d, float blur) {
+  vec3 up = mix(uHorizon.rgb, uZenith.rgb, pow(clamp(d.y, 0.0, 1.0), 0.5));
+  float b = 0.03 + blur * 0.5;
+  return mix(uGround.rgb, up, smoothstep(-b, b, d.y));
+}
+)";
+std::string Src(const char* text) { // expands #FRAME_UBO and #SKY_FN
+  std::string s = text;
+  for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}})
+    for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
+  return s;
+}
+
 const char* kVS = R"(#version 450 core
-layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+#FRAME_UBO
 layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
@@ -30,7 +53,7 @@ void main() {
 // emissive = (rgb, normal scale), maps = has (base, metal-rough, normal, occlusion), extra = (has emissive,
 // occlusion strength, alpha cutoff, -).
 const char* kFS = R"(#version 450 core
-layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+#FRAME_UBO
 layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
 layout(binding = 0) uniform sampler2D uBaseMap;
 layout(binding = 1) uniform sampler2D uMetalRoughMap;
@@ -56,6 +79,39 @@ vec2 EnvBRDFApprox(float NoV, float rough) { // Karis, mobile split-sum approxim
   vec4 r = rough * c0 + c1;
   float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
   return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
+layout(binding = 5) uniform sampler2DShadow uShadowMap;
+#SKY_FN
+vec3 Brdf(vec3 N, vec3 V, vec3 L, vec3 diffuse, vec3 f0, float a) {
+  vec3 H = normalize(V + L);
+  float NoL = max(dot(N, L), 0.0), NoV = max(dot(N, V), 1e-4), NoH = max(dot(N, H), 0.0), VoH = max(dot(V, H), 0.0);
+  vec3 F = F_Schlick(VoH, f0);
+  return (diffuse / PI * (1.0 - F) + D_GGX(NoH, a) * V_SmithGGX(NoV, NoL, a) * F) * NoL;
+}
+vec3 Irradiance(vec3 n) { // light from the whole sky hemisphere above n (ground below)
+  return mix(uGround.rgb, mix(uHorizon.rgb, uZenith.rgb, 0.6), clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
+}
+float ShadowFactor(vec3 world, vec3 n) { // 1 = lit; 3x3 taps of 2x2 hardware PCF
+  if (uShadow.x < 0.5) return 1.0;
+  vec4 c = uLightViewProj * vec4(world + n * uShadow.z, 1.0); // normal offset against acne
+  vec3 s = c.xyz / c.w * 0.5 + 0.5;
+  if (s.z >= 1.0) return 1.0;
+  float t = 1.0 / uShadow.w, sum = 0.0;
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) sum += textureLod(uShadowMap, vec3(s.xy + vec2(x, y) * t, s.z - uShadow.y), 0.0);
+  float edge = smoothstep(0.85, 1.0, max(abs(s.x * 2.0 - 1.0), abs(s.y * 2.0 - 1.0))); // fade at the map's edge
+  return mix(sum / 9.0, 1.0, edge);
+}
+vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) {
+  vec3 toL = uLPos[i].xyz - world;
+  float d2 = max(dot(toL, toL), 1e-4);
+  vec3 L = toL * inversesqrt(d2);
+  float range = max(uLPos[i].w, 1e-3);
+  float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
+  float atten = win * win / (d2 + 1.0); // windowed inverse square (no hard cut at the range)
+  if (uLCone[i].y > 0.5) atten *= smoothstep(uLDir[i].w, uLCone[i].x, dot(-L, uLDir[i].xyz)); // spot cone
+  return Brdf(N, V, L, diffuse, f0, a) * uLColor[i].rgb * atten;
 }
 void main() {
   // Every map is sampled and every derivative taken before any branch (implicit LOD needs uniform control flow).
@@ -97,11 +153,11 @@ void main() {
   rough = clamp(rough, 0.045, 1.0);
   float a = rough * rough;
   vec3 f0 = mix(vec3(0.04), base.rgb, metallic), diffuse = base.rgb * (1.0 - metallic);
-  vec3 F = F_Schlick(VoH, f0);
-  vec3 color = (diffuse / PI * (1.0 - F) + D_GGX(NoH, a) * V_SmithGGX(NoV, NoL, a) * F) * uLight.rgb * NoL;
+  vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
+  for (int i = 0; i < int(uCounts.x); ++i) color += LocalLight(i, vWorld, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
-  vec3 ambient = mix(uGround.rgb, uSky.rgb, N.y * 0.5 + 0.5);
-  vec3 env = mix(uGround.rgb, uSky.rgb, smoothstep(-0.2, 0.2, R.y)); // sharp horizon in reflections
+  vec3 ambient = Irradiance(N);
+  vec3 env = SkyColor(R, rough); // the sky seen in reflections, softer the rougher the surface
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
@@ -112,7 +168,7 @@ void main() {
 
 // Editor grid on y = 0 around the camera. Colours are display values (the target holds display-encoded colour).
 const char* kGridVS = R"(#version 450 core
-layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+#FRAME_UBO
 layout(location = 0) in vec3 aPos;
 out vec3 vWorld;
 void main() {
@@ -124,7 +180,7 @@ void main() {
 }
 )";
 const char* kGridFS = R"(#version 450 core
-layout(std140, binding = 1) uniform Frame3D { mat4 uViewProj; vec4 uCamPos; vec4 uToLight; vec4 uLight; vec4 uSky; vec4 uGround; };
+#FRAME_UBO
 in vec3 vWorld;
 out vec4 oColor;
 float Lines(vec2 p, float spacing, float width) {
@@ -150,6 +206,51 @@ void main() {
   oColor = vec4(col, a * fade);
 }
 )";
+// Sky behind everything: a fullscreen triangle at the far plane, drawn after the opaque surfaces.
+const char* kSkyVS = R"(#version 450 core
+layout(location = 0) in vec3 aPos;
+out vec2 vNdc;
+void main() { vNdc = aPos.xy; gl_Position = vec4(aPos.xy, 1.0, 1.0); }
+)";
+const char* kSkyFS = R"(#version 450 core
+#FRAME_UBO
+in vec2 vNdc;
+out vec4 oColor;
+#SKY_FN
+vec3 ToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+void main() {
+  vec4 p = uInvViewProj * vec4(vNdc, 1.0, 1.0);
+  vec3 d = normalize(p.xyz / p.w - uCamPos.xyz);
+  vec3 c = SkyColor(d, 0.0);
+  if (uSun.x < 1.0) { // sun disk with a soft rim
+    float k = smoothstep(uSun.x - 0.00008, uSun.x + 0.00008, dot(d, normalize(uToLight.xyz)));
+    c += uLight.rgb * 4.0 * k;
+  }
+  oColor = vec4(ToSrgb(c), 1.0);
+}
+)";
+// Shadow casters: depth only; alpha-masked materials cut their holes.
+const char* kShadowVS = R"(#version 450 core
+#FRAME_UBO
+layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+layout(location = 0) in vec3 aPos;
+layout(location = 2) in vec2 aUV;
+out vec2 vUV;
+void main() { vUV = aUV; gl_Position = uLightViewProj * (uModel * vec4(aPos, 1.0)); }
+)";
+const char* kShadowFS = R"(#version 450 core
+layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+layout(binding = 0) uniform sampler2D uBaseMap;
+in vec2 vUV;
+void main() {
+  float alpha = uBaseColor.a * (uMaps.x > 0.5 ? texture(uBaseMap, vUV).a : 1.0);
+  if (uParams.w > 0.5 && uParams.w < 1.5 && alpha < uExtra.z) discard;
+}
+)";
+
 // Selection: selected items are drawn white into a mask; the outline pass marks pixels within 2 px of the mask.
 const char* kMaskFS = R"(#version 450 core
 out vec4 oColor;
@@ -174,7 +275,44 @@ void main() {
 }
 )";
 
-struct FrameData { float viewProj[16]; float camPos[4], toLight[4], light[4], sky[4], ground[4]; };
+struct FrameData {
+  float viewProj[16], invViewProj[16], lightViewProj[16];
+  float camPos[4], toLight[4], light[4], sky[4], ground[4], zenith[4], horizon[4], sun[4], shadow[4], counts[4];
+};
+struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
+
+void Put(float* dst, const glm::vec3& v, float w = 0) { dst[0] = v.x; dst[1] = v.y; dst[2] = v.z; dst[3] = w; }
+void Put(float* dst, Color c, float scale = 1) { dst[0] = c.r * scale; dst[1] = c.g * scale; dst[2] = c.b * scale; dst[3] = c.a; }
+
+// Orthographic light camera around the bounding sphere of the view slice [near, distance]; the centre snaps to
+// whole shadow texels so the map does not shimmer while the camera moves.
+glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight, float distance, float& texelWorld, float& depthRange) {
+  float nearZ = cam.nearZ, farZ = std::min(cam.farZ, distance);
+  float ty = std::tan(glm::radians(cam.fovY * 0.5f)), tx = ty * aspect;
+  glm::vec3 f = glm::normalize(cam.target - cam.position), r = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
+  if (!std::isfinite(r.x)) r = {1, 0, 0};
+  glm::vec3 u = glm::cross(r, f), corners[8];
+  for (int i = 0; i < 8; ++i) {
+    float z = i < 4 ? nearZ : farZ;
+    corners[i] = cam.position + f * z + r * (z * tx * ((i & 1) ? 1.f : -1.f)) + u * (z * ty * ((i & 2) ? 1.f : -1.f));
+  }
+  glm::vec3 center{0};
+  for (const glm::vec3& c : corners) center += c / 8.f;
+  float radius = 0;
+  for (const glm::vec3& c : corners) radius = std::max(radius, glm::distance(c, center));
+  radius = std::ceil(radius * 16.f) / 16.f; // steady size: no flicker from tiny changes
+  glm::vec3 L = glm::normalize(toLight), up = std::fabs(L.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+  texelWorld = 2.f * radius / (float)Renderer3D::kShadowMapSize;
+  glm::mat4 rot = glm::lookAt(glm::vec3(0), -L, up);
+  glm::vec3 ls = glm::vec3(rot * glm::vec4(center, 1));
+  ls.x = std::floor(ls.x / texelWorld) * texelWorld;
+  ls.y = std::floor(ls.y / texelWorld) * texelWorld;
+  center = glm::vec3(glm::inverse(rot) * glm::vec4(ls, 1));
+  const float casterReach = 100.f; // casters this far toward the light still throw shadows into the slice
+  depthRange = 2.f * radius + casterReach;
+  glm::mat4 view = glm::lookAt(center + L * (radius + casterReach), center, up);
+  return glm::ortho(-radius, radius, -radius, radius, 0.f, depthRange) * view;
+}
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4]; };
 }
 
@@ -199,9 +337,11 @@ bool ProjectToPixel(const Camera3D& cam, int32_t w, int32_t h, const glm::vec3& 
 
 bool Renderer3D::Init(RHI& rhi) {
   rhi_ = &rhi;
+  const std::string vs = Src(kVS), fs = Src(kFS), gridVS = Src(kGridVS), gridFS = Src(kGridFS), skyFS = Src(kSkyFS),
+                    shadowVS = Src(kShadowVS);
   PipelineDesc pd;
-  pd.vertexSource = kVS;
-  pd.fragmentSource = kFS;
+  pd.vertexSource = vs.c_str();
+  pd.fragmentSource = fs.c_str();
   pd.attrs[0] = {0, 3, offsetof(Vertex3D, px)};
   pd.attrs[1] = {1, 3, offsetof(Vertex3D, nx)};
   pd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
@@ -226,8 +366,8 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.debugName = "editor.mask";
   mask_ = rhi.CreatePipeline(pd);
   PipelineDesc gp;
-  gp.vertexSource = kGridVS;
-  gp.fragmentSource = kGridFS;
+  gp.vertexSource = gridVS.c_str();
+  gp.fragmentSource = gridFS.c_str();
   gp.attrs[0] = {0, 3, 0};
   gp.attrCount = 1;
   gp.stride = 12;
@@ -241,7 +381,28 @@ bool Renderer3D::Init(RHI& rhi) {
   gp.depthTest = false;
   gp.debugName = "editor.outline";
   outline_ = rhi.CreatePipeline(gp);
-  if (!mask_.Valid() || !grid_.Valid() || !outline_.Valid()) return false;
+  gp.vertexSource = kSkyVS;
+  gp.fragmentSource = skyFS.c_str();
+  gp.alphaBlend = false;
+  gp.depthTest = true; // only where nothing was drawn (depth still at the far plane)
+  gp.depthWrite = false;
+  gp.debugName = "sky";
+  sky_ = rhi.CreatePipeline(gp);
+  pd.vertexSource = shadowVS.c_str();
+  pd.fragmentSource = kShadowFS;
+  pd.depthTest = true;
+  pd.depthWrite = true;
+  pd.alphaBlend = false;
+  pd.cull = CullMode::None;      // thin and open meshes cast from both sides
+  pd.depthBiasConstant = 2.f;    // with the normal offset in the lit pass: no acne, little peter-panning
+  pd.depthBiasSlope = 2.5f;
+  pd.debugName = "shadow";
+  shadowPipe_ = rhi.CreatePipeline(pd);
+  if (!mask_.Valid() || !grid_.Valid() || !outline_.Valid() || !sky_.Valid() || !shadowPipe_.Valid()) return false;
+  lightsUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(LightsData), true);
+  noShadowRT_ = rhi.CreateDepthTarget(1);
+  rhi.BeginRenderTarget(noShadowRT_, {0, 0, 0, 0});
+  rhi.EndRenderTarget();
   const float quad[18] = {-1, 0, -1, -1, 0, 1, 1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0, -1};
   gridQuad_ = rhi.CreateBuffer(BufferUsage::Vertex, quad, sizeof(quad));
   const float tri[9] = {-1, -1, 0, 3, -1, 0, -1, 3, 0};
@@ -259,7 +420,10 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectUbo_);
   rhi_->DestroyTexture(white_);
-  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_}) rhi_->DestroyPipeline(p);
+  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_}) rhi_->DestroyPipeline(p);
+  rhi_->DestroyBuffer(lightsUbo_);
+  rhi_->DestroyRenderTarget(shadowRT_);
+  rhi_->DestroyRenderTarget(noShadowRT_);
   rhi_->DestroyBuffer(gridQuad_);
   rhi_->DestroyBuffer(fullscreen_);
   rhi_->DestroyRenderTarget(maskRT_);
@@ -344,13 +508,47 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
                         const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras) {
   if (!rhi_ || !rt.Valid() || w <= 0 || h <= 0) return;
   FrameData f{};
-  glm::mat4 vp = cam.Projection((float)w / (float)h) * cam.View();
+  const float aspect = (float)w / (float)h;
+  glm::mat4 vp = cam.Projection(aspect) * cam.View(), ivp = glm::inverse(vp);
   std::memcpy(f.viewProj, glm::value_ptr(vp), sizeof(f.viewProj));
-  f.camPos[0] = cam.position.x; f.camPos[1] = cam.position.y; f.camPos[2] = cam.position.z;
-  f.toLight[0] = light.toLight.x; f.toLight[1] = light.toLight.y; f.toLight[2] = light.toLight.z;
-  f.light[0] = light.color.r * light.intensity; f.light[1] = light.color.g * light.intensity; f.light[2] = light.color.b * light.intensity;
-  f.sky[0] = light.sky.r; f.sky[1] = light.sky.g; f.sky[2] = light.sky.b;
-  f.ground[0] = light.ground.r; f.ground[1] = light.ground.g; f.ground[2] = light.ground.b;
+  std::memcpy(f.invViewProj, glm::value_ptr(ivp), sizeof(f.invViewProj));
+  Put(f.camPos, cam.position);
+  Put(f.toLight, light.toLight);
+  Put(f.light, light.color, light.intensity);
+  const SkyBackground3D& bg = light.background;
+  if (bg.draw) { // the sky gives the ambient light and the reflections
+    Put(f.zenith, bg.zenith, bg.intensity);
+    Put(f.horizon, bg.horizon, bg.intensity);
+    Put(f.ground, bg.ground, bg.intensity);
+    f.sun[0] = bg.sunSize > 0 ? std::cos(glm::radians(bg.sunSize * 0.5f)) : 1.f;
+  } else { // no sky: the plain two-colour hemisphere
+    Put(f.zenith, light.sky);
+    Put(f.horizon, light.sky);
+    Put(f.ground, light.ground);
+    f.sun[0] = 1.f;
+  }
+  Put(f.sky, light.sky);
+  int locals = std::min((int)light.locals.size(), kMaxLocalLights);
+  f.counts[0] = (float)locals;
+  LightsData ld{};
+  for (int i = 0; i < locals; ++i) {
+    const LocalLight3D& l = light.locals[i];
+    Put(ld.pos[i], l.position, l.range);
+    Put(ld.color[i], l.color, l.intensity);
+    Put(ld.dir[i], glm::normalize(l.direction), std::cos(glm::radians(std::max(l.outerAngle, 0.1f) * 0.5f)));
+    ld.cone[i][0] = std::cos(glm::radians(std::clamp(l.innerAngle, 0.f, l.outerAngle - 0.01f) * 0.5f));
+    ld.cone[i][1] = l.spot ? 1.f : 0.f;
+  }
+  rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
+  float texelWorld = 0, depthRange = 1;
+  if (light.shadows && light.intensity > 0) {
+    shadowMatrix_ = FitShadow(cam, aspect, light.toLight, light.shadowDistance, texelWorld, depthRange);
+    std::memcpy(f.lightViewProj, glm::value_ptr(shadowMatrix_), sizeof(f.lightViewProj));
+    f.shadow[0] = 1.f;
+    f.shadow[1] = 0.02f / depthRange;   // 2 cm in depth
+    f.shadow[2] = texelWorld * 1.5f;    // normal offset
+    f.shadow[3] = (float)kShadowMapSize;
+  }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
   // All object constants in one buffer, one aligned slice per draw (no buffer rewrite between draws).
@@ -376,6 +574,21 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   if (!blob.empty()) rhi_->UpdateBuffer(objectUbo_, blob.data(), blob.size());
 
   rhi_->BindUniformBuffer(1, frameUbo_);
+  rhi_->BindUniformBuffer(3, lightsUbo_);
+  if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
+    if (!shadowRT_.Valid()) shadowRT_ = rhi_->CreateDepthTarget(kShadowMapSize);
+    rhi_->BeginRenderTarget(shadowRT_, {0, 0, 0, 0});
+    for (size_t i = 0; i < items.size(); ++i) {
+      const DrawItem3D& it = items[i];
+      if (!it.mesh || !it.mesh->indexCount || it.material.alpha == Material3D::Alpha::Blend) continue;
+      rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
+      rhi_->BindTexture(0, it.material.baseMap.Valid() ? it.material.baseMap : white_);
+      rhi_->DrawIndexed(shadowPipe_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
+      ++draws_;
+    }
+    rhi_->EndRenderTarget();
+  }
+  rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
   bool outline = extras && !extras->outlined.empty();
   if (outline) { // selection mask first (its own target, no depth: the outline shows through other objects)
     if (!maskRT_.Valid() || maskW_ != w || maskH_ != h) {
@@ -402,6 +615,10 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   size_t opaqueCount = order.size();
   order.insert(order.end(), blended.begin(), blended.end());
   for (size_t n = 0; n <= order.size(); ++n) {
+    if (n == opaqueCount && bg.draw) { // sky where no surface was drawn
+      rhi_->Draw(sky_, fullscreen_, 3);
+      ++draws_;
+    }
     if (n == opaqueCount && extras && extras->grid) { // after opaque surfaces, before blended ones
       rhi_->Draw(grid_, gridQuad_, 6);
       ++draws_;

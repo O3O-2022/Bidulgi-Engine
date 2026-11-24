@@ -42,12 +42,33 @@ struct Camera3D {
   glm::mat4 Projection(float aspect) const;
 };
 
+// Point and spot lights (queue 3-4). Falloff: windowed inverse square, intensity 1 = the sun's 1 at 1 m.
+struct LocalLight3D {
+  glm::vec3 position{0}, direction{0, -1, 0}; // direction: where a spot light points
+  Color color{1, 1, 1, 1};
+  float intensity = 1, range = 10;
+  bool spot = false;
+  float innerAngle = 30, outerAngle = 45;      // full cone angles in degrees
+};
+
+// Procedural sky drawn behind everything; also the ambient light and the reflections (queue 3-4).
+struct SkyBackground3D {
+  bool draw = false;                           // false: keep the clear colour, ambient from Light3D sky/ground
+  Color zenith{0.16f, 0.32f, 0.62f, 1}, horizon{0.62f, 0.70f, 0.80f, 1}, ground{0.20f, 0.18f, 0.16f, 1}; // linear
+  float intensity = 1, sunSize = 1.5f;         // sun disk in degrees (0 = none)
+};
+
 struct Light3D {
   glm::vec3 toLight{0.3f, 1.f, 0.5f};    // direction toward the light (normalised in the shader)
   Color color{1, 1, 1, 1};
   float intensity = 2.5f;
-  Color sky{0.3f, 0.36f, 0.45f, 1}, ground{0.1f, 0.09f, 0.08f, 1}; // ambient hemisphere (linear)
+  Color sky{0.3f, 0.36f, 0.45f, 1}, ground{0.1f, 0.09f, 0.08f, 1}; // ambient hemisphere (linear) without a sky
+  bool shadows = false;                  // directional shadow map fitted to the camera
+  float shadowDistance = 40.f;           // metres from the camera that get shadows
+  std::vector<LocalLight3D> locals;      // the first kMaxLocalLights are used
+  SkyBackground3D background;
 };
+constexpr int kMaxLocalLights = 16;
 
 Color SrgbToLinear(uint8_t r, uint8_t g, uint8_t b); // exact sRGB transfer function
 // World point -> pixel in a w x h target (x from the left, y from the BOTTOM, like the render target rows).
@@ -98,7 +119,15 @@ private:
   uint32_t draws_ = 0;
   uint64_t triangles_ = 0;
   // Editor passes: grid plane, selection mask (own target) and the outline drawn from it.
-  PipelineHandle grid_, mask_, outline_;
+  PipelineHandle grid_, mask_, outline_, sky_, shadowPipe_;
+  BufferHandle lightsUbo_;
+  RenderTargetHandle shadowRT_, noShadowRT_; // 2048 shadow map; 1x1 stand-in when shadows are off
+public:
+  static constexpr int kShadowMapSize = 2048;
+  // Light-space matrix of the last frame's shadow map (tests read it back to check where shadows fall).
+  const glm::mat4& ShadowMatrix() const { return shadowMatrix_; }
+private:
+  glm::mat4 shadowMatrix_{1.f};
   BufferHandle gridQuad_, fullscreen_;
   RenderTargetHandle maskRT_;
   int32_t maskW_ = 0, maskH_ = 0;

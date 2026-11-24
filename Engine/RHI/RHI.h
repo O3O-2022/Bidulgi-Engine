@@ -45,6 +45,7 @@ struct PipelineDesc {
   bool        depthTest = false;        // less-or-equal test (3D); 2D pipelines leave it off
   bool        depthWrite = true;        // with depthTest: false for blended surfaces
   CullMode    cull = CullMode::None;    // front faces wind counter-clockwise (Core/Space.h)
+  float       depthBiasConstant = 0, depthBiasSlope = 0; // polygon offset (shadow map passes)
   const char* debugName = "pipeline";
 };
 
@@ -74,6 +75,10 @@ public:
   // the colour texture at EndRenderTarget. The texture is bottom-up (OpenGL): draw it with v flipped.
   RenderTargetHandle CreateRenderTarget(int32_t w, int32_t h, int32_t samples = 1);
   void          DestroyRenderTarget(RenderTargetHandle rt);
+  // Depth only (shadow maps): a 32-bit float depth texture sampled with comparison (GLSL sampler2DShadow),
+  // outside the map reads as lit. BeginRenderTarget clears it to the far plane.
+  RenderTargetHandle CreateDepthTarget(int32_t size);
+  TextureHandle RenderTargetDepth(RenderTargetHandle rt) const;
   TextureHandle RenderTargetColor(RenderTargetHandle rt) const;
   void          BeginRenderTarget(RenderTargetHandle rt, Color clear); // viewport = the whole target
   void          EndRenderTarget();                                     // resolve, back to the window
@@ -92,8 +97,8 @@ public:
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
-  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; };
-  struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0; int32_t w = 0, h = 0, samples = 1; };
+  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
+  struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; };
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;
   int32_t frameW_ = 0, frameH_ = 0;

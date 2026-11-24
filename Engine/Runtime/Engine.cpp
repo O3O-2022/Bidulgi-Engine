@@ -1161,6 +1161,16 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (e->r3d->Init(e->rhi) && e->sceneView->Init(e->rhi, *e->r3d)) {
       e->materials.Init(e->rhi);
       e->sceneView->SetMaterials(&e->materials);
+      if (const char* camEnv = std::getenv("BDG_SCENE_CAMERA")) { // "yaw,pitch,distance" for screenshots
+        float yaw, pitch, dist, px, py, pz; // optional pivot after the distance: "yaw,pitch,distance,x,y,z"
+        int n = std::sscanf(camEnv, "%f,%f,%f,%f,%f,%f", &yaw, &pitch, &dist, &px, &py, &pz);
+        if (n == 6) e->sceneView->camera.pivot = {px, py, pz};
+        if (n >= 3) {
+          e->sceneView->camera.yaw = yaw;
+          e->sceneView->camera.pitch = pitch;
+          e->sceneView->camera.distance = dist;
+        }
+      }
       if (bdg::Widget* scene = e->editor->Find("scene"))
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
     } else {
@@ -1306,6 +1316,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
   double idleCpu0 = 0, wakeLatencyMs = -1;
   int idleFrames = 0;
   bool idleMeasuring = false;
+  int idleWakesInput = 0, idleWakesMouse = 0, idleWakesOther = 0; // what woke the idle editor (diagnosis)
   std::atomic<long long> wakeSentNs{0};
   std::thread waker;
 
@@ -1349,6 +1360,13 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       wakeLatencyMs = msd(now.time_since_epoch() - clock::duration(sent)).count();
     if (idleTestSec > 0 && now >= idleEnd) break;
     if (e->window.HadEvents()) {
+      if (idleMeasuring) { // input from the desktop vs window / wake events
+        const auto& evs = e->window.Events();
+        bool mouse = !evs.empty() && std::all_of(evs.begin(), evs.end(), [](const bdg::InputEvent& ev) {
+          return ev.type == bdg::InputEvent::Type::MouseMove || ev.type == bdg::InputEvent::Type::Wheel;
+        });
+        (evs.empty() ? idleWakesOther : mouse ? idleWakesMouse : idleWakesInput)++;
+      }
       pending = std::max(pending, 2);
       if (idleShown) { idleShown = false; statStart = now; statFrames = 0; statWorkMs = 0; } // waking up
     }
@@ -1635,8 +1653,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
   if (idleMeasuring) {
     double idleSec = std::chrono::duration<double>(clock::now() - idleStart).count();
     double cpu = ProcessCpuMs() - idleCpu0;
-    bdg::LogInfo("idle: seconds={:.2f} frames={} cpu_ms={:.0f} cpu_pct={:.2f} wake_latency_ms={:.2f} vsync={} limiter={}",
-                 idleSec, idleFrames, cpu, cpu / (idleSec * 10.0), wakeLatencyMs, e->window.SwapInterval(), limiter ? 1 : 0);
+    bdg::LogInfo("idle: seconds={:.2f} frames={} cpu_ms={:.0f} cpu_pct={:.2f} wake_latency_ms={:.2f} vsync={} limiter={} "
+                 "wakes_mouse={} wakes_input={} wakes_other={}",
+                 idleSec, idleFrames, cpu, cpu / (idleSec * 10.0), wakeLatencyMs, e->window.SwapInterval(), limiter ? 1 : 0,
+                 idleWakesMouse, idleWakesInput, idleWakesOther);
   }
   return BDG_OK;
 }

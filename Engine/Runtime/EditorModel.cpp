@@ -74,6 +74,7 @@ void EditorModel::BuildSampleScene() {
   sun.intensity = 3;
   obj("g3", "Sky");
   Add<Transform>(scene, "g3");
+  Add<Sky>(scene, "g3");
   obj("g4", "World Settings");
   Add<Transform>(scene, "g4");
   obj("g5", "Ground");
@@ -98,7 +99,10 @@ void EditorModel::BuildSampleScene() {
   crystal.mesh = "Crystal.glb"; crystal.material = "M_Gold";
   obj("g9", "Lantern Light");
   Add<Transform>(scene, "g9").position = {-2, 2.5f, 1};
-  Add<Light>(scene, "g9").color = {1, 0.75f, 0.45f, 1};
+  Light& lantern = Add<Light>(scene, "g9");
+  lantern.color = {1, 0.75f, 0.45f, 1};
+  lantern.intensity = 6;
+  lantern.range = 8;
   selected_ = "g6";
   selection_ = {"g6"};
 }

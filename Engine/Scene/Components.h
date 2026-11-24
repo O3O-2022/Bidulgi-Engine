@@ -35,6 +35,24 @@ public:
   BPROPERTY(Edit) Color color{1, 1, 1, 1};
   BPROPERTY(Edit, Range = "0,100000") float intensity = 1.f;
   BPROPERTY(Edit, Range = "0,1000", ShowIf = "type != Directional") float range = 10.f;
+  BPROPERTY(Edit, Range = "1,179", ShowIf = "type == Spot", Tooltip = "Full cone angle in degrees") float spotAngle = 45.f;
+  BPROPERTY(Edit, Range = "0,179", ShowIf = "type == Spot", Tooltip = "Full-brightness cone in degrees (soft edge out to spotAngle)")
+  float innerSpotAngle = 30.f;
+  BPROPERTY(Edit, ShowIf = "type == Directional", Tooltip = "Shadow map (directional lights; point and spot shadows come later)")
+  bool castShadows = true;
+};
+
+// Sky and ambient light (queue 3-4): the background of the scene view and the light it gives to every surface.
+// The sun disk follows the first directional light.
+BCLASS(Component)
+struct Sky {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Header = "Colors") Color zenith{0.16f, 0.32f, 0.62f, 1};
+  BPROPERTY(Edit) Color horizon{0.62f, 0.70f, 0.80f, 1};
+  BPROPERTY(Edit) Color ground{0.20f, 0.18f, 0.16f, 1};
+  BPROPERTY(Edit, Range = "0,10", Tooltip = "Scales the background and the ambient light it gives") float intensity = 1.f;
+  BPROPERTY(Edit, Range = "0,10", Tooltip = "Sun disk size in degrees (0 = no disk)") float sunSize = 1.5f;
 };
 
 BCLASS(Component)

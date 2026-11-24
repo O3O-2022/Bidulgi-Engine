@@ -222,6 +222,34 @@ RenderTargetHandle RHI::CreateRenderTarget(int32_t w, int32_t h, int32_t samples
   return {(uint32_t)targets_.size() - 1};
 }
 
+RenderTargetHandle RHI::CreateDepthTarget(int32_t size) {
+  TargetGL t;
+  t.w = t.h = std::max(size, 1);
+  glCreateTextures(GL_TEXTURE_2D, 1, &t.depthTex);
+  glTextureStorage2D(t.depthTex, 1, GL_DEPTH_COMPONENT32F, t.w, t.h);
+  glTextureParameteri(t.depthTex, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // linear + compare = 2x2 PCF per tap
+  glTextureParameteri(t.depthTex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTextureParameteri(t.depthTex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTextureParameteri(t.depthTex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  const float border[4] = {1, 1, 1, 1}; // outside the map: nothing in front, lit
+  glTextureParameterfv(t.depthTex, GL_TEXTURE_BORDER_COLOR, border);
+  glTextureParameteri(t.depthTex, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+  glTextureParameteri(t.depthTex, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+  glCreateFramebuffers(1, &t.fbo);
+  glNamedFramebufferTexture(t.fbo, GL_DEPTH_ATTACHMENT, t.depthTex, 0);
+  glNamedFramebufferDrawBuffer(t.fbo, GL_NONE);
+  glNamedFramebufferReadBuffer(t.fbo, GL_NONE);
+  if (glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) LogError("rhi: depth target {} is incomplete", t.w);
+  for (uint32_t i = 1; i < targets_.size(); ++i)
+    if (!targets_[i].fbo) { targets_[i] = t; return {i}; }
+  targets_.push_back(t);
+  return {(uint32_t)targets_.size() - 1};
+}
+
+TextureHandle RHI::RenderTargetDepth(RenderTargetHandle rt) const {
+  return rt.Valid() && rt.id < targets_.size() ? TextureHandle{targets_[rt.id].depthTex} : TextureHandle{};
+}
+
 void RHI::DestroyRenderTarget(RenderTargetHandle rt) {
   if (!rt.Valid() || rt.id >= targets_.size()) return;
   TargetGL& t = targets_[rt.id];
@@ -230,6 +258,7 @@ void RHI::DestroyRenderTarget(RenderTargetHandle rt) {
   if (t.color) glDeleteTextures(1, &t.color);
   if (t.depth) glDeleteRenderbuffers(1, &t.depth);
   if (t.msColor) glDeleteRenderbuffers(1, &t.msColor);
+  if (t.depthTex) glDeleteTextures(1, &t.depthTex);
   t = {};
 }
 
@@ -244,6 +273,7 @@ void RHI::BeginRenderTarget(RenderTargetHandle rt, Color c) {
   glBindFramebuffer(GL_FRAMEBUFFER, t.samples > 1 ? t.msFbo : t.fbo);
   glViewport(0, 0, t.w, t.h);
   glDepthMask(GL_TRUE);
+  if (t.depthTex && !t.color) { glClear(GL_DEPTH_BUFFER_BIT); return; } // depth only
   glClearColor(c.r, c.g, c.b, c.a);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -300,7 +330,7 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
     glVertexArrayAttribBinding(vao, a.location, 0);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.depthWrite, d.cull});
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -322,6 +352,8 @@ const RHI::PipelineGL* RHI::Bind(PipelineHandle p, BufferHandle vertices) {
   else glDisable(GL_BLEND);
   if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(g.depthWrite ? GL_TRUE : GL_FALSE); }
   else { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); }
+  if (g.biasC != 0 || g.biasS != 0) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(g.biasS, g.biasC); }
+  else glDisable(GL_POLYGON_OFFSET_FILL);
   if (g.cull == CullMode::Back) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(GL_CCW); }
   else glDisable(GL_CULL_FACE);
   return &g;

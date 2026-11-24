@@ -26,6 +26,11 @@ const float kLettersSize = 1.3f;
 const glm::vec3 kChecker0{4.4f, 1.3f, 0.5f};
 const float kPatch = 0.34f, kPitch = 0.38f;
 const glm::vec3 kCCW{3.8f, 3.0f, 0.5f}, kCW{5.0f, 3.0f, 0.5f};
+// Lighting zone on the ground between the axes and the sphere wall (queue 3-4).
+const glm::vec3 kCaster{-2.2f, 1.0f, 1.2f};                       // floating box: its sun shadow lands on the ground
+const glm::vec3 kLitGround{-1.7f, 0.f, 1.6f};
+const glm::vec3 kPointLight{2.0f, 0.35f, 0.9f}, kPointFar{2.0f, 0.f, -1.2f};
+const glm::vec3 kSpotLight{-0.9f, 2.5f, -1.6f}, kSpotOut{-2.3f, 0.f, -1.6f};
 const glm::vec3 kProbeParent{-4.4f, 4.6f, 0.f}, kProbeChild{0.f, 0.f, 0.5f}; // glTF probe: parent + child translation
 const uint8_t kProbeColors[4][3] = {{230, 60, 160}, {60, 200, 220}, {250, 150, 30}, {120, 90, 230}}; // TL TR BL BR
 const glm::vec3 kDepthNear{4.25f, 4.4f, 0.8f}, kDepthFar{4.55f, 4.4f, 0.5f};
@@ -97,6 +102,7 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
   quadCW_ = r.CreateMesh(cw);
   cylinder_ = r.CreateMesh(MakeCylinder(1, 1));
   cone_ = r.CreateMesh(MakeCone(1, 1));
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
   std::vector<uint8_t> letters = LetterTexture();
   letters_ = rhi.CreateTexture2D(kTex, kTex, TextureFormat::SRGBA8, letters.data());
 
@@ -105,6 +111,21 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
   camera.fovY = 40.f;
   light.toLight = {-0.4f, 0.8f, 0.45f};
   light.intensity = 2.6f;
+  light.shadows = true;
+  LocalLight3D point; // red, close to the ground
+  point.position = kPointLight;
+  point.color = {1.f, 0.1f, 0.05f, 1};
+  point.intensity = 3.f;
+  point.range = 1.6f;
+  LocalLight3D spot; // white, straight down
+  spot.position = kSpotLight;
+  spot.direction = {0, -1, 0};
+  spot.intensity = 8.f;
+  spot.range = 6.f;
+  spot.spot = true;
+  spot.outerAngle = 40.f;
+  spot.innerAngle = 25.f;
+  light.locals = {point, spot};
 
   auto add = [&](const Mesh3D& m, const glm::mat4& model, Material3D mat) { items_.push_back({&m, model, mat}); };
   auto unlit = [](Color c) { Material3D m; m.baseColor = c; m.unlit = true; return m; };
@@ -132,6 +153,9 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
   arrow(glm::mat4(1.f), kAxisY);
   arrow(glm::rotate(glm::mat4(1.f), glm::radians(90.f), {1, 0, 0}), kAxisZ);  // +Y -> +Z
   add(sphere_, At({0, 0, 0}, 0.07f, 0.07f, 0.07f), unlit({0.9f, 0.9f, 0.9f, 1}));
+  Material3D casterMat;
+  casterMat.baseColor = {0.6f, 0.6f, 0.62f, 1};
+  add(box_, At(kCaster, 0.5f, 0.5f, 0.5f), casterMat);
 
   add(quad_, At(kGreyCard, 1.0f, 1.0f), unlit({0.18f, 0.18f, 0.18f, 1})); // 18% grey: display value 118
   Material3D lettersMat = unlit({1, 1, 1, 1});
@@ -161,6 +185,9 @@ bool ReferenceBoard::Init(RHI& rhi, Renderer3D& r) {
              {kGreyCard - glm::vec3(0.5f, 0.7f, 0), "18% grey · unlit"},
              {kLetters - glm::vec3(0.65f, 0.85f, 0), "UV · top-left red"},
              {kChecker0 - glm::vec3(1.2f, 1.0f, 0), "ColorChecker"},
+             {kCaster + glm::vec3(-0.3f, 0.45f, 0), "shadow"},
+             {kPointLight + glm::vec3(0.15f, 0.1f, 0), "point"},
+             {kSpotLight + glm::vec3(-0.5f, -2.2f, 0.4f), "spot"},
              {kCCW - glm::vec3(0.35f, 0.55f, 0), "CCW shown · CW culled"},
              {kDepthNear + glm::vec3(-0.35f, 0.45f, 0), "depth: near wins"},
              {SpherePos(0, 0) + glm::vec3(-0.3f, -0.55f, 0.4f), "roughness 0 → 1"},
@@ -227,7 +254,7 @@ void ReferenceBoard::Shutdown() {
   if (!renderer_) return;
   for (AssetModel& a : assets_) renderer_->DestroyModel(a.model);
   assets_.clear();
-  for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_}) renderer_->DestroyMesh(*m);
+  for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_, &box_}) renderer_->DestroyMesh(*m);
   rhi_->DestroyTexture(letters_);
   renderer_->DestroyModel(probe_);
   renderer_->DestroyModel(model_);
@@ -416,6 +443,26 @@ std::string ReferenceBoard::Check(const std::vector<uint8_t>& rgba, int32_t w, i
   bool br = at(kLetters + glm::vec3(in, -in, 0), c) && close(c, kBR[0], kBR[1], kBR[2], 3);
   out += std::string(" uv=") + (tl && tr && bl && br ? "ok" : "bad");
   if (!(tl && tr && bl && br)) fail("uv");
+
+  // 10) sun shadow: the ground under the floating box (along the light) is darker than open ground beside it
+  auto lum = [](const int q[3]) { return q[0] + q[1] + q[2]; };
+  glm::vec3 toL = light.toLight;
+  glm::vec3 shadowSpot = kCaster - toL * (kCaster.y / toL.y);
+  int sh[3], lit[3];
+  bool shadowOk = at(shadowSpot, sh) && at(kLitGround, lit) && lum(sh) * 4 < lum(lit) * 3; // sky light still reaches the shadow
+  out += shadowOk ? std::string(" shadow=ok") : std::format(" shadow=none(in={},open={})", lum(sh), lum(lit));
+  if (!shadowOk) fail("shadow");
+  // 11) point light: the ground right under it is redder than ground out of its range
+  int under[3], far[3];
+  bool pointOk = at({kPointLight.x, 0, kPointLight.z}, under) && at(kPointFar, far) &&
+                 (under[0] - under[1]) > (far[0] - far[1]) + 25;
+  out += std::format(" point={}", pointOk ? "ok" : "none");
+  if (!pointOk) fail("point");
+  // 12) spot light: bright inside its cone on the ground, not outside
+  int inCone[3], outCone[3];
+  bool spotOk = at({kSpotLight.x, 0, kSpotLight.z}, inCone) && at(kSpotOut, outCone) && lum(inCone) > lum(outCone) + 40;
+  out += std::format(" spot={}", spotOk ? "ok" : "none");
+  if (!spotOk) fail("spot");
 
   // 9) glTF probe: hierarchy transform, accessors, embedded PNG and UV orientation through the importer
   bool gltf = probeLoaded_;

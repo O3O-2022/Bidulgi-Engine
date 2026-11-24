@@ -164,7 +164,9 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   light_ = {};
   light_.toLight = {-0.35f, 0.85f, 0.4f};
   light_.intensity = 2.6f;
-  bool sun = false;
+  light_.shadows = true;
+  light_.background.draw = true; // default sky until a Sky component says otherwise
+  bool sun = false, skySet = false;
   const Scene& scene = model.scene;
   std::set<std::string> selected(model.Selection().begin(), model.Selection().end());
   auto isSelected = [&](std::string id) { // the object or one of its parents
@@ -189,15 +191,37 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
       if (c.type == &Light::StaticType()) {
         const Light& l = *static_cast<const Light*>(c.data);
         bool directional = l.type == LightType::Directional;
+        glm::vec3 forward = glm::normalize(glm::vec3(world * glm::vec4(0, 0, -1, 0))); // lights shine along -Z
         if (directional && !sun) {
           sun = true;
-          light_.toLight = -glm::normalize(glm::vec3(world * glm::vec4(0, 0, -1, 0)));
+          light_.toLight = -forward;
           light_.color = l.color;
           light_.intensity = l.intensity;
+          light_.shadows = l.castShadows;
+        } else if (!directional) {
+          LocalLight3D local;
+          local.position = glm::vec3(world[3]);
+          local.direction = forward;
+          local.color = l.color;
+          local.intensity = l.intensity;
+          local.range = l.range;
+          local.spot = l.type == LightType::Spot;
+          local.outerAngle = l.spotAngle;
+          local.innerAngle = l.innerSpotAngle;
+          light_.locals.push_back(local);
         }
         icons_.push_back({id, glm::vec3(world[3]), directional ? 0 : 1});
       }
       if (c.type == &Camera::StaticType()) icons_.push_back({id, glm::vec3(world[3]), 2});
+      if (c.type == &Sky::StaticType() && !skySet) {
+        const Sky& sky = *static_cast<const Sky*>(c.data);
+        skySet = true;
+        light_.background.zenith = sky.zenith;
+        light_.background.horizon = sky.horizon;
+        light_.background.ground = sky.ground;
+        light_.background.intensity = sky.intensity;
+        light_.background.sunSize = sky.sunSize;
+      }
     }
     if (!mr) continue;
     const MeshEntry* e = Resolve(mr->mesh, assets);
@@ -216,6 +240,11 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
       info_.push_back({id, &e->cpu});
     }
   }
+  if ((int)light_.locals.size() > kMaxLocalLights) // nearest to what the camera looks at
+    std::partial_sort(light_.locals.begin(), light_.locals.begin() + kMaxLocalLights, light_.locals.end(),
+                      [&](const LocalLight3D& a, const LocalLight3D& b) {
+                        return glm::distance(a.position, camera.pivot) < glm::distance(b.position, camera.pivot);
+                      });
 }
 
 void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Widget& v, float scale) {
