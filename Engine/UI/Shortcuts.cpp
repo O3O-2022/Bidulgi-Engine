@@ -19,6 +19,7 @@ const PresetRow kTable[] = {
     {"edit.delete", "Delete", "Delete"},
     {"edit.rename", "F2", "F2"},
     {"file.save", "Ctrl+S", "Ctrl+S"},
+    {"file.new", "Ctrl+N", "Ctrl+N"},
     {"play.toggle", "Ctrl+P", "Alt+P"},
     {"play.pause", "Ctrl+Shift+P", "Ctrl+Shift+P"},
     {"play.step", "Ctrl+Alt+P", "Ctrl+Alt+P"},

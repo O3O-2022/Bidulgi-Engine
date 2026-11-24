@@ -125,7 +125,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Reflection.h Engine/Core/Reflection.cpp
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
-  Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp
+  Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp

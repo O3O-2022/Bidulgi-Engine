@@ -185,6 +185,23 @@ bool EditorModel::SaveScene() {
   return true;
 }
 
+void EditorModel::NewScene(SceneTemplate t) {
+  namespace fs = std::filesystem;
+  BuildDefaultScene(scene, t);
+  bus.Reset();
+  const fs::path dir = scenePath.empty() ? fs::current_path() / "Scenes" : fs::path(std::u8string((const char8_t*)scenePath.c_str())).parent_path();
+  std::error_code ec;
+  std::string file = "New Scene.scene";
+  for (int n = 1; fs::exists(dir / fs::path(std::u8string((const char8_t*)file.c_str())), ec); ++n) file = std::format("New Scene {}.scene", n);
+  const std::u8string full = (dir / fs::path(std::u8string((const char8_t*)file.c_str()))).generic_u8string();
+  scenePath.assign((const char*)full.data(), full.size());
+  sceneName = file.substr(0, file.size() - 6);
+  selected_ = "cam";
+  selection_ = {"cam"};
+  needRebuild_ = true;
+  LogInfo("scene: new {} scene ({} objects), saves to {}", SceneTemplateName(t), scene.ObjectCount(), scenePath);
+}
+
 bool EditorModel::Autosave() {
   namespace fs = std::filesystem;
   std::error_code ec;

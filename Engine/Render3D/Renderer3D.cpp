@@ -31,6 +31,8 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   vec4 uFlags;                                   // x: SSAO on (3-5b)
   vec4 uCluster;                                 // tiles x, y, depth slices, per-pixel lights (Forward+, 3-5b)
   vec4 uCluster2;                                // near, slices / log(far / near), clustered on, -
+  vec4 uFog;                                     // fog colour (linear), density per metre (0 = off) (2-6)
+  vec4 uFog2;                                    // fog start (m), -, -, -
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -179,6 +181,11 @@ layout(std430, binding = 3) readonly buffer Clusters3D { uint uCl[]; };  // per 
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
 out vec4 oColor;
 const float PI = 3.14159265;
+vec3 Fog(vec3 c) { // distance fog (World Settings, 2-6)
+  if (uFog.w <= 0.0) return c;
+  float d = max(length(vWorld - uCamPos.xyz) - uFog2.x, 0.0);
+  return mix(uFog.rgb, c, exp(-d * uFog.w));
+}
 vec3 ToSrgb(vec3 c) {
   c = clamp(c, 0.0, 1.0);
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
@@ -302,9 +309,9 @@ void main() {
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
   int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades, 9 ao, 10 lights
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
-  if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
-  if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
-  if (uCounts.y < 1.5 && view == 0) { oColor = vec4(base.rgb * vLit + emissive, alpha); return; }   // low tier: per vertex
+  if (uParams.z > 0.5 && view == 0) { oColor = vec4(Fog(base.rgb), alpha); return; }        // unlit material
+  if (uCounts.y < 0.5 && view == 0) { oColor = vec4(Fog(base.rgb + emissive), alpha); return; }          // potato tier: no lighting
+  if (uCounts.y < 1.5 && view == 0) { oColor = vec4(Fog(base.rgb * vLit + emissive), alpha); return; }   // low tier: per vertex
 
   vec3 ng = normalize(vNormal);
   // Tangent frame: from the mesh when it has tangents, otherwise from screen-space UV derivatives
@@ -372,7 +379,7 @@ void main() {
   color += emissive;
   // Linear light; tone mapping and display encoding happen in post. Capped below the half-float maximum: a sharp
   // highlight of a point light (GGX on a mirror) would otherwise turn into inf in the RGBA16F target and its mips.
-  oColor = vec4(min(color, vec3(60000.0)), alpha);
+  oColor = vec4(min(Fog(color), vec3(60000.0)), alpha);
 }
 )";
 
@@ -703,6 +710,7 @@ struct FrameData {
   float cascadeVP[4][16], cascadeSplit[4], cascadeInfo[4][4], shadow2[4];
   float screen[4], flags[4];
   float cluster[4], cluster2[4];
+  float fog[4], fog2[4];
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
@@ -1232,6 +1240,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   f.cluster2[0] = clusterNear;
   f.cluster2[1] = sliceScale;
   f.cluster2[2] = clustered ? 1.f : 0.f;
+  if (light.fogDensity > 0 && !(extras && extras->linearOutput)) { // distance fog (World Settings, 2-6); not in captures
+    f.fog[0] = light.fogColor.r;
+    f.fog[1] = light.fogColor.g;
+    f.fog[2] = light.fogColor.b;
+    f.fog[3] = light.fogDensity;
+    f.fog2[0] = std::max(light.fogStart, 0.f);
+  }
   uint32_t clusterRefs = 0, clusterMax = 0, clustersUsed = 0;
   {
     constexpr int kClusters = kClusterX * kClusterY * kClusterZ;
@@ -1615,7 +1630,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     if (timing) Mark(timer, "bloom");
   }
   const bool grading = gradingLut_.Valid() && !(extras && extras->linearOutput) && view == DebugView::Lit;
-  PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
+  PostData pd{{q.exposure * std::max(light.exposure, 0.f), q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
               {extras && extras->linearOutput ? 1.f : 0.f, grading ? 1.f : 0.f, 0, 0}};
   stats_.grading = grading;
   if (grading) rhi_->BindTexture(2, gradingLut_);

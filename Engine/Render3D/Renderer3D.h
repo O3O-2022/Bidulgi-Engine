@@ -77,6 +77,11 @@ struct Light3D {
   float shadowDistance = 40.f;           // metres from the camera that get shadows
   std::vector<LocalLight3D> locals;      // per pixel: up to the tier's maxLights (<= kMaxClusteredLights); per vertex: first 16
   SkyBackground3D background;
+  // World Settings (2-6). Fog: colour = mix(fogColor, surface, exp(-fogDensity * metres past fogStart)); 0 = off.
+  // Not applied to probe and lightmap captures (they are lighting, not the view).
+  float fogDensity = 0, fogStart = 0;
+  Color fogColor{0.62f, 0.70f, 0.80f, 1}; // linear
+  float exposure = 1;                     // times the quality tier's exposure
 };
 constexpr int kMaxLocalLights = 16;        // per-vertex lighting (low tier), uniform buffer
 constexpr int kMaxClusteredLights = 1024;  // per-pixel lighting, storage buffer (Forward+, 3-5b)

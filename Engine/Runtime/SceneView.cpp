@@ -160,6 +160,12 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
 
 Material3D SceneView::MaterialFor(const std::string& name) {
   Material3D m;
+  if (name == "bdg:Grid") { // built-in 1 m grid (new scenes' ground, 2-6): darker than greybox blocks so they stand out
+    m.baseColor = {0.42f, 0.43f, 0.45f, 1};
+    m.roughness = 0.85f;
+    m.baseMap = gridTex_;
+    return m;
+  }
   if (materials_ && !name.empty() && materials_->Find(name, m)) return m;
   std::string n = Lower(name);
   auto has = [&](const char* k) { return n.find(k) != std::string::npos; };
@@ -203,7 +209,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   light_.intensity = 2.6f;
   light_.shadows = true;
   light_.background.draw = true; // default sky until a Sky component says otherwise
-  bool sun = false, skySet = false;
+  bool sun = false, skySet = false, worldSet = false;
   hasGrading_ = false;
   const Scene& scene = model.scene;
   std::set<std::string> selected(model.Selection().begin(), model.Selection().end());
@@ -297,6 +303,14 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         }
         grading_.lutSize = lutCacheSize_;
         grading_.lut = lutCache_;
+      }
+      if (c.type == &WorldSettings::StaticType() && !worldSet) { // fog and exposure (2-6)
+        const WorldSettings& ws = *static_cast<const WorldSettings*>(c.data);
+        worldSet = true;
+        light_.fogDensity = ws.fog ? std::max(ws.fogDensity, 0.f) : 0.f;
+        light_.fogStart = ws.fogStart;
+        light_.fogColor = ws.fogColor;
+        light_.exposure = ws.exposure;
       }
       if (c.type == &Sky::StaticType() && !skySet) {
         const Sky& sky = *static_cast<const Sky*>(c.data);

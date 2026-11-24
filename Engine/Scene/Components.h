@@ -94,6 +94,20 @@ public:
   BPROPERTY(Edit, Range = "0,10", Tooltip = "Sun disk size in degrees (0 = no disk)") float sunSize = 1.5f;
 };
 
+// World Settings (queue 2-6): values for the whole scene on one object; the first one in the scene is used.
+BCLASS(Component)
+struct WorldSettings {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Header = "Fog", Tooltip = "Distance fog: far surfaces fade toward the fog colour") bool fog = false;
+  BPROPERTY(Edit, ShowIf = "fog") Color fogColor{0.62f, 0.70f, 0.80f, 1};
+  BPROPERTY(Edit, Range = "0,0.5", ShowIf = "fog", Tooltip = "How fast it thickens per metre (at 0.02 half is gone after 35 m)")
+  float fogDensity = 0.02f;
+  BPROPERTY(Edit, Range = "0,1000", ShowIf = "fog", Tooltip = "Metres from the camera before the fog starts") float fogStart = 0.f;
+  BPROPERTY(Edit, Header = "Exposure", Range = "0.1,8", Tooltip = "Brightness of the whole picture, on top of the quality tier's")
+  float exposure = 1.f;
+};
+
 // Turns its object while the game is playing (queue 3-6): the first built-in behaviour, so play mode has
 // something to run before the script hosts (M4) exist.
 BCLASS(Component)

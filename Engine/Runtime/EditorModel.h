@@ -4,6 +4,7 @@
 // command; Ctrl+Z / Ctrl+Y undo and redo through the bus. (Temporary home until the editor module exists.)
 #include "Assets/AssetRefs.h"
 #include "Assets/AssetImport.h"
+#include "Scene/DefaultScene.h"
 #include "Core/Command.h"
 #include "Scene/Scene.h"
 #include "UI/UI.h"
@@ -58,6 +59,9 @@ public:
   void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
   AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
+  // File > New Scene (2-6): replaces the open scene by a template (history starts over); the file is
+  // Scenes/New Scene.scene next to the current one (numbered when taken) until saved.
+  void NewScene(SceneTemplate t);
   // References (queue 2-5b, Assets/AssetRefs): on disk plus the open scene (as "열린 장면").
   std::vector<AssetRef> FindReferences(const std::string& assetPath);
   std::vector<std::string> FindUnused();

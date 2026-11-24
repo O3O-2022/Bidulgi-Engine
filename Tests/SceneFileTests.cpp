@@ -1,11 +1,14 @@
 // Scene file tests (queue 2-2 exit criterion: save -> open -> save gives the same bytes).
 #include "Core/Command.h"
+#include "Core/Space.h"
 #include "Scene/Components.h"
 #include "Scene/SampleComponents.h"
+#include "Scene/DefaultScene.h"
 #include "Scene/SceneFile.h"
 #include "bdg_test.h"
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <random>
 
 using namespace bdg;
@@ -126,4 +129,51 @@ TEST_CASE("scene files: the rendering reference scene loads cleanly (queue 3-8)"
           slots |= 1 << std::stoi(slot);
         }
   CHECK(bookmarks == 9 && slots == 0x3fe); // keys 1..9, each once
+}
+
+TEST_CASE("scene: templates for new scenes and projects (queue 2-6)") {
+  SceneTemplate t;
+  CHECK(ParseSceneTemplate("basic3d", t) && t == SceneTemplate::Basic3D);
+  CHECK(ParseSceneTemplate("3D", t) && t == SceneTemplate::Basic3D);
+  CHECK(ParseSceneTemplate("Empty", t) && t == SceneTemplate::Empty);
+  CHECK(!ParseSceneTemplate("fps", t));
+
+  Scene s;
+  BuildDefaultScene(s, SceneTemplate::Empty);
+  CHECK(s.ObjectCount() == 1 && s.Find("cam") && s.Find("cam")->Find("Camera"));
+  BuildDefaultScene(s, SceneTemplate::Basic3D); // replaces what was there
+  CHECK_EQ(s.ObjectCount(), size_t(5));
+  const char* names[] = {"Main Camera", "Sun", "Sky", "World Settings", "Ground"};
+  for (size_t i = 0; i < 5; ++i) CHECK_EQ(s.Find(s.Roots()[i])->name, std::string(names[i]));
+  const Transform& cam = *static_cast<const Transform*>(s.Find("cam")->Find("Transform")->data);
+  CHECK(Near(cam.position, {0, 1.5f, -6}));
+  const glm::vec3 fwd = space::EulerDegreesToQuat(cam.rotation) * glm::vec3(0, 0, -1); // looks at the origin
+  CHECK(glm::dot(fwd, glm::normalize(glm::vec3(0, -1.5f, 6))) > 0.9999f);
+  const Light& sun = *static_cast<const Light*>(s.Find("sun")->Find("Light")->data);
+  CHECK(sun.type == LightType::Directional && sun.castShadows);
+  const Transform& sunT = *static_cast<const Transform*>(s.Find("sun")->Find("Transform")->data);
+  const glm::vec3 shine = space::EulerDegreesToQuat(sunT.rotation) * glm::vec3(0, 0, -1);
+  CHECK(std::abs(std::asin(-shine.y) * 57.29578f - 45) < 0.01f); // 45 degrees down
+  CHECK(s.Find("world")->Find("WorldSettings") && s.Find("sky")->Find("Sky"));
+  const MeshRenderer& ground = *static_cast<const MeshRenderer*>(s.Find("ground")->Find("MeshRenderer")->data);
+  CHECK(ground.mesh == "Plane" && ground.material == "bdg:Grid");
+
+  // the file a new project gets: written, opened, written again -> the same bytes
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "bdg_default_scene";
+  std::filesystem::remove_all(dir);
+  const std::string path = (dir / "Scenes" / "Main.scene").string();
+  std::string err;
+  CHECK(WriteDefaultScene(path, SceneTemplate::Basic3D, "Main", &err));
+  Scene loaded;
+  std::string name;
+  CHECK(LoadSceneFile(loaded, path, &name) && name == "Main" && loaded.ObjectCount() == 5);
+  const std::string again = (dir / "again.scene").string();
+  CHECK(SaveSceneFile(loaded, name, again, &err));
+  auto read = [](const std::string& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  CHECK_EQ(read(path), read(again));
+  CHECK(read(path).find("{\"id\":\"world\",\"name\":\"World Settings\",\"WorldSettings\":{}}") != std::string::npos); // defaults left out
+  std::filesystem::remove_all(dir);
 }

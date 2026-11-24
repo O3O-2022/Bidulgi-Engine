@@ -103,13 +103,15 @@ Assets/
 | Ground | 20×20m 평면, 격자 머티리얼 |
 
 ```jsonl
-{"scene":"Main","defaults":"1.0"}
-{"id":"cam","name":"Main Camera","pos":[0,1.5,-6],"c":{"Camera":{}}}
-{"id":"sun","name":"Sun","rot":[45,-30,0],"c":{"DirectionalLight":{"shadows":true}}}
-{"id":"sky","name":"Sky","c":{"Sky":{"sun":"@sun"}}}
-{"id":"world","name":"World Settings","c":{"WorldSettings":{}}}
-{"id":"ground","name":"Ground","scale":[20,1,20],"c":{"Plane":{},"MeshRenderer":{"mat":"bdg:Grid"}}}
+{"v":1,"defaults":"1.0","scene":"Main","mode":"3d"}
+{"id":"cam","name":"Main Camera","pos":[0,1.5,-6],"rot":[-14.036243,180,0],"Camera":{}}
+{"id":"sun","name":"Sun","rot":[-45,-30,0],"Light":{"type":"Directional","intensity":3}}
+{"id":"sky","name":"Sky","Sky":{}}
+{"id":"world","name":"World Settings","WorldSettings":{}}
+{"id":"ground","name":"Ground","scale":[20,1,20],"MeshRenderer":{"mesh":"Plane","material":"bdg:Grid"}}
 ```
+
+(2-6에서 구현: `Scene/DefaultScene.*`가 만드는 실제 파일. 에디터 Ctrl+N과 `bdg new`가 같은 함수를 씀. World Settings는 지금 포그와 노출을 가짐 — GI·품질 단계 기본값은 해당 기능이 장면 단위 설정을 가질 때 여기로 모음.)
 
 ## 일정
 

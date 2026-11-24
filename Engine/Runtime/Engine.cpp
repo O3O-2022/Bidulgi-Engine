@@ -102,7 +102,8 @@ struct bdg_engine {
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
-  bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false;
+  bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
+  std::string newSceneTestValues[6];
   std::string importTestValues[8];
   std::string themeTestValues[8];
   std::string themePath;     // ProjectSettings/Theme.json (BDG_THEME_FILE)
@@ -594,6 +595,121 @@ void InjectImportTest(bdg_engine* e, int frame) {
   }
 }
 
+// Scripted check of 2-6 (BDG_NEWSCENE_TEST=1, BDG_SCENE_FILE in a scratch folder): Ctrl+N gives the basic 3D
+// scene (five objects, fresh history), the Game view camera looks at the ground, the ground has the grid, fog
+// turns the far ground toward the fog colour, a lower exposure darkens the picture, and Ctrl+S writes the new file.
+void InjectNewSceneTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->sceneView) return;
+  auto* v = e->newSceneTestValues;
+  auto key = [&](bdg::Key k, bool ctrl) {
+    bdg::InputEvent ev{bdg::InputEvent::Type::KeyDown};
+    ev.key = k;
+    ev.ctrl = ctrl;
+    e->window.InjectEvent(ev);
+  };
+  // ground far (upper) and near (lower), left of the centre (the camera icon and gizmo sit there); drawable
+  // pixels, bottom-up rows
+  auto sample = [&](float fy) {
+    bdg::Widget* sw = e->editor->Find("scene");
+    if (!sw) return glm::vec3(0);
+    int32_t w = 0, h = 0;
+    e->window.GetDrawableSize(w, h);
+    std::vector<uint8_t> px;
+    e->rhi.ReadPixels(w, h, px);
+    const float s = e->editor->Scale();
+    glm::vec3 sum(0);
+    int n = 0;
+    for (int dy = -3; dy <= 3; ++dy)
+      for (int dx = -3; dx <= 3; ++dx) {
+        const int x = (int)((sw->x + sw->w * 0.25f) * s) + dx, y = h - 1 - ((int)((sw->y + sw->h * fy) * s) + dy);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const uint8_t* p = &px[((size_t)y * w + x) * 4];
+        sum += glm::vec3(p[0], p[1], p[2]);
+        ++n;
+      }
+    return n ? sum / (float)n : sum;
+  };
+  auto set = [&](const char* path, const std::string& value) {
+    bdg::Command c;
+    c.name = "set";
+    c.target = "world";
+    c.args = std::format(R"({{"path":"{}","value":{}}})", path, value);
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("new scene test: {}", err);
+  };
+  static glm::vec3 far0, near0;
+  if (frame == 2) key(bdg::Key::N, true);
+  if (frame == 4) {
+    const char* names[] = {"Main Camera", "Sun", "Sky", "World Settings", "Ground"};
+    bool ok = m->scene.ObjectCount() == 5 && m->bus.UndoDepth() == 0;
+    const auto& roots = m->scene.Roots();
+    for (size_t i = 0; ok && i < 5; ++i) ok = i < roots.size() && m->scene.Find(roots[i])->name == names[i];
+    v[0] = std::format("{}", ok && m->scenePath.ends_with("New Scene.scene") ? 1 : 0);
+    // the camera looks at the origin: its forward (-Z turned by its rotation) points from it to (0, 0, 0)
+    bdg::SceneObject* cam = m->scene.Find("cam");
+    bdg::Component* t = cam ? cam->Find("Transform") : nullptr;
+    if (t) {
+      const bdg::Transform& tr = *static_cast<const bdg::Transform*>(t->data);
+      const glm::vec3 fwd = bdg::space::EulerDegreesToQuat(tr.rotation) * glm::vec3(0, 0, -1);
+      const glm::vec3 to = glm::normalize(-bdg::space::ToGlm(tr.position));
+      v[1] = std::format("{}", glm::dot(fwd, to) > 0.999f ? 1 : 0);
+    }
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
+    e->sceneView->camera.pivot = {0, 0, 0}; // a fixed editor view of the ground
+    m->Select("ground");
+    e->sceneView->Frame(*m);
+  }
+  if (frame == 8) {
+    far0 = sample(0.35f);
+    near0 = sample(0.85f);
+    { // the grid texture: along a row of the near ground the brightness changes (lines); a plain colour would not
+      bdg::Widget* sw = e->editor->Find("scene");
+      int32_t w = 0, h = 0;
+      e->window.GetDrawableSize(w, h);
+      std::vector<uint8_t> px;
+      e->rhi.ReadPixels(w, h, px);
+      const float s = e->editor->Scale();
+      int lo = 999, hi = -1;
+      if (sw) {
+        const int y = h - 1 - (int)((sw->y + sw->h * 0.8f) * s);
+        for (int x = (int)((sw->x + sw->w * 0.3f) * s); x < (int)((sw->x + sw->w * 0.7f) * s); ++x) {
+          if (x < 0 || x >= w || y < 0 || y >= h) continue;
+          const uint8_t* p = &px[((size_t)y * w + x) * 4];
+          const int l = (p[0] + p[1] + p[2]) / 3;
+          lo = std::min(lo, l);
+          hi = std::max(hi, l);
+        }
+      }
+      v[2] = std::format("{}", hi - lo > 6 ? 1 : 0);
+      if (v[2] != "1") bdg::LogError("new scene test: ground row {}..{}", lo, hi);
+    }
+    set("WorldSettings.fog", "true");
+    set("WorldSettings.fogColor", "[1,0,0,1]");
+    set("WorldSettings.fogDensity", "0.5");
+  }
+  if (frame == 11) {
+    const glm::vec3 far1 = sample(0.35f);
+    v[3] = std::format("{}", far1.r > far0.r + 40 && far1.g < far0.g - 20 ? 1 : 0);
+    if (v[3] != "1") bdg::LogError("new scene test: fog far {} {} {} -> {} {} {}", far0.r, far0.g, far0.b, far1.r, far1.g, far1.b);
+    set("WorldSettings.fog", "false");
+    set("WorldSettings.exposure", "0.3");
+  }
+  if (frame == 14) {
+    const glm::vec3 near1 = sample(0.85f);
+    const float l0 = near0.r + near0.g + near0.b, l1 = near1.r + near1.g + near1.b;
+    v[4] = std::format("{}", l1 < l0 * 0.75f ? 1 : 0); // darker
+    if (v[4] != "1") bdg::LogError("new scene test: exposure {} -> {}", l0, l1);
+    key(bdg::Key::S, true);
+  }
+  if (frame == 16) {
+    std::string text;
+    std::ifstream in(std::filesystem::path(std::u8string((const char8_t*)m->scenePath.c_str())), std::ios::binary);
+    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    v[5] = std::format("{}", text.find("\"World Settings\"") != std::string::npos && text.find("bdg:Grid") != std::string::npos ? 1 : 0);
+  }
+}
+
 // ---- Theme editor (queue 2-5c) ------------------------------------------------------------------
 // Project Settings > Theme: one row per color token (swatch, name, value, a dot when the project changed it).
 // A click opens the picker under the row: hex field + hue / saturation / brightness / opacity sliders. Every change
@@ -924,6 +1040,7 @@ void SetupShortcuts(bdg_engine* e) {
     }
   });
   s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
+  s.Register("file.new", "New Scene", [m] { m->NewScene(bdg::SceneTemplate::Basic3D); }); // 2-6
   s.Register("play.toggle", "Play / Stop", [e, m] { TogglePlay(e); });
   s.Register("play.pause", "Pause", [e] { SetPlayPaused(e, !e->play.Paused()); });
   s.Register("play.step", "Step One Frame", [e] { StepPlay(e); });
@@ -2373,6 +2490,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->refsTest = std::getenv("BDG_REFS_TEST") != nullptr;
   e->themeTest = std::getenv("BDG_THEME_TEST") != nullptr;
   e->importTest = std::getenv("BDG_IMPORT_TEST") != nullptr;
+  e->newSceneTest = std::getenv("BDG_NEWSCENE_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2810,6 +2928,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->refsTest && !e->showGallery) InjectRefsTest(e, frames);
     if (e->themeTest && !e->showGallery) InjectThemeTest(e, frames);
     if (e->importTest && !e->showGallery) InjectImportTest(e, frames);
+    if (e->newSceneTest && !e->showGallery) InjectNewSceneTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3158,6 +3277,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->newSceneTest) {
+        auto* v = e->newSceneTestValues;
+        bdg::LogInfo("new scene test: scene={} camera={} grid={} fog={} exposure={} saved={}", v[0], v[1], v[2], v[3], v[4], v[5]);
       }
       if (e->importTest) {
         auto* v = e->importTestValues;
