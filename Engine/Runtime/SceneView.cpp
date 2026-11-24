@@ -1,6 +1,7 @@
 #include "Runtime/SceneView.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
+#include "Core/Command.h"
 #include "Core/Log.h"
 #include "Core/Space.h"
 #include "Render2D/Batch2D.h"
@@ -295,6 +296,74 @@ bool SceneView::ObjectCenter(const EditorModel& model, const std::string& id, gl
   return true;
 }
 
+bool SceneView::CurrentGizmo(const EditorModel& model, GizmoMode& mode, GizmoFrame& frame, GizmoView& view) const {
+  if (model.tool == "move") mode = GizmoMode::Move;
+  else if (model.tool == "rotate") mode = GizmoMode::Rotate;
+  else if (model.tool == "scale") mode = GizmoMode::Scale;
+  else return false;
+  const SceneObject* o = model.Selected().empty() ? nullptr : model.scene.Find(model.Selected());
+  if (!o || !const_cast<SceneObject*>(o)->Find("Transform") || pw_ <= 0) return false;
+  view.camera = camera.ToCamera();
+  view.x = vx_; view.y = vy_; view.w = vw_; view.h = vh_;
+  glm::mat4 world = model.scene.WorldMatrix(o->id);
+  glm::mat3 axes(1.f);
+  if (localSpace || mode == GizmoMode::Scale)
+    for (int i = 0; i < 3; ++i) {
+      glm::vec3 c = glm::vec3(world[i]);
+      axes[i] = glm::length(c) > 1e-8f ? glm::normalize(c) : glm::mat3(1.f)[i];
+    }
+  frame = MakeGizmoFrame(view, glm::vec3(world[3]), axes);
+  return true;
+}
+
+bool SceneView::GizmoPoint(const EditorModel& model, GizmoHandle h, float& x, float& y) const {
+  GizmoMode mode;
+  GizmoFrame f;
+  GizmoView v;
+  glm::vec2 p;
+  if (!CurrentGizmo(model, mode, f, v) || !GizmoHandlePoint(mode, h, f, v, p)) return false;
+  x = p.x;
+  y = p.y;
+  return true;
+}
+
+// Applies a drag delta to every dragged object from its values at the start of the drag (never accumulates).
+void SceneView::ApplyGizmo(EditorModel& model, const GizmoDelta& d) {
+  auto rotationOf = [](const glm::mat4& m) {
+    glm::mat3 r;
+    for (int i = 0; i < 3; ++i) {
+      glm::vec3 c = glm::vec3(m[i]);
+      r[i] = glm::length(c) > 1e-8f ? glm::normalize(c) : glm::mat3(1.f)[i];
+    }
+    return glm::normalize(glm::quat_cast(r));
+  };
+  auto set = [&](const std::string& id, const char* field, const glm::vec3& v) {
+    Command c;
+    c.name = "set";
+    c.target = id;
+    c.args = std::format(R"({{"path":"Transform.{}","value":[{},{},{}]}})", field, v.x, v.y, v.z);
+    std::string err;
+    if (!model.bus.Execute(c, &err)) LogWarn("gizmo: {}", err);
+  };
+  const GizmoMode mode = gizmo_.Mode();
+  const glm::vec3 pivot = gizmo_.Frame().origin;
+  for (const DragStart& s : starts_) {
+    glm::vec3 worldPos = glm::vec3(s.world[3]);
+    glm::mat4 toParent = glm::inverse(s.parentWorld);
+    if (mode == GizmoMode::Move) {
+      set(s.id, "position", glm::vec3(toParent * glm::vec4(worldPos + d.move, 1.f)));
+    } else if (mode == GizmoMode::Rotate) {
+      glm::quat local = glm::inverse(rotationOf(s.parentWorld)) * (d.rotate * rotationOf(s.world));
+      set(s.id, "rotation", space::ToGlm(space::QuatToEulerDegrees(glm::normalize(local))));
+      if (starts_.size() > 1) // several objects turn around the primary one
+        set(s.id, "position", glm::vec3(toParent * glm::vec4(pivot + d.rotate * (worldPos - pivot), 1.f)));
+    } else {
+      set(s.id, "scale", space::ToGlm(s.scale) * d.scale);
+    }
+  }
+  gizmoChanged_ = true;
+}
+
 void SceneView::Frame(const EditorModel& model) {
   glm::vec3 lo{0}, hi{0};
   bool any = false;
@@ -325,6 +394,39 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     bool used = false;
     switch (e.type) {
       case T::MouseDown:
+        if (drag_ == Drag::None && inside(e) && e.button == 1 && !e.alt) { // a gizmo handle wins over picking
+          GizmoMode mode;
+          GizmoFrame frame;
+          GizmoView gv;
+          GizmoHandle h = CurrentGizmo(model, mode, frame, gv) ? GizmoHit(mode, frame, gv, {e.x, e.y}) : GizmoHandle::None;
+          if (h != GizmoHandle::None && gizmo_.Begin(mode, h, frame, gv, {e.x, e.y})) {
+            starts_.clear();
+            std::set<std::string> sel(model.Selection().begin(), model.Selection().end());
+            std::vector<std::string> ids = model.Selection();
+            std::stable_partition(ids.begin(), ids.end(), [&](const std::string& id) { return id == model.Selected(); });
+            for (const std::string& id : ids) {
+              SceneObject* o = model.scene.Find(id);
+              Component* c = o ? o->Find("Transform") : nullptr;
+              if (!c) continue;
+              bool underSelected = false; // a selected parent already carries it
+              for (const SceneObject* p = o->parent.empty() ? nullptr : model.scene.Find(o->parent); p && !underSelected;
+                   p = p->parent.empty() ? nullptr : model.scene.Find(p->parent))
+                underSelected = sel.count(p->id) > 0;
+              if (underSelected) continue;
+              const Transform& t = *static_cast<const Transform*>(c->data);
+              starts_.push_back({id, t.position, t.rotation, t.scale, model.scene.WorldMatrix(id),
+                                 o->parent.empty() ? glm::mat4(1.f) : model.scene.WorldMatrix(o->parent)});
+            }
+            const char* label = mode == GizmoMode::Move ? "Move" : mode == GizmoMode::Rotate ? "Rotate" : "Scale";
+            model.bus.BeginGroup(std::format("{} {}", label, starts_.size() == 1 ? model.scene.Find(starts_[0].id)->name
+                                                                                 : std::format("{} objects", starts_.size())), "ui");
+            gizmoChanged_ = false;
+            drag_ = Drag::Gizmo;
+            dragButton_ = 1;
+            used = true;
+            break;
+          }
+        }
         if (drag_ == Drag::None && inside(e)) {
           dragButton_ = e.button;
           drag_ = e.button == 1 ? (e.alt ? Drag::Orbit : Drag::Click) : e.button == 2 ? Drag::Pan : e.button == 3 ? Drag::Fly : Drag::None;
@@ -336,7 +438,18 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         break;
       case T::MouseMove: {
         hover_ = inside(e);
-        if (drag_ == Drag::None) break;
+        if (drag_ == Drag::Gizmo) {
+          ApplyGizmo(model, gizmo_.Update({e.x, e.y}, e.ctrl));
+          used = true;
+          break;
+        }
+        if (drag_ == Drag::None) {
+          GizmoMode mode;
+          GizmoFrame frame;
+          GizmoView gv;
+          hot_ = hover_ && CurrentGizmo(model, mode, frame, gv) ? GizmoHit(mode, frame, gv, {e.x, e.y}) : GizmoHandle::None;
+          break;
+        }
         float dx = e.x - lastX_, dy = e.y - lastY_;
         lastX_ = e.x;
         lastY_ = e.y;
@@ -357,6 +470,12 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         break;
       }
       case T::MouseUp:
+        if (drag_ == Drag::Gizmo && e.button == 1) {
+          model.bus.EndGroup();
+          drag_ = Drag::None;
+          used = true;
+          break;
+        }
         if (drag_ != Drag::None && e.button == dragButton_) {
           if (drag_ == Drag::Click && std::hypot(e.x - downX_, e.y - downY_) < 4.f) {
             std::string id = Pick(model, e.x, e.y);
@@ -382,6 +501,18 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         break;
       case T::KeyDown:
+        if (drag_ == Drag::Gizmo && e.key == Key::Escape) { // cancel: the whole drag goes away
+          std::string err;
+          if (!model.bus.CancelGroup(&err)) LogWarn("gizmo: cancel failed: {}", err);
+          drag_ = Drag::None;
+          used = true;
+          break;
+        }
+        if (e.key == Key::X && hover_ && !textFocused && !e.ctrl && !e.alt && drag_ == Drag::None) {
+          localSpace = !localSpace;
+          used = true;
+          break;
+        }
         if (drag_ == Drag::Fly && (e.key == Key::W || e.key == Key::A || e.key == Key::S || e.key == Key::D || e.key == Key::Q || e.key == Key::E)) {
           held_.insert(e.key);
           used = true;
@@ -442,9 +573,20 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
       b.Triangle(x + 2, y - 4, 6, 8, t.C("fg"));
     }
   }
+  if (model) { // gizmo of the active tool on the selection
+    GizmoMode mode;
+    GizmoFrame frame;
+    GizmoView gv;
+    if (CurrentGizmo(*model, mode, frame, gv))
+      DrawGizmo(b, t, mode, frame, gv, drag_ == Drag::Gizmo ? gizmo_.Handle() : hot_);
+  }
   // Chips (top-left) and stats (top-right).
   float px = w.x + 10;
-  for (const char* chip : {"Perspective", "Lit", "Grid"}) {
+  std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
+                       : model->tool == "scale" ? "Scale (R)" : "Select";
+  std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
+  for (const std::string& chip : {std::string("Perspective"), std::string("Lit"), toolChip, spaceChip}) {
+    if (chip.empty()) continue;
     float cw = ui.Measure(11, chip) + 18;
     b.Rect(px, w.y + 8, cw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
     ui.Text(px + 9, w.y + 12, 11, t.C("fg-dim"), chip);

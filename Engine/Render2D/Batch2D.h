@@ -18,6 +18,8 @@ public:
   void Shadow(float x, float y, float w, float h, Color color, float radius, float blur);
   // Isosceles triangle inside the box, pointing right (Graph exec pins). border > 0 draws an outline.
   void Triangle(float x, float y, float w, float h, Color fill, float border = 0.f, Color borderColor = {0, 0, 0, 0});
+  // Filled convex quad, corners in order (gizmo plane handles); no anti-aliased edge.
+  void Quad(const float corners[4][2], Color fill);
   // One glyph quad sampled from the SDF text atlas (see SetTextAtlas).
   void Glyph(float x, float y, float w, float h, float u0, float v0, float u1, float v1, Color color);
   void SetTextAtlas(TextureHandle atlas); // single atlas for now

@@ -238,12 +238,12 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
 
 // ---- History ---------------------------------------------------------------------------------
 void CommandBus::Push(Entry e) {
-  redo_.clear();
-  if (groupDepth_ > 0) {
+  if (groupDepth_ > 0) { // the redo history goes when the group is committed (EndGroup), not if it is cancelled
     group_.forward.insert(group_.forward.end(), e.forward.begin(), e.forward.end());
     group_.inverse.insert(group_.inverse.begin(), e.inverse.begin(), e.inverse.end());
     return;
   }
+  redo_.clear();
   undo_.push_back(std::move(e));
 }
 
@@ -359,6 +359,16 @@ void CommandBus::EndGroup() {
     undo_.push_back(std::move(group_));
   }
   group_ = {};
+}
+
+bool CommandBus::CancelGroup(std::string* error) {
+  if (groupDepth_ == 0) return true;
+  if (groupDepth_ > 1 || group_.forward.empty()) { EndGroup(); return true; } // nested or empty: nothing of its own
+  std::vector<Entry> keepRedo = std::move(redo_);
+  EndGroup();
+  bool ok = Undo(error);
+  redo_ = std::move(keepRedo); // the cancelled edit is not offered for redo
+  return ok;
 }
 
 // ---- Log / replay ------------------------------------------------------------------------------

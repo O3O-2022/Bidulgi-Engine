@@ -68,6 +68,7 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
     case SDL_EVENT_QUIT: return false;
     case SDL_EVENT_MOUSE_MOTION:
       ev.type = InputEvent::Type::MouseMove; ev.x = e.motion.x * density; ev.y = e.motion.y * density;
+      { SDL_Keymod m = SDL_GetModState(); ev.ctrl = (m & SDL_KMOD_CTRL) != 0; ev.shift = (m & SDL_KMOD_SHIFT) != 0; ev.alt = (m & SDL_KMOD_ALT) != 0; }
       out.push_back(ev); break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP:

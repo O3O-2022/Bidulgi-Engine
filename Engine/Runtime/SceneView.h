@@ -4,6 +4,8 @@
 // axis widget). Editor camera: Alt + left drag orbits, middle drag pans, wheel zooms, right drag looks around
 // and W A S D Q E fly while it is held (Shift = faster, wheel = speed), F frames the selection. A left click
 // selects the object under the cursor (Ctrl/Shift add or remove), a click on empty space clears the selection.
+// Gizmos (queue 3-3): the active tool (W move, E rotate, R scale) puts handles on the selection; one drag is one
+// undo step (a command group of "set Transform.*"), Ctrl snaps, Esc cancels, X switches world / local axes.
 //
 // Meshes: MeshRenderer.mesh names a project asset (.gltf / .glb through the importer) or a built-in shape by its
 // file stem: Plane (1 x 1), Cube, Sphere, Cylinder, Cone (1 m). Anything else shows a placeholder cube.
@@ -11,6 +13,7 @@
 // a stable colour from their name.
 #include "Platform/Window.h"
 #include "Render3D/Renderer3D.h"
+#include "Runtime/Gizmo.h"
 #include <memory>
 #include <set>
 #include <string>
@@ -49,6 +52,10 @@ public:
   bool ProjectUI(const glm::vec3& world, float& x, float& y) const;   // world -> UI point in the last view
   bool ObjectCenter(const EditorModel& model, const std::string& id, glm::vec3& center, float& radius) const;
   EditorCamera camera;
+  bool localSpace = false; // gizmo axes: the object's own (true) or the world's; scale always uses the object's
+  // Gizmo of the current tool and selection in the last view (false: no gizmo).
+  bool CurrentGizmo(const EditorModel& model, GizmoMode& mode, GizmoFrame& frame, GizmoView& view) const;
+  bool GizmoPoint(const EditorModel& model, GizmoHandle h, float& x, float& y) const; // test hook
   // Test hooks: the last rendered picture (bottom-up RGBA8 rows) and what it contained.
   void ReadPixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
   int32_t PixelW() const { return pw_; }
@@ -85,7 +92,13 @@ private:
   std::vector<Icon> icons_;
   float renderMs_ = 0;
 
-  enum class Drag { None, Click, Orbit, Pan, Fly } drag_ = Drag::None;
+  enum class Drag { None, Click, Orbit, Pan, Fly, Gizmo } drag_ = Drag::None;
+  GizmoDrag gizmo_;
+  GizmoHandle hot_ = GizmoHandle::None;
+  bool gizmoChanged_ = false;
+  struct DragStart { std::string id; Vec3 position, rotation, scale; glm::mat4 world, parentWorld; };
+  std::vector<DragStart> starts_;
+  void ApplyGizmo(EditorModel& model, const GizmoDelta& d);
   int dragButton_ = 0;
   float lastX_ = 0, lastY_ = 0, downX_ = 0, downY_ = 0;
   bool clickCtrl_ = false, hover_ = false;

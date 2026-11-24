@@ -3,6 +3,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Render3D/ReferenceBoard.h"
 #include "Assets/GltfImport.h"
+#include "Runtime/Gizmo.h"
 #include <cstdio>
 #include <filesystem>
 #include <cmath>
@@ -104,4 +105,57 @@ TEST_CASE("gltf: external buffer under a non-ASCII folder, errors reported (queu
   CHECK(!ImportGltfMemory(empty, sizeof(empty) - 1, dir, m, &err));
   CHECK(err == "no triangle meshes in the default scene");
   fs::remove_all(dir);
+}
+
+TEST_CASE("gizmo: hit tests and drags follow the handles (queue 3-3)") {
+  GizmoView v;
+  v.camera.position = {0, 0, 10};
+  v.camera.target = {0, 0, 0};
+  v.camera.fovY = 50;
+  v.x = 0; v.y = 0; v.w = 800; v.h = 600;
+  GizmoFrame f = MakeGizmoFrame(v, {0, 0, 0}, glm::mat3(1.f));
+  glm::vec2 o, tip;
+  CHECK(v.Project(f.origin, o) && v.Project(f.origin + glm::vec3(f.size, 0, 0), tip));
+  CHECK(std::fabs(glm::length(tip - o) - kGizmoPixels) < 0.5f); // constant size on screen
+  CHECK(std::fabs(o.x - 400) < 0.01f && std::fabs(o.y - 300) < 0.01f);
+
+  glm::vec2 px;
+  CHECK(GizmoHandlePoint(GizmoMode::Move, GizmoHandle::X, f, v, px));
+  CHECK(GizmoHit(GizmoMode::Move, f, v, px) == GizmoHandle::X);
+  CHECK(GizmoHit(GizmoMode::Move, f, v, o) == GizmoHandle::Center);
+  CHECK(GizmoHit(GizmoMode::Move, f, v, {20, 20}) == GizmoHandle::None);
+  CHECK(GizmoHit(GizmoMode::Move, f, v, o + glm::vec2(0, -40)) == GizmoHandle::Y); // screen up = +Y
+  CHECK(GizmoHit(GizmoMode::Move, f, v, o + glm::vec2(40, -40)) == GizmoHandle::XY); // plane square facing us
+
+  GizmoDrag d; // move along X: 55 px to the right is half an axis length
+  CHECK(d.Begin(GizmoMode::Move, GizmoHandle::X, f, v, px));
+  GizmoDelta m = d.Update(px + glm::vec2(55, 30), false);
+  CHECK(std::fabs(m.move.x - f.size * 0.5f) < f.size * 0.01f && m.move.y == 0 && m.move.z == 0);
+  GizmoDelta snapped = d.Update(px + glm::vec2(55, 0), true);
+  CHECK(std::fabs(snapped.move.x - std::round(f.size * 0.5f)) < 1e-4f);
+
+  glm::vec2 pp; // move in the XY plane
+  CHECK(GizmoHandlePoint(GizmoMode::Move, GizmoHandle::XY, f, v, pp));
+  CHECK(d.Begin(GizmoMode::Move, GizmoHandle::XY, f, v, pp));
+  m = d.Update(pp + glm::vec2(22, -33), false);
+  CHECK(m.move.x > 0 && m.move.y > 0 && std::fabs(m.move.z) < 1e-5f);
+
+  // Rotate around Z (pointing at the viewer): a counter-clockwise screen drag is a positive turn.
+  glm::vec2 rz;
+  CHECK(GizmoHandlePoint(GizmoMode::Rotate, GizmoHandle::Z, f, v, rz));
+  CHECK(GizmoHit(GizmoMode::Rotate, f, v, rz) == GizmoHandle::Z);
+  glm::vec2 start = o + glm::vec2(kGizmoPixels, 0), quarter = o + glm::vec2(0, -kGizmoPixels);
+  CHECK(d.Begin(GizmoMode::Rotate, GizmoHandle::Z, f, v, start));
+  GizmoDelta r = d.Update(quarter, false);
+  CHECK(std::fabs(r.angle - 90.f) < 0.01f);
+  glm::vec3 turned = r.rotate * glm::vec3(1, 0, 0);
+  CHECK(std::fabs(turned.y - 1.f) < 1e-4f); // +X turns to +Y around +Z (right-hand rule)
+  CHECK(std::fabs(d.Update(o + glm::vec2(kGizmoPixels, -8), true).angle) < 1e-4f); // 4 degrees snaps to 0
+
+  // Scale along X: dragging the handle one axis length outward doubles it.
+  glm::vec2 sx;
+  CHECK(GizmoHandlePoint(GizmoMode::Scale, GizmoHandle::X, f, v, sx));
+  CHECK(d.Begin(GizmoMode::Scale, GizmoHandle::X, f, v, sx));
+  GizmoDelta s = d.Update(sx + glm::vec2(kGizmoPixels, 0), false);
+  CHECK(std::fabs(s.scale.x - 2.f) < 1e-3f && s.scale.y == 1.f && s.scale.z == 1.f);
 }

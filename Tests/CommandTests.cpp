@@ -177,3 +177,25 @@ TEST_CASE("commands: a saved log replays to the same scene") {
   CHECK_EQ(busB.UndoDepth(), busA.UndoDepth());
   std::remove(path.c_str());
 }
+
+TEST_CASE("commands: a cancelled group leaves no undo or redo step (queue 3-3)") {
+  Scene s;
+  Fill(s);
+  CommandBus bus(s);
+  CHECK(bus.Execute(Set("g1", "Transform.position", "[5,0,0]")));
+  CHECK(bus.Undo());
+  CHECK(bus.CanRedo()); // earlier redo history
+  size_t depth = bus.UndoDepth();
+  bus.BeginGroup("Move Root", "ui");
+  CHECK(bus.Execute(Set("g1", "Transform.position", "[1,0,0]")));
+  CHECK(bus.Execute(Set("g1", "Transform.position", "[2,0,0]")));
+  CHECK(bus.CancelGroup());
+  CHECK(Get(s, "g1", "Transform", "position") == "[0,0,0]");
+  CHECK(bus.UndoDepth() == depth);
+  CHECK(bus.CanRedo()); // still the old redo, not the cancelled drag
+  CHECK(bus.Redo());
+  CHECK(Get(s, "g1", "Transform", "position") == "[5,0,0]");
+  bus.BeginGroup("empty", "ui"); // nothing done: nothing to take back
+  CHECK(bus.CancelGroup());
+  CHECK(bus.UndoDepth() == depth + 1);
+}

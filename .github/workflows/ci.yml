@@ -225,6 +225,12 @@ jobs:
           if ($log -notmatch 'sceneview test: drawn=1 pick=g8 outline=1 orbit=1 zoom=1 frame=1 pan=1 fly=1 deselect=1 icon=g9') { $errors += 'scene view test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 20) Gizmos (queue 3-3): move axis + plane, one undo step per drag, Esc cancel, rotate ring, scale, snap, local axes
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_GIZMO_TEST = '1' } 32
+          if ($log -notmatch 'gizmo test: move=1 undo=1 plane=1 cancel=1 rotate=1 scale=1 snap=1 local=1') { $errors += 'gizmo test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

@@ -11,6 +11,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
+#include "Scene/Components.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
 #include "Runtime/Screens.h"
@@ -126,7 +127,8 @@ struct bdg_engine {
   int32_t viewW = 0, viewH = 0;
   bool renderTest = false;
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
-  bool sceneViewTest = false;
+  bool sceneViewTest = false, gizmoTest = false;
+  std::string gizmoTestValues[8];
   std::string sceneViewTestValues[10];
 };
 
@@ -510,7 +512,7 @@ void SetupShortcuts(bdg_engine* e) {
   });
   for (const char* t : {"view", "select", "move", "rotate", "scale"})
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
-  s.Register("view.focus", "Focus Selected", log("focus: needs the 3D scene view (queue 3-2)"));
+  s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->Frame(*m); });
   s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
   s.Register("view.nextPanel", "Next Panel", [e] { FocusNextPanel(e); }); // keyboard users jump between docked panels
   s.Register("help.bug", "Report a Bug", [e] { e->bugRequested = true; }); // F12 is Windows' debugger break key
@@ -795,6 +797,133 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 24) v[9] = m->Selected();
 }
 
+// Scripted gizmo check (BDG_GIZMO_TEST=1, queue 3-3) on the Crystal (g8, at 3, 0.5, 2): real mouse drags on the
+// handles through the scene view, each drag one undo step, Esc cancels, W/E/R switch tools, Ctrl snaps, X local axes.
+void InjectGizmoTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->gizmoTestValues;
+  auto ev = [&](T type, float x, float y, int button = 0, bool ctrl = false) {
+    bdg::InputEvent i{type, x * scale, y * scale, button};
+    i.ctrl = ctrl;
+    e->window.InjectEvent(i);
+  };
+  auto key = [&](bdg::Key k, bool ctrl = false) { bdg::InputEvent i{T::KeyDown}; i.key = k; i.ctrl = ctrl; e->window.InjectEvent(i); };
+  auto vec = [&](const char* field) {
+    bdg::SceneObject* o = m->scene.Find("g8");
+    bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    if (!c) return glm::vec3(0);
+    const bdg::Transform& t = *static_cast<const bdg::Transform*>(c->data);
+    const bdg::Vec3& r = std::string(field) == "position" ? t.position : std::string(field) == "rotation" ? t.rotation : t.scale;
+    return glm::vec3(r.x, r.y, r.z);
+  };
+  auto near3 = [](glm::vec3 a, glm::vec3 b) { return glm::length(a - b) < 1e-4f; };
+  // Screen direction of a world axis at the Crystal (where a drag "along X" goes).
+  auto axisDir = [&](glm::vec3 axis) {
+    float ox, oy, ax, ay;
+    glm::vec3 p = vec("position");
+    sv->ProjectUI(p, ox, oy);
+    sv->ProjectUI(p + axis, ax, ay);
+    glm::vec2 d(ax - ox, ay - oy);
+    return glm::length(d) > 0 ? glm::normalize(d) : glm::vec2(1, 0);
+  };
+  auto drag = [&](bdg::GizmoHandle h, glm::vec2 by, bool ctrl = false, bool release = true) {
+    float x, y;
+    if (!sv->GizmoPoint(*m, h, x, y)) { bdg::LogError("gizmo test: no handle point"); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + by.x * k / 4, y + by.y * k / 4, 0, ctrl);
+    if (release) ev(T::MouseUp, x + by.x, y + by.y, 1);
+  };
+  static size_t depth0, future0;
+  static glm::vec3 start;
+  auto future = [&] { // redo steps on offer
+    size_t n = 0;
+    for (const auto& h : m->bus.History()) n += h.future ? 1 : 0;
+    return n;
+  };
+  if (frame == 2) {
+    m->Select("g8");
+    key(bdg::Key::W);
+  }
+  if (frame == 4) { // move along X
+    start = vec("position");
+    depth0 = m->bus.UndoDepth();
+    drag(bdg::GizmoHandle::X, axisDir({1, 0, 0}) * 60.f);
+  }
+  if (frame == 6) {
+    glm::vec3 p = vec("position");
+    v[0] = std::format("{}", p.x > start.x + 0.1f && p.y == start.y && p.z == start.z && m->bus.UndoDepth() == depth0 + 1 ? 1 : 0);
+    key(bdg::Key::Z, true); // one Ctrl+Z undoes the whole drag
+  }
+  if (frame == 8) {
+    v[1] = std::format("{}", near3(vec("position"), start) ? 1 : 0);
+    drag(bdg::GizmoHandle::XZ, axisDir({1, 0, 0}) * 30.f + axisDir({0, 0, 1}) * 30.f); // ground plane square
+  }
+  if (frame == 10) {
+    glm::vec3 p = vec("position");
+    v[2] = std::format("{}", p.x != start.x && p.z != start.z && std::fabs(p.y - start.y) < 1e-5f ? 1 : 0);
+    key(bdg::Key::Z, true);
+  }
+  if (frame == 12) { // Esc in the middle of a drag: nothing changes, nothing to undo
+    depth0 = m->bus.UndoDepth();
+    future0 = future(); // the undone plane drag stays redoable
+    drag(bdg::GizmoHandle::Y, {0, -50}, false, false);
+  }
+  if (frame == 13) key(bdg::Key::Escape);
+  if (frame == 14) {
+    float x, y;
+    sv->GizmoPoint(*m, bdg::GizmoHandle::Y, x, y);
+    ev(T::MouseUp, x, y - 50, 1);
+  }
+  if (frame == 16) {
+    v[3] = std::format("{}", near3(vec("position"), start) && m->bus.UndoDepth() == depth0 && future() == future0 && future0 == 1 ? 1 : 0);
+    key(bdg::Key::E); // rotate tool
+  }
+  if (frame == 18) {
+    float x, y, ox, oy;
+    if (sv->GizmoPoint(*m, bdg::GizmoHandle::Y, x, y) && sv->ProjectUI(vec("position"), ox, oy)) {
+      glm::vec2 r = glm::normalize(glm::vec2(x - ox, y - oy)), tangent(r.y, -r.x); // around the centre
+      drag(bdg::GizmoHandle::Y, tangent * 40.f);
+    }
+  }
+  if (frame == 20) {
+    glm::vec3 r = vec("rotation");
+    v[4] = std::format("{}", std::fabs(r.y) > 1.f && std::fabs(r.x) < 1e-3f && std::fabs(r.z) < 1e-3f ? 1 : 0);
+    key(bdg::Key::R); // scale tool
+  }
+  if (frame == 22) {
+    float x, y, ox, oy; // outward along the (local) X handle
+    if (sv->GizmoPoint(*m, bdg::GizmoHandle::X, x, y) && sv->ProjectUI(vec("position"), ox, oy))
+      drag(bdg::GizmoHandle::X, glm::normalize(glm::vec2(x - ox, y - oy)) * 50.f);
+  }
+  if (frame == 24) {
+    glm::vec3 s = vec("scale");
+    v[5] = std::format("{}", s.x > 1.2f && s.y == 1.f && s.z == 1.f ? 1 : 0);
+    key(bdg::Key::W);
+    start = vec("position");
+  }
+  if (frame == 26) drag(bdg::GizmoHandle::X, axisDir({1, 0, 0}) * 45.f, true); // Ctrl: whole metres
+  if (frame == 28) {
+    float dx = vec("position").x - start.x;
+    v[6] = std::format("{}", std::fabs(dx - std::round(dx)) < 1e-4f ? 1 : 0);
+    float x = 0, y = 0; // X over the view: local axes, the X arrow follows the object's turn
+    if (bdg::Widget* s = e->editor->Find("scene")) { x = s->x + s->w * 0.5f; y = s->y + s->h * 0.5f; }
+    ev(T::MouseMove, x, y);
+    key(bdg::Key::X);
+  }
+  if (frame == 30) {
+    bdg::GizmoMode mode;
+    bdg::GizmoFrame f;
+    bdg::GizmoView gv;
+    glm::vec3 worldX = glm::vec3(m->scene.WorldMatrix("g8")[0]);
+    v[7] = std::format("{}", sv->localSpace && sv->CurrentGizmo(*m, mode, f, gv) &&
+                                 glm::length(f.axes[0] - glm::normalize(worldX)) < 1e-4f ? 1 : 0);
+  }
+}
+
 // Scripted Project panel check (BDG_PROJECT_TEST=1 with BDG_ASSETS holding Scripts/Weapon.h + .cpp and more):
 // open the Scripts folder, select the C++ class item, rename it to Sword through the name field.
 void InjectProjectTest(bdg_engine* e, int frame, float scale) {
@@ -865,6 +994,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->a11yTest = std::getenv("BDG_A11Y_TEST") != nullptr;
   e->renderTest = std::getenv("BDG_RENDER_TEST") != nullptr;
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
+  e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -1128,6 +1258,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     }
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
+    if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
@@ -1285,6 +1416,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->sceneViewTestValues;
         bdg::LogInfo("sceneview test: drawn={} pick={} outline={} orbit={} zoom={} frame={} pan={} fly={} deselect={} icon={}",
                      v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
+      }
+      if (e->gizmoTest) {
+        auto* v = e->gizmoTestValues;
+        bdg::LogInfo("gizmo test: move={} undo={} plane={} cancel={} rotate={} scale={} snap={} local={}", v[0], v[1], v[2], v[3], v[4],
+                     v[5], v[6], v[7]);
       }
       if (e->faultTest)
         bdg::LogInfo("fault test: guard_failures={} check_failures={} frames={} survived=1", bdg::GuardFailureCount(),

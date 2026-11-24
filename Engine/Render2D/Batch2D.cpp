@@ -181,6 +181,11 @@ void Batch2D::Triangle(float x, float y, float w, float h, Color fill, float bor
   PushQuad(c, l, hw, hh, 0.f, border, fill, borderColor, 2.f);
 }
 
+void Batch2D::Quad(const float c[4][2], Color fill) {
+  const float l[4][2] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}}; // deep inside a huge box: full coverage everywhere
+  PushQuad(c, l, 1e6f, 1e6f, 0.f, 0.f, fill, fill);
+}
+
 void Batch2D::Line(float x0, float y0, float x1, float y1, float thickness, Color color) {
   float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx * dx + dy * dy);
   if (len <= 0.f) return;

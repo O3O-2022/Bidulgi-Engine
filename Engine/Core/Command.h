@@ -35,6 +35,9 @@ public:
   size_t UndoDepth() const { return undo_.size(); }
   void BeginGroup(std::string label, std::string source = "ai"); // until EndGroup: one undo step (one AI request)
   void EndGroup();
+  // Ends the open group and takes back everything it did, leaving neither an undo nor a redo step and the
+  // earlier redo history untouched (a gizmo drag cancelled with Esc). The log keeps the lines plus an "undo".
+  bool CancelGroup(std::string* error = nullptr);
 
   // Continuous edits of the same field from the UI within this window merge into one undo step.
   double mergeWindow = 0.3;
