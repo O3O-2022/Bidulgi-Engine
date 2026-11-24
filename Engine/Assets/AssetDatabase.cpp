@@ -1,4 +1,5 @@
 #include "Assets/AssetDatabase.h"
+#include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include <yyjson.h>
 #include "Assets/TextureCooker.h"
@@ -129,7 +130,7 @@ fs::path AssetDatabase::Abs(const std::string& rel) const {
 }
 
 bool AssetDatabase::LoadCache() {
-  std::FILE* f = cachePath_.empty() ? nullptr : std::fopen(cachePath_.c_str(), "rb");
+  std::FILE* f = cachePath_.empty() ? nullptr : OpenU8(cachePath_, "rb");
   if (!f) return false;
   char line[2048];
   bool ok = false;
@@ -162,7 +163,7 @@ bool AssetDatabase::SaveCache() const {
   if (cachePath_.empty()) return false;
   std::error_code ec;
   fs::create_directories(fs::path(cachePath_).parent_path(), ec);
-  std::FILE* f = std::fopen(cachePath_.c_str(), "wb");
+  std::FILE* f = OpenU8(cachePath_, "wb");
   if (!f) return false;
   std::fprintf(f, "{\"assetdb\":1,\"root\":%s}\n", Registry_Quote(root_).c_str());
   for (auto& [g, r] : byGuid_)

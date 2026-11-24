@@ -36,6 +36,11 @@ void        bdg_engine_destroy(bdg_engine* engine);
 const char* bdg_result_string(bdg_result r);
 const char* bdg_version_string(void);
 
+/* `bdg` command line (queue 2-7): runs one command (argv[0] = program name, the rest UTF-8 arguments) on the
+   project in the working folder without opening a window; prints to stdout / stderr. Returns the exit code:
+   0 done, 1 problems found or the command failed, 2 bad usage. */
+int         bdg_cli_main(int argc, const char* const* argv);
+
 #ifdef __cplusplus
 }
 #endif

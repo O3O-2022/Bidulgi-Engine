@@ -10,6 +10,7 @@
 //     u32 covered texels; per texel: u32 atlas index, position, normal (3 f32 each)
 //   f64 probe bake ms
 #include "Render3D/Renderer3D.h"
+#include "Core/Utf8Path.h"
 #include "Render3D/Lightmap.h"
 #include "Render3D/RayScene.h"
 #include "Core/Log.h"
@@ -126,11 +127,11 @@ bool Renderer3D::SaveGI(const std::string& path, uint64_t inputHash, std::string
   auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
   if (!rhi_) return fail("no renderer");
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+  std::filesystem::create_directories(PathU8(path).parent_path(), ec);
   const std::string temp = path + ".tmp";
   {
     Writer w;
-    w.f.open(temp, std::ios::binary | std::ios::trunc);
+    w.f.open(PathU8(temp), std::ios::binary | std::ios::trunc);
     if (!w.f) return fail("cannot write " + temp);
     w.Raw(kMagic, 8);
     w.Pod(kGIVersion);
@@ -189,7 +190,7 @@ bool Renderer3D::SaveGI(const std::string& path, uint64_t inputHash, std::string
     w.Pod(probeBakeMs_);
     if (!w.f) return fail("write failed: " + temp);
   }
-  std::filesystem::rename(temp, path, ec); // whole files only: a crash mid-write leaves the old cache
+  std::filesystem::rename(PathU8(temp), PathU8(path), ec); // whole files only: a crash mid-write leaves the old cache
   if (ec) return fail("cannot replace " + path + ": " + ec.message());
   return true;
 }
@@ -198,7 +199,7 @@ bool Renderer3D::LoadGI(const std::string& path, const std::vector<DrawItem3D>& 
   auto fail = [&](const std::string& why) { if (error) *error = why; return false; };
   if (!rhi_) return fail("no renderer");
   Reader r;
-  r.f.open(path, std::ios::binary);
+  r.f.open(PathU8(path), std::ios::binary);
   if (!r.f) return fail("no file");
   char magic[8];
   uint32_t version = 0;

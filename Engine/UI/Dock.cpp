@@ -1,4 +1,5 @@
 #include "UI/Dock.h"
+#include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include "Render2D/Batch2D.h"
 #include "UI/Theme.h"
@@ -121,8 +122,8 @@ std::string DockState::Describe() const { return root >= 0 ? DescribeNode(root) 
 bool DockState::Save(const std::string& path) const {
   if (root < 0) return false;
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-  std::FILE* f = std::fopen(path.c_str(), "w");
+  std::filesystem::create_directories(PathU8(path).parent_path(), ec);
+  std::FILE* f = OpenU8(path, "w");
   if (!f) return false;
   std::unordered_map<int, int> ids; // node index -> 1-based id in preorder (stable output)
   std::vector<int> order, stack{root};
@@ -148,7 +149,7 @@ bool DockState::Save(const std::string& path) const {
 }
 
 bool DockState::Load(const std::string& path) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = OpenU8(path, "rb");
   if (!f) return false;
   struct Line { std::string id, a, b; bool split = false; Axis axis = Axis::Row; float ratio = 0.5f; std::vector<std::string> tabs; int sel = 0; };
   std::vector<Line> lines;

@@ -133,7 +133,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Reflection.h Engine/Core/Reflection.cpp
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
-  Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp
+  Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp Engine/Assets/ModelImport.h Engine/Assets/ModelImport.cpp
@@ -175,10 +175,14 @@ target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> 
 configure_file(Editor/app.rc.in ${CMAKE_BINARY_DIR}/app.rc @ONLY)
 add_executable(BidulgiEditor Editor/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
 target_link_libraries(BidulgiEditor PRIVATE BidulgiEngine)
+# `bdg` command line (queue 2-7): console tool over the same engine library
+add_executable(bdg tools/bdg/main.cpp)
+target_link_libraries(bdg PRIVATE BidulgiEngine)
 
 if(MSVC)
   target_compile_options(BidulgiEngine PRIVATE /W4 /utf-8)
   target_compile_options(BidulgiEditor PRIVATE /W4 /utf-8)
+  target_compile_options(bdg PRIVATE /W4 /utf-8)
   # Double-click opens a window only (no console). main() stays the entry point.
   target_link_options(BidulgiEditor PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()
@@ -187,10 +191,13 @@ endif()
 add_custom_command(TARGET BidulgiEditor POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:BidulgiEditor> ${CMAKE_SOURCE_DIR}/Bin/)
+add_custom_command(TARGET bdg POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bdg> ${CMAKE_SOURCE_DIR}/Bin/)
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

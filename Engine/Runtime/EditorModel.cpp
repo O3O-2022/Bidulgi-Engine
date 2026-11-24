@@ -1,4 +1,5 @@
 #include "Runtime/EditorModel.h"
+#include "Core/Utf8Path.h"
 #include "Core/Expr.h"
 #include "UI/Theme.h"
 #include <fstream>
@@ -306,7 +307,7 @@ bool EditorModel::Autosave() {
   fs::path dir = fs::current_path() / ".cache" / "autosave";
   fs::create_directories(dir, ec);
   std::string dump = scene.Dump();
-  std::FILE* f = std::fopen((dir / "scene.jsonl").string().c_str(), "wb");
+  std::FILE* f = _wfopen((dir / "scene.jsonl").c_str(), L"wb");
   bool ok = f && std::fwrite(dump.data(), 1, dump.size(), f) == dump.size();
   if (f) std::fclose(f);
   ok = bus.SaveLog((dir / "commands.jsonl").string()) && ok;
@@ -399,8 +400,8 @@ bool EditorModel::SavePreset(const std::string& type) {
   vt.structType = c->type;
   std::string path = PresetPath(type), text = std::format("{{\"preset\":1,\"type\":{},\"value\":{}}}\n", Q(type), Registry::ToJson(c->data, vt));
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-  std::FILE* f = std::fopen(path.c_str(), "wb");
+  std::filesystem::create_directories(PathU8(path).parent_path(), ec);
+  std::FILE* f = OpenU8(path, "wb");
   if (!f) { LogError("preset: cannot write {}", path); return false; }
   std::fwrite(text.data(), 1, text.size(), f);
   std::fclose(f);
@@ -410,7 +411,7 @@ bool EditorModel::SavePreset(const std::string& type) {
 
 bool EditorModel::LoadPreset(const std::string& type, std::string& value) const {
   std::string path = PresetPath(type), text;
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = OpenU8(path, "rb");
   if (!f) { LogInfo("preset: no {} preset yet ({})", type, path); return false; }
   char buf[4096];
   for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);

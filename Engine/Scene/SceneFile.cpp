@@ -1,4 +1,5 @@
 #include "Scene/SceneFile.h"
+#include "Core/Utf8Path.h"
 #include "Scene/Components.h"
 #include <yyjson.h>
 #include <cstdio>
@@ -62,16 +63,16 @@ std::string WriteSceneText(const Scene& scene, const std::string& sceneName) {
 bool SaveSceneFile(const Scene& scene, const std::string& sceneName, const std::string& path, std::string* error) {
   std::string text = WriteSceneText(scene, sceneName);
   std::error_code ec;
-  std::filesystem::path p(path);
+  const std::filesystem::path p = PathU8(path);
   if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
   std::string tmp = path + ".tmp"; // write next to it, then swap: a crash mid-save never leaves half a scene
-  std::FILE* f = std::fopen(tmp.c_str(), "wb");
+  std::FILE* f = OpenU8(tmp, "wb");
   if (!f) return Fail(error, std::format("cannot write {}", path));
   bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
   ok = std::fclose(f) == 0 && ok;
-  if (!ok) { std::filesystem::remove(tmp, ec); return Fail(error, std::format("cannot write {}", path)); }
-  std::filesystem::rename(tmp, p, ec);
-  if (ec) { std::filesystem::remove(tmp, ec); return Fail(error, std::format("cannot replace {}", path)); }
+  if (!ok) { std::filesystem::remove(PathU8(tmp), ec); return Fail(error, std::format("cannot write {}", path)); }
+  std::filesystem::rename(PathU8(tmp), p, ec);
+  if (ec) { std::filesystem::remove(PathU8(tmp), ec); return Fail(error, std::format("cannot replace {}", path)); }
   return true;
 }
 
@@ -139,7 +140,7 @@ bool ReadSceneText(Scene& scene, std::string_view text, std::string* sceneName, 
 
 bool LoadSceneFile(Scene& scene, const std::string& path, std::string* sceneName, std::vector<std::string>* warnings,
                    std::string* error) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = OpenU8(path, "rb");
   if (!f) return Fail(error, std::format("cannot open {}", path));
   std::string text;
   char buf[8192];

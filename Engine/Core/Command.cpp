@@ -1,4 +1,5 @@
 #include "Core/Command.h"
+#include "Core/Utf8Path.h"
 #include "Scene/Components.h"
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
@@ -406,7 +407,7 @@ void CommandBus::Reset() {
 }
 
 bool CommandBus::SaveLog(const std::string& path) const {
-  std::FILE* f = std::fopen(path.c_str(), "w");
+  std::FILE* f = OpenU8(path, "w");
   if (!f) return false;
   for (auto& line : log_) std::fprintf(f, "%s\n", line.c_str());
   std::fclose(f);
@@ -433,7 +434,7 @@ bool CommandBus::ExecuteLine(std::string_view line, std::string* error) {
 }
 
 bool CommandBus::Replay(const std::string& path, std::string* error, size_t* count) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = OpenU8(path, "rb");
   if (!f) return Fail(error, std::format("cannot open {}", path));
   std::string line;
   size_t n = 0, lineNo = 0;

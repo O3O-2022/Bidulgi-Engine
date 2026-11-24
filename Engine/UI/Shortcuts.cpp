@@ -1,4 +1,5 @@
 #include "UI/Shortcuts.h"
+#include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include <yyjson.h>
 #include <algorithm>
@@ -167,7 +168,7 @@ bool Shortcuts::Handle(const InputEvent& e) {
 }
 
 bool Shortcuts::Load(const std::string& path, std::string* error) {
-  std::FILE* f = std::fopen(path.c_str(), "rb");
+  std::FILE* f = OpenU8(path, "rb");
   if (!f) {
     if (error) *error = "no shortcut file";
     return false;
@@ -206,8 +207,8 @@ bool Shortcuts::Load(const std::string& path, std::string* error) {
 
 bool Shortcuts::Save(const std::string& path) const {
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
-  std::FILE* f = std::fopen(path.c_str(), "w");
+  std::filesystem::create_directories(PathU8(path).parent_path(), ec);
+  std::FILE* f = OpenU8(path, "w");
   if (!f) return false;
   std::fprintf(f, "{\"preset\":\"%s\"}\n", preset_.c_str());
   for (auto& [a, k] : overrides_) std::fprintf(f, "{\"action\":\"%s\",\"keys\":\"%s\"}\n", a.c_str(), k.c_str());

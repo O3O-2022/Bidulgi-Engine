@@ -33,7 +33,7 @@ jobs:
         run: |
           $fail = $false
           foreach ($cfg in 'Debug', 'Release') {
-            cmake --build build --config $cfg --target BidulgiEditor BidulgiTests -- /m /v:minimal 2>&1 | Tee-Object -FilePath "build-$cfg.log"
+            cmake --build build --config $cfg --target BidulgiEditor BidulgiTests bdg -- /m /v:minimal 2>&1 | Tee-Object -FilePath "build-$cfg.log"
             if ($LASTEXITCODE -ne 0) { Write-Error "$cfg build failed"; exit 1 }
             # Warnings from our own sources only (third-party code under build/_deps is excluded).
             $warn = Select-String -Path "build-$cfg.log" -Pattern 'warning C\d+' | Where-Object { $_.Line -notmatch '_deps' }
@@ -490,6 +490,29 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SHAFTS_TEST = '1'; BDG_QUALITY = 'high' } 20
           if ($log -notmatch 'shafts test: sun=1 rays=1 occluded=1 away=1') { $errors += 'light shafts test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
+          # 2-7 `bdg` command line in a Korean-named folder: new, view, set (dry run and real), add, validate (exit codes)
+          $cli = Join-Path $PWD 'ci-cli'
+          Remove-Item -Recurse -Force $cli -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $cli | Out-Null
+          $bdg = Join-Path $PWD 'build/Release/bdg.exe'
+          [Console]::OutputEncoding = [Text.Encoding]::UTF8 # bdg prints UTF-8 (Korean messages)
+          Push-Location $cli
+          & $bdg new '게임' | Out-Null
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path (Join-Path $cli '게임/Scenes/Main.scene'))) { $errors += 'bdg new failed' }
+          Set-Location (Join-Path $cli '게임')
+          $view = (& $bdg view) -join "`n"
+          if ($view -notmatch 'sun\s+Light\s+#Sun\s+rot -45,-30,0 \| Light type=Directional intensity=3') { $errors += 'bdg view output unexpected' }
+          & $bdg set sun 'Light.intensity=5' | Out-Null
+          & $bdg add crate --pos 1,0.5,2 --comp MeshRenderer | Out-Null
+          & $bdg set crate MeshRenderer.mesh=Rock.glb | Out-Null
+          & $bdg validate | Out-Null
+          if ($LASTEXITCODE -ne 1) { $errors += 'bdg validate did not report the missing mesh' }
+          & $bdg set crate MeshRenderer.mesh=Cube | Out-Null
+          $val = (& $bdg validate) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $val -notmatch '통과') { $errors += 'bdg validate failed on a valid scene' }
+          if (Test-Path 'Bidulgi.log') { $errors += 'bdg wrote Bidulgi.log into the project' }
+          Pop-Location
 
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5

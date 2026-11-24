@@ -88,8 +88,10 @@ void JsonStrings(const std::string& text, const std::function<void(const std::st
 } // namespace
 
 std::vector<std::string> RefTokens(const AssetRecord& r) {
-  std::vector<std::string> t = {r.path, FileName(r.path), "guid:" + r.guid, r.guid};
-  if (IsMaterial(Ext(r.path))) t.push_back(Stem(r.path));
+  std::vector<std::string> t = {r.path};
+  // an asset at the top of Assets has the same path and file name: each name once, or a use counts twice
+  for (const std::string& n : {FileName(r.path), "guid:" + r.guid, r.guid, IsMaterial(Ext(r.path)) ? Stem(r.path) : std::string()})
+    if (!n.empty() && std::find(t.begin(), t.end(), n) == t.end()) t.push_back(n);
   return t;
 }
 

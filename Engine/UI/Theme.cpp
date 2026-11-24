@@ -1,4 +1,5 @@
 #include "UI/Theme.h"
+#include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include <yyjson.h>
 #include <cstdio>
@@ -88,8 +89,10 @@ Color Theme::FromHSV(float h, float s, float v, float a) {
 
 bool Theme::Load(const std::string& path) {
   path_ = path;
-  yyjson_read_err err;
-  yyjson_doc* doc = yyjson_read_file(path.c_str(), 0, nullptr, &err);
+  yyjson_read_err err{};
+  std::string fileText;
+  yyjson_doc* doc = ReadTextU8(path, fileText) ? yyjson_read_opts(fileText.data(), fileText.size(), 0, nullptr, &err) : nullptr;
+  if (!doc && fileText.empty()) err.msg = "cannot open", err.pos = 0;
   if (!doc) { LogError("tokens: cannot read {} ({} at {})", path, err.msg, err.pos); return false; }
   yyjson_val* root = yyjson_doc_get_root(doc);
   colors_.clear(); numbers_.clear(); fontSizes_.clear(); shadows_.clear();
@@ -179,8 +182,11 @@ bool Theme::LoadOverrides(const std::string& path, std::string* err) {
   overridesMtime_ = FileTime(path);
   overrides_.clear();
   if (overridesMtime_ == 0) return true; // no file: no overrides
-  yyjson_read_err rerr;
-  yyjson_doc* doc = yyjson_read_file(path.c_str(), 0, nullptr, &rerr);
+  yyjson_read_err rerr{};
+  std::string fileText;
+  const bool opened = ReadTextU8(path, fileText);
+  yyjson_doc* doc = opened ? yyjson_read_opts(fileText.data(), fileText.size(), 0, nullptr, &rerr) : nullptr;
+  if (!opened) { rerr.code = YYJSON_READ_ERROR_FILE_OPEN; rerr.msg = "cannot open"; rerr.pos = 0; }
   if (!doc) {
     if (rerr.code == YYJSON_READ_ERROR_FILE_OPEN) overridesMtime_ = 0; // held by another program: read it on the next poll
     if (err) *err = std::format("{}: {} at {}", path, rerr.msg, rerr.pos);
@@ -220,7 +226,7 @@ bool Theme::SaveOverrides(const std::string& path) {
     first = false;
   }
   text += "\n}}\n";
-  if (std::filesystem::path(path).has_parent_path()) std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+  if (PathU8(path).has_parent_path()) std::filesystem::create_directories(PathU8(path).parent_path(), ec);
   {
     std::ofstream out(path, std::ios::binary);
     if (!out) return false;
@@ -231,7 +237,7 @@ bool Theme::SaveOverrides(const std::string& path) {
 }
 
 bool Theme::DumpJSON(const std::string& path) const {
-  std::FILE* f = std::fopen(path.c_str(), "w");
+  std::FILE* f = OpenU8(path, "w");
   if (!f) return false;
   auto color = [&](const Color& c) { std::fprintf(f, "[%.6f,%.6f,%.6f,%.6f]", c.r, c.g, c.b, c.a); };
   std::fprintf(f, "{\n \"colors\": {");
