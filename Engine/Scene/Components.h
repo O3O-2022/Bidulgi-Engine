@@ -1,5 +1,7 @@
 #pragma once
 // Built-in components (reflected; tools/bht generates Components.gen.cpp).
+#include <vector>
+#include <utility>
 #include "Core/Reflection.h"
 #include <string>
 
@@ -185,5 +187,25 @@ public:
   BPROPERTY(Edit, Range = "1,179", Tooltip = "Vertical field of view in degrees") float fov = 60.f;
   BPROPERTY(Edit) float nearClip = 0.1f;
   BPROPERTY(Edit) float farClip = 1000.f;
+  // Camera shake (E-9, Unreal's StartCameraShake): "bdg:Heavy" or a .camshake asset, times scale. Played by the
+  // game (play mode); a Graph node and a script call like any Callable.
+  BFUNCTION(Callable) void Shake(std::string shake, float scale) { pendingShakes.emplace_back(std::move(shake), scale); }
+  std::vector<std::pair<std::string, float>> pendingShakes; // not saved: taken by play mode each frame
+};
+
+// A shake in the world (E-9, Unreal's CameraShakeSourceComponent): full strength for a camera within innerRadius
+// metres, fading to nothing at outerRadius.
+BCLASS(Component)
+struct CameraShakeSource {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "bdg:Light / Medium / Heavy / Explosion / Handheld, or a .camshake asset") std::string shake = "bdg:Medium";
+  BPROPERTY(Edit, Range = "0,10") float scale = 1.f;
+  BPROPERTY(Edit, Range = "0,1000", Tooltip = "Full strength within this distance (m)") float innerRadius = 2.f;
+  BPROPERTY(Edit, Range = "0,1000", Tooltip = "No shake beyond this distance (m)") float outerRadius = 20.f;
+  BPROPERTY(Edit, Range = "0.1,8", Tooltip = "How the strength falls between the radii (1 = linear)") float falloff = 1.f;
+  BPROPERTY(Edit, Tooltip = "Play when the game starts") bool playOnStart = false;
+  BFUNCTION(Button) void Play() { ++pendingPlays; } // while playing: shakes the game camera now
+  int32_t pendingPlays = 0; // not saved: taken by play mode
 };
 }

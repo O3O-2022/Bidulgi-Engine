@@ -13,6 +13,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
 #include "Runtime/AssetPreviews.h"
+#include "Scene/GraphLibrary.h"
 #include "Runtime/MaterialLibrary.h"
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
@@ -107,7 +108,8 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false, shaftTest = false;
+  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false;
+  std::string shakeTestValues[5];
   std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
   std::string inspectTestValues[7];
@@ -1277,6 +1279,65 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
     v[6] = std::format("{}", n >= 0 && n < 50 ? 1 : 0);
     if (v[6] != "1") bdg::LogError("postfx test: after removing, {} pixels differ", n);
   }
+}
+
+void TogglePlay(bdg_engine* e);
+// Scripted check of E-9 (BDG_SHAKE_TEST=1): a CameraShakeSource (bdg:Heavy, play on start) near the camera and
+// one far away; Play: only the near one shakes the game camera (the Game view's picture moves frame to frame),
+// it ends after its duration, Camera.Shake run as a Graph node starts another, and Stop leaves no offset.
+void InjectShakeTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  auto* v = e->shakeTestValues;
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("shake test: {}", err);
+  };
+  static std::vector<uint8_t> prev;
+  static int moved = 0, endedAt = 0, nodeAt = 0;
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("game");
+    const glm::vec3 cam = glm::vec3(m->scene.WorldMatrix("g1")[3]);
+    run("add", "", R"({"id":"boom","name":"Boom"})");
+    run("addcomp", "boom", R"({"type":"CameraShakeSource","value":{"shake":"bdg:Heavy","playOnStart":true,"innerRadius":5,"outerRadius":30}})");
+    run("set", "boom", std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", cam.x + 1, cam.y, cam.z));
+    run("add", "", R"({"id":"far","name":"Far"})");
+    run("addcomp", "far", R"({"type":"CameraShakeSource","value":{"shake":"bdg:Explosion","playOnStart":true,"innerRadius":1,"outerRadius":5}})");
+    run("set", "far", R"({"path":"Transform.position","value":[500,0,500]})");
+  }
+  if (frame == 4) TogglePlay(e);
+  if (frame == 6) v[0] = std::format("{}", e->play.Playing() && e->play.ShakesPlaying() == 1 && e->play.Shake().Size() > 0 ? 1 : 0);
+  if (frame >= 6 && frame <= 12) { // the Game view's picture changes while the camera shakes
+    int32_t w = 0, h = 0;
+    std::vector<uint8_t> px;
+    sv->ReadGamePixels(w, h, px);
+    if (!prev.empty() && prev.size() == px.size() && prev != px) ++moved;
+    prev = px;
+  }
+  if (frame == 13) v[1] = std::format("{}", moved >= 4 ? 1 : 0);
+  if (frame > 13 && !endedAt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(40)); // let game time pass the shake's 0.8 s
+    if (e->play.ShakesPlaying() == 0) {
+      endedAt = frame;
+      v[2] = std::format("{}", e->play.Shake().Size() == 0 && e->play.Time() >= 0.8 ? 1 : 0);
+      const auto lib = bdg::BuildGraphNodeLibrary("Camera.Shake");
+      std::string err;
+      if (lib.empty() || !bdg::RunGraphNode(m->bus, m->scene, lib[0], "g1", {"\"bdg:Light\"", "1"}, nullptr, &err))
+        bdg::LogError("shake test: Camera.Shake node: {}", err);
+      nodeAt = frame;
+    }
+    if (frame > 200) bdg::LogError("shake test: the shake did not end (game time {})", e->play.Time());
+  }
+  if (nodeAt && frame == nodeAt + 2) {
+    v[3] = std::format("{}", e->play.ShakesPlaying() == 1 ? 1 : 0);
+    TogglePlay(e);
+  }
+  if (nodeAt && frame == nodeAt + 4) v[4] = std::format("{}", !e->play.Playing() && e->play.Shake().Size() == 0 ? 1 : 0);
 }
 
 // Scripted check of E-7 (BDG_SHAFTS_TEST=1): the editor camera turned toward the sun; light shafts on find the sun
@@ -3426,6 +3487,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->postTest = std::getenv("BDG_POSTFX_TEST") != nullptr;
   e->post2Test = std::getenv("BDG_POSTFX2_TEST") != nullptr;
   e->shaftTest = std::getenv("BDG_SHAFTS_TEST") != nullptr;
+  e->shakeTest = std::getenv("BDG_SHAKE_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3889,6 +3951,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->postTest && !e->showGallery) InjectPostFxTest(e, frames);
     if (e->post2Test && !e->showGallery) InjectPostFx2Test(e, frames);
     if (e->shaftTest && !e->showGallery) InjectShaftsTest(e, frames);
+    if (e->shakeTest && !e->showGallery) InjectShakeTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -4101,7 +4164,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         e->sceneView->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, *sceneWidget, scale);
       if (bdg::Widget* game = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("game") : nullptr;
           game && !game->hidden && game->w >= 2 && game->h >= 2)
+      {
+        e->sceneView->gameShake = e->play.Shake(); // camera shake while playing (E-9)
         e->sceneView->RenderGame(*e->model, e->assetsOpen ? &e->assets : nullptr, *game, scale);
+      }
       if (e->previewsReady && e->model && &ui == e->editor.get()) { // thumbnails a few per frame, the Inspector preview
         if (e->previews.Update(2) > 0 || e->previews.Pending() > 0) pending = std::max(pending, 2);
         e->previewTex = {};
@@ -4267,6 +4333,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->shakeTest) {
+        auto* v = e->shakeTestValues;
+        bdg::LogInfo("shake test: start={} moves={} ends={} node={} stop={}", v[0], v[1], v[2], v[3], v[4]);
       }
       if (e->shaftTest) {
         auto* v = e->shaftTestValues;

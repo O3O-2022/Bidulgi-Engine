@@ -1514,6 +1514,18 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
   c.fovY = std::clamp(cam->fov, 1.f, 179.f);
   c.nearZ = std::max(cam->nearClip, 0.001f);
   c.farZ = std::max(cam->farClip, c.nearZ * 2);
+  if (gameShake.Size() > 0) { // camera shake (E-9): offset along the camera's own axes, small turns, FOV
+    glm::vec3 f = glm::normalize(c.target - c.position), u = c.up, r = glm::normalize(glm::cross(f, u));
+    u = glm::normalize(glm::cross(r, f));
+    c.position += r * gameShake.location.x + u * gameShake.location.y + f * gameShake.location.z;
+    const glm::mat4 turn = glm::rotate(glm::mat4(1.f), glm::radians(gameShake.rotation.y), u) *
+                           glm::rotate(glm::mat4(1.f), glm::radians(gameShake.rotation.x), r) *
+                           glm::rotate(glm::mat4(1.f), glm::radians(gameShake.rotation.z), f);
+    f = glm::vec3(turn * glm::vec4(f, 0.f));
+    c.up = glm::normalize(glm::vec3(turn * glm::vec4(u, 0.f)));
+    c.target = c.position + f;
+    c.fovY = std::clamp(c.fovY + gameShake.fov, 1.f, 179.f);
+  }
   light_.post = PostAt(c.position);
   r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, nullptr, &quality);
   ++gameFrames_;

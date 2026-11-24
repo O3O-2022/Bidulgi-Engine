@@ -24,6 +24,7 @@
 // (M_Ground, M_Gold, M_Steel, M_Copper, M_Glass; others a stable colour from the name).
 #include "Platform/Window.h"
 #include "Render3D/Renderer3D.h"
+#include "Scene/CameraShake.h"
 #include "Runtime/Gizmo.h"
 #include "Runtime/Budget.h"
 #include "Runtime/Snapping.h"
@@ -78,6 +79,7 @@ public:
   // Scene icons (E-3): size 0 off, 1 small, 2 medium, 3 large (the "Icons" chip steps through them).
   int iconSize = 2;
   bool showGrid = true; // the editor ground grid (drawn over the finished picture)
+  ShakeOffset gameShake;  // camera shake added to the Game view camera this frame (E-9, from play mode)
   // Test hook (E-7): whether the Scene view's last render drew light shafts
   bool RenderStatsSun(const Renderer3D*) const { return lastShafts_; }
   static float IconPixels(int size) { return size <= 0 ? 0.f : size == 1 ? 16.f : size == 2 ? 22.f : 30.f; }

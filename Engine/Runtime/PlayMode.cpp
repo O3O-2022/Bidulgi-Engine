@@ -3,6 +3,8 @@
 #include "Runtime/EditorModel.h"
 #include "Scene/Components.h"
 #include "Scene/SceneFile.h"
+#include "Assets/AssetDatabase.h"
+#include "Core/Utf8Path.h"
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -27,6 +29,9 @@ bool PlayMode::Start(EditorModel& m) {
   selection_ = m.Selection();
   m.bus.PushLayer();
   pending_.clear();
+  shaker_.StopAll(true);
+  shakesStarted_ = false;
+  shakeCache_.clear();
   time_ = 0;
   frames_ = 0;
   playing_ = true;
@@ -37,6 +42,7 @@ bool PlayMode::Start(EditorModel& m) {
 
 bool PlayMode::Stop(EditorModel& m) {
   if (!playing_) return false;
+  shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
   std::vector<Change> changes;
@@ -108,6 +114,75 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     changed = true;
   }
   if (changed) m.ValuesChanged();
+  TickShakes(m, (float)dt);
+}
+
+// A shake by name: built-in ("bdg:Heavy") or a .camshake asset by path, file name or name without extension.
+bool PlayMode::FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out) {
+  if (auto it = shakeCache_.find(name); it != shakeCache_.end()) { out = it->second; return true; }
+  CameraShakeDef d;
+  bool ok = BuiltinCameraShake(name, d);
+  if (!ok && m.assets)
+    for (const AssetRecord* r : m.assets->All()) {
+      const std::string file = r->path.substr(r->path.find_last_of('/') == std::string::npos ? 0 : r->path.find_last_of('/') + 1);
+      if (!file.ends_with(".camshake") || (r->path != name && file != name && file.substr(0, file.size() - 9) != name)) continue;
+      std::string text, err;
+      const std::u8string root = std::filesystem::path(std::u8string((const char8_t*)m.assets->Root().c_str())).u8string() + u8"/";
+      if (ReadTextU8(std::string((const char*)root.data(), root.size()) + r->path, text) && ParseCameraShake(text, d, &err)) ok = true;
+      else LogWarn("play: camera shake {}: {}", r->path, err.empty() ? "cannot read" : err);
+      break;
+    }
+  if (!ok) {
+    LogWarn("play: no camera shake \"{}\" (bdg:Light, bdg:Medium, bdg:Heavy, bdg:Explosion, bdg:Handheld or a .camshake asset)", name);
+    d = CameraShakeDef{}; // remember the miss: warn once
+    d.location = d.rotation = glm::vec3(0);
+  }
+  shakeCache_[name] = d;
+  out = d;
+  return ok;
+}
+
+void PlayMode::TickShakes(EditorModel& m, float dt) {
+  // the game camera: the first Camera in hierarchy order (as the Game view)
+  glm::vec3 camPos(0);
+  std::vector<std::string> order, stack(m.scene.Roots().rbegin(), m.scene.Roots().rend());
+  while (!stack.empty()) {
+    const std::string id = stack.back();
+    stack.pop_back();
+    const SceneObject* o = m.scene.Find(id);
+    if (!o) continue;
+    order.push_back(id);
+    for (auto c = o->children.rbegin(); c != o->children.rend(); ++c) stack.push_back(*c);
+  }
+  bool haveCam = false;
+  for (const std::string& id : order)
+    if (SceneObject* o = m.scene.Find(id); o && o->Find("Camera") && !haveCam) {
+      camPos = glm::vec3(m.scene.WorldMatrix(id)[3]);
+      haveCam = true;
+    }
+  const bool first = !shakesStarted_;
+  shakesStarted_ = true;
+  for (const std::string& id : order) {
+    SceneObject* o = m.scene.Find(id);
+    if (Component* c = o->Find("Camera")) { // Camera.Shake(...) calls
+      Camera& cam = *static_cast<Camera*>(c->data);
+      for (auto& [name, scale] : cam.pendingShakes) {
+        CameraShakeDef d;
+        if (FindShake(m, name, d)) shaker_.Start(d, scale);
+      }
+      cam.pendingShakes.clear();
+    }
+    if (Component* c = o->Find("CameraShakeSource")) {
+      CameraShakeSource& src = *static_cast<CameraShakeSource*>(c->data);
+      int plays = src.pendingPlays + (first && src.playOnStart ? 1 : 0);
+      src.pendingPlays = 0;
+      const float k = src.scale * WorldShakeScale(glm::vec3(m.scene.WorldMatrix(id)[3]), camPos, src.innerRadius, src.outerRadius, src.falloff);
+      CameraShakeDef d;
+      for (; plays > 0; --plays)
+        if (k > 0 && FindShake(m, src.shake, d)) shaker_.Start(d, k);
+    }
+  }
+  shaker_.Update(dt);
 }
 
 int PlayMode::KeepPending(EditorModel& m) {

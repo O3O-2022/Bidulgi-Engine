@@ -7,6 +7,8 @@
 // world through commands, as one undo step; DiscardPending() forgets them. What the game itself changes
 // (behaviours such as Rotator) is never kept.
 #include "Core/Command.h"
+#include "Scene/CameraShake.h"
+#include <map>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,10 @@ public:
   float TimeScale() const { return timeScale_; }
   static constexpr double kStepSeconds = 1.0 / 60.0;
   double Time() const { return time_; }      // game seconds since Start
+  // Camera shake on the game camera (E-9): CameraShakeSource components (play on start, Play button) and
+  // Camera.Shake calls, attenuated by distance; the Game view adds this offset to its camera.
+  ShakeOffset Shake() const { return playing_ ? shaker_.Current() : ShakeOffset{}; }
+  size_t ShakesPlaying() const { return shaker_.Active(); }
   uint64_t Frames() const { return frames_; } // ticks since Start
 
   struct Change { Command cmd; std::string label; }; // "Crystal: Transform.position"
@@ -45,5 +51,10 @@ private:
   uint64_t frames_ = 0;
   bool paused_ = false, step_ = false;
   float timeScale_ = 1.f;
+  CameraShaker shaker_;
+  bool shakesStarted_ = false;
+  std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
+  bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);
+  void TickShakes(EditorModel& m, float dt);
 };
 }
