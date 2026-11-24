@@ -127,6 +127,7 @@ struct bdg_engine {
   // UI shows as an image; BDG_RENDER_TEST=1 reads it back and checks gamma, colours, axes, winding, depth, UV.
   std::unique_ptr<bdg::Renderer3D> r3d;
   std::unique_ptr<bdg::ReferenceBoard> board;
+  bool boardGIDone = false; // the board's GI was loaded from .cache/gi or baked (GI Tier 0-D)
   bdg::RenderTargetHandle viewRT;
   int32_t viewW = 0, viewH = 0;
   bool renderTest = false;
@@ -182,16 +183,50 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
     e->viewW = pw;
     e->viewH = ph;
   }
-  if ((!e->board->probes.empty() || !e->board->volumes.empty()) && e->r3d->BakedProbes() == 0 && e->r3d->VolumeProbes() == 0) {
-    // GI Tier 0: bake the board's probes and probe volume (two bounces)
+  if ((!e->board->probes.empty() || !e->board->volumes.empty() || e->board->lightmaps) && !e->boardGIDone) {
+    // GI Tier 0: the board's probes, volume and lightmaps come from .cache/gi when the inputs match (D); otherwise
+    // they are baked (two bounces) and saved. BDG_GI_READONLY=1 acts like a runtime build: load, never bake.
+    e->boardGIDone = true;
     auto b0 = std::chrono::steady_clock::now();
     e->r3d->SetProbes(e->board->probes);
     e->r3d->SetVolume(e->board->volumes.empty() ? nullptr : &e->board->volumes[0]);
-    if (e->board->lightmaps) e->r3d->BakeLightmaps(e->board->Items(), e->board->light); // before the probes see the room
-    e->r3d->BakeProbes(e->board->Items(), e->board->light);
-    e->r3d->BakeProbes(e->board->Items(), e->board->light);
-    bdg::LogInfo("gi: baked {} probe(s) and {} volume probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(), e->r3d->VolumeProbes(),
-                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
+    const uint64_t hash = e->r3d->GIInputHash(e->board->Items(), e->board->light);
+    const char* scr = std::getenv("BDG_SCREEN");
+    const std::string path = (std::filesystem::current_path() / ".cache" / "gi" /
+                              std::format("{}-{:016x}.bdggi", scr ? scr : "board", hash)).string();
+    const char* cacheEnv = std::getenv("BDG_GI_CACHE");
+    const bool useCache = !(cacheEnv && std::string(cacheEnv) == "0"), readOnly = std::getenv("BDG_GI_READONLY") != nullptr;
+    std::string err;
+    if (useCache && e->r3d->LoadGI(path, e->board->Items(), hash, &err)) {
+      e->r3d->giCacheNote = "loaded " + path;
+      bdg::LogInfo("gi: loaded {} in {:.0f} ms ({} probe(s), {} volume probe(s), {} lightmapped)", path,
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count(), e->r3d->BakedProbes(),
+                   e->r3d->VolumeProbes(), e->r3d->LightmappedObjects());
+    } else if (readOnly) {
+      bdg::LogWarn("gi: no baked GI at {} ({}); read-only like a runtime build, so nothing is baked", path, err);
+    } else {
+      if (e->board->lightmaps) e->r3d->BakeLightmaps(e->board->Items(), e->board->light); // before the probes see the room
+      e->r3d->BakeProbes(e->board->Items(), e->board->light);
+      e->r3d->BakeProbes(e->board->Items(), e->board->light);
+      bdg::LogInfo("gi: baked {} probe(s) and {} volume probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(), e->r3d->VolumeProbes(),
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
+      if (useCache) {
+        if (e->r3d->SaveGI(path, hash, &err)) {
+          e->r3d->giCacheNote = "saved " + path;
+          bdg::LogInfo("gi: saved {} ({} KB)", path, std::filesystem::file_size(path) / 1024);
+        } else {
+          bdg::LogWarn("gi: could not save the bake: {}", err);
+        }
+      }
+    }
+    if (std::getenv("BDG_GI_DIAGNOSE")) { // `bdg gi diagnose` until the CLI exists (2-7)
+      std::string text = e->r3d->DiagnoseGI(e->board->Items());
+      for (size_t a = 0, b; a < text.size(); a = b + 1) {
+        b = text.find('\n', a);
+        if (b == std::string::npos) b = text.size();
+        bdg::LogInfo("gi diagnose: {}", text.substr(a, b - a));
+      }
+    }
   }
   auto t0 = std::chrono::steady_clock::now();
   bdg::RenderExtras boardExtras; // BDG_RENDER_VIEW=0..7: debug view of the board screens (7 = indirect light only)

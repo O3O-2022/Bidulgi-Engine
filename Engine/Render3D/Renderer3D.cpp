@@ -2,6 +2,8 @@
 #include "Assets/GltfImport.h"
 #include "Render3D/Culling.h"
 #include "Render3D/Lightmap.h"
+#include "Render3D/RayScene.h"
+#include <chrono>
 #include "Core/Log.h"
 #include <algorithm>
 #include <cmath>
@@ -77,6 +79,7 @@ vec3 VolumeIrradiance(vec3 p, vec3 n) { // the 8 nearest grid probes, blended by
   float b[9];
   SHBasis(n, b);
   vec3 e = vec3(0.0);
+  float wsum = 0.0;
   for (int c = 0; c < 8; ++c) {
     bvec3 hi = bvec3((c & 1) != 0, (c & 2) != 0, (c & 4) != 0);
     ivec3 q = ivec3(hi.x ? i1.x : i0.x, hi.y ? i1.y : i0.y, hi.z ? i1.z : i0.z);
@@ -84,9 +87,11 @@ vec3 VolumeIrradiance(vec3 p, vec3 n) { // the 8 nearest grid probes, blended by
     int base = ((q.z * cnt.y + q.y) * cnt.x + q.x) * 9;
     vec3 s = vec3(0.0);
     for (int k = 0; k < 9; ++k) s += uVolSH[base + k].rgb * b[k];
-    e += s * (w3.x * w3.y * w3.z);
+    float w = w3.x * w3.y * w3.z * max(uVolSH[base].w, 1e-4); // probes inside objects are switched off (w = 0)
+    e += s * w;
+    wsum += w;
   }
-  return max(e, vec3(0.0)) * uVolCount.w;
+  return max(e / max(wsum, 1e-8), vec3(0.0)) * uVolCount.w;
 }
 )";
 // Direction of a cube face texel: st in 0..1 with t = 0 the first row (OpenGL cube map face layout).
@@ -795,6 +800,13 @@ Mesh3D Renderer3D::CreateMesh(const MeshData& d) {
   m.indices = rhi_->CreateBuffer(BufferUsage::Index, d.indices.data(), d.indices.size() * sizeof(uint32_t));
   m.indexCount = (uint32_t)d.indices.size();
   m.source = std::make_shared<const MeshData>(d);
+  m.contentHash = 1469598103934665603ull;
+  auto fold = [&](const void* p, size_t n) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    for (size_t i = 0; i < n; ++i) m.contentHash = (m.contentHash ^ b[i]) * 1099511628211ull;
+  };
+  fold(d.vertices.data(), d.vertices.size() * sizeof(Vertex3D));
+  fold(d.indices.data(), d.indices.size() * sizeof(uint32_t));
   for (size_t i = 0; i < d.vertices.size(); ++i) {
     glm::vec3 p(d.vertices[i].px, d.vertices[i].py, d.vertices[i].pz);
     m.boundsMin = i ? glm::min(m.boundsMin, p) : p;
@@ -869,8 +881,7 @@ void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::
       items.push_back({&m.meshes[in.mesh], placement * in.world, m.materials[in.mesh]});
 }
 
-namespace {
-uint64_t LightmapKey(const Mesh3D* mesh, const glm::mat4& model) {
+uint64_t Renderer3D::LightmapKey(const Mesh3D* mesh, const glm::mat4& model) {
   uint64_t key = 1469598103934665603ull ^ (uint64_t)(uintptr_t)mesh;
   const float* f = glm::value_ptr(model);
   for (int i = 0; i < 16; ++i) {
@@ -880,7 +891,17 @@ uint64_t LightmapKey(const Mesh3D* mesh, const glm::mat4& model) {
   }
   return key;
 }
-} // namespace
+
+uint64_t Renderer3D::ContentKey(const Mesh3D* mesh, const glm::mat4& model) {
+  uint64_t key = (1469598103934665603ull ^ (mesh ? mesh->contentHash : 0)) * 1099511628211ull;
+  const float* f = glm::value_ptr(model);
+  for (int i = 0; i < 16; ++i) {
+    uint32_t bits;
+    std::memcpy(&bits, &f[i], 4);
+    key = (key ^ bits) * 1099511628211ull;
+  }
+  return key;
+}
 
 void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& camIn, const Light3D& light,
                         const std::vector<DrawItem3D>& itemsIn, Color clear, const RenderExtras* extras, const QualitySettings* quality) {
@@ -1365,13 +1386,15 @@ glm::vec3 Renderer3D::VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) c
   const float b[9] = {0.282095f, 0.488603f * n.y, 0.488603f * n.z, 0.488603f * n.x, 1.092548f * n.x * n.y, 1.092548f * n.y * n.z,
                       0.315392f * (3 * n.z * n.z - 1), 1.092548f * n.x * n.z, 0.546274f * (n.x * n.x - n.y * n.y)};
   glm::vec3 e{0};
+  float wsum = 0;
   for (int c = 0; c < 8; ++c) {
     glm::ivec3 q{(c & 1) ? i1.x : i0.x, (c & 2) ? i1.y : i0.y, (c & 4) ? i1.z : i0.z};
-    float w = ((c & 1) ? f.x : 1 - f.x) * ((c & 2) ? f.y : 1 - f.y) * ((c & 4) ? f.z : 1 - f.z);
     size_t base = ((size_t)(q.z * cnt.y + q.y) * cnt.x + q.x) * 36;
+    float w = ((c & 1) ? f.x : 1 - f.x) * ((c & 2) ? f.y : 1 - f.y) * ((c & 4) ? f.z : 1 - f.z) * std::max(volumeSH_[base + 3], 1e-4f);
     for (int k = 0; k < 9; ++k) e += w * b[k] * glm::vec3(volumeSH_[base + k * 4], volumeSH_[base + k * 4 + 1], volumeSH_[base + k * 4 + 2]);
+    wsum += w;
   }
-  return glm::max(e, glm::vec3(0)) * volume_.intensity;
+  return glm::max(e / std::max(wsum, 1e-8f), glm::vec3(0)) * volume_.intensity;
 }
 
 void Renderer3D::EnsureSmallCapture() {
@@ -1412,6 +1435,9 @@ void Renderer3D::ClearLightmaps() {
   lmTexelPos_.clear();
   lmTexelN_.clear();
   lmTexelValue_.clear();
+  lmTexelIndex_.clear();
+  lightmapRGBA_.clear();
+  lightmapInside_ = 0;
 }
 
 int Renderer3D::BakeLightmaps(const std::vector<DrawItem3D>& items, const Light3D& light, const LightmapSettings& settings) {
@@ -1464,6 +1490,7 @@ int Renderer3D::BakeLightmaps(const std::vector<DrawItem3D>& items, const Light3
     li.mesh = CreateMesh(r.meshes[k]);
     li.source = items[r.instanceItem[k]].mesh;
     li.model = items[r.instanceItem[k]].model;
+    li.key = ContentKey(li.source, li.model); // by content, so a cached bake finds the item again
     lightmapIndex_[LightmapKey(li.source, li.model)] = (int)lightmaps_.size();
     lightmaps_.push_back(std::move(li));
   }
@@ -1475,6 +1502,9 @@ int Renderer3D::BakeLightmaps(const std::vector<DrawItem3D>& items, const Light3
   lmTexelPos_ = std::move(r.texelPos);
   lmTexelN_ = std::move(r.texelNormal);
   for (uint32_t idx : r.texelIndex) lmTexelValue_.push_back({r.rgba[idx * 4], r.rgba[idx * 4 + 1], r.rgba[idx * 4 + 2]});
+  lmTexelIndex_ = std::move(r.texelIndex);
+  lightmapRGBA_ = std::move(r.rgba);
+  lightmapInside_ = r.insideTexels;
   LogInfo("gi: lightmaps: {}{}", DescribeLightmaps(), r.insideTexels ? std::format(", {} texels inside geometry filled", r.insideTexels) : "");
   return (int)lightmaps_.size();
 }
@@ -1498,6 +1528,7 @@ bool Renderer3D::LightmapAt(const glm::vec3& p, const glm::vec3& n, glm::vec3& v
 int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light) {
   if ((probes_.empty() && !hasVolume_) || !rhi_) return 0;
   badTexels_ = 0;
+  const auto bakeStart = std::chrono::steady_clock::now();
   const RenderStats keep = stats_;
   // Each probe sees the scene lit by the probes as they are now, so every bake adds one bounce.
   if (!probes_.empty() && !captureRT_.Valid()) captureRT_ = rhi_->CreateRenderTargetEx(kEnvSize, kEnvSize, 1, true, true);
@@ -1512,14 +1543,21 @@ int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& 
     const size_t n = (size_t)cnt.x * cnt.y * cnt.z;
     std::vector<float> next(n * 36, 0.f);
     const glm::vec3 cell = (volume_.boxMax - volume_.boxMin) / glm::vec3(cnt);
+    std::vector<glm::vec3> corners; // probes inside objects see only back faces: switched off, not captured
+    GatherOpaqueTriangles(items, corners);
+    RayScene solids;
+    solids.Build(std::move(corners));
+    invalidVolumeProbes_ = 0;
     for (int z = 0; z < cnt.z; ++z)
       for (int y = 0; y < cnt.y; ++y)
         for (int x = 0; x < cnt.x; ++x) {
           glm::vec3 at = volume_.boxMin + (glm::vec3(x, y, z) + 0.5f) * cell;
+          size_t base = ((size_t)(z * cnt.y + y) * cnt.x + x) * 36;
+          if (BackfaceShare(solids, at) > 0.5f) { ++invalidVolumeProbes_; continue; } // weight 0 (coefficient 0's w)
+          next[base + 3] = 1.f;
           CaptureCube(at, smallCaptureRT_, kVolumeSize, smallCube_, items, light);
           float sh[9][3];
           if (!ComputeSHFrom(smallCube_, 1, sh)) continue;
-          size_t base = ((size_t)(z * cnt.y + y) * cnt.x + x) * 36;
           for (int k = 0; k < 9; ++k)
             for (int ch = 0; ch < 3; ++ch) next[base + k * 4 + ch] = sh[k][ch];
         }
@@ -1533,6 +1571,7 @@ int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& 
     volumeBaked_ = true;
   }
   if (badTexels_) LogWarn("gi: {} captured texel(s) were not finite (NaN/inf) and were left out", badTexels_);
+  probeBakeMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bakeStart).count();
   bakedProbes_ = (int)probes_.size();
   UploadProbes();
   stats_ = keep;

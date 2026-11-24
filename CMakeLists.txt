@@ -142,7 +142,7 @@ add_library(BidulgiEngine STATIC
   Engine/Render3D/Culling.h Engine/Render3D/Culling.cpp
   Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
   Engine/Render3D/RayScene.h Engine/Render3D/RayScene.cpp
-  Engine/Render3D/Lightmap.h Engine/Render3D/Lightmap.cpp
+  Engine/Render3D/Lightmap.h Engine/Render3D/Lightmap.cpp Engine/Render3D/GICache.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp
   Engine/Core/ImageCompare.h Engine/Core/ImageCompare.cpp

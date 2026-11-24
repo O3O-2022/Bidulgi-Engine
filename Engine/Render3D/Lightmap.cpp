@@ -30,6 +30,29 @@ glm::vec3 Rgb(Color c) { return {c.r, c.g, c.b}; }
 
 } // namespace
 
+void GatherOpaqueTriangles(const std::vector<DrawItem3D>& items, std::vector<glm::vec3>& corners) {
+  for (const DrawItem3D& it : items) {
+    if (!it.mesh || !it.mesh->source || it.material.alpha == Material3D::Alpha::Blend) continue;
+    const MeshData& src = *it.mesh->source;
+    for (size_t t = 0; t + 2 < src.indices.size(); t += 3)
+      for (int c = 0; c < 3; ++c) {
+        const Vertex3D& v = src.vertices[src.indices[t + c]];
+        corners.push_back(glm::vec3(it.model * glm::vec4(v.px, v.py, v.pz, 1)));
+      }
+  }
+}
+
+float BackfaceShare(const RayScene& scene, const glm::vec3& p) {
+  const int n = 64;
+  int back = 0;
+  for (int i = 0; i < n; ++i) { // Fibonacci sphere
+    const float y = 1 - (i + 0.5f) * 2.f / n, r = std::sqrt(std::max(1 - y * y, 0.f)), phi = i * 2.39996323f;
+    RayHit hit;
+    if (scene.Intersect(p, {r * std::cos(phi), y, r * std::sin(phi)}, 1e30f, hit) && hit.backface) ++back;
+  }
+  return (float)back / n;
+}
+
 bool BakeLightmapAtlas(const LightmapBakeInput& in, const LightmapSettings& s, LightmapResult& out, std::string* error) {
   const auto t0 = std::chrono::steady_clock::now();
   out = {};

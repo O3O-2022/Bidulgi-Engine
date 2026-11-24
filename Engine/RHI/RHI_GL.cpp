@@ -248,6 +248,14 @@ bool RHI::ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& r
   return true;
 }
 
+void RHI::UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int32_t faces, const float* rgba) {
+  auto it = texInfo_.find(t.id);
+  if (!t.Valid() || it == texInfo_.end() || faces <= 0) return;
+  int32_t s = std::max(it->second.size >> level, 1);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+  glTextureSubImage3D(t.id, level, 0, 0, firstFace, s, s, faces, GL_RGBA, GL_FLOAT, rgba);
+}
+
 void RHI::DestroyTexture(TextureHandle t) {
   if (!t.Valid()) return;
   if (auto it = textureBytes_.find(t.id); it != textureBytes_.end()) { mem_.textures -= it->second; textureBytes_.erase(it); }

@@ -323,15 +323,32 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
       r_->ClearLightmaps();
       bakedLightmapKey_ = 0;
     }
+    // Baked GI cache (GI Tier 0-D): a bake of exactly these inputs is loaded instead of baked again.
+    auto cachePath = [](uint64_t h) { return (std::filesystem::current_path() / ".cache" / "gi" / std::format("scene-{:016x}.bdggi", h)).string(); };
+    auto tryLoad = [&]() {
+      const uint64_t h = r_->GIInputHash(items_, light_);
+      std::string err;
+      if (!r_->LoadGI(cachePath(h), items_, h, &err)) return false;
+      r_->giCacheNote = "loaded " + cachePath(h);
+      if (r_->LightmappedObjects()) bakedLightmapKey_ = lightmapKey_;
+      LogInfo("gi: loaded {} ({} probe(s), {} volume probe(s), {} lightmapped)", cachePath(h), r_->BakedProbes(), r_->VolumeProbes(),
+              r_->LightmappedObjects());
+      return true;
+    };
+    bool baked = false;
     if (bakeRequested_ && lightmapItems_) {
       r_->BakeLightmaps(items_, light_);
       bakedLightmapKey_ = lightmapKey_;
+      baked = true;
     }
     if (key != probeKey_) {
       probeKey_ = key;
       r_->SetProbes(probes_);
       r_->SetVolume(hasVolume_ ? &volume_ : nullptr);
-      firstBake_ = anyGI;
+      firstBake_ = anyGI && !(bakeRequested_ ? false : tryLoad());
+    } else if (lightmapItems_ && lightmapKey_ != lastLoadTry_ && lightmapKey_ != bakedLightmapKey_ && !bakeRequested_) {
+      lastLoadTry_ = lightmapKey_; // lightmapped objects changed: a matching earlier bake may be on disk
+      tryLoad();
     }
     if ((firstBake_ || bakeRequested_) && anyGI) {
       auto b0 = std::chrono::steady_clock::now();
@@ -340,6 +357,25 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
       LogInfo("gi: baked {} probe(s){}{} in {:.0f} ms", probes_.size(), firstBake_ ? ", 2 bounces" : ", one more bounce",
               hasVolume_ ? std::format(", volume {} probes", r_->VolumeProbes()) : std::string(),
               std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
+      baked = true;
+    }
+    if (baked) { // keep it for the next time these inputs come back (reopening the scene, undo)
+      const uint64_t h = r_->GIInputHash(items_, light_);
+      std::string err;
+      if (r_->SaveGI(cachePath(h), h, &err)) {
+        r_->giCacheNote = "saved " + cachePath(h);
+        LogInfo("gi: saved {}", cachePath(h));
+      } else {
+        LogWarn("gi: could not save the bake: {}", err);
+      }
+      if (std::getenv("BDG_GI_DIAGNOSE")) {
+        std::string text = r_->DiagnoseGI(items_);
+        for (size_t a = 0, b; a < text.size(); a = b + 1) {
+          b = text.find('\n', a);
+          if (b == std::string::npos) b = text.size();
+          LogInfo("gi diagnose: {}", text.substr(a, b - a));
+        }
+      }
     }
     firstBake_ = bakeRequested_ = false;
   }

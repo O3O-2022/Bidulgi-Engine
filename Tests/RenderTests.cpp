@@ -320,3 +320,34 @@ TEST_CASE("gi: lightmap bake on the CPU: open sky, contact shadow, unwrap (GI Ti
   CHECK(!BakeLightmapAtlas(in, s, none, &err));
   CHECK(!err.empty());
 }
+
+TEST_CASE("gi: baked GI cache key follows every input (GI Tier 0-D)") {
+  Renderer3D r; // no GPU needed for the hash
+  Mesh3D a, b;
+  a.contentHash = 1;
+  b.contentHash = 2;
+  std::vector<DrawItem3D> items(2);
+  items[0].mesh = &a;
+  items[1].mesh = &b;
+  Light3D light;
+  const uint64_t base = r.GIInputHash(items, light);
+  CHECK(base == r.GIInputHash(items, light)); // stable
+  auto changed = [&](auto edit) {
+    std::vector<DrawItem3D> it = items;
+    Light3D l = light;
+    edit(it, l);
+    return r.GIInputHash(it, l) != base;
+  };
+  CHECK(changed([](std::vector<DrawItem3D>& it, Light3D&) { it[1].model[3][0] = 0.5f; }));          // moved
+  CHECK(changed([](std::vector<DrawItem3D>& it, Light3D&) { it[0].lightmapped = true; }));          // static GI flag
+  CHECK(changed([](std::vector<DrawItem3D>& it, Light3D&) { it[0].material.baseColor.r = 0.1f; })); // colour
+  CHECK(changed([&](std::vector<DrawItem3D>& it, Light3D&) { it[1].mesh = &a; }));                  // other mesh data
+  CHECK(changed([](std::vector<DrawItem3D>&, Light3D& l) { l.intensity = 3; }));                     // light
+  CHECK(changed([](std::vector<DrawItem3D>&, Light3D& l) { l.locals.push_back({}); }));              // a lamp
+  LightmapSettings s;
+  s.samples = 128;
+  CHECK(r.GIInputHash(items, light, s) != base);
+  ProbeVolume3D v;
+  r.SetVolume(&v); // the probes and volume set on the renderer count too
+  CHECK(r.GIInputHash(items, light) != base);
+}

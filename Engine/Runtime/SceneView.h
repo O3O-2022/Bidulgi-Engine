@@ -113,6 +113,7 @@ private:
   bool hasVolume_ = false;
   size_t lightmapItems_ = 0;                        // items marked bakeLightmap (GI Tier 0-C)
   uint64_t lightmapKey_ = 0, bakedLightmapKey_ = 0; // their meshes and placements now / at the last bake
+  uint64_t lastLoadTry_ = 0;                        // lightmap key last looked up in .cache/gi
   bool bakeRequested_ = false, firstBake_ = false;
   int noteFrames_ = 0;
   float renderMs_ = 0;

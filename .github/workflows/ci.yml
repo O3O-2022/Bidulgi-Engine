@@ -285,17 +285,34 @@ jobs:
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 27) GI Tier 0 (reflection probes, IBL): Cornell box probe faces, mirror reflections of the walls, colour bleeding
+          Remove-Item .cache/gi -Recurse -Force -ErrorAction SilentlyContinue
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'gi test: .*faces=ok mirror=ok .* bleed=ok volume=ok .* lightmaps=ok .* probes_baked=1 volume_probes=48 result=pass') { $errors += 'GI Tier 0 probe test failed' }
+          if ($log -notmatch 'gi: saved .*render-gi-[0-9a-f]{16}\.bdggi') { $errors += 'GI bake was not saved to .cache/gi' }
           if ($log -match '(gi: lightmaps: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 27b) the indirect-light debug view of the same box (GI Tier 0-B) renders and still finds the volume
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1'; BDG_RENDER_VIEW = '7' } 5
           if ($log -notmatch 'gi test: .* volume=ok ') { $errors += 'GI indirect view failed' }
+          # 27c) GI Tier 0-D: read-only like a runtime build -> the saved bake is loaded, same checks pass; text diagnosis
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1'; BDG_GI_READONLY = '1'; BDG_GI_DIAGNOSE = '1' } 5
+          if ($log -notmatch 'gi: loaded .*render-gi-') { $errors += 'GI cache was not loaded' }
+          if ($log -match 'gi: lightmaps: ') { $errors += 'GI read-only run baked lightmaps' }
+          if ($log -notmatch 'gi test: .*faces=ok mirror=ok .* bleed=ok volume=ok .* lightmaps=ok .* probes_baked=1 volume_probes=48 result=pass') { $errors += 'GI checks failed after loading the cache' }
+          if ($log -notmatch 'gi diagnose: volume 4x3x4 = 48 probes .* inside objects [1-9]') { $errors += 'GI diagnose: volume line missing' }
+          if ($log -notmatch 'gi diagnose: leaks \d+ suspected') { $errors += 'GI diagnose: leak line missing' }
+          if ($log -notmatch 'gi diagnose: bake .* cache loaded ') { $errors += 'GI diagnose: cache line missing' }
+          if ($log -match '(gi diagnose: volume[^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 27d) read-only without a saved bake: nothing is baked
+          Remove-Item .cache/gi -Recurse -Force -ErrorAction SilentlyContinue
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1'; BDG_GI_READONLY = '1' } 5
+          if ($log -notmatch 'gi: no baked GI at .*read-only') { $errors += 'GI read-only without cache: warning missing' }
+          if ($log -notmatch 'gi test: .* probes_baked=0 volume_probes=0 ') { $errors += 'GI read-only without cache baked something' }
 
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_GI_TEST = '1' } 12
           if ($log -notmatch 'gi editor test: added=1 baked=1 rebaked=1 after_undo=0 volume=32 volume_after_undo=0 lightmapped=[1-9]\d* lightmapped_after_undo=0') { $errors += 'GI probe editor test failed' }
           if ($log -notmatch 'gi: lightmaps: [1-9]\d* objects, atlas \d+x\d+') { $errors += 'GI lightmap bake from the chip missing' }
+          if ($log -notmatch 'gi: saved .*scene-[0-9a-f]{16}\.bdggi') { $errors += 'GI editor bake was not saved' }
           if ($log -notmatch 'gi: baked 1 probe\(s\), one more bounce') { $errors += 'GI re-bake from the chip missing' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 

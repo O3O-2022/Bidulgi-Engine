@@ -84,6 +84,8 @@ public:
   void          GenerateMips(TextureHandle t);
   // A whole mip level as RGBA floats (cubemaps: the 6 faces one after another).
   bool          ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& rgba);
+  // Writes `faces` faces (arrays: face + 6 * cube) of one mip level from RGBA floats (cached bakes).
+  void          UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int32_t faces, const float* rgba);
   void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
   void          DestroyTexture(TextureHandle t);
   void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D

@@ -36,6 +36,12 @@ struct LightmapResult {
   double ms = 0;
 };
 
+// World triangles of every opaque item with mesh data (3 corners each), for a RayScene.
+void GatherOpaqueTriangles(const std::vector<DrawItem3D>& items, std::vector<glm::vec3>& corners);
+class RayScene;
+// Share of 64 rays from p (evenly spread) that meet a back face: about 1 inside a closed object, near 0 in the open.
+float BackfaceShare(const RayScene& scene, const glm::vec3& p);
+
 // false (with a reason) when nothing could be baked: no lightmapped items with mesh data, or the unwrap failed.
 bool BakeLightmapAtlas(const LightmapBakeInput& in, const LightmapSettings& settings, LightmapResult& out, std::string* error);
 

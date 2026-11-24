@@ -18,6 +18,7 @@ struct Mesh3D {
   uint32_t indexCount = 0;
   glm::vec3 boundsMin{0}, boundsMax{0}; // local box (culling); equal = unknown, never culled
   std::shared_ptr<const MeshData> source; // CPU copy (lightmap unwrap and ray casts); null for meshes made elsewhere
+  uint64_t contentHash = 0;               // of the vertex and index data (baked GI cache keys)
 };
 
 struct Material3D {
@@ -189,6 +190,17 @@ public:
   std::string DescribeLightmaps() const; // "7 objects, atlas 512x384, 12.0 texels/m, 41230 texels, 1840 ms"
   // Test hook: the baked value (ambient / pi) of the covered texel nearest to p whose normal is within ~45 deg of n.
   bool LightmapAt(const glm::vec3& p, const glm::vec3& n, glm::vec3& value) const;
+  // Baked GI cache (GI Tier 0-D, Render3D/GICache.cpp). GIInputHash covers everything a bake depends on: the items
+  // (meshes, placements, materials, lightmap flags), the light, the probes and volume set now, the lightmap settings.
+  // SaveGI writes what is baked now; LoadGI restores it when the file's hash matches (lightmaps are matched to the
+  // items again by mesh and placement). Runtime builds only load; the editor bakes and saves.
+  uint64_t GIInputHash(const std::vector<DrawItem3D>& items, const Light3D& light, const LightmapSettings& settings = {}) const;
+  bool SaveGI(const std::string& path, uint64_t inputHash, std::string* error = nullptr) const;
+  bool LoadGI(const std::string& path, const std::vector<DrawItem3D>& items, uint64_t inputHash, std::string* error = nullptr);
+  // `bdg gi diagnose` (text, one finding per line): probes inside objects, light leak suspects between volume
+  // probes, lightmap coverage, memory, bake times, and what to change.
+  std::string DiagnoseGI(const std::vector<DrawItem3D>& items) const;
+  std::string giCacheNote; // "loaded <path>" / "saved <path>" / "none": shown by DiagnoseGI
   // Test hooks: one face of a probe's mirror-sharp level (0 = sky), RGB linear, and its SH9 (ambient / pi).
   bool ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size);
   const float (&ProbeSH(int probe) const)[9][3] { return probeSH_[probe]; }
@@ -244,20 +256,27 @@ private:
   BufferHandle volumeBuffer_;
   size_t volumeCapacity_ = 0;
   int badTexels_ = 0; // non-finite texels skipped by ComputeSHFrom
+  int invalidVolumeProbes_ = 0; // inside objects at the last bake: switched off (neighbours fill in)
+  double probeBakeMs_ = 0;
   TextureHandle smallCube_;
   RenderTargetHandle smallCaptureRT_;
   void EnsureSmallCapture();
   glm::vec3 AmbientAt(const glm::vec3& p, const glm::vec3& n) const; // CPU: volume, probe or sky SH (ambient / pi)
   // Lightmaps: one atlas; each lightmapped item has its own mesh copy with atlas coordinates, matched by the
   // original mesh and placement (moving the object drops back to the probes until the next bake).
-  struct LightmapInstance { Mesh3D mesh; const Mesh3D* source = nullptr; glm::mat4 model{1.f}; };
+  struct LightmapInstance { Mesh3D mesh; const Mesh3D* source = nullptr; glm::mat4 model{1.f}; uint64_t key = 0; };
   std::vector<LightmapInstance> lightmaps_;
   std::unordered_map<uint64_t, int> lightmapIndex_;
+  static uint64_t ContentKey(const Mesh3D* mesh, const glm::mat4& model); // mesh data + placement
+  static uint64_t LightmapKey(const Mesh3D* mesh, const glm::mat4& model); // mesh address + placement (per frame)
   TextureHandle lightmapTex_;
   int lightmapW_ = 0, lightmapH_ = 0, lightmapTexels_ = 0;
   float lightmapDensity_ = 0;
   double lightmapMs_ = 0;
   std::vector<glm::vec3> lmTexelPos_, lmTexelN_, lmTexelValue_;
+  std::vector<uint32_t> lmTexelIndex_;
+  std::vector<float> lightmapRGBA_; // CPU copy of the atlas (cache)
+  int lightmapInside_ = 0;
   void UploadProbes();
   // GPU timings: a few frames of timestamp queries in flight, read back when the GPU has finished them.
   static constexpr int kTimerFrames = 4, kMarks = 8;
