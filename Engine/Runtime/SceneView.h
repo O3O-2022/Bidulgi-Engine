@@ -6,6 +6,11 @@
 // selects the object under the cursor (Ctrl/Shift add or remove), a click on empty space clears the selection.
 // Gizmos (queue 3-3): the active tool (W move, E rotate, R scale) puts handles on the selection; one drag is one
 // undo step (a command group of "set Transform.*"), Ctrl snaps, Esc cancels, X switches world / local axes.
+// Snapping and measuring (queue 3-3b): the Snap chip sets the grid (moves land on it; Ctrl turns snapping on or
+// off for one drag), V while moving puts a vertex of the selection onto the vertex under the mouse, Ctrl+Shift
+// while moving rests the object on the surface under the mouse. With two or more objects selected the Align chip
+// opens min / centre / max / distribute per axis (one undo step each). The Measure tool (M) drags a ruler between
+// two surface points (V snaps its ends to vertices).
 // Debug tools (queue 3-8): keys 1-9 jump to CameraBookmark views (Ctrl + key stores the current view), Alt + 1-7
 // pick what is shown (Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow), chips toggle wireframe, bounding
 // boxes and a stats panel with GPU time per render pass.
@@ -17,6 +22,7 @@
 #include "Platform/Window.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/Gizmo.h"
+#include "Runtime/Snapping.h"
 #include "Runtime/MaterialLibrary.h"
 #include <memory>
 #include <set>
@@ -66,6 +72,21 @@ public:
   std::string BookmarkName(const EditorModel& model, int slot) const; // "" when there is none
   bool ChipCenter(const std::string& name, float& x, float& y) const; // test hook: "view", "wire", "bounds", "stats"
   bool localSpace = false; // gizmo axes: the object's own (true) or the world's; scale always uses the object's
+  SnapSettings snap;       // grid, rotate and scale steps; `always` = snap without Ctrl (3-3b)
+  // Lines up the selected objects' bounds on an axis (0 x, 1 y, 2 z), or gives them equal gaps: one undo step.
+  // false: too few objects (2, or 3 to distribute) or nothing to move.
+  bool AlignSelection(EditorModel& model, int axis, AlignMode mode);
+  // The nearest surface under a UI point, skipping the objects in `skip` and their children.
+  bool RaycastUI(const EditorModel& model, float x, float y, const std::set<std::string>& skip, glm::vec3& hit, glm::vec3& normal,
+                 std::string* owner = nullptr) const;
+  // The mesh vertex nearest to a UI point within `maxDist` UI units: of the objects in `ids` (and their children)
+  // when `inIds`, otherwise of every other object.
+  bool NearestVertexUI(const EditorModel& model, float x, float y, const std::set<std::string>& ids, bool inIds, float maxDist,
+                       glm::vec3& vertex) const;
+  // World bounds of an object's meshes (and its children's), as the scene is now.
+  bool ObjectBounds(const EditorModel& model, const std::string& id, glm::vec3& lo, glm::vec3& hi) const;
+  const Measure* CurrentMeasure() const { return hasMeasure_ ? &measure_ : nullptr; } // the ruler (Measure tool)
+  bool SnapTarget(glm::vec3& p) const { p = snapTarget_; return hasSnapTarget_; }    // vertex / surface under the drag
   // Gizmo of the current tool and selection in the last view (false: no gizmo).
   bool CurrentGizmo(const EditorModel& model, GizmoMode& mode, GizmoFrame& frame, GizmoView& view) const;
   bool GizmoPoint(const EditorModel& model, GizmoHandle h, float& x, float& y) const; // test hook
@@ -98,7 +119,9 @@ private:
   std::unordered_map<std::string, MeshEntry> meshes_;
   std::unordered_map<std::string, MeshEntry> builtins_;
   std::vector<DrawItem3D> items_;
-  struct ItemInfo { std::string owner; const MeshData* cpu; glm::vec3 lo{0}, hi{0}; }; // world bounds
+  struct ItemInfo { std::string owner; const MeshData* cpu; glm::vec3 lo{0}, hi{0}; glm::mat4 ownerWorld{1.f}; }; // world bounds
+  glm::mat4 ItemMatrix(const EditorModel& model, size_t i) const; // item i as the scene is now (moved since the render)
+  bool Owned(const EditorModel& model, const std::string& owner, const std::set<std::string>& ids) const; // owner or a parent in ids
   std::vector<ItemInfo> info_;
   RenderExtras extras_;
   Light3D light_;
@@ -123,7 +146,12 @@ private:
   int noteFrames_ = 0;
   float renderMs_ = 0;
 
-  enum class Drag { None, Click, Orbit, Pan, Fly, Gizmo } drag_ = Drag::None;
+  enum class Drag { None, Click, Orbit, Pan, Fly, Gizmo, Measure } drag_ = Drag::None;
+  // 3-3b: vertex / surface snapping during a move drag, the ruler, the align chips
+  bool vHeld_ = false, vertexSourceSet_ = false, hasSnapTarget_ = false, hasMeasure_ = false, alignOpen_ = false;
+  glm::vec3 vertexSource_{0}, lastMove_{0}, snapTarget_{0}, startLo_{0}, startHi_{0};
+  Measure measure_;
+  bool MeasurePoint(const EditorModel& model, float x, float y, glm::vec3& p) const;
   GizmoDrag gizmo_;
   GizmoHandle hot_ = GizmoHandle::None;
   bool gizmoChanged_ = false;

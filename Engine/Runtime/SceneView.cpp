@@ -288,6 +288,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         items_.push_back({&e->model.meshes[in.mesh], world * in.world, e->model.materials[in.mesh]});
         items_.back().lightmapped = mr->bakeLightmap;
         info_.push_back({id, &e->cpuPrims[in.mesh]});
+        info_.back().ownerWorld = world;
         bool any = false;
         Bounds(e->cpuPrims[in.mesh], items_.back().model, info_.back().lo, info_.back().hi, any);
       }
@@ -296,6 +297,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
       items_.push_back({&e->mesh, world, MaterialFor(mr->material)});
       items_.back().lightmapped = mr->bakeLightmap;
       info_.push_back({id, &e->cpu});
+      info_.back().ownerWorld = world;
       bool any = false;
       Bounds(e->cpu, world, info_.back().lo, info_.back().hi, any);
     }
@@ -451,6 +453,131 @@ std::string SceneView::Pick(const EditorModel& model, float x, float y) const {
   return best;
 }
 
+glm::mat4 SceneView::ItemMatrix(const EditorModel& model, size_t i) const {
+  if (!model.scene.Find(info_[i].owner)) return items_[i].model;
+  return model.scene.WorldMatrix(info_[i].owner) * glm::inverse(info_[i].ownerWorld) * items_[i].model;
+}
+
+bool SceneView::Owned(const EditorModel& model, const std::string& owner, const std::set<std::string>& ids) const {
+  for (std::string o = owner; !o.empty();) {
+    if (ids.count(o)) return true;
+    const SceneObject* so = model.scene.Find(o);
+    o = so ? so->parent : "";
+  }
+  return false;
+}
+
+bool SceneView::ObjectBounds(const EditorModel& model, const std::string& id, glm::vec3& lo, glm::vec3& hi) const {
+  bool any = false;
+  const std::set<std::string> ids{id};
+  for (size_t i = 0; i < items_.size(); ++i)
+    if (info_[i].cpu && Owned(model, info_[i].owner, ids)) Bounds(*info_[i].cpu, ItemMatrix(model, i), lo, hi, any);
+  return any;
+}
+
+bool SceneView::RaycastUI(const EditorModel& model, float x, float y, const std::set<std::string>& skip, glm::vec3& hit,
+                          glm::vec3& normal, std::string* owner) const {
+  if (pw_ <= 0) return false;
+  Camera3D cam = camera.ToCamera();
+  glm::mat4 inv = glm::inverse(cam.Projection((float)pw_ / ph_) * cam.View());
+  float nx = (x - vx_) / vw_ * 2.f - 1.f, ny = 1.f - (y - vy_) / vh_ * 2.f;
+  glm::vec4 a = inv * glm::vec4(nx, ny, -1, 1), b = inv * glm::vec4(nx, ny, 1, 1);
+  glm::vec3 o = glm::vec3(a) / a.w, d = glm::normalize(glm::vec3(b) / b.w - o);
+  float best = 1e30f;
+  for (size_t i = 0; i < items_.size(); ++i) {
+    if (!info_[i].cpu || !model.scene.Find(info_[i].owner) || Owned(model, info_[i].owner, skip)) continue;
+    const glm::mat4 m = ItemMatrix(model, i);
+    const MeshData& md = *info_[i].cpu;
+    for (size_t k = 0; k + 2 < md.indices.size(); k += 3) {
+      const Vertex3D &v0 = md.vertices[md.indices[k]], &v1 = md.vertices[md.indices[k + 1]], &v2 = md.vertices[md.indices[k + 2]];
+      const glm::vec3 p0 = glm::vec3(m * glm::vec4(v0.px, v0.py, v0.pz, 1)), p1 = glm::vec3(m * glm::vec4(v1.px, v1.py, v1.pz, 1)),
+                      p2 = glm::vec3(m * glm::vec4(v2.px, v2.py, v2.pz, 1));
+      float t;
+      if (!RayTriangle(o, d, p0, p1, p2, t) || t >= best) continue;
+      best = t;
+      hit = o + d * t;
+      glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+      normal = glm::dot(n, n) > 1e-20f ? glm::normalize(n) : glm::vec3(0, 1, 0);
+      if (glm::dot(normal, d) > 0) normal = -normal; // facing the camera
+      if (owner) *owner = info_[i].owner;
+    }
+  }
+  return best < 1e30f;
+}
+
+bool SceneView::NearestVertexUI(const EditorModel& model, float x, float y, const std::set<std::string>& ids, bool inIds, float maxDist,
+                                glm::vec3& vertex) const {
+  float best = maxDist;
+  bool found = false;
+  for (size_t i = 0; i < items_.size(); ++i) {
+    if (!info_[i].cpu || !model.scene.Find(info_[i].owner) || Owned(model, info_[i].owner, ids) != inIds) continue;
+    const glm::mat4 m = ItemMatrix(model, i);
+    for (const Vertex3D& v : info_[i].cpu->vertices) {
+      const glm::vec3 p = glm::vec3(m * glm::vec4(v.px, v.py, v.pz, 1));
+      float sx, sy;
+      if (!ProjectUI(p, sx, sy)) continue;
+      const float dist = std::hypot(sx - x, sy - y);
+      if (dist < best) { best = dist; vertex = p; found = true; }
+    }
+  }
+  return found;
+}
+
+bool SceneView::MeasurePoint(const EditorModel& model, float x, float y, glm::vec3& p) const {
+  if (vHeld_ && NearestVertexUI(model, x, y, {}, false, 24.f, p)) return true; // V: onto a vertex
+  glm::vec3 n;
+  if (RaycastUI(model, x, y, {}, p, n)) return true;
+  // nothing under the mouse: the ground plane (y = 0)
+  Camera3D cam = camera.ToCamera();
+  glm::mat4 inv = glm::inverse(cam.Projection((float)pw_ / ph_) * cam.View());
+  float nx = (x - vx_) / vw_ * 2.f - 1.f, ny = 1.f - (y - vy_) / vh_ * 2.f;
+  glm::vec4 a = inv * glm::vec4(nx, ny, -1, 1), b = inv * glm::vec4(nx, ny, 1, 1);
+  glm::vec3 o = glm::vec3(a) / a.w, d = glm::normalize(glm::vec3(b) / b.w - o);
+  if (std::abs(d.y) < 1e-6f || -o.y / d.y <= 0) return false;
+  p = o + d * (-o.y / d.y);
+  return true;
+}
+
+bool SceneView::AlignSelection(EditorModel& model, int axis, AlignMode mode) {
+  std::set<std::string> sel(model.Selection().begin(), model.Selection().end());
+  std::vector<std::string> ids;
+  for (const std::string& id : model.Selection()) { // top-level picks only: a selected parent carries its children
+    const SceneObject* o = model.scene.Find(id);
+    if (o && const_cast<SceneObject*>(o)->Find("Transform") && !(!o->parent.empty() && Owned(model, o->parent, sel))) ids.push_back(id);
+  }
+  std::vector<AlignBox> boxes;
+  std::vector<std::string> kept;
+  for (const std::string& id : ids) {
+    AlignBox b;
+    if (!ObjectBounds(model, id, b.lo, b.hi)) b.lo = b.hi = space::ToGlm(model.scene.WorldPosition(id));
+    boxes.push_back(b);
+    kept.push_back(id);
+  }
+  if (boxes.size() < (mode == AlignMode::Distribute ? 3u : 2u)) return false;
+  const std::vector<float> offsets = AlignOffsets(boxes, axis, mode);
+  const char* modeName = mode == AlignMode::Min ? "min" : mode == AlignMode::Center ? "centre" : mode == AlignMode::Max ? "max" : "distribute";
+  model.bus.BeginGroup(std::format("Align {} {} ({} objects)", "XYZ"[axis], modeName, kept.size()), "ui");
+  int moved = 0;
+  for (size_t k = 0; k < kept.size(); ++k) {
+    if (std::abs(offsets[k]) < 1e-6f) continue;
+    const SceneObject* o = model.scene.Find(kept[k]);
+    glm::vec3 world = glm::vec3(model.scene.WorldMatrix(kept[k])[3]);
+    world[axis] += offsets[k];
+    const glm::mat4 toParent = o->parent.empty() ? glm::mat4(1.f) : glm::inverse(model.scene.WorldMatrix(o->parent));
+    const glm::vec3 local = glm::vec3(toParent * glm::vec4(world, 1.f));
+    Command c;
+    c.name = "set";
+    c.target = kept[k];
+    c.args = std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", local.x, local.y, local.z);
+    std::string err;
+    if (model.bus.Execute(c, &err)) ++moved;
+    else LogWarn("align: {}", err);
+  }
+  if (moved) model.bus.EndGroup();
+  else { std::string err; model.bus.CancelGroup(&err); }
+  return moved > 0;
+}
+
 bool SceneView::ObjectCenter(const EditorModel& model, const std::string& id, glm::vec3& center, float& radius) const {
   glm::vec3 lo{0}, hi{0};
   bool any = false;
@@ -583,6 +710,21 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
             else if (hit->name == "gi") bakeRequested_ = true;
+            else if (hit->name == "snap") { // Off -> 0.1 -> 0.25 -> 0.5 -> 1 -> 2 m -> Off
+              const size_t n = std::size(kSnapSteps);
+              size_t at = 0;
+              for (size_t k = 0; k < n; ++k)
+                if (snap.always && kSnapSteps[k] == snap.move) at = k;
+              const float next = kSnapSteps[(at + 1) % n];
+              snap.always = next > 0;
+              if (next > 0) snap.move = next;
+            } else if (hit->name == "align") alignOpen_ = !alignOpen_;
+            else if (hit->name.starts_with("al.")) { // al.<axis>.<mode>
+              const int axis = hit->name[3] - 'x';
+              const std::string m = hit->name.substr(5);
+              AlignSelection(model, axis, m == "min" ? AlignMode::Min : m == "mid" ? AlignMode::Center : m == "max" ? AlignMode::Max
+                                                                        : AlignMode::Distribute);
+            }
             used = true;
             break;
           }
@@ -616,6 +758,23 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
             gizmoChanged_ = false;
             drag_ = Drag::Gizmo;
             dragButton_ = 1;
+            downX_ = lastX_ = e.x;
+            downY_ = lastY_ = e.y;
+            vertexSourceSet_ = hasSnapTarget_ = false;
+            lastMove_ = glm::vec3(0);
+            if (starts_.empty() || !ObjectBounds(model, starts_[0].id, startLo_, startHi_))
+              startLo_ = startHi_ = starts_.empty() ? glm::vec3(0) : glm::vec3(starts_[0].world[3]);
+            used = true;
+            break;
+          }
+        }
+        if (drag_ == Drag::None && inside(e) && e.button == 1 && !e.alt && model.tool == "measure") { // the ruler (3-3b)
+          glm::vec3 p;
+          if (MeasurePoint(model, e.x, e.y, p)) {
+            measure_ = {p, p};
+            hasMeasure_ = true;
+            drag_ = Drag::Measure;
+            dragButton_ = 1;
             used = true;
             break;
           }
@@ -632,7 +791,41 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
       case T::MouseMove: {
         hover_ = inside(e);
         if (drag_ == Drag::Gizmo) {
-          ApplyGizmo(model, gizmo_.Update({e.x, e.y}, e.ctrl));
+          const bool surface = e.ctrl && e.shift && gizmo_.Mode() == GizmoMode::Move;
+          GizmoDelta d = gizmo_.Update({e.x, e.y}, !surface && snap.always != e.ctrl, snap); // Ctrl flips grid snapping
+          hasSnapTarget_ = false;
+          if (gizmo_.Mode() == GizmoMode::Move && !starts_.empty()) {
+            std::set<std::string> moving;
+            for (const DragStart& s : starts_) moving.insert(s.id);
+            if (vHeld_) { // vertex snap: the selection's vertex nearest the grab point onto the vertex under the mouse
+              glm::vec3 p;
+              if (!vertexSourceSet_ && NearestVertexUI(model, downX_, downY_, moving, true, 1e9f, p)) {
+                vertexSource_ = p - lastMove_; // where it was when the drag began
+                vertexSourceSet_ = true;
+              }
+              if (vertexSourceSet_ && NearestVertexUI(model, e.x, e.y, moving, false, 24.f, p)) {
+                d.move = p - vertexSource_;
+                snapTarget_ = p;
+                hasSnapTarget_ = true;
+              }
+            } else if (surface) { // surface snap: rest on what is under the mouse
+              glm::vec3 hit, n;
+              if (RaycastUI(model, e.x, e.y, moving, hit, n)) {
+                const glm::vec3 pivot = glm::vec3(starts_[0].world[3]);
+                d.move = hit + n * RestOffset(pivot, startLo_, startHi_, n) - pivot;
+                snapTarget_ = hit;
+                hasSnapTarget_ = true;
+              }
+            }
+          }
+          lastMove_ = d.move;
+          ApplyGizmo(model, d);
+          used = true;
+          break;
+        }
+        if (drag_ == Drag::Measure) {
+          glm::vec3 p;
+          if (MeasurePoint(model, e.x, e.y, p)) measure_.b = p;
           used = true;
           break;
         }
@@ -666,6 +859,13 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         if (drag_ == Drag::Gizmo && e.button == 1) {
           model.bus.EndGroup();
           drag_ = Drag::None;
+          hasSnapTarget_ = false;
+          used = true;
+          break;
+        }
+        if (drag_ == Drag::Measure && e.button == 1) {
+          LogInfo("measure: {:.3f} m (x {:.3f} y {:.3f} z {:.3f})", measure_.Length(), measure_.Delta().x, measure_.Delta().y, measure_.Delta().z);
+          drag_ = Drag::None;
           used = true;
           break;
         }
@@ -694,6 +894,17 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         break;
       case T::KeyDown:
+        if (e.key == Key::V && !textFocused && !e.ctrl && !e.alt && (hover_ || drag_ != Drag::None)) { // vertex snap while held
+          vHeld_ = true;
+          used = true;
+          break;
+        }
+        if (e.key == Key::Escape && hasMeasure_ && drag_ != Drag::Gizmo && hover_) {
+          hasMeasure_ = false;
+          drag_ = drag_ == Drag::Measure ? Drag::None : drag_;
+          used = true;
+          break;
+        }
         if (drag_ == Drag::Gizmo && e.key == Key::Escape) { // cancel: the whole drag goes away
           std::string err;
           if (!model.bus.CancelGroup(&err)) LogWarn("gizmo: cancel failed: {}", err);
@@ -725,6 +936,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         break;
       case T::KeyUp:
         held_.erase(e.key);
+        if (e.key == Key::V) vHeld_ = false;
         used = true; // the UI has no use for key releases
         break;
       default: break;
@@ -872,7 +1084,9 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   // Chips (top-left) and stats (top-right).
   float px = w.x + 10;
   std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
-                       : model->tool == "scale" ? "Scale (R)" : "Select";
+                       : model->tool == "scale" ? "Scale (R)" : model->tool == "measure" ? "Measure (M)" : "Select";
+  std::string snapChip = snap.always ? std::format("Snap {} m", snap.move) : "Snap: Ctrl";
+  const bool several = model && model->Selection().size() >= 2;
   std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
   std::string tierChip = std::string(TierLabel(quality.tier)) + (quality.lighting == LightingMode::Unlit ? " · Unlit" : "");
   chips_.clear();
@@ -883,7 +1097,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
                            probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
                                : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0) + lightmapItems_),
                            lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_},
-                          {"", toolChip, false}, {"", spaceChip, false}};
+                          {"", toolChip, false}, {"", spaceChip, false}, {"snap", snapChip, snap.always},
+                          {several ? "align" : "", several ? "Align" : "", alignOpen_}};
   for (const ChipDef& chip : defs) {
     if (chip.text.empty()) continue;
     float cw = ui.Measure(11, chip.text) + 18;
@@ -891,6 +1106,32 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     ui.Text(px + 9, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
     if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, w.y + 8, cw, 22});
     px += cw + 6;
+  }
+  if (several && alignOpen_) { // second row: align / distribute per axis
+    float ax2 = w.x + 10;
+    for (const char* axis : {"x", "y", "z"})
+      for (const char* m : {"min", "mid", "max", "dist"}) {
+        const std::string name = std::format("al.{}.{}", axis, m), text = std::format("{} {}", (char)std::toupper(axis[0]), m);
+        const float cw = ui.Measure(11, text) + 14;
+        b.Rect(ax2, w.y + 36, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("line"));
+        ui.Text(ax2 + 7, w.y + 39, 11, t.C("fg"), text);
+        chips_.push_back({name, ax2, w.y + 36, cw, 20});
+        ax2 += cw + (m[0] == 'd' ? 12 : 4);
+      }
+  }
+  { // snap target (vertex / surface) and the ruler
+    float sx, sy;
+    if (hasSnapTarget_ && ProjectUI(snapTarget_, sx, sy)) b.Rect(sx - 5, sy - 5, 10, 10, {0, 0, 0, 0}, 2, 2.f, {1.f, 0.85f, 0.2f, 1});
+    float ax3, ay3, bx3, by3;
+    if (hasMeasure_ && ProjectUI(measure_.a, ax3, ay3) && ProjectUI(measure_.b, bx3, by3)) {
+      b.Line(ax3, ay3, bx3, by3, 2.f, {1.f, 0.85f, 0.2f, 1});
+      for (auto [px3, py3] : {std::pair{ax3, ay3}, std::pair{bx3, by3}}) b.Rect(px3 - 4, py3 - 4, 8, 8, {1.f, 0.85f, 0.2f, 1}, 4);
+      const glm::vec3 d = measure_.Delta();
+      const std::string label = std::format("{:.2f} m  ·  x {:.2f}  y {:.2f}  z {:.2f}", measure_.Length(), d.x, d.y, d.z);
+      const float lw = ui.Measure(11, label) + 16;
+      b.Rect((ax3 + bx3) * 0.5f - lw * 0.5f, (ay3 + by3) * 0.5f - 26, lw, 20, WithAlpha(t.C("win"), 0.9f), 6, 1, {1.f, 0.85f, 0.2f, 1});
+      ui.Text((ax3 + bx3) * 0.5f - lw * 0.5f + 8, (ay3 + by3) * 0.5f - 23, 11, t.C("fg"), label);
+    }
   }
   if (bounds) // world-space boxes of every drawn mesh
     for (size_t i = 0; i < info_.size(); ++i) {

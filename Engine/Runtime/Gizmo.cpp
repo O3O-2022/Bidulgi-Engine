@@ -226,7 +226,7 @@ bool GizmoDrag::Begin(GizmoMode mode, GizmoHandle handle, const GizmoFrame& fram
   return a >= 0 || handle == GizmoHandle::Center;
 }
 
-GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap) const {
+GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap, const SnapSettings& steps) const {
   GizmoDelta d;
   glm::vec3 ro, rd;
   view_.Ray(mouse, ro, rd);
@@ -236,15 +236,23 @@ GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap) const {
       float s;
       if (!ClosestOnAxis(frame_.origin, axis_, ro, rd, s)) return d;
       float t = s - startParam_;
-      d.move = axis_ * (snap ? Snap(t, 1.f) : t);
+      int world = -1; // a world axis: land on the grid there
+      for (int i = 0; i < 3; ++i)
+        if (std::abs(std::abs(axis_[i]) - 1.f) < 1e-5f) world = i;
+      if (snap && world >= 0) d.move = SnapMoveToGrid(frame_.origin, axis_ * t, glm::bvec3(world == 0, world == 1, world == 2), steps.move);
+      else d.move = axis_ * (snap ? Snap(t, steps.move) : t);
     } else {
       glm::vec3 hit;
       if (!RayPlane(ro, rd, frame_.origin, planeNormal_, hit)) return d;
       glm::vec3 move = hit - startHit_;
-      if (snap) { // round along the frame axes (world axes for the screen-plane handle)
-        glm::mat3 axes = handle_ == GizmoHandle::Center ? glm::mat3(1.f) : frame_.axes;
-        glm::vec3 local = glm::transpose(axes) * move;
-        move = axes * glm::vec3(Snap(local.x, 1.f), Snap(local.y, 1.f), Snap(local.z, 1.f));
+      const bool worldAxes = handle_ == GizmoHandle::Center || frame_.axes == glm::mat3(1.f);
+      if (snap && worldAxes) { // land on the grid on the axes this handle moves along
+        glm::bvec3 moved = handle_ == GizmoHandle::XY ? glm::bvec3(true, true, false) : handle_ == GizmoHandle::YZ ? glm::bvec3(false, true, true)
+                         : handle_ == GizmoHandle::XZ ? glm::bvec3(true, false, true) : glm::greaterThan(glm::abs(move), glm::vec3(1e-4f));
+        move = SnapMoveToGrid(frame_.origin, move, moved, steps.move);
+      } else if (snap) { // round along the frame axes
+        glm::vec3 local = glm::transpose(frame_.axes) * move;
+        move = frame_.axes * glm::vec3(Snap(local.x, steps.move), Snap(local.y, steps.move), Snap(local.z, steps.move));
       }
       d.move = move;
     }
@@ -256,7 +264,7 @@ GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap) const {
     while (delta <= -180.f) delta += 360.f;
     // Counter-clockwise on screen is a positive turn when the axis points toward the viewer (right-hand rule).
     if (glm::dot(axis_, view_.camera.position - frame_.origin) < 0) delta = -delta;
-    if (snap) delta = Snap(delta, 15.f);
+    if (snap) delta = Snap(delta, steps.rotate);
     d.angle = delta;
     d.rotate = glm::angleAxis(glm::radians(delta), glm::normalize(axis_));
     return d;
@@ -272,7 +280,7 @@ GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap) const {
   } else {
     factor = 1.f + ((mouse.x - start_.x) - (mouse.y - start_.y)) / kGizmoPixels;
   }
-  if (snap) factor = Snap(factor, 0.1f);
+  if (snap) factor = Snap(factor, steps.scale);
   factor = std::max(factor, 0.01f);
   if (a >= 0) d.scale[a] = factor;
   else d.scale = glm::vec3(factor);

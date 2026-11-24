@@ -401,3 +401,26 @@ TEST_CASE("render: colour grading table and .cube files (queue 3-5b)") {
   CHECK(ReferenceQuality().anisotropy == 1);
   CHECK(QualityPreset(QualityTier::Low).blobShadows && !QualityPreset(QualityTier::Medium).blobShadows);
 }
+
+TEST_CASE("editor: grid, rest-on-surface, align and distribute maths (queue 3-3b)") {
+  CHECK(SnapValue(1.26f, 0.25f) == 1.25f && SnapValue(-0.3f, 0.5f) == -0.5f && SnapValue(0.7f, 0) == 0.7f);
+  // a move along x from x = 0.3 lands on the 0.5 grid; y and z keep the free move
+  glm::vec3 m = SnapMoveToGrid({0.3f, 0.5f, 4}, {0.9f, 0.2f, 0}, {true, false, false}, 0.5f);
+  CHECK(std::abs(0.3f + m.x - 1.f) < 1e-5f && std::abs(m.y - 0.2f) < 1e-6f);
+  // a 1 m cube with its pivot in the middle rests 0.5 m above a floor (normal +y), 0.5 m off a wall (normal +x)
+  CHECK(std::abs(RestOffset({0, 0.5f, 0}, {-0.5f, 0, -0.5f}, {0.5f, 1, 0.5f}, {0, 1, 0}) - 0.5f) < 1e-6f);
+  CHECK(std::abs(RestOffset({0, 0, 0}, {-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, {1, 0, 0}) - 0.5f) < 1e-6f);
+  // three boxes on x: [0,1], [1.5,2] and [5,7]
+  std::vector<AlignBox> boxes = {{{0, 0, 0}, {1, 1, 1}}, {{1.5f, 0, 0}, {2, 1, 1}}, {{5, 0, 0}, {7, 1, 1}}};
+  std::vector<float> lo = AlignOffsets(boxes, 0, AlignMode::Min), hi = AlignOffsets(boxes, 0, AlignMode::Max);
+  CHECK(lo[0] == 0 && lo[1] == -1.5f && lo[2] == -5);
+  CHECK(hi[0] == 6 && hi[1] == 5 && hi[2] == 0);
+  std::vector<float> mid = AlignOffsets(boxes, 0, AlignMode::Center); // all centres to 3.5
+  CHECK(std::abs(0.5f + mid[0] - 3.5f) < 1e-6f && std::abs(1.75f + mid[1] - 3.5f) < 1e-6f && std::abs(6 + mid[2] - 3.5f) < 1e-6f);
+  std::vector<float> dist = AlignOffsets(boxes, 0, AlignMode::Distribute); // span 0..7, sizes 3.5 -> gaps 1.75
+  CHECK(dist[0] == 0 && dist[2] == 0 && std::abs(1.5f + dist[1] - 2.75f) < 1e-5f);
+  CHECK(AlignOffsets({boxes[0], boxes[1]}, 0, AlignMode::Distribute) == std::vector<float>(2, 0.f)); // needs three
+  CHECK(AlignOffsets({boxes[0]}, 0, AlignMode::Min) == std::vector<float>(1, 0.f));
+  Measure ruler{{1, 0, 0}, {4, 4, 0}};
+  CHECK(std::abs(ruler.Length() - 5.f) < 1e-6f && ruler.Delta() == glm::vec3(3, 4, 0));
+}

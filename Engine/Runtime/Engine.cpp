@@ -143,8 +143,9 @@ struct bdg_engine {
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
   std::string materialTestValues[8];
-  bool sceneViewTest = false, gizmoTest = false;
+  bool sceneViewTest = false, gizmoTest = false, snapTest = false;
   std::string gizmoTestValues[8];
+  std::string snapTestValues[8];
   std::string sceneViewTestValues[10];
 };
 
@@ -577,7 +578,7 @@ void SetupShortcuts(bdg_engine* e) {
     if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
     bdg::LogInfo("play: {}", m->playing ? "on" : "off");
   });
-  for (const char* t : {"view", "select", "move", "rotate", "scale"})
+  for (const char* t : {"view", "select", "move", "rotate", "scale", "measure"})
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
   s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->Frame(*m); });
   s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
@@ -1247,6 +1248,150 @@ void InjectMaterialTest(bdg_engine* e, int frame) {
 
 // Scripted gizmo check (BDG_GIZMO_TEST=1, queue 3-3) on the Crystal (g8, at 3, 0.5, 2): real mouse drags on the
 // handles through the scene view, each drag one undo step, Esc cancels, W/E/R switch tools, Ctrl snaps, X local axes.
+// Scripted check of 3-3b (BDG_SNAP_TEST=1): three cubes added by command; grid snap from the Snap chip, vertex
+// snap (V), surface snap (Ctrl+Shift), align and distribute from the chips, the ruler of the Measure tool.
+void InjectSnapTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->snapTestValues;
+  auto ev = [&](T type, float x, float y, int button = 0, bool ctrl = false, bool shift = false) {
+    bdg::InputEvent i{type, x * scale, y * scale, button};
+    i.ctrl = ctrl;
+    i.shift = shift;
+    e->window.InjectEvent(i);
+  };
+  auto keyAs = [&](bdg::Key k, bool down) { bdg::InputEvent i{down ? T::KeyDown : T::KeyUp}; i.key = k; e->window.InjectEvent(i); };
+  auto key = [&](bdg::Key k) { keyAs(k, true); };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("snap test: {} {}: {}", name, target, err);
+  };
+  auto bounds = [&](const char* id, glm::vec3& lo, glm::vec3& hi) { return sv->ObjectBounds(*m, id, lo, hi); };
+  auto click = [&](const char* chip) {
+    float x, y;
+    if (!sv->ChipCenter(chip, x, y)) { bdg::LogError("snap test: no chip {}", chip); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    ev(T::MouseUp, x, y, 1);
+  };
+  auto ui = [&](glm::vec3 p) { glm::vec2 s(0); sv->ProjectUI(p, s.x, s.y); return s; };
+  // A move drag from the centre handle to a UI point, with modifiers on the moves.
+  auto dragTo = [&](glm::vec2 to, bool ctrl, bool shift) {
+    float x, y;
+    if (!sv->GizmoPoint(*m, bdg::GizmoHandle::Center, x, y)) { bdg::LogError("snap test: no centre handle"); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + (to.x - x) * k / 4, y + (to.y - y) * k / 4, 0, ctrl, shift);
+    ev(T::MouseUp, to.x, to.y, 1);
+  };
+  static glm::vec3 start;
+  static size_t depth0;
+  if (frame == 2) { // three 1 m cubes standing on the ground
+    const float pos[3][3] = {{0, 0.5f, 4}, {2.3f, 0.5f, 4.4f}, {5.1f, 0.5f, 3.7f}};
+    for (int i = 0; i < 3; ++i) {
+      const std::string id = std::format("s{}", i + 1);
+      run("add", "", std::format(R"({{"id":"{}","name":"Snap {}"}})", id, (char)('A' + i)));
+      run("addcomp", id, R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+      run("set", id, std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", pos[i][0], pos[i][1], pos[i][2]));
+    }
+    sv->camera.pivot = {2.5f, 0.5f, 4.2f};
+    sv->camera.yaw = 0;
+    sv->camera.pitch = -32;
+    sv->camera.distance = 10;
+    m->Select("s1");
+    key(bdg::Key::W);
+  }
+  if (frame == 4) { // grid snap: Snap chip to 0.5 m (Off -> 0.1 -> 0.25 -> 0.5), drag along X
+    click("snap");
+    click("snap");
+    click("snap");
+    start = bdg::space::ToGlm(m->scene.WorldPosition("s1"));
+    float x, y;
+    if (sv->GizmoPoint(*m, bdg::GizmoHandle::X, x, y)) {
+      ev(T::MouseMove, x, y);
+      ev(T::MouseDown, x, y, 1);
+      for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + 20.f * k, y);
+      ev(T::MouseUp, x + 80, y, 1);
+    }
+  }
+  if (frame == 6) {
+    glm::vec3 p = bdg::space::ToGlm(m->scene.WorldPosition("s1"));
+    const float r = p.x / 0.5f;
+    v[0] = std::format("{}", sv->snap.always && sv->snap.move == 0.5f && p.x > start.x + 0.2f && std::abs(r - std::round(r)) < 1e-4f &&
+                                     p.y == start.y && p.z == start.z ? 1 : 0);
+    click("snap"); // 1 m
+    click("snap"); // 2 m
+    click("snap"); // off again: free moves for the rest
+    key(bdg::Key::V); // vertex snap: hold V and drag onto the second cube's top front-left corner
+    dragTo(ui({1.8f, 1.f, 4.9f}), false, false);
+    keyAs(bdg::Key::V, false);
+  }
+  if (frame == 8) {
+    glm::vec3 lo, hi;
+    bool onCorner = false;
+    if (bounds("s1", lo, hi))
+      for (int k = 0; k < 8; ++k)
+        onCorner = onCorner || glm::distance(glm::vec3((k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z), glm::vec3(1.8f, 1.f, 4.9f)) < 1e-3f;
+    v[1] = std::format("{}", !sv->snap.always && onCorner ? 1 : 0);
+    dragTo(ui({5.1f, 1.f, 3.7f}), true, true); // surface snap: onto the top of the third cube
+  }
+  if (frame == 10) {
+    glm::vec3 lo, hi;
+    bool ok = bounds("s1", lo, hi) && std::abs(lo.y - 1.f) < 2e-3f && std::abs((lo.x + hi.x) * 0.5f - 5.1f) < 0.1f &&
+              std::abs((lo.z + hi.z) * 0.5f - 3.7f) < 0.1f;
+    v[2] = std::format("{}", ok ? 1 : 0);
+    key(bdg::Key::Z); // (Ctrl+Z below) back to the vertex-snapped place
+    bdg::InputEvent z{T::KeyDown};
+    z.key = bdg::Key::Z;
+    z.ctrl = true;
+    e->window.InjectEvent(z);
+  }
+  if (frame == 12) { // align: three selected, the Align chip, then "Z min"
+    m->SetSelection({"s1", "s2", "s3"});
+  }
+  if (frame == 14) click("align");
+  if (frame == 16) {
+    depth0 = m->bus.UndoDepth();
+    click("al.z.min");
+  }
+  if (frame == 18) {
+    glm::vec3 lo[3], hi[3];
+    bool ok = bounds("s1", lo[0], hi[0]) && bounds("s2", lo[1], hi[1]) && bounds("s3", lo[2], hi[2]);
+    v[3] = std::format("{}", ok && std::abs(lo[0].z - lo[1].z) < 1e-4f && std::abs(lo[1].z - lo[2].z) < 1e-4f && m->bus.UndoDepth() == depth0 + 1 ? 1 : 0);
+    click("al.x.dist");
+  }
+  if (frame == 20) {
+    glm::vec3 lo[3], hi[3];
+    bounds("s1", lo[0], hi[0]);
+    bounds("s2", lo[1], hi[1]);
+    bounds("s3", lo[2], hi[2]);
+    int order[3] = {0, 1, 2};
+    std::sort(order, order + 3, [&](int a, int b) { return lo[a].x < lo[b].x; });
+    const float gap1 = lo[order[1]].x - hi[order[0]].x, gap2 = lo[order[2]].x - hi[order[1]].x;
+    v[4] = std::format("{}", std::abs(gap1 - gap2) < 1e-3f && m->bus.UndoDepth() == depth0 + 2 ? 1 : 0);
+    m->SetSelection({});
+    key(bdg::Key::M); // the Measure tool (the key reaches the shortcuts after the view's mouse events)
+  }
+  if (frame == 21) { // the ruler: 3 m along x on the ground
+    glm::vec2 a = ui({-3.f, 0, 7.f}), b = ui({0.f, 0, 7.f});
+    ev(T::MouseMove, a.x, a.y);
+    ev(T::MouseDown, a.x, a.y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, a.x + (b.x - a.x) * k / 4, a.y + (b.y - a.y) * k / 4);
+    ev(T::MouseUp, b.x, b.y, 1);
+  }
+  if (frame == 23) {
+    const bdg::Measure* ms = sv->CurrentMeasure();
+    v[5] = std::format("{}", ms && std::abs(ms->Length() - 3.f) < 0.02f && std::abs(ms->Delta().x - 3.f) < 0.02f && m->tool == "measure" ? 1 : 0);
+    v[6] = std::format("{}", m->bus.UndoDepth()); // each drag / align was one step
+  }
+}
+
 void InjectGizmoTest(bdg_engine* e, int frame, float scale) {
   using T = bdg::InputEvent::Type;
   bdg::SceneView* sv = e->sceneView.get();
@@ -1443,6 +1588,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->renderTest = std::getenv("BDG_RENDER_TEST") != nullptr;
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
+  e->snapTest = std::getenv("BDG_SNAP_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
   e->refSceneTest = std::getenv("BDG_REFSCENE_TEST") != nullptr;
@@ -1816,6 +1962,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->a11yTest && !e->showGallery) InjectA11yTest(e, frames);
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
+    if (e->snapTest && !e->showGallery) InjectSnapTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
     if (e->refSceneTest && !e->showGallery) InjectRefSceneTest(e, frames, scale);
@@ -2131,6 +2278,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->materialTestValues;
         bdg::LogInfo("material test: red={} blue={} texture={} presets={} cooked={} reused={} formats={} undo={}", v[0], v[1], v[2], v[3],
                      v[4], v[5], v[6], v[7]);
+      }
+      if (e->snapTest) {
+        auto* v = e->snapTestValues;
+        bdg::LogInfo("snap test: grid={} vertex={} surface={} align={} distribute={} measure={} undo={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->gizmoTest) {
         auto* v = e->gizmoTestValues;

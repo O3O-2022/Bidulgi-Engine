@@ -5,8 +5,10 @@
 //
 // Handles: Move = X, Y, Z arrows, XY / YZ / XZ plane squares, centre (screen plane). Rotate = X, Y, Z rings and
 // the outer view ring. Scale = X, Y, Z axes with boxes, centre (uniform). The gizmo keeps a constant size on
-// screen. Snapping (Ctrl): move 1 m, rotate 15 degrees, scale 0.1.
+// screen. Snapping (SnapSettings, queue 3-3b): moves land on the world grid (world axes) or step by it (local
+// axes), rotations step by degrees, scale by a factor step.
 #include "Render3D/Renderer3D.h"
+#include "Runtime/Snapping.h"
 #include <glm/gtc/quaternion.hpp>
 
 namespace bdg {
@@ -45,7 +47,7 @@ bool GizmoHandlePoint(GizmoMode mode, GizmoHandle h, const GizmoFrame& f, const 
 class GizmoDrag {
 public:
   bool Begin(GizmoMode mode, GizmoHandle handle, const GizmoFrame& frame, const GizmoView& view, const glm::vec2& mouse);
-  GizmoDelta Update(const glm::vec2& mouse, bool snap) const;
+  GizmoDelta Update(const glm::vec2& mouse, bool snap, const SnapSettings& steps = {}) const;
   GizmoMode Mode() const { return mode_; }
   GizmoHandle Handle() const { return handle_; }
   const GizmoFrame& Frame() const { return frame_; }
