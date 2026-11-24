@@ -174,6 +174,14 @@ bool EditorModel::SaveScene() {
   if (scenePath.empty()) { LogWarn("save: no scene file path"); return false; }
   if (!SaveSceneFile(scene, sceneName, scenePath, &err)) { LogError("save: {}", err); return false; }
   LogInfo("scene: saved {} ({} objects)", scenePath, scene.ObjectCount());
+  if (assets) { // asset rules (2-5d): warn, never block the save
+    const std::vector<AssetIssue> issues = CheckAssetRules();
+    lastRuleIssues = issues.size();
+    if (!issues.empty()) {
+      LogWarn("asset rules: {} problem(s) (Project > 규칙)", issues.size());
+      for (size_t i = 0; i < issues.size() && i < 20; ++i) LogWarn("  {}: {}", issues[i].path, issues[i].message);
+    }
+  }
   return true;
 }
 

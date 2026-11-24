@@ -102,7 +102,8 @@ struct bdg_engine {
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
-  bool playTest = false, budgetTest = false, refsTest = false, themeTest = false;
+  bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false;
+  std::string importTestValues[8];
   std::string themeTestValues[8];
   std::string themePath;     // ProjectSettings/Theme.json (BDG_THEME_FILE)
   std::string themeSelected; // color token open in the picker
@@ -484,6 +485,115 @@ void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openB
                     UrlEncode("[Bug] ") + "&system=" + UrlEncode(sys));
 }
 
+// ---- Drag-and-drop import (queue 2-5d) ----------------------------------------------------------
+// Files and folders dropped from Explorer are copied into the Project panel's current folder (a .gltf brings its
+// buffers and images), checked against the asset rules and selected. A model dropped on the Scene view is also
+// placed there as a new object.
+void HandleDrops(bdg_engine* e, std::vector<bdg::InputEvent>& events, const bdg::Widget* sceneWidget) {
+  std::vector<std::filesystem::path> files;
+  float dx = 0, dy = 0;
+  for (const bdg::InputEvent& ev : events)
+    if (ev.type == bdg::InputEvent::Type::DropFile) {
+      files.push_back(std::filesystem::path(std::u8string((const char8_t*)ev.text.c_str())));
+      dx = ev.x;
+      dy = ev.y;
+    }
+  if (files.empty()) return;
+  std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::DropFile; });
+  if (!e->assetsOpen || !e->model) {
+    bdg::LogWarn("import: no project is open (BDG_ASSETS); {} dropped file(s) ignored", files.size());
+    return;
+  }
+  bdg::EditorModel* m = e->model.get();
+  const bool onScene = sceneWidget && dx >= sceneWidget->x && dy >= sceneWidget->y && dx < sceneWidget->x + sceneWidget->w &&
+                       dy < sceneWidget->y + sceneWidget->h;
+  const bdg::ImportResult r = bdg::ImportExternal(e->assets, files, m->ProjectFolder());
+  for (const std::string& err : r.errors) bdg::LogWarn("import: {}", err);
+  if (r.added.empty()) return;
+  e->assets.Refresh();
+  m->ProjectChanged();
+  bdg::LogInfo("import: {} file(s) into Assets/{}", r.added.size(), m->ProjectFolder());
+  for (const bdg::AssetIssue& is : m->CheckAssetRules(&r.added)) bdg::LogWarn("asset rules: {}: {}", is.path, is.message);
+  m->SelectProjectItem(r.added.front());
+  const bdg::AssetRecord* model = nullptr;
+  for (const std::string& p : r.added)
+    if (const bdg::AssetRecord* rec = e->assets.ByPath(p); rec && rec->importer == "model") { model = rec; break; }
+  if (onScene && model && e->sceneView) {
+    const std::string id = e->sceneView->PlaceModel(*m, model->path, dx, dy);
+    bdg::LogInfo("import: placed {} as {}", model->path, id);
+  } else if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) {
+    dw->dock->SelectPanel("project");
+  }
+}
+
+// Scripted check of 2-5d (BDG_IMPORT_TEST=1, BDG_IMPORT_SRC = a folder outside the project with rock.png 8x8,
+// Box.gltf + Box.bin; BDG_ASSETS = an empty project whose AssetRules.json wants T_ textures up to 4 px): drop two
+// files on the Project panel (the .gltf brings its .bin), the same file again (renamed), rule problems, the Rules
+// view, the model dropped on the Scene view (placed, one undo step, the .bin shared), the .bin changed on disk (the
+// model is imported again) and the warnings on save.
+void InjectImportTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen) return;
+  auto* v = e->importTestValues;
+  const float s = e->editor->Scale();
+  const char* srcEnv = std::getenv("BDG_IMPORT_SRC");
+  const std::filesystem::path src = srcEnv ? srcEnv : "";
+  auto drop = [&](const char* widget, std::initializer_list<const char*> names) {
+    bdg::Widget* w = e->editor->Find(widget);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("import test: {} is not visible", widget); return; }
+    for (const char* n : names) {
+      bdg::InputEvent ev{T::DropFile, (w->x + w->w * 0.5f) * s, (w->y + w->h * 0.5f) * s};
+      ev.text = (src / n).string();
+      e->window.InjectEvent(ev);
+    }
+  };
+  static size_t depth0;
+  static int reimportAt = 0;
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("project");
+  }
+  if (frame == 3) drop("project", {"rock.png", "Box.gltf"});
+  if (frame == 5) {
+    v[0] = std::format("{}", e->assets.ByPath("rock.png") && e->assets.ByPath("Box.gltf") && e->assets.ByPath("Box.bin") ? 1 : 0);
+    drop("project", {"rock.png"});
+  }
+  if (frame == 7) {
+    v[1] = std::format("{}", e->assets.ByPath("rock 1.png") ? 1 : 0);
+    const std::vector<std::string> only = {"rock.png", "Box.gltf"};
+    const auto issues = m->CheckAssetRules(&only);
+    auto has = [&](const char* path, const char* rule) {
+      return std::any_of(issues.begin(), issues.end(), [&](const bdg::AssetIssue& i) { return i.path == path && i.rule == rule; });
+    };
+    v[2] = std::format("{}", issues.size() == 2 && has("rock.png", "prefix") && has("rock.png", "size") ? 1 : 0);
+    m->ShowProjectView(bdg::EditorModel::ProjectView::Rules);
+  }
+  if (frame == 9) {
+    v[3] = std::format("{}", e->editor->Find("p.issue.0") && e->editor->Find("p.issue.3") && !e->editor->Find("p.issue.4") ? 1 : 0);
+    m->ShowProjectView(bdg::EditorModel::ProjectView::Files);
+    depth0 = m->bus.UndoDepth();
+    drop("scene", {"Box.gltf"});
+  }
+  if (frame == 11) {
+    bdg::SceneObject* o = m->scene.Find(m->Selected());
+    bdg::Component* c = o ? o->Find("MeshRenderer") : nullptr;
+    const std::string mesh = c ? static_cast<const bdg::MeshRenderer*>(c->data)->mesh : std::string();
+    v[4] = std::format("{}", mesh == "Box 1.gltf" && m->bus.UndoDepth() == depth0 + 1 && !e->assets.ByPath("Box 1.bin") ? 1 : 0);
+  }
+  if (frame == 14) { // a bigger triangle, written by another program
+    const float tri[9] = {0, 0, 0, 3, 0, 0, 0, 3, 0};
+    std::ofstream(std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())) / "Box.bin", std::ios::binary)
+        .write(reinterpret_cast<const char*>(tri), sizeof tri);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the watcher thread sees it
+  }
+  if (frame > 14 && !reimportAt && e->sceneView && e->sceneView->ReimportCount() > 0) {
+    v[5] = "1";
+    reimportAt = frame;
+    m->SaveScene();
+    v[6] = std::format("{}", m->lastRuleIssues == 4 ? 1 : 0); // rock.png and rock 1.png: prefix + size each
+  }
+}
+
 // ---- Theme editor (queue 2-5c) ------------------------------------------------------------------
 // Project Settings > Theme: one row per color token (swatch, name, value, a dot when the project changed it).
 // A click opens the picker under the row: hex field + hue / saturation / brightness / opacity sliders. Every change
@@ -682,11 +792,21 @@ void InjectThemeTest(bdg_engine* e, int frame) {
     const std::string text = fileText();
     v[4] = std::format("{}", !t.Overridden("accent") && same(t.C("accent"), "#f59e32") && text.find("panel") != std::string::npos &&
                                      text.find("accent") == std::string::npos && revertHidden() ? 1 : 0);
-    std::ofstream(std::filesystem::path(e->themePath), std::ios::binary) << "{\"colors\":{\"ok\":\"#ff00ff\"}}\n"; // by hand
+    bool written = false; // by hand (another program may hold the file for a moment: try again)
+    for (int tries = 0; tries < 20 && !written; ++tries) {
+      std::ofstream out(std::filesystem::path(e->themePath), std::ios::binary);
+      out << "{\"colors\":{\"ok\":\"#ff00ff\"}}\n";
+      out.close();
+      written = !out.fail();
+      if (!written) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!written) bdg::LogError("theme test: cannot write {}", e->themePath);
     std::this_thread::sleep_for(std::chrono::milliseconds(600)); // the editor polls the file twice a second
     handEdit = frame;
   }
-  if (handEdit && !resetAt && frame > handEdit && frame <= handEdit + 20 && same(t.C("ok"), "#ff00ff") && !t.Overridden("panel")) {
+  if (handEdit && !resetAt && frame == handEdit + 25)
+    bdg::LogError("theme test: hand edit not seen (ok={} panel overridden={})", bdg::Theme::FormatColor(t.C("ok")), t.Overridden("panel"));
+  if (handEdit && !resetAt && frame > handEdit && frame <= handEdit + 24 && same(t.C("ok"), "#ff00ff") && !t.Overridden("panel")) {
     v[5] = "1";
     click("theme.reset");
     resetAt = frame;
@@ -2252,6 +2372,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->budgetTest = std::getenv("BDG_BUDGET_TEST") != nullptr;
   e->refsTest = std::getenv("BDG_REFS_TEST") != nullptr;
   e->themeTest = std::getenv("BDG_THEME_TEST") != nullptr;
+  e->importTest = std::getenv("BDG_IMPORT_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2523,6 +2644,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   if (e->model && e->assetsOpen)
     if (bdg::Widget* project = e->editor->Find("project")) e->model->AttachProject(*project, &e->assets);
+  if (e->model && e->assetsOpen) // asset rules (2-5d): <project>/ProjectSettings/AssetRules.json
+    e->model->assetRulesPath = (std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / "ProjectSettings" /
+                                "AssetRules.json").string();
   if (e->model) { // component presets: BDG_PRESETS, else <assets>/Presets, else ./Presets
     const char* p = std::getenv("BDG_PRESETS");
     e->model->presetDir = p ? p : e->assetsOpen ? (std::filesystem::path(e->assets.Root()) / "Presets").string()
@@ -2685,6 +2809,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->budgetTest && !e->showGallery) InjectBudgetTest(e, frames);
     if (e->refsTest && !e->showGallery) InjectRefsTest(e, frames);
     if (e->themeTest && !e->showGallery) InjectThemeTest(e, frames);
+    if (e->importTest && !e->showGallery) InjectImportTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -2802,6 +2927,12 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       for (auto& [from, to] : ch.moved) if (e->model) e->model->RetargetAssetPath(from, to);
       if (e->model && !ch.Empty()) e->model->ProjectChanged();
       if (!ch.Empty()) e->materials.Invalidate();
+      if (e->sceneView && !ch.Empty()) { // a model, or a buffer / image a .gltf uses, changed: import it again (2-5d)
+        std::vector<std::string> changed = ch.modified;
+        changed.insert(changed.end(), ch.added.begin(), ch.added.end());
+        changed.insert(changed.end(), ch.removed.begin(), ch.removed.end());
+        e->sceneView->Reimport(changed);
+      }
       if (!ch.Empty())
         bdg::LogInfo("assets: {} added, {} removed, {} modified, {} moved", ch.added.size(), ch.removed.size(), ch.modified.size(),
                      ch.moved.size());
@@ -2843,6 +2974,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       for (bdg::InputEvent& ev : events) { ev.x /= scale; ev.y /= scale; }
       bdg::Widget* sceneWidget = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("scene") : nullptr;
       if (sceneWidget && (sceneWidget->hidden || sceneWidget->w < 2 || sceneWidget->h < 2)) sceneWidget = nullptr;
+      HandleDrops(e, events, &ui == e->editor.get() ? sceneWidget : nullptr);
       {
         static auto lastFrame = std::chrono::steady_clock::now();
         auto nowFrame = std::chrono::steady_clock::now();
@@ -3026,6 +3158,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->importTest) {
+        auto* v = e->importTestValues;
+        bdg::LogInfo("import test: import={} rename={} rules={} view={} place={} reimport={} save={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->themeTest) {
         auto* v = e->themeTestValues;

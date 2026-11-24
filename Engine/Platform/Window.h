@@ -18,7 +18,8 @@ Key KeyFromName(std::string_view name); // inverse of KeyName (case-insensitive)
 
 // Platform-neutral input event. Coordinates are in drawable pixels (same space as rendering).
 struct InputEvent {
-  enum class Type { MouseMove, MouseDown, MouseUp, KeyDown, Text, TextEditing, Wheel, KeyUp } type = Type::MouseMove;
+  enum class Type { MouseMove, MouseDown, MouseUp, KeyDown, Text, TextEditing, Wheel, KeyUp, DropFile } type = Type::MouseMove;
+  // DropFile: text = the dropped file or folder (UTF-8 path), x / y = where it was dropped
   float x = 0, y = 0;
   int button = 0;     // 1 = left
   Key key = Key::None;

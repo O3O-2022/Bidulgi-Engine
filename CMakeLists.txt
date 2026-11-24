@@ -130,7 +130,7 @@ add_library(BidulgiEngine STATIC
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp
   Engine/Assets/TextureCooker.h Engine/Assets/TextureCooker.cpp
-  Engine/Assets/AssetRefs.h Engine/Assets/AssetRefs.cpp Engine/Assets/MaterialFile.h Engine/Assets/MaterialFile.cpp
+  Engine/Assets/AssetRefs.h Engine/Assets/AssetRefs.cpp Engine/Assets/AssetImport.h Engine/Assets/AssetImport.cpp Engine/Assets/MaterialFile.h Engine/Assets/MaterialFile.cpp
   Engine/Scene/Components.h Engine/Scene/SampleComponents.h
   Engine/Platform/Window.h Engine/Platform/Window.cpp
   Engine/Platform/Accessibility.h Engine/Platform/Accessibility_Win.cpp

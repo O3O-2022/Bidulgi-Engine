@@ -1,4 +1,5 @@
 #include "Runtime/SceneView.h"
+#include "Assets/AssetImport.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
 #include "Core/Command.h"
@@ -138,6 +139,11 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
       e.hash = rec->hash;
       e.model = r_->UploadModel(im);
       for (ImportedPrimitive& p : im.primitives) e.cpuPrims.push_back(std::move(p.mesh));
+      if (ext == ".gltf") { // its buffers and images: a change to one of them re-imports the model
+        const size_t slash = name.find_last_of('/');
+        const std::string dir = slash == std::string::npos ? std::string() : name.substr(0, slash + 1);
+        for (const std::string& d : GltfDependencies(full)) e.deps.push_back((fs::path(dir) / d).lexically_normal().generic_string());
+      }
       return &(meshes_[name] = std::move(e));
     }
     LogWarn("scene view: {} did not import ({}); showing a placeholder cube", name, err);
@@ -639,6 +645,65 @@ bool SceneView::FaceHandlePoint(const EditorModel& model, int face, float& x, fl
   for (const FaceHandle& h : FaceHandles(model))
     if (h.face == face) return ProjectUI(h.center, x, y);
   return false;
+}
+
+int SceneView::Reimport(const std::vector<std::string>& changed) {
+  int n = 0;
+  for (auto it = meshes_.begin(); it != meshes_.end();) {
+    MeshEntry& e = it->second;
+    std::string why;
+    for (const std::string& c : changed) {
+      if (c == it->first) { why = "changed"; break; }
+      if (std::find(e.deps.begin(), e.deps.end(), c) != e.deps.end()) { why = c + " changed"; break; }
+    }
+    if (why.empty()) { ++it; continue; }
+    if (e.isModel && r_) r_->DestroyModel(e.model);
+    LogInfo("assets: re-importing {} ({})", it->first, why);
+    it = meshes_.erase(it);
+    ++n;
+  }
+  reimports_ += n;
+  return n;
+}
+
+std::string SceneView::PlaceModel(EditorModel& model, const std::string& meshPath, float x, float y) {
+  glm::vec3 at{0}, n;
+  if (!RaycastUI(model, x, y, {}, at, n) && !MeasurePoint(model, x, y, at)) at = glm::vec3(camera.pivot.x, 0, camera.pivot.z);
+  if (snap.always) {
+    at.x = SnapValue(at.x, snap.move);
+    at.z = SnapValue(at.z, snap.move);
+  }
+  std::string id;
+  for (int k = 1; id.empty() || model.scene.Find(id); ++k) id = std::format("m{}", k);
+  const size_t slash = meshPath.find_last_of('/'), dot = meshPath.find_last_of('.');
+  const std::string stem = meshPath.substr(slash == std::string::npos ? 0 : slash + 1,
+                                           dot == std::string::npos || (slash != std::string::npos && dot < slash) ? std::string::npos
+                                                                                                                 : dot - (slash == std::string::npos ? 0 : slash + 1));
+  model.bus.BeginGroup(std::format("Add {}", stem), "ui");
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!model.bus.Execute(c, &err)) LogWarn("drop: {}", err);
+  };
+  std::string q; // JSON string body
+  for (char ch : meshPath) {
+    if (ch == '"' || ch == '\\') q += '\\';
+    q += ch;
+  }
+  std::string qn;
+  for (char ch : stem) {
+    if (ch == '"' || ch == '\\') qn += '\\';
+    qn += ch;
+  }
+  run("add", "", std::format(R"({{"id":"{}","name":"{}"}})", id, qn));
+  run("addcomp", id, std::format(R"({{"type":"MeshRenderer","value":{{"mesh":"{}"}}}})", q));
+  run("set", id, std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", at.x, at.y, at.z));
+  model.bus.EndGroup();
+  model.Select(id);
+  return id;
 }
 
 std::string SceneView::CreateBlock(EditorModel& model, int shape) {

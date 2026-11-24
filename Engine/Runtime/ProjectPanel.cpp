@@ -64,6 +64,7 @@ void EditorModel::RebuildProject() {
   if (projectView == ProjectView::References) shownRefs_ = projectSelected_.empty() ? std::vector<AssetRef>{} : FindReferences(projectSelected_);
   else if (deleteWarning_.empty()) shownRefs_.clear();
   if (projectView == ProjectView::Unused) shownUnused_ = FindUnused();
+  if (projectView == ProjectView::Rules) shownIssues_ = CheckAssetRules();
   project_->children.clear();
   project_->axis = Axis::Row;
   project_->gap = 1;
@@ -106,6 +107,9 @@ void EditorModel::RebuildProject() {
   bar.Add(MakeButton("p.unused", "안 쓰는 것", projectView == ProjectView::Unused)).onClick = [this](Widget&) {
     ShowProjectView(projectView == ProjectView::Unused ? ProjectView::Files : ProjectView::Unused);
   };
+  bar.Add(MakeButton("p.rules", "규칙", projectView == ProjectView::Rules)).onClick = [this](Widget&) { // 2-5d
+    ShowProjectView(projectView == ProjectView::Rules ? ProjectView::Files : ProjectView::Rules);
+  };
   bar.Add(MakeButton("p.delete", deleteWarning_.empty() || deleteWarning_ != projectSelected_ ? "지우기" : "그래도 지우기",
                      !deleteWarning_.empty() && deleteWarning_ == projectSelected_))
       .onClick = [this](Widget&) { DeleteProjectItem(!deleteWarning_.empty() && deleteWarning_ == projectSelected_); };
@@ -134,6 +138,20 @@ void EditorModel::RebuildProject() {
         const std::string id = where.substr(0, sp);
         if (from == "열린 장면" && scene.Find(id)) Select(id);
       };
+    }
+    if (ui_) ui_->ForgetRemovedWidgets();
+    return;
+  }
+  if (projectView == ProjectView::Rules) {
+    right.Add(MakeLabel(shownIssues_.empty() ? std::string("규칙에 어긋나는 에셋이 없습니다 (ProjectSettings/AssetRules.json)")
+                                             : std::format("규칙에 어긋나는 곳 {}개 (ProjectSettings/AssetRules.json)", shownIssues_.size())))
+        .variant = 1;
+    int i = 0;
+    for (const AssetIssue& is : shownIssues_) {
+      auto& row = right.Add(MakeListRow(std::format("p.issue.{}", i++), is.path + "  ·  " + is.message, is.rule));
+      const std::string path = is.path;
+      row.selected = path == projectSelected_;
+      row.onClick = [this, path](Widget&) { projectSelected_ = path; needProject_ = true; };
     }
     if (ui_) ui_->ForgetRemovedWidgets();
     return;
@@ -222,6 +240,13 @@ std::vector<AssetRef> EditorModel::FindReferences(const std::string& assetPath) 
     out.insert(out.end(), r.begin(), r.end());
   }
   return out;
+}
+
+std::vector<AssetIssue> EditorModel::CheckAssetRules(const std::vector<std::string>* only) {
+  if (!assets) return {};
+  std::string err;
+  if (!assetRulesPath.empty() && !assetRules.Load(assetRulesPath, &err)) LogWarn("asset rules: {}", err);
+  return ruleChecker_.Check(*assets, assetRules, only);
 }
 
 std::vector<std::string> EditorModel::FindUnused() {

@@ -368,6 +368,26 @@ jobs:
           if ($log -notmatch 'theme test: start=1 open=1 live=1 slider=1 revert=1 file=1 reset=1') { $errors += 'theme editor test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 2-5d drag-and-drop import: an 8x8 PNG and a glTF with an external .bin outside an empty project whose rules
+          # want T_ textures up to 4 px; drop on the Project panel, again (renamed), on the Scene view, change the .bin
+          Remove-Item -Recurse -Force "$PWD/ci-import" -ErrorAction SilentlyContinue
+          $imp = "$PWD/ci-import"
+          foreach ($d in 'src','Project/Assets','Project/ProjectSettings') { New-Item -ItemType Directory -Force "$imp/$d" | Out-Null }
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 8, 8
+          $bmp.Save("$imp/src/rock.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $bmp.Dispose()
+          $tri = New-Object byte[] 36
+          [BitConverter]::GetBytes([single]1).CopyTo($tri, 12)
+          [BitConverter]::GetBytes([single]1).CopyTo($tri, 28)
+          [IO.File]::WriteAllBytes("$imp/src/Box.bin", $tri)
+          [IO.File]::WriteAllText("$imp/src/Box.gltf", '{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"buffers":[{"uri":"Box.bin","byteLength":36}],"bufferViews":[{"buffer":0,"byteLength":36}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}]}')
+          [IO.File]::WriteAllText("$imp/Project/ProjectSettings/AssetRules.json", '{"prefix":{"texture":"T_"},"maxTextureSize":4}')
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_IMPORT_TEST = '1'; BDG_IMPORT_SRC = "$imp/src"; BDG_ASSETS = "$imp/Project/Assets"; BDG_SCENE_FILE = "$imp/Main.scene" } 60
+          if ($log -notmatch 'import test: import=1 rename=1 rules=1 view=1 place=1 reimport=1 save=1') { $errors += 'drag-and-drop import test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

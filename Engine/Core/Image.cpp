@@ -58,6 +58,13 @@ bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, st
   return ReadFileBytes(path, bytes) && DecodeImageRGBA(bytes.data(), bytes.size(), w, h, rgba);
 }
 
+bool ImageSize(const std::filesystem::path& path, int32_t& w, int32_t& h) {
+  std::vector<uint8_t> bytes;
+  int comp = 0;
+  return ReadFileBytes(path, bytes) && !bytes.empty() && bytes.size() <= 0x7fffffff &&
+         stbi_info_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &comp) != 0;
+}
+
 bool DecodeImageRGBA(const uint8_t* data, size_t size, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
   if (!data || size == 0 || size > 0x7fffffff) return false;
   int comp = 0;

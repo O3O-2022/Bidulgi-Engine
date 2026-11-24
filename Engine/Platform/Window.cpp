@@ -94,6 +94,11 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
       ev.type = InputEvent::Type::Wheel; ev.x = e.wheel.mouse_x * density; ev.y = e.wheel.mouse_y * density;
       ev.wheel = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
       out.push_back(ev); break;
+    case SDL_EVENT_DROP_FILE: // dragged in from Explorer (one event per file or folder)
+      ev.type = InputEvent::Type::DropFile; ev.text = e.drop.data ? e.drop.data : "";
+      ev.x = e.drop.x * density; ev.y = e.drop.y * density;
+      if (!ev.text.empty()) out.push_back(ev);
+      break;
     case SDL_EVENT_TEXT_EDITING: // IME composition (e.g. Hangul jamo being combined)
       ev.type = InputEvent::Type::TextEditing; ev.text = e.edit.text ? e.edit.text : "";
       out.push_back(ev); break;

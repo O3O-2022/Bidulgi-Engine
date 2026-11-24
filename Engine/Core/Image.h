@@ -12,4 +12,5 @@ bool WritePNG(const char* path, int32_t w, int32_t h, const uint8_t* rgba, bool 
 bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
 bool DecodeImageRGBA(const uint8_t* data, size_t size, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba); // same, from memory
 bool ReadFileBytes(const std::filesystem::path& path, std::vector<uint8_t>& out); // whole file; Unicode paths work
+bool ImageSize(const std::filesystem::path& path, int32_t& w, int32_t& h);         // from the header, no decode
 }

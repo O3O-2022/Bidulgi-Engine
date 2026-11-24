@@ -1,9 +1,11 @@
 // Asset database tests (queue 2-3).
 #include "Assets/AssetDatabase.h"
+#include "Assets/AssetImport.h"
 #include "Assets/AssetRefs.h"
 #include "Assets/Thumbnails.h"
 #include "Core/Image.h"
 #include "bdg_test.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -217,5 +219,75 @@ TEST_CASE("assets: references, unused assets and replacing one asset by another 
   CHECK(Read(d / "Materials/M_Rock.material").find("M_Rock") != std::string::npos); // its own file is left alone
   ReplaceReferencesOnDisk(db, "Textures/Rock_D.png", "Textures/Unused.png", &count);
   CHECK(count == 1 && Read(d / "Materials/M_Rock.material").find("\"Textures/Unused.png\"") != std::string::npos);
+  fs::remove_all(d);
+}
+
+TEST_CASE("assets: importing dropped files, glTF dependencies and asset rules (queue 2-5d)") {
+  fs::path outside = Fresh("bdg_import_src");
+  fs::path d = Fresh("bdg_import_project");
+  fs::create_directories(d / "Assets");
+  Write(outside / "Box.gltf", R"({"asset":{"version":"2.0"},"buffers":[{"uri":"bin/Box%20Data.bin","byteLength":4},{"uri":"data:application/octet-stream;base64,AAAA"}],)"
+                              R"("images":[{"uri":"tex/wood.png"},{"uri":"bin/Box%20Data.bin"}]})");
+  Write(outside / "bin/Box Data.bin", "1234");
+  Write(outside / "tex/wood.png", "png");
+  Write(outside / "Pack/a.txt", "a");
+  Write(outside / "Pack/sub/b.txt", "b");
+  Write(outside / "Pack/sub/b.txt.meta", "{\"guid\":\"theirs\"}");
+  const std::vector<std::string> deps = GltfDependencies(outside / "Box.gltf");
+  CHECK(deps.size() == 2 && deps[0] == "bin/Box Data.bin" && deps[1] == "tex/wood.png"); // data: skipped, no repeats
+
+  AssetDatabase db;
+  CHECK(db.Open((d / "Assets").string()));
+  ImportResult r = ImportExternal(db, {outside / "Box.gltf", outside / "Pack", outside / "missing.png"}, "Models");
+  CHECK(fs::exists(d / "Assets/Models/Box.gltf") && fs::exists(d / "Assets/Models/bin/Box Data.bin") && fs::exists(d / "Assets/Models/tex/wood.png"));
+  CHECK(fs::exists(d / "Assets/Models/Pack/sub/b.txt") && !fs::exists(d / "Assets/Models/Pack/sub/b.txt.meta")); // the project makes its own
+  CHECK_EQ(r.added.size(), size_t(5));
+  CHECK_EQ(r.added[0], std::string("Models/Box.gltf"));
+  CHECK_EQ(r.errors.size(), size_t(1)); // missing.png
+  db.Refresh();
+  CHECK(db.ByPath("Models/bin/Box Data.bin") != nullptr);
+
+  // again: a new name for the model, the same dependency is shared; a different one is not overwritten
+  r = ImportExternal(db, {outside / "Box.gltf"}, "Models");
+  CHECK(r.added.size() == 1 && r.added[0] == "Models/Box 1.gltf" && r.errors.empty());
+  Write(outside / "tex/wood.png", "other png");
+  r = ImportExternal(db, {outside / "Box.gltf"}, "Models");
+  CHECK(r.added.size() == 1 && r.added[0] == "Models/Box 2.gltf" && r.errors.size() == 1);
+  CHECK_EQ(Read(d / "Assets/Models/tex/wood.png"), std::string("png"));
+  r = ImportExternal(db, {d / "Assets/Models/Box.gltf"}, ""); // already in the project
+  CHECK(r.added.empty() && r.errors.size() == 1);
+  CHECK_EQ(UniqueFileName(d / "Assets/Models", "Box.gltf"), std::string("Box 3.gltf"));
+  CHECK_EQ(UniqueFileName(d / "Assets/Models", "New.gltf"), std::string("New.gltf"));
+
+  // rules: prefixes, texture size from the header, license in the .meta
+  std::vector<uint8_t> px(16 * 8 * 4, 200);
+  CHECK(WritePNG((d / "Assets/T_Wide.png").string().c_str(), 16, 8, px.data(), false));
+  CHECK(WritePNG((d / "Assets/small.png").string().c_str(), 4, 4, px.data(), false));
+  Write(d / "Assets/SM_Rock.glb", "glb");
+  int32_t w = 0, h = 0;
+  CHECK(ImageSize(d / "Assets/T_Wide.png", w, h) && w == 16 && h == 8);
+  db.Refresh();
+  Write(d / "Assets/SM_Rock.glb.meta", Read(d / "Assets/SM_Rock.glb.meta").substr(0, Read(d / "Assets/SM_Rock.glb.meta").find_last_of('}')) +
+                                           ",\"source\":{\"author\":\"me\",\"license\":\"CC0\"}}\n");
+  AssetRules rules;
+  CHECK(rules.Load(d / "ProjectSettings/AssetRules.json")); // no file: defaults
+  CHECK(rules.prefix.empty() && rules.maxTextureSize == 8192 && rules.requireLicense.empty());
+  Write(d / "ProjectSettings/AssetRules.json", R"({"prefix":{"texture":"T_","model":"SM_"},"maxTextureSize":8,"requireLicense":["model"]})");
+  CHECK(rules.Load(d / "ProjectSettings/AssetRules.json"));
+  AssetRuleChecker checker;
+  const std::vector<std::string> only = {"T_Wide.png", "small.png", "SM_Rock.glb", "Models/Box.gltf"};
+  const std::vector<AssetIssue> issues = checker.Check(db, rules, &only);
+  auto has = [&](const char* path, const char* rule) {
+    return std::any_of(issues.begin(), issues.end(), [&](const AssetIssue& i) { return i.path == path && i.rule == rule; });
+  };
+  CHECK(has("T_Wide.png", "size") && !has("T_Wide.png", "prefix"));
+  CHECK(has("small.png", "prefix") && !has("small.png", "size"));
+  CHECK(!has("SM_Rock.glb", "prefix") && !has("SM_Rock.glb", "license"));
+  CHECK(has("Models/Box.gltf", "prefix") && has("Models/Box.gltf", "license"));
+  CHECK_EQ(issues.size(), size_t(4));
+  Write(d / "ProjectSettings/AssetRules.json", "{oops");
+  std::string err;
+  CHECK(!rules.Load(d / "ProjectSettings/AssetRules.json", &err) && !err.empty());
+  fs::remove_all(outside);
   fs::remove_all(d);
 }

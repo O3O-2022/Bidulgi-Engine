@@ -109,6 +109,13 @@ public:
   void ReadGamePixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
   // Greybox (3-3c): adds a block where the view looks (on the surface there, on the grid), selected; one undo step.
   std::string CreateBlock(EditorModel& model, int shape); // BlockoutShape as int; returns the new object's id
+  // Auto re-import (2-5d): drops the imported models that are or use one of these project paths, so the next
+  // render imports them again. Returns the models dropped (each logged).
+  int Reimport(const std::vector<std::string>& changedPaths);
+  int ReimportCount() const { return reimports_; }
+  // A model dropped on the view: a new object with a MeshRenderer at the surface (or ground) under the UI point,
+  // one undo step. Returns its id.
+  std::string PlaceModel(EditorModel& model, const std::string& meshPath, float x, float y);
   // Face handle of the selected block: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (test hook; false: none there).
   bool FaceHandlePoint(const EditorModel& model, int face, float& x, float& y) const;
   // Gizmo of the current tool and selection in the last view (false: no gizmo).
@@ -129,6 +136,7 @@ private:
     std::vector<MeshData> cpuPrims;
     uint64_t hash = 0;
     bool isModel = false, missing = false;
+    std::vector<std::string> deps; // .gltf: the project paths of its buffers and images (2-5d)
   };
   const MeshEntry* Resolve(const std::string& name, const AssetDatabase* assets);
   Material3D MaterialFor(const std::string& name); // project material asset first, then the name rules
@@ -173,6 +181,7 @@ private:
   bool hasVolume_ = false;
   size_t lightmapItems_ = 0;                        // items marked bakeLightmap (GI Tier 0-C)
   uint64_t lightmapKey_ = 0, bakedLightmapKey_ = 0; // their meshes and placements now / at the last bake
+  int reimports_ = 0;
   uint64_t lastLoadTry_ = 0;                        // lightmap key last looked up in .cache/gi
   ColorGrading3D grading_;                          // from the first ColorGrading component (3-5b)
   bool hasGrading_ = false;

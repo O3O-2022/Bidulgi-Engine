@@ -182,6 +182,7 @@ bool Theme::LoadOverrides(const std::string& path, std::string* err) {
   yyjson_read_err rerr;
   yyjson_doc* doc = yyjson_read_file(path.c_str(), 0, nullptr, &rerr);
   if (!doc) {
+    if (rerr.code == YYJSON_READ_ERROR_FILE_OPEN) overridesMtime_ = 0; // held by another program: read it on the next poll
     if (err) *err = std::format("{}: {} at {}", path, rerr.msg, rerr.pos);
     return false;
   }
