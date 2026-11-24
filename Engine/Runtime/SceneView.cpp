@@ -246,6 +246,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
           light_.color = l.color;
           light_.intensity = l.intensity;
           light_.shadows = l.castShadows;
+          light_.shafts = l.lightShafts ? std::max(l.lightShaftIntensity, 0.f) : 0.f;
         } else if (!directional) {
           LocalLight3D local;
           local.position = glm::vec3(world[3]);
@@ -523,6 +524,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   }
   light_.post = PostAt(camera.ToCamera().position);
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
+  lastShafts_ = r_->Stats().shafts;
   { // platform budget (3-7): what this view drew, and its heaviest objects
     const RenderStats& st = r_->Stats();
     budgetUse_.draws = st.sceneDraws;

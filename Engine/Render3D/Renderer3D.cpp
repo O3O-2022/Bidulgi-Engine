@@ -603,12 +603,14 @@ void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); 
 // uPost3 = (vignette, vignette smoothness, chromatic aberration, film grain), uPost4 = (auto exposure on, min EV,
 // max EV, grain seed), uPost5 = (adaptation step 0..1, first frame, aspect w/h, -)   (post-process volumes, E-6)
 // uPost6 = (focus distance m, in-focus range m, widest blur px, depth of field on), uPost7 = (lens flare, -, -, -)
-#define POST_UBO "layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; vec4 uPost3; vec4 uPost4; vec4 uPost5; vec4 uPost6; vec4 uPost7; };\n"
+// uPost8 = (sun u, sun v, shaft strength incl. fade, shafts on), uPost9 = sun colour x intensity (linear)   (E-7)
+#define POST_UBO "layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; vec4 uPost3; vec4 uPost4; vec4 uPost5; vec4 uPost6; vec4 uPost7; vec4 uPost8; vec4 uPost9; };\n"
 const char* kToneMapFS = "#version 450 core\n" POST_UBO R"(
 layout(binding = 0) uniform sampler2D uHdr;
 layout(binding = 1) uniform sampler2D uBloom;
 layout(binding = 2) uniform sampler3D uGrading; // 32^3 colour grading table (3-5b), uPost2.y = on
 layout(binding = 3) uniform sampler2D uAdapted; // 1x1: average log2 luminance the eye has adapted to (E-6)
+layout(binding = 4) uniform sampler2D uShafts;  // half-size light shafts (E-7)
 in vec2 vUV;
 out vec4 oColor;
 float Hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -624,6 +626,7 @@ void main() {
     c = vec3(texture(uHdr, vUV + off).r, texture(uHdr, vUV).g, texture(uHdr, vUV - off).b);
   } else c = texture(uHdr, vUV).rgb;
   if (uPost.w > 0.5) c += texture(uBloom, vUV).rgb * (uPost.y / 5.0); // the chain sums 5 levels: average them
+  if (uPost8.w > 0.5) c += texture(uShafts, vUV).r * uPost9.rgb * uPost8.z * 0.5; // god rays (E-7)
   float exposure = uPost.x;
   if (uPost4.x > 0.5) { // eye adaptation: bring the adapted average to middle grey, within the volume's range
     float avgLog = texelFetch(uAdapted, ivec2(0), 0).r;
@@ -685,6 +688,29 @@ void main() {
     }
   }
   oColor = vec4(sum / wsum, 1.0);
+}
+)";
+// Light shafts (E-7, Unreal's occlusion shafts): march from each pixel toward the sun on the screen; every step that
+// lands on sky (no geometry in the depth prepass) near the sun adds light, decaying along the way. Half size.
+const char* kShaftsFS = "#version 450 core\n" POST_UBO R"(
+layout(binding = 0) uniform sampler2D uGeo; // .w = view depth (65000 = nothing drawn: sky)
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  const int kSteps = 64;
+  vec2 sun = uPost8.xy;
+  vec2 stepUV = (sun - vUV) / float(kSteps) * 0.95;
+  vec2 uv = vUV;
+  float light = 0.0, decay = 1.0;
+  for (int i = 0; i < kSteps; ++i) {
+    uv += stepUV;
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { decay *= 0.96; continue; }
+    float sky = texture(uGeo, uv).w > 60000.0 ? 1.0 : 0.0;
+    float near = 1.0 - smoothstep(0.0, 0.25, length((uv - sun) * vec2(uPost5.z, 1.0))); // the sky close to the sun
+    light += sky * near * near * decay;
+    decay *= 0.96;
+  }
+  oColor = vec4(light / float(kSteps), 0.0, 0.0, 1.0);
 }
 )";
 // Auto exposure, pass 1: log2 luminance of the HDR picture on a 32x32 target (16 samples per texel).
@@ -808,7 +834,7 @@ struct FrameData {
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
-struct PostData { float post[4]; float post2[4]; float post3[4]; float post4[4]; float post5[4]; float post6[4]; float post7[4]; };
+struct PostData { float post[4]; float post2[4]; float post3[4]; float post4[4]; float post5[4]; float post6[4]; float post7[4]; float post8[4]; float post9[4]; };
 struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4], volMin[4], volMax[4], volCount[4]; };
 struct PrefilterData { float p[4]; };
 
@@ -1007,7 +1033,10 @@ bool Renderer3D::Init(RHI& rhi) {
   pp.fragmentSource = kDofFS;
   pp.debugName = "post.dof";
   dof_ = rhi.CreatePipeline(pp);
-  if (!dof_.Valid()) return false;
+  pp.fragmentSource = kShaftsFS;
+  pp.debugName = "post.shafts";
+  shafts_ = rhi.CreatePipeline(pp);
+  if (!dof_.Valid() || !shafts_.Valid()) return false;
   pp.fragmentSource = kAdaptFS;
   pp.debugName = "post.adapt";
   adapt_ = rhi.CreatePipeline(pp);
@@ -1075,7 +1104,8 @@ void Renderer3D::Shutdown() {
   adapt_s.clear();
   if (lumRT_.Valid()) rhi_->DestroyRenderTarget(lumRT_);
   if (dofRT_.Valid()) rhi_->DestroyRenderTarget(dofRT_);
-  for (PipelineHandle p : {lum_, adapt_, dof_})
+  if (shaftRT_.Valid()) rhi_->DestroyRenderTarget(shaftRT_);
+  for (PipelineHandle p : {lum_, adapt_, dof_, shafts_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
@@ -1427,6 +1457,21 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   f.flags[0] = ssaoOn ? 1.f : 0.f;
   // depth of field (E-6b) needs the depth / normal prepass too; only on the lit view, never on captures
   const bool dofOn = light.post.dofBlur > 0.001f && !(extras && extras->linearOutput) && (!extras || extras->view == DebugView::Lit);
+  // light shafts (E-7): where the sun is on the picture; faded out as it leaves the screen, off behind the camera
+  float sunU = 0, sunV = 0, shaftFade = 0;
+  if (light.shafts > 0 && light.intensity > 0 && q.lighting == LightingMode::Pixel && !(extras && extras->linearOutput) &&
+      (!extras || extras->view == DebugView::Lit)) {
+    const glm::vec4 clip = cam.Projection((float)w / std::max(h, 1)) * cam.View() *
+                           glm::vec4(cam.position + glm::normalize(light.toLight) * std::max(cam.farZ * 0.5f, 10.f), 1.f);
+    if (clip.w > 0) {
+      sunU = clip.x / clip.w * 0.5f + 0.5f;
+      sunV = clip.y / clip.w * 0.5f + 0.5f;
+      const float off = std::max(std::abs(sunU - 0.5f), std::abs(sunV - 0.5f)); // 0.5 = on the edge
+      shaftFade = 1.f - std::clamp((off - 0.5f) / 0.5f, 0.f, 1.f);
+    }
+  }
+  const bool shaftsOn = shaftFade > 0.001f;
+
   const int cascades = std::clamp(q.shadowCascades, 1, 4);
   if (light.shadows && q.shadows && q.lighting == LightingMode::Pixel && light.intensity > 0) {
     // Cascades (3-5b): view depth split between uniform and logarithmic (practical split, lambda 0.8); more cascades
@@ -1622,6 +1667,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
   stats_ = RenderStats{w, h, std::clamp(q.msaa, 1, 8), f.shadow[0] > 0.5f ? q.shadowMapSize : 0, locals, stats_.shadowCasters, 0, 0,
                        q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
+  stats_.shafts = shaftsOn; // light shafts (E-7)
+  stats_.sunU = sunU;
+  stats_.sunV = sunV;
   stats_.cascades = f.shadow[0] > 0.5f ? cascades : 0;
   stats_.clustered = clustered;
   stats_.anisotropy = (int)aniso;
@@ -1651,7 +1699,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
-  if (ssaoOn || dofOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+  if (ssaoOn || dofOn || shaftsOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
     const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
     if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
       for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -1759,7 +1807,26 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
               {0, 0, (float)w / (float)std::max(h, 1), 0},
               {std::max(fx.dofFocus, 0.05f), std::max(fx.dofRange, 0.f), std::clamp(fx.dofBlur, 0.f, 1.f) * 14.f * std::max(h, 1) / 1080.f,
                dofOn && camFx ? 1.f : 0.f},
-              {std::clamp(fx.lensFlare, 0.f, 1.f), 0, 0, 0}};
+              {std::clamp(fx.lensFlare, 0.f, 1.f), 0, 0, 0},
+              {sunU, sunV, light.shafts * shaftFade, shaftsOn ? 1.f : 0.f},
+              {light.color.r * light.intensity, light.color.g * light.intensity, light.color.b * light.intensity, 0}};
+  if (shaftsOn) { // god rays at half size (E-7)
+    const int sw = std::max(w / 2, 1), sh = std::max(h / 2, 1);
+    if (!shaftRT_.Valid() || shaftW_ != sw || shaftH_ != sh) {
+      rhi_->DestroyRenderTarget(shaftRT_);
+      shaftRT_ = rhi_->CreateRenderTargetEx(sw, sh, 1, true, false);
+      shaftW_ = sw;
+      shaftH_ = sh;
+    }
+    rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
+    rhi_->BindUniformBuffer(4, postUbo_);
+    rhi_->BeginRenderTarget(shaftRT_, {0, 0, 0, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(geoRT_));
+    rhi_->Draw(shafts_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+    if (timing) Mark(timer, "shafts");
+  }
   if (dofOn && camFx) { // blur by depth into a copy the tone map then reads
     if (!dofRT_.Valid() || dofW_ != w || dofH_ != h) {
       rhi_->DestroyRenderTarget(dofRT_);
@@ -1809,6 +1876,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     it->second.primed = false; // turned off: start fresh next time
   }
   rhi_->BindTexture(3, adapted);
+  rhi_->BindTexture(4, shaftsOn ? rhi_->RenderTargetColor(shaftRT_) : white_);
   stats_.grading = grading;
   if (grading) rhi_->BindTexture(2, gradingLut_);
   rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));

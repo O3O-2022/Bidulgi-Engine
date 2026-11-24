@@ -107,7 +107,8 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false;
+  bool postTest = false, post2Test = false, shaftTest = false;
+  std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
   std::string inspectTestValues[7];
   bool hierarchyKeys = false; // the Hierarchy was clicked last: arrow keys move in it (E-4b)
@@ -1276,6 +1277,84 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
     v[6] = std::format("{}", n >= 0 && n < 50 ? 1 : 0);
     if (v[6] != "1") bdg::LogError("postfx test: after removing, {} pixels differ", n);
   }
+}
+
+// Scripted check of E-7 (BDG_SHAFTS_TEST=1): the editor camera turned toward the sun; light shafts on find the sun
+// on the picture and brighten the sky around it; a board hiding the sun cuts them down (occlusion); with the
+// camera turned away no shafts are drawn.
+void InjectShaftsTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv || !e->r3d) return;
+  auto* v = e->shaftTestValues;
+  struct Shot { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+  auto grab = [&] { Shot s; sv->ReadPixels(s.w, s.h, s.px); return s; };
+  auto brighter = [](const Shot& a, const Shot& b) {
+    int n = 0;
+    for (size_t i = 0; a.px.size() == b.px.size() && i < a.px.size(); i += 4)
+      n += (b.px[i] + b.px[i + 1] + b.px[i + 2]) - (a.px[i] + a.px[i + 1] + a.px[i + 2]) > 9;
+    return n;
+  };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("shafts test: {}", err);
+  };
+  auto shafts = [&](bool on) { run("set", "g2", std::format(R"({{"path":"Light.lightShafts","value":{}}})", on ? "true" : "false")); };
+  static Shot off;
+  static int open = 0;
+  if (frame == 3) { // after the Scene view's own start-up framing: look at the sun from 1.6 m
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    m->SetSelection({});
+    const glm::vec3 toSun = -glm::normalize(glm::vec3(m->scene.WorldMatrix("g2") * glm::vec4(0, 0, -1, 0)));
+    float best = -2;
+    bdg::EditorCamera c = sv->camera;
+    for (int yaw = -180; yaw < 180; yaw += 2)
+      for (int pitch = -80; pitch <= 80; pitch += 2) {
+        c.yaw = (float)yaw;
+        c.pitch = (float)pitch;
+        const float d = glm::dot(c.Forward(), toSun);
+        if (d > best) { best = d; sv->camera.yaw = c.yaw; sv->camera.pitch = c.pitch; }
+      }
+    sv->camera.pitch = std::max(sv->camera.pitch - 12.f, -80.f); // the sun in the upper half of the picture
+    sv->camera.pivot = glm::vec3(0, 1.6f, 0) + sv->camera.Forward() * sv->camera.distance; // eye at 1.6 m
+    run("set", "g2", R"({"path":"Light.lightShaftIntensity","value":1})");
+  }
+  if (frame == 6) {
+    off = grab();
+    shafts(true);
+  }
+  if (frame == 9) {
+    v[0] = std::format("{}", sv->RenderStatsSun(e->r3d.get()) ? 1 : 0);
+    open = brighter(off, grab());
+    v[1] = std::format("{}", open > 800 ? 1 : 0);
+    if (v[1] != "1") bdg::LogError("shafts test: {} pixels brightened", open);
+    shafts(false);
+    // a board 8 m out, square to the view, hiding the sun (and the sky right around it)
+    const glm::vec3 toSun = -glm::normalize(glm::vec3(m->scene.WorldMatrix("g2") * glm::vec4(0, 0, -1, 0)));
+    const glm::vec3 at = sv->camera.Position() + toSun * 8.f;
+    const float yawDeg = glm::degrees(std::atan2(-toSun.x, -toSun.z)), pitchDeg = glm::degrees(std::asin(toSun.y));
+    run("add", "", R"({"id":"board","name":"Board"})");
+    run("addcomp", "board", R"({"type":"Blockout","value":{"shape":"Box","size":[4,4,0.2]}})");
+    run("set", "board", std::format(R"({{"path":"Transform.rotation","value":[{},{},0]}})", pitchDeg, yawDeg));
+    run("set", "board", std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", at.x, at.y - 2, at.z));
+  }
+  if (frame == 12) {
+    off = grab();
+    shafts(true);
+  }
+  if (frame == 15) {
+    const int blocked = brighter(off, grab());
+    v[2] = std::format("{}", blocked < open / 4 ? 1 : 0);
+    if (v[2] != "1") bdg::LogError("shafts test: open {} pixels, sun hidden {}", open, blocked);
+    sv->camera.yaw += 180; // away from the sun
+    sv->camera.pitch = -20;
+  }
+  if (frame == 18) v[3] = std::format("{}", !sv->RenderStatsSun(e->r3d.get()) ? 1 : 0);
 }
 
 // Scripted check of E-6b (BDG_POSTFX2_TEST=1, BDG_QUALITY=high for bloom): depth of field focused a few cm from
@@ -3346,6 +3425,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->fbxTest = std::getenv("BDG_FBX_TEST") != nullptr;
   e->postTest = std::getenv("BDG_POSTFX_TEST") != nullptr;
   e->post2Test = std::getenv("BDG_POSTFX2_TEST") != nullptr;
+  e->shaftTest = std::getenv("BDG_SHAFTS_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3808,6 +3888,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->fbxTest && !e->showGallery) InjectFbxTest(e, frames);
     if (e->postTest && !e->showGallery) InjectPostFxTest(e, frames);
     if (e->post2Test && !e->showGallery) InjectPostFx2Test(e, frames);
+    if (e->shaftTest && !e->showGallery) InjectShaftsTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -4186,6 +4267,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->shaftTest) {
+        auto* v = e->shaftTestValues;
+        bdg::LogInfo("shafts test: sun={} rays={} occluded={} away={}", v[0], v[1], v[2], v[3]);
       }
       if (e->post2Test) {
         auto* v = e->post2TestValues;

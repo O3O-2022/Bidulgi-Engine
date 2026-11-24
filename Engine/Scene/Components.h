@@ -41,6 +41,9 @@ public:
   float innerSpotAngle = 30.f;
   BPROPERTY(Edit, ShowIf = "type == Directional", Tooltip = "Shadow map (directional lights; point and spot shadows come later)")
   bool castShadows = true;
+  BPROPERTY(Edit, ShowIf = "type == Directional", Tooltip = "God rays: the sky around the sun streaks past objects toward the camera (E-7)")
+  bool lightShafts = false;
+  BPROPERTY(Edit, Range = "0,4", ShowIf = "lightShafts", Tooltip = "Strength of the light shafts") float lightShaftIntensity = 1.f;
 };
 
 // Camera bookmark (queue 3-8): number key `slot` (1-9) over the scene view jumps to this view, Ctrl + key stores the

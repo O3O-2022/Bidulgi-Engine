@@ -84,6 +84,9 @@ struct Light3D {
   Color fogColor{0.62f, 0.70f, 0.80f, 1}; // linear
   float exposure = 1;                     // times the quality tier's exposure
   PostEffects3D post;                     // post-process volumes at the camera (E-6)
+  // Light shafts / god rays (E-7, Unreal's): sky seen around the sun streaks toward the camera, blocked by
+  // geometry. 0 = off; the sun's colour and intensity tint them.
+  float shafts = 0;
 };
 constexpr int kMaxLocalLights = 16;        // per-vertex lighting (low tier), uniform buffer
 constexpr int kMaxClusteredLights = 1024;  // per-pixel lighting, storage buffer (Forward+, 3-5b)
@@ -163,6 +166,8 @@ struct RenderStats {
   size_t lightmapped = 0;   // objects drawn with a baked lightmap
   int cascades = 0;         // shadow cascades drawn (3-5b)
   bool ssao = false;        // screen-space ambient occlusion pass ran (3-5b)
+  bool shafts = false;      // light shafts were drawn (E-7): the sun was on or near the screen
+  float sunU = 0, sunV = 0; // where the sun was on the picture (0..1, from the bottom left)
   bool clustered = false;   // Forward+ light lists were used (3-5b)
   uint32_t clusterRefs = 0, clusterMax = 0, clustersUsed = 0; // light references, most lights in one cluster, clusters with any
   int anisotropy = 1;       // texture filtering used (3-5b)
@@ -245,8 +250,9 @@ private:
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
   // Auto exposure (E-6): the picture's log luminance on a 32x32 target, then per output target a 1x1 average that
   // moves toward it over time (two 1x1 targets swapped each frame).
-  PipelineHandle lum_, adapt_, dof_;
-  RenderTargetHandle lumRT_, dofRT_;
+  PipelineHandle lum_, adapt_, dof_, shafts_;
+  RenderTargetHandle lumRT_, dofRT_, shaftRT_;
+  int32_t shaftW_ = 0, shaftH_ = 0;
   int32_t dofW_ = 0, dofH_ = 0;
   struct Adapt { RenderTargetHandle rt[2]; int cur = 0; double last = 0; bool primed = false; };
   std::unordered_map<uint32_t, Adapt> adapt_s;
