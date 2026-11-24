@@ -4,6 +4,7 @@
 #include <glad/gl.h>
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 namespace bdg {
 namespace {
@@ -44,6 +45,10 @@ bool RHI::Init(Window&) {
   glVersion = (const char*)glGetString(GL_VERSION);
   gpuName = (const char*)glGetString(GL_RENDERER);
   LogInfo("rhi: OpenGL {} | {}", glVersion, gpuName);
+  GLint extensions = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &extensions);
+  for (GLint i = 0; i < extensions; ++i)
+    if (const char* x = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i); x && std::string_view(x) == "GL_NVX_gpu_memory_info") nvxMemory_ = true;
   GLint align = 256;
   glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align);
   uboAlign_ = (size_t)std::max(align, 16);
@@ -82,6 +87,8 @@ BufferHandle RHI::CreateBuffer(BufferUsage, const void* data, size_t size, bool 
   GLuint b = 0;
   glCreateBuffers(1, &b);
   glNamedBufferStorage(b, (GLsizeiptr)size, data, dynamic ? GL_DYNAMIC_STORAGE_BIT : 0);
+  bufferBytes_[b] = size;
+  mem_.buffers += size;
   return {b};
 }
 
@@ -90,12 +97,16 @@ void RHI::UpdateBuffer(BufferHandle b, const void* data, size_t size, size_t off
 }
 
 void RHI::DestroyBuffer(BufferHandle b) {
-  if (b.Valid()) glDeleteBuffers(1, &b.id);
+  if (!b.Valid()) return;
+  if (auto it = bufferBytes_.find(b.id); it != bufferBytes_.end()) { mem_.buffers -= it->second; bufferBytes_.erase(it); }
+  glDeleteBuffers(1, &b.id);
 }
 
 void RHI::BindUniformBuffer(uint32_t slot, BufferHandle b) {
   glBindBufferBase(GL_UNIFORM_BUFFER, slot, b.id);
 }
+
+void RHI::BindStorageBuffer(uint32_t slot, BufferHandle b) { glBindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, b.id); }
 
 void RHI::BindUniformBufferRange(uint32_t slot, BufferHandle b, size_t offset, size_t size) {
   glBindBufferRange(GL_UNIFORM_BUFFER, slot, b.id, (GLintptr)offset, (GLsizeiptr)size);
@@ -119,6 +130,10 @@ TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
     UpdateTexture2D({t}, 0, 0, d.w, d.h, d.format, pixels);
     if (levels > 1) glGenerateTextureMipmap(t);
   }
+  uint64_t bytes = (uint64_t)d.w * d.h * (d.format == TextureFormat::R8 ? 1 : 4);
+  bytes = levels > 1 ? bytes * 4 / 3 : bytes;
+  textureBytes_[t] = bytes;
+  mem_.textures += bytes;
   return {t};
 }
 
@@ -145,6 +160,10 @@ TextureHandle RHI::CreateTextureMips(const TextureDesc& d, const std::vector<con
   glTextureParameteri(t, GL_TEXTURE_WRAP_S, wrap);
   glTextureParameteri(t, GL_TEXTURE_WRAP_T, wrap);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  uint64_t bytes = 0;
+  for (size_t sz : sizes) bytes += sz;
+  textureBytes_[t] = bytes;
+  mem_.textures += bytes;
   for (size_t m = 0; m < levels.size(); ++m) {
     GLsizei w = std::max(1, d.w >> m), h = std::max(1, d.h >> m);
     if (block)
@@ -164,6 +183,9 @@ TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const 
   glTextureParameteri(t, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTextureParameteri(t, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   if (pixels) UpdateTexture2D({t}, 0, 0, w, h, f, pixels);
+  uint64_t bytes = (uint64_t)w * h * (f == TextureFormat::R8 ? 1 : 4);
+  textureBytes_[t] = bytes;
+  mem_.textures += bytes;
   return {t};
 }
 
@@ -173,7 +195,9 @@ void RHI::UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int3
 }
 
 void RHI::DestroyTexture(TextureHandle t) {
-  if (t.Valid()) glDeleteTextures(1, &t.id);
+  if (!t.Valid()) return;
+  if (auto it = textureBytes_.find(t.id); it != textureBytes_.end()) { mem_.textures -= it->second; textureBytes_.erase(it); }
+  glDeleteTextures(1, &t.id);
 }
 
 void RHI::BindTexture(uint32_t slot, TextureHandle t) { glBindTextureUnit(slot, t.id); }
@@ -225,6 +249,8 @@ RenderTargetHandle RHI::CreateRenderTargetEx(int32_t w, int32_t h, int32_t sampl
     glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, t.w, t.h);
     glNamedFramebufferRenderbuffer(t.fbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
   }
+  t.bytes = (uint64_t)t.w * t.h * ((hdr ? 8 : 4) * (t.samples > 1 ? 1 + t.samples : 1) + (withDepth ? 4 * t.samples : 0));
+  mem_.targets += t.bytes;
   GLuint drawFbo = t.samples > 1 ? t.msFbo : t.fbo;
   if (glCheckNamedFramebufferStatus(drawFbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
       glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
@@ -254,6 +280,8 @@ RenderTargetHandle RHI::CreateDepthTarget(int32_t size) {
   glNamedFramebufferDrawBuffer(t.fbo, GL_NONE);
   glNamedFramebufferReadBuffer(t.fbo, GL_NONE);
   if (glCheckNamedFramebufferStatus(t.fbo, GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) LogError("rhi: depth target {} is incomplete", t.w);
+  t.bytes = (uint64_t)t.w * t.h * 4;
+  mem_.targets += t.bytes;
   for (uint32_t i = 1; i < targets_.size(); ++i)
     if (!targets_[i].fbo) { targets_[i] = t; return {i}; }
   targets_.push_back(t);
@@ -267,6 +295,7 @@ TextureHandle RHI::RenderTargetDepth(RenderTargetHandle rt) const {
 void RHI::DestroyRenderTarget(RenderTargetHandle rt) {
   if (!rt.Valid() || rt.id >= targets_.size()) return;
   TargetGL& t = targets_[rt.id];
+  mem_.targets -= std::min(mem_.targets, t.bytes);
   if (t.fbo) glDeleteFramebuffers(1, &t.fbo);
   if (t.msFbo) glDeleteFramebuffers(1, &t.msFbo);
   if (t.color) glDeleteTextures(1, &t.color);
@@ -350,9 +379,11 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     const VertexAttr& a = d.attrs[i];
     glEnableVertexArrayAttrib(vao, a.location);
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
-    glVertexArrayAttribBinding(vao, a.location, 0);
+    glVertexArrayAttribBinding(vao, a.location, a.binding);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.additive, d.wireframe, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
+  if (d.instanceStride) glVertexArrayBindingDivisor(vao, 1, 1); // binding 1 advances once per instance
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.additive, d.wireframe, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant,
+                        d.depthBiasSlope, d.instanceStride});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -422,6 +453,26 @@ bool RHI::QueryNs(uint32_t q, uint64_t& ns) {
   glGetQueryObjectui64v(q, GL_QUERY_RESULT, &v);
   ns = v;
   return true;
+}
+
+void RHI::DrawIndexedInstanced(PipelineHandle p, BufferHandle vertices, BufferHandle indices, uint32_t count, uint32_t instances,
+                               uint32_t firstInstance, BufferHandle instanceData) {
+  const PipelineGL* g = Bind(p, vertices);
+  if (!g || instances == 0) return;
+  if (g->instanceStride && instanceData.Valid()) glVertexArrayVertexBuffer(g->vao, 1, instanceData.id, 0, (GLsizei)g->instanceStride);
+  glVertexArrayElementBuffer(g->vao, indices.id);
+  glDrawElementsInstancedBaseInstance(GL_TRIANGLES, (GLsizei)count, GL_UNSIGNED_INT, nullptr, (GLsizei)instances, firstInstance);
+  ++drawCalls_;
+}
+
+bool RHI::VideoMemoryKB(int64_t& total, int64_t& available) const {
+  if (!nvxMemory_) return false;
+  GLint t = 0, a = 0;
+  glGetIntegerv(0x9047, &t); // GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX
+  glGetIntegerv(0x9049, &a); // GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX
+  total = t;
+  available = a;
+  return t > 0;
 }
 
 Color RHI::ReadPixel(int32_t x, int32_t y) {

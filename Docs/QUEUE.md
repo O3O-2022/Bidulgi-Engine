@@ -50,6 +50,9 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_RENDER_TEST=1` | 기준판 렌더 결과 자동 판정(`render-ref`와 함께) |
 | `BDG_QUALITY=potato\|low\|medium\|high\|ultra` | 시작 품질 단계(프로젝트 범위 안으로) |
 | `BDG_QUALITY_SET=msaa=1,bloom=0,...` | 단계 위에 설정 덮어쓰기(msaa·bloom·fxaa·shadows·tonemap·lights·bias·exposure·shadowmap·view) |
+| `BDG_SCREEN=render-stress` | 스트레스 화면(상자 `BDG_STRESS_INSTANCES`=10000, 4K 텍스처 `BDG_STRESS_TEXTURES`=16), 마지막에 `stress:` 로그 |
+| `BDG_STRESS_TEST=1` | 인스턴싱 켬/끔 비교(드로우 수·같은 그림·CPU/GPU 시간) |
+| `BDG_RENDER_COMPARE=<폴더>` | 북마크별 이미지 비교(`BDG_COMPARE_OUT`, `BDG_COMPARE_THRESHOLD`=0.03), `--frames 42` |
 | `BDG_REFSCENE_TEST=1` | 렌더 기준 씬 자동 테스트(`BDG_ASSETS`=Tests/RenderReference/Assets + `BDG_SCENE_FILE`) |
 | `BDG_RENDER_STATS=1` | 마지막 프레임의 패스별 GPU 시간·렌더 통계를 로그로 |
 | `BDG_BOOKMARK=N` | 씬 뷰를 카메라 북마크 N에서 시작 |
@@ -96,6 +99,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `tools/testassets.py` | 표준 테스트 에셋 받기·확인(`Tests/testassets.lock.json`) |
 | `Engine/Runtime/Gizmo.*` | 이동·회전·크기 기즈모: 핸들 히트 테스트, 드래그 계산, 그리기 (씬과 명령은 모름) |
 | `Engine/Runtime/SceneView.*` | Scene 패널 3D: 씬 → 그리기 항목, 메시 캐시, 에디터 카메라, 피킹, 오버레이 |
+| `Engine/Core/ImageCompare.*` | FLIP(LDR) 이미지 차이 + 열지도 |
 | `tools/make_render_reference.py` → `Tests/RenderReference/` | 렌더 기준 프로젝트(구역·북마크·머티리얼) 생성기와 결과 |
 | `Engine/Render3D/Quality.*` | 품질 단계 설정 묶음, 프로젝트 범위, 덮어쓰기, 톤 곡선 |
 | `Engine/Render3D/*` | 3D: 절차 메시(`MeshGen`), 전방 렌더러(`Renderer3D`, GGX + 방향광 + 반구 환경), 렌더링 기준판(`ReferenceBoard`) |
@@ -141,7 +145,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 2. ~~**3-4** 조명·그림자~~ (2026-11-24 완료, 점·스폿 그림자는 3-4b)
 3. ~~**3-5** 품질 단계 감자~중사양 + 톤매핑·FXAA·Bloom~~ (2026-11-24 완료)
 4. ~~**3-8** 렌더 기준 씬 + 디버그 도구~~ (2026-11-24 완료, Sponza 대체는 3-8b)
-5. **3-9** 스트레스·이미지 비교 (인스턴싱 1만 개, 4K 텍스처, `bdg render compare`)
+5. ~~**3-9** 스트레스·이미지 비교~~ (2026-11-24 완료, 회귀 CI는 3-9b·1.0)
 6. **Halo GI Tier 0** (1.0 준비에서 당겨 옴: 라이트맵 + 프로브 + 반사 프로브)
 7. **3-5b** 고사양 단계 확장 (CSM 3, SSAO, Forward+ 클러스터 라이트)
 8. 그 다음: ~~3-3 기즈모~~(2026-11-24 사용자 요청으로 먼저 완료) → 3-3b·3-3c → 3-6·3-6b 플레이 모드 → 3-7 → 2-5b~2-7 → M4 이후 순서대로
@@ -196,7 +200,8 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | 3-1b 머티리얼 파일·텍스처 쿠킹·표준 에셋 | **표준 에셋**: `tools/testassets.py fetch`가 Khronos glTF-Sample-Assets(커밋 고정 e124e8d)의 MetalRoughSpheres·NormalTangentMirrorTest·TextureCoordinateTest·AlphaBlendModeTest + 기준 스크린샷을 `.cache/testassets/`로 받고 SHA-256 확인(`Tests/testassets.lock.json`에 URL·크기·해시·라이선스 CC-BY-4.0/CC0·저작자, CREDITS.txt). `BDG_SCREEN=render-assets` 4개 모델 나란히: 알파(불투명·블렌드·컷오프 0.25/0.5/0.75)와 노멀맵 미러 UV가 Khronos 기준 스크린샷과 일치. **머티리얼**: `Assets/MaterialFile.*` `.material`(고정 파라미터: BaseColor·BaseColorMap·Metallic·Roughness·ORMMap·NormalMap·NormalStrength·AOStrength·Emissive·EmissiveStrength·EmissiveMap·Opacity, shading lit/unlit, blend opaque/masked/translucent, twoSided, cutoff) + `.matinst`(부모 체인, 덮어쓰기, 없는 부모·순환 오류). `Runtime/MaterialLibrary.*`: 경로·guid:·파일 이름으로 찾고 MeshRenderer.material에 연결(없으면 이전 이름 규칙). **텍스처**: `Assets/TextureCooker.*` 이름으로 프리셋(default·normal·masks·grayscale·ui) → `.meta`에 기록, 최대 크기 축소, 밉(sRGB는 선형 평균, 노멀은 재정규화), **BC7(sRGB)/BC5/BC4** 압축(bc7enc·rgbcx, MIT) → DDS(DX10)로 `<프로젝트>/.cache/cooked/`, 다음부터 DDS만 읽음. RHI 압축 텍스처·밉 업로드, 셰이더 노멀 Z 복원(BC5). 단위 테스트 3개(BC7 PSNR>38dB, BC5 오차≤6, sRGB 밉 188, DDS 왕복 등, 총 62개·693개), `BDG_MATERIAL_TEST=1`, CI 21·22번 | `9da9bda` |
 | 3-4 조명·그림자 | **방향광 그림자**: 2048 깊이 맵(32비트 float, 하드웨어 비교 = 2×2 PCF) × 3×3 탭, 카메라 시야 조각(기본 40 m)의 경계 구에 맞춘 정사영 + 텍셀 단위 스냅(흔들림 없음), 노멀 오프셋 + 폴리곤 오프셋 바이어스, 맵 가장자리에서 서서히 사라짐, 마스크 머티리얼은 구멍까지. **점·스폿광** 최대 16개(카메라 중심에 가까운 순): 창 함수를 곱한 역제곱 감쇠(세기 1 = 1 m에서 태양 1), 스폿 안쪽·바깥 각 부드러운 가장자리. **하늘**: 절차 하늘(천정·지평선·땅 색, 세기, 해 원반) 배경 패스 + 같은 하늘로 환경광(반구)·반사(거칠기만큼 흐린 지평선). `Light`에 spotAngle·innerSpotAngle(스폿일 때만 보임)·castShadows, 새 `Sky` 컴포넌트(샘플 씬 Sky 오브젝트). Lantern 세기 6·범위 8. 공통 프레임 상수 블록(모든 3D 셰이더), RHI 깊이 타깃·폴리곤 오프셋. 기준판에 떠 있는 상자·빨간 점광·흰 스폿광 → 검사 3개 추가(`shadow`·`point`·`spot`, 총 12개 통과). `BDG_SCENE_CAMERA=yaw,pitch,거리[,x,y,z]`(스크린샷용). 유휴 로그에 깨운 원인(`wakes_mouse/input/other`). 점·스폿 그림자는 3-4b로 | `54f4586` |
 | 3-5 품질 단계·포스트 프로세스 | `Render3D/Quality.*`: 감자·저사양·중사양·고사양·초고사양 설정 묶음(조명 방식 없음/정점/픽셀, 라이트 수 0/4/8/16, 그림자 없음/없음/1024/2048, 텍스처 밉 바이어스 2/2/1/0, 포스트 없음/없음/ACES+FXAA/+Bloom·MSAA4, 뷰 거리 0.5~1.25). 렌더러: 장면을 **HDR(RGBA16F, MSAA는 단계별)** 에 선형으로 그린 뒤 Bloom(13탭 다운 → 텐트 업, 5단) → ACES 톤매핑(Narkowicz) → FXAA → 편집 오버레이(그리드·선택 외곽선, 장면 깊이 복사). 기준판은 기준 설정(톤매핑 끔)이라 색 판정 그대로. 프로젝트 범위 `ProjectSettings/Quality.json`(min·max·default), 위 막대 단계 배지 클릭으로 순환, `BDG_QUALITY`·`BDG_QUALITY_SET`(키=값 덮어쓰기). 고친 문제: MSAA 깊이 복사 후 그리드가 바닥에 가려짐(→ 기울기 깊이 바이어스), FXAA 없는 경로에서 알파=휘도로 화면이 비침(→ 알파 1). 단위 테스트 1개(총 63개·737개), `BDG_QUALITY_TEST=1` 7개 판정, CI 23번. 고사양 고유 기능(CSM·SSAO·Forward+)은 3-5b | `5774307` |
-| 3-8 렌더 기준 씬 + 디버그 도구 | `tools/make_render_reference.py`가 `Tests/RenderReference/` 프로젝트를 생성(머티리얼 110개·텍스처 2개·`Scenes/RenderReference.scene` 290개 오브젝트, CI가 다시 만들어 차이 없음 확인): ① 재질 매트릭스(흰 7×7 + 금·구리 거칠기 줄) ② 조명·그림자(얇은 기둥·떠 있는 구·계단·빨간 점광·스폿광) ③ 투명(색 유리 겹침·잘린 철망) ④ 지오메트리(작은 상자 144개·아주 얇은 막대·겹친 평면) ⑤ 포스트(발광 12·20 구·어두운 터널) ⑥ 좌표·색(축·18% 회색·ColorChecker·글자 판) ⑦ 품질 비교(북마크 7·8 = 구역 1을 저사양·감자로) + 9 전체. 새 `CameraBookmark` 컴포넌트(씬에 저장): 숫자 1~9 이동, Ctrl+숫자 현재 시점 저장(명령, 되돌리기 한 번), 단계 지정 가능. **렌더 패스 뷰어**: Alt+1~7 또는 칩으로 Lit·Albedo·Normal·Roughness·Metallic·Depth·Shadow(데이터 보기는 톤매핑·포스트 끔). 칩: 와이어프레임(선 오버레이), 바운딩 상자, 통계 패널(해상도·MSAA·드로우·삼각형·라이트·그림자 캐스터·포스트 + **패스별 GPU 시간**, 타임스탬프 쿼리를 기다리지 않고 읽음). `BDG_RENDER_STATS=1` 로그(`render passes`·`render stats`, CLI는 2-7), `BDG_BOOKMARK=N`. **Sponza는 쓰지 않음**: Khronos판은 CRYENGINE 라이선스(3-8b에서 대체). 단위 테스트 1개(씬 경고 0·290개·북마크 9개, 총 64개·741개), `BDG_REFSCENE_TEST=1` 11개 판정, CI 24번 | (이 커밋) |
+| 3-8 렌더 기준 씬 + 디버그 도구 | `tools/make_render_reference.py`가 `Tests/RenderReference/` 프로젝트를 생성(머티리얼 110개·텍스처 2개·`Scenes/RenderReference.scene` 290개 오브젝트, CI가 다시 만들어 차이 없음 확인): ① 재질 매트릭스(흰 7×7 + 금·구리 거칠기 줄) ② 조명·그림자(얇은 기둥·떠 있는 구·계단·빨간 점광·스폿광) ③ 투명(색 유리 겹침·잘린 철망) ④ 지오메트리(작은 상자 144개·아주 얇은 막대·겹친 평면) ⑤ 포스트(발광 12·20 구·어두운 터널) ⑥ 좌표·색(축·18% 회색·ColorChecker·글자 판) ⑦ 품질 비교(북마크 7·8 = 구역 1을 저사양·감자로) + 9 전체. 새 `CameraBookmark` 컴포넌트(씬에 저장): 숫자 1~9 이동, Ctrl+숫자 현재 시점 저장(명령, 되돌리기 한 번), 단계 지정 가능. **렌더 패스 뷰어**: Alt+1~7 또는 칩으로 Lit·Albedo·Normal·Roughness·Metallic·Depth·Shadow(데이터 보기는 톤매핑·포스트 끔). 칩: 와이어프레임(선 오버레이), 바운딩 상자, 통계 패널(해상도·MSAA·드로우·삼각형·라이트·그림자 캐스터·포스트 + **패스별 GPU 시간**, 타임스탬프 쿼리를 기다리지 않고 읽음). `BDG_RENDER_STATS=1` 로그(`render passes`·`render stats`, CLI는 2-7), `BDG_BOOKMARK=N`. **Sponza는 쓰지 않음**: Khronos판은 CRYENGINE 라이선스(3-8b에서 대체). 단위 테스트 1개(씬 경고 0·290개·북마크 9개, 총 64개·741개), `BDG_REFSCENE_TEST=1` 11개 판정, CI 24번 | `6a3b06f` |
+| 3-9 스트레스·이미지 비교 | **인스턴싱**: 오브젝트 상수를 프레임당 스토리지 버퍼(std430) 하나에 그리기 순서대로 넣고, 메시·파이프라인·텍스처가 같은 불투명 오브젝트를 정렬해 묶은 '연속 구간'마다 인스턴스 그리기 한 번(색 등 값은 오브젝트마다 달라도 됨, 인스턴스 번호 스트림 + base instance). 그림자·외곽선·와이어프레임도 같은 구간. 기준 씬 266개 → 장면 드로우 11번. **스트레스 화면** `BDG_SCREEN=render-stress`: 상자 1만 개 + 4096² BC7 텍스처 16장(256 타일을 인코딩해 블록 반복, 밉 전부) — 인스턴싱 18번 ↔ 끔 10,017번, **같은 그림**(픽셀 일치), CPU 0.8→30 ms, GPU 0.6→30 ms. **VRAM**: RHI가 텍스처·버퍼·타깃 바이트를 직접 셈(+ NVIDIA는 드라이버 수치), 이 장면 약 505 MB. **이미지 비교** `BDG_RENDER_COMPARE=<기준 폴더>`: 북마크 1~9를 돌며 `bookmark_N.png`와 비교, 없으면 기준 생성, `<out>/N.png`·`N_diff.png`(열지도), 표 로그. 오차는 `Core/ImageCompare.*`의 **FLIP(LDR)를 논문대로 직접 구현**(색 반대 공간·CSF 필터·HyAB·특징 항, NVIDIA 코드와 비트 일치는 아님). 같은 빌드 = 0.0000, 노출 1.8 = 6곳 실패(최대 0.38). 단위 테스트 1개(총 65개·750개), `BDG_STRESS_TEST=1`, CI 25·26번. 회귀 CI는 3-9b | (이 커밋) |
 ---
 
 ## M0 — 남은 것
@@ -229,7 +234,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [ ] **3-6b. 플레이 모드 도구** — 실행 중 테두리 색, 시간 배율, 한 프레임 진행 [convenience-features](planning/convenience-features.md)
 - [ ] **3-7. 편집 중 플랫폼 예산 표시** — Draw·삼각형·텍스처·라이트 막대.
 - [ ] **3-8b. 실내 복합 씬 (Sponza 대체)** — 라이선스가 분명한 실내 장면(CC0/CC-BY 확인, 예: 직접 만든 회랑·Intel 샘플 라이선스 검토)으로 텍스처 로딩·다중 라이트·그림자 품질. LOD 생기면 LOD 오버레이, `bdg render passes/stats`는 2-7 CLI와 함께
-- [ ] **3-9. 스트레스·이미지 비교** — 메시 1만 개 인스턴싱, 4K 텍스처 다수로 드로우콜·VRAM 측정, `bdg render compare`(북마크별 FLIP 오차·차이 이미지). 1.0에서 회귀 CI로
+- [ ] **3-9b. 이미지 비교 회귀 CI (1.0)** — 기준 GPU 1대 + 소프트웨어 렌더러로 북마크 기준 이미지를 저장소(LFS 등)에 두고 매 커밋 비교, GLES 3.0/WebGL2 백엔드용 인스턴싱 경로(스토리지 버퍼 대신 UBO 묶음 또는 텍스처) 검토
 
 ## M4 — C# 스크립팅
 

@@ -3,6 +3,7 @@
 #include "Core/Crash.h"
 #include "Core/Guard.h"
 #include "Core/Image.h"
+#include "Core/ImageCompare.h"
 #include "Core/Log.h"
 #include "Platform/Accessibility.h"
 #include "Platform/Window.h"
@@ -129,6 +130,10 @@ struct bdg_engine {
   bdg::RenderTargetHandle viewRT;
   int32_t viewW = 0, viewH = 0;
   bool renderTest = false;
+  bdg::QualitySettings boardQuality = bdg::ReferenceQuality(); // board screens (stress test switches instancing)
+  double boardRenderMs = 0;                                     // CPU time of the last board Render()
+  bool stressTest = false;
+  std::string stressTestValues[6];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bool materialTest = false, qualityTest = false, refSceneTest = false;
@@ -176,7 +181,9 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
     e->viewW = pw;
     e->viewH = ph;
   }
-  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear);
+  auto t0 = std::chrono::steady_clock::now();
+  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, nullptr, &e->boardQuality);
+  e->boardRenderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 }
 
@@ -806,6 +813,63 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 24) v[9] = m->Selected();
 }
 
+// `bdg render compare` until the CLI exists (queue 3-9): BDG_RENDER_COMPARE=<baseline folder> visits camera bookmarks
+// 1-9 of the open scene, compares each picture with <folder>/bookmark_<n>.png (FLIP-style error, Core/ImageCompare)
+// and writes <out>/<n>.png plus <out>/<n>_diff.png (heat map); a missing baseline is created from this run.
+// <out> = BDG_COMPARE_OUT or .cache/compare. Threshold: BDG_COMPARE_THRESHOLD (mean error, default 0.03).
+void RenderCompareStep(bdg_engine* e, int frame, const char* baseDir) {
+  namespace fs = std::filesystem;
+  static int created = 0, failed = 0, compared = 0;
+  static double worst = 0;
+  const int slot = (frame - 4) / 4 + 1, phase = (frame - 4) % 4;
+  if (frame < 4 || slot > 9) return;
+  bdg::SceneView* sv = e->sceneView.get();
+  if (phase == 0) { // move to the bookmark; the picture is read three frames later (shadow map and timers settle)
+    if (!sv->JumpToBookmark(*e->model, slot)) bdg::LogInfo("compare: bookmark {} -", slot);
+    return;
+  }
+  if (phase != 3 || sv->BookmarkName(*e->model, slot).empty()) return;
+  int32_t w, h;
+  std::vector<uint8_t> px;
+  sv->ReadPixels(w, h, px);
+  std::vector<uint8_t> top((size_t)w * h * 4); // render target rows are bottom-up
+  for (int y = 0; y < h; ++y) std::memcpy(&top[(size_t)y * w * 4], &px[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
+  const char* outEnv = std::getenv("BDG_COMPARE_OUT");
+  fs::path out = outEnv ? fs::path(outEnv) : fs::current_path() / ".cache" / "compare", base = fs::path(baseDir);
+  std::error_code ec;
+  fs::create_directories(out, ec);
+  fs::create_directories(base, ec);
+  double threshold = 0.03;
+  if (const char* t = std::getenv("BDG_COMPARE_THRESHOLD")) threshold = std::atof(t);
+  bdg::WritePNG((out / std::format("{}.png", slot)).string().c_str(), w, h, top.data(), false);
+  fs::path basePng = base / std::format("bookmark_{}.png", slot);
+  std::string name = sv->BookmarkName(*e->model, slot), result;
+  int32_t bw = 0, bh = 0;
+  std::vector<uint8_t> baseline;
+  if (!fs::exists(basePng)) {
+    bdg::WritePNG(basePng.string().c_str(), w, h, top.data(), false);
+    ++created;
+    result = "created";
+    bdg::LogInfo("compare: bookmark {} {:<24} baseline created ({}x{})", slot, name, w, h);
+  } else if (!bdg::LoadImageRGBA(basePng, bw, bh, baseline) || bw != w || bh != h) {
+    ++failed;
+    bdg::LogInfo("compare: bookmark {} {:<24} FAIL size {}x{} vs baseline {}x{}", slot, name, w, h, bw, bh);
+  } else {
+    bdg::ImageDiff d;
+    bdg::CompareImages(baseline.data(), top.data(), w, h, d);
+    bdg::WritePNG((out / std::format("{}_diff.png", slot)).string().c_str(), w, h, d.heat.data(), false);
+    bool ok = d.mean <= threshold;
+    failed += ok ? 0 : 1;
+    ++compared;
+    worst = std::max(worst, d.mean);
+    bdg::LogInfo("compare: bookmark {} {:<24} flip={:.4f} max={:.3f} over0.1={:.2f}% base={:.2f} {}", slot, name, d.mean, d.max,
+                 d.over * 100, threshold, ok ? "ok" : "FAIL");
+  }
+  if (slot == 9 || sv->BookmarkName(*e->model, slot + 1).empty())
+    bdg::LogInfo("compare summary: compared={} created={} failed={} worst={:.4f} out={}", compared, created, failed, worst,
+                 out.string());
+}
+
 // Scripted render reference check (BDG_REFSCENE_TEST=1 with the Tests/RenderReference project, queue 3-8):
 // bookmarks 1 / 2 / 8 by key, the Albedo / Normal / Depth / Shadow views (Alt + digit), the wireframe chip,
 // Ctrl + 5 storing a bookmark (one undo step), GPU pass timings.
@@ -1374,7 +1438,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (auto parity = bdg::BuildParityScreen(component)) e->editor->SetRoot(std::move(parity));
     else bdg::LogError("unknown parity component: {}", component);
   }
-  const bool boardScreen = screen && (std::string(screen) == "render-ref" || std::string(screen) == "render-assets");
+  const bool boardScreen = screen && (std::string(screen) == "render-ref" || std::string(screen) == "render-assets" ||
+                                      std::string(screen) == "render-stress");
   if (!boardScreen) { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
     e->r3d = std::make_unique<bdg::Renderer3D>();
     e->sceneView = std::make_unique<bdg::SceneView>();
@@ -1430,6 +1495,21 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       e->editor->SetRoot(BuildRenderReferenceScreen(e));
     }
     else { bdg::LogError("render-ref: the 3D renderer did not start"); e->board.reset(); }
+  }
+  if (screen && std::string(screen) == "render-stress") { // instancing and video memory stress (queue 3-9)
+    int instances = 10000, textures = 16;
+    if (const char* n = std::getenv("BDG_STRESS_INSTANCES")) instances = std::clamp(std::atoi(n), 1, 1000000);
+    if (const char* n = std::getenv("BDG_STRESS_TEXTURES")) textures = std::clamp(std::atoi(n), 0, 64);
+    e->stressTest = std::getenv("BDG_STRESS_TEST") != nullptr;
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->board = std::make_unique<bdg::ReferenceBoard>();
+    if (e->r3d->Init(e->rhi)) {
+      auto t0 = std::chrono::steady_clock::now();
+      e->board->InitStress(e->rhi, *e->r3d, instances, textures);
+      bdg::LogInfo("stress: built {} cubes and {} 4K textures in {:.0f} ms", instances, textures,
+                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+      e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    } else { bdg::LogError("render-stress: the 3D renderer did not start"); e->board.reset(); }
   }
   if (screen && std::string(screen) == "render-assets") { // standard test models (queue 3-1b)
     const char* custom = std::getenv("BDG_TESTASSETS"); // the folder itself; otherwise .cache/testassets above the working folder
@@ -1656,6 +1736,34 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
     if (e->refSceneTest && !e->showGallery) InjectRefSceneTest(e, frames, scale);
+    if (const char* baseDir = std::getenv("BDG_RENDER_COMPARE"); baseDir && e->sceneView && e->model)
+      RenderCompareStep(e, frames, baseDir);
+    if (e->stressTest && e->board) { // BDG_STRESS_TEST: the same picture with and without instancing
+      static std::vector<uint8_t> instanced;
+      static uint32_t drawsOn = 0;
+      static double gpuOn = 0, cpuOn = 0;
+      auto gpu = [&] { double ms = 0; for (const auto& p : e->r3d->Stats().passes) ms += p.ms; return ms; };
+      int32_t rw, rh;
+      if (frames == 6) {
+        e->rhi.ReadRenderTarget(e->viewRT, rw, rh, instanced);
+        drawsOn = e->r3d->Stats().sceneDraws;
+        gpuOn = gpu();
+        cpuOn = e->boardRenderMs;
+        e->boardQuality.instancing = false;
+      }
+      if (frames == 12) {
+        std::vector<uint8_t> single;
+        e->rhi.ReadRenderTarget(e->viewRT, rw, rh, single);
+        size_t differ = 0;
+        for (size_t i = 0; i < single.size() && i < instanced.size(); ++i) differ += single[i] != instanced[i];
+        auto* v = e->stressTestValues;
+        v[0] = std::format("{}", drawsOn);
+        v[1] = std::format("{}", e->r3d->Stats().sceneDraws);
+        v[2] = std::format("{}", differ == 0 && single.size() == instanced.size() ? 1 : 0);
+        v[3] = std::format("{:.2f}->{:.2f}", cpuOn, e->boardRenderMs);
+        v[4] = std::format("{:.2f}->{:.2f}", gpuOn, gpu());
+      }
+    }
     if (frames == 1 && e->sceneView && e->model)                // BDG_BOOKMARK=N: open the Scene view at a camera bookmark
       if (const char* bm = std::getenv("BDG_BOOKMARK"); bm && !e->sceneView->JumpToBookmark(*e->model, std::atoi(bm)))
         bdg::LogWarn("scene view: no camera bookmark {}", bm);
@@ -1821,6 +1929,22 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (std::getenv("BDG_RENDER_STATS") && e->r3d) { // `bdg render passes` / `bdg render stats` until the CLI exists (2-7)
         bdg::LogInfo("render passes: {}", e->r3d->DescribePasses());
         bdg::LogInfo("render stats: {}", e->r3d->DescribeStats());
+      }
+      if (e->board && std::getenv("BDG_SCREEN") && std::string(std::getenv("BDG_SCREEN")) == "render-stress") {
+        const bdg::RHI::MemoryStats& mem = e->rhi.Memory();
+        int64_t total = 0, avail = 0;
+        std::string driver = e->rhi.VideoMemoryKB(total, avail) ? std::format(" driver_used_mb={}", (total - avail) / 1024) : std::string();
+        double gpuMs = 0;
+        for (const auto& p : e->r3d->Stats().passes) gpuMs += p.ms;
+        bdg::LogInfo("stress: objects={} scene_draws={} draws={} tris={} textures={}x4096 vram_mb={:.0f} (textures {:.0f}, buffers {:.0f}, "
+                     "targets {:.0f}){} cpu_ms={:.2f} gpu_ms={:.2f}",
+                     e->r3d->Stats().objects, e->r3d->Stats().sceneDraws, e->r3d->Stats().draws, e->r3d->Stats().triangles,
+                     e->board->StressTextures(), mem.Total() / 1048576.0, mem.textures / 1048576.0, mem.buffers / 1048576.0,
+                     mem.targets / 1048576.0, driver, e->boardRenderMs, gpuMs);
+        if (e->stressTest) {
+          auto* v = e->stressTestValues;
+          bdg::LogInfo("stress test: draws_instanced={} draws_single={} same_picture={} cpu_ms={} gpu_ms={}", v[0], v[1], v[2], v[3], v[4]);
+        }
       }
       if (e->refSceneTest) {
         auto* v = e->refSceneTestValues;

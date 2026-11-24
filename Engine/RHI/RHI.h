@@ -2,6 +2,7 @@
 #include "Core/Math.h"
 #include <cstddef>
 #include <cstdint>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -16,7 +17,7 @@ struct PipelineHandle { uint32_t id = 0; bool Valid() const { return id != 0; } 
 struct TextureHandle  { uint32_t id = 0; bool Valid() const { return id != 0; } };
 struct RenderTargetHandle { uint32_t id = 0; bool Valid() const { return id != 0; } };
 
-enum class BufferUsage { Vertex, Index, Uniform };
+enum class BufferUsage { Vertex, Index, Uniform, Storage };
 // SRGBA8: 8-bit sRGB-encoded colour, decoded to linear when sampled (albedo textures, colour pictures).
 enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4 }; // BCn: 4x4 blocks (cooked textures)
 enum class CullMode { None, Back };
@@ -33,6 +34,7 @@ struct VertexAttr {
   uint32_t location;
   uint32_t components; // float components (1-4)
   uint32_t offset;     // bytes
+  uint32_t binding = 0; // 0 = per vertex, 1 = per instance (PipelineDesc::instanceStride)
 };
 
 struct PipelineDesc {
@@ -41,6 +43,7 @@ struct PipelineDesc {
   VertexAttr  attrs[8] = {};
   uint32_t    attrCount = 0;
   uint32_t    stride = 0;               // bytes per vertex
+  uint32_t    instanceStride = 0;       // bytes per instance of the binding-1 stream (0 = none)
   bool        alphaBlend = false;
   bool        additive = false;         // ONE + ONE (bloom upsampling); wins over alphaBlend
   bool        wireframe = false;        // triangle edges only (debug overlay)
@@ -63,6 +66,7 @@ public:
   void         DestroyBuffer(BufferHandle buffer);
   void         BindUniformBuffer(uint32_t slot, BufferHandle buffer); // GLSL: layout(std140, binding = slot)
   void         BindUniformBufferRange(uint32_t slot, BufferHandle buffer, size_t offset, size_t size);
+  void         BindStorageBuffer(uint32_t slot, BufferHandle buffer);  // GLSL: layout(std430, binding = slot) buffer
   size_t       UniformAlignment() const { return uboAlign_; } // offsets for BindUniformBufferRange are multiples
 
   TextureHandle CreateTexture2D(int32_t w, int32_t h, TextureFormat format, const void* pixels = nullptr);
@@ -97,6 +101,15 @@ public:
 
   void Draw(PipelineHandle pipeline, BufferHandle vertices, uint32_t vertexCount, uint32_t firstVertex = 0);
   void DrawIndexed(PipelineHandle pipeline, BufferHandle vertices, BufferHandle indices, uint32_t indexCount);
+  // `instances` copies; the binding-1 stream starts at element firstInstance (one draw call for many objects).
+  void DrawIndexedInstanced(PipelineHandle pipeline, BufferHandle vertices, BufferHandle indices, uint32_t indexCount,
+                            uint32_t instances, uint32_t firstInstance, BufferHandle instanceData);
+
+  // Video memory this RHI has allocated (exact byte counts of its own objects; drivers add their overhead).
+  struct MemoryStats { uint64_t textures = 0, buffers = 0, targets = 0; uint64_t Total() const { return textures + buffers + targets; } };
+  const MemoryStats& Memory() const { return mem_; }
+  // The driver's own numbers (NVIDIA GL_NVX_gpu_memory_info), KiB. false when the driver does not say.
+  bool VideoMemoryKB(int64_t& total, int64_t& available) const;
 
   // GPU timestamps (render pass timings): Timestamp() records when the GPU reaches this point; the result is
   // read later without waiting (false while the GPU has not got there yet).
@@ -112,8 +125,11 @@ public:
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
-  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, additive = false, wireframe = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
-  struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; };
+  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, additive = false, wireframe = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; uint32_t instanceStride = 0; };
+  struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; uint64_t bytes = 0; };
+  MemoryStats mem_;
+  std::unordered_map<uint32_t, uint64_t> bufferBytes_, textureBytes_;
+  bool nvxMemory_ = false;
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;
   int32_t frameW_ = 0, frameH_ = 0;

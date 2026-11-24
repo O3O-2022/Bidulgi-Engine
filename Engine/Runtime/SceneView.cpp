@@ -637,6 +637,15 @@ bool SceneView::JumpToBookmark(const EditorModel& model, int slot) {
   return false;
 }
 
+std::string SceneView::BookmarkName(const EditorModel& model, int slot) const {
+  for (auto& [id, b] : Bookmarks(model))
+    if (b->slot == slot) {
+      const SceneObject* o = model.scene.Find(id);
+      return o ? o->name : id;
+    }
+  return {};
+}
+
 bool SceneView::StoreBookmark(EditorModel& model, int slot) {
   std::string target;
   for (auto& [id, b] : Bookmarks(model))

@@ -109,6 +109,8 @@ struct RenderStats {
   DebugView view = DebugView::Lit;
   struct Pass { const char* name; double ms; };
   std::vector<Pass> passes; // GPU time per pass of the newest finished frame (empty until one is ready)
+  uint32_t sceneDraws = 0;  // draw calls of the scene pass (with instancing: one per run of alike objects)
+  size_t objects = 0;       // objects drawn in the scene pass
 };
 
 class Renderer3D {
@@ -136,8 +138,8 @@ public:
 private:
   RHI* rhi_ = nullptr;
   PipelineHandle opaque_, twoSided_, blend_;
-  BufferHandle frameUbo_, objectUbo_;
-  size_t objectCapacity_ = 0, objectStride_ = 0;
+  BufferHandle frameUbo_, objectBuffer_, instanceIds_; // object constants (storage buffer), 0..N-1 instance stream
+  size_t objectCapacity_ = 0;
   TextureHandle white_;
   uint32_t draws_ = 0;
   uint64_t triangles_ = 0;

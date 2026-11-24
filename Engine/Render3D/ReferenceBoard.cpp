@@ -2,6 +2,7 @@
 #include "Assets/GltfImport.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
+#include "Assets/TextureCooker.h"
 #include <cstring>
 #include <algorithm>
 #include <cmath>
@@ -250,8 +251,91 @@ bool ReferenceBoard::InitAssets(RHI& rhi, Renderer3D& r, const std::filesystem::
   return all;
 }
 
+bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
+  quad_ = r.CreateMesh(MakeQuad(1, 1));
+  Material3D ground;
+  ground.baseColor = {0.2f, 0.2f, 0.21f, 1};
+  ground.roughness = 0.9f;
+  items_.push_back({&plane_, At({0, 0, 0}, 200, 1, 200), ground});
+  int side = std::max(1, (int)std::ceil(std::sqrt((double)instances)));
+  for (int i = 0; i < instances; ++i) { // a grid of small cubes, each its own colour and height
+    int x = i % side, z = i / side;
+    float h = 0.2f + 0.6f * (0.5f + 0.5f * std::sin(x * 0.37f) * std::cos(z * 0.29f));
+    Material3D m;
+    float hue = (float)(x + z) / (2.f * side);
+    m.baseColor = {0.35f + 0.5f * std::fabs(std::sin(hue * 6.28f)), 0.35f + 0.5f * std::fabs(std::sin(hue * 6.28f + 2.1f)),
+                   0.35f + 0.5f * std::fabs(std::sin(hue * 6.28f + 4.2f)), 1};
+    m.roughness = 0.5f;
+    items_.push_back({&box_, At({(x - side * 0.5f) * 0.6f, h * 0.5f, -(float)z * 0.6f}, 0.4f, h, 0.4f), m});
+  }
+  // 4096 x 4096 BC7 textures, full mip chain: a 256 x 256 tile is encoded once per texture and its blocks repeated
+  // (BC blocks are independent, so the repeat is valid texture data); the smallest levels are solid colour.
+  for (int t = 0; t < textures; ++t) {
+    const int tile = 256, size = 4096;
+    std::vector<uint8_t> px((size_t)tile * tile * 4);
+    for (int y = 0; y < tile; ++y)
+      for (int x = 0; x < tile; ++x) {
+        uint8_t* p = &px[((size_t)y * tile + x) * 4];
+        bool line = (x % 64) < 3 || (y % 64) < 3;
+        p[0] = (uint8_t)(line ? 30 : 60 + (t * 47 + x / 2) % 180);
+        p[1] = (uint8_t)(line ? 30 : 60 + (t * 89 + y / 2) % 180);
+        p[2] = (uint8_t)(line ? 30 : 60 + (t * 131 + (x + y) / 4) % 180);
+        p[3] = 255;
+      }
+    TextureSettings ts;
+    ts.maxSize = tile;
+    CookedTexture cooked;
+    CookTexture(px.data(), tile, tile, ts, cooked); // BC7 sRGB, 9 levels (256 ... 1)
+    std::vector<std::vector<uint8_t>> levels;
+    for (int level = 0; (size >> level) >= 1; ++level) {
+      int s = size >> level, ts2 = tile >> level, blocks = (s + 3) / 4;
+      std::vector<uint8_t> data((size_t)blocks * blocks * 16);
+      if (ts2 >= 4) { // repeat the tile's blocks
+        int tb = ts2 / 4;
+        const std::vector<uint8_t>& src = cooked.mips[level];
+        for (int by = 0; by < blocks; ++by)
+          for (int bx = 0; bx < blocks; ++bx)
+            std::memcpy(&data[((size_t)by * blocks + bx) * 16], &src[((size_t)(by % tb) * tb + (bx % tb)) * 16], 16);
+      } else { // average colour, one solid block repeated
+        const std::vector<uint8_t>& last = cooked.mips[std::min<size_t>(cooked.mips.size() - 1, 6)];
+        for (size_t k = 0; k < data.size(); k += 16) std::memcpy(&data[k], last.data(), 16);
+      }
+      levels.push_back(std::move(data));
+    }
+    TextureDesc d;
+    d.w = d.h = size;
+    d.format = TextureFormat::BC7_SRGB;
+    d.repeat = true;
+    std::vector<const void*> ptrs;
+    std::vector<size_t> sizes;
+    for (const auto& l : levels) { ptrs.push_back(l.data()); sizes.push_back(l.size()); }
+    stressTextures_.push_back(rhi.CreateTextureMips(d, ptrs, sizes));
+    Material3D wall;
+    wall.baseMap = stressTextures_.back();
+    wall.baseColor = {1, 1, 1, 1};
+    wall.roughness = 0.7f;
+    int col = t % 8, row = t / 8;
+    items_.push_back({&quad_, At({(col - 3.5f) * 4.2f, 2.2f + row * 4.2f, 6.f}, 4.f, 4.f), wall});
+  }
+  camera.position = {0, 22, 34};
+  camera.target = {0, 0, -14};
+  camera.fovY = 50.f;
+  light.toLight = {-0.4f, 0.8f, 0.45f};
+  light.intensity = 2.6f;
+  light.shadows = true;
+  labels_.push_back({{-side * 0.3f, 0.2f, 1.f}, std::format("{} cubes", instances)});
+  if (textures > 0) labels_.push_back({{-16.f, 1.2f, 6.f}, std::format("{} x 4096² BC7", textures)});
+  return true;
+}
+
 void ReferenceBoard::Shutdown() {
   if (!renderer_) return;
+  for (TextureHandle t : stressTextures_) rhi_->DestroyTexture(t);
+  stressTextures_.clear();
   for (AssetModel& a : assets_) renderer_->DestroyModel(a.model);
   assets_.clear();
   for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_, &box_}) renderer_->DestroyMesh(*m);

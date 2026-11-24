@@ -5,6 +5,7 @@
 #include "Assets/GltfImport.h"
 #include "Runtime/Gizmo.h"
 #include "Render3D/Quality.h"
+#include "Core/ImageCompare.h"
 #include <cstdio>
 #include <filesystem>
 #include <cmath>
@@ -193,4 +194,34 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(ToneMapACES(0.f) == 0.f && ToneMapACES(100.f) == 1.f);
   float prev = 0;
   for (float x = 0.01f; x < 8.f; x *= 1.3f) { CHECK(ToneMapACES(x) > prev); prev = ToneMapACES(x); } // keeps order
+}
+
+TEST_CASE("image compare: FLIP-style error is zero for equal pictures and grows with the difference (queue 3-9)") {
+  const int W = 64, H = 48;
+  std::vector<uint8_t> a(W * H * 4), b;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      uint8_t* p = &a[(y * W + x) * 4];
+      p[0] = (uint8_t)(x * 4); p[1] = (uint8_t)(y * 5); p[2] = (uint8_t)(((x / 8 + y / 8) % 2) * 200 + 20); p[3] = 255;
+    }
+  ImageDiff d;
+  CHECK(CompareImages(a.data(), a.data(), W, H, d));
+  CHECK(d.mean == 0 && d.max == 0 && d.over == 0 && d.heat.size() == (size_t)W * H * 4 && d.heat[0] == 0);
+
+  b = a; // a little brighter everywhere: small error
+  for (size_t i = 0; i < b.size(); ++i) if (i % 4 != 3) b[i] = (uint8_t)std::min(255, b[i] + 3);
+  CHECK(CompareImages(a.data(), b.data(), W, H, d));
+  double small = d.mean;
+  CHECK(small > 0 && small < 0.15); // about FLIP's "just noticeable" range
+
+  b = a; // a red square: large error there, none far away
+  for (int y = 10; y < 20; ++y) for (int x = 10; x < 20; ++x) { uint8_t* p = &b[(y * W + x) * 4]; p[0] = 255; p[1] = 0; p[2] = 0; }
+  CHECK(CompareImages(a.data(), b.data(), W, H, d));
+  CHECK(d.error[15 * W + 15] > 0.5f && d.error[40 * W + 60] < 0.01f && d.over > 0.02); // local: strong inside, none far away
+
+  std::vector<uint8_t> black(W * H * 4, 0), white(W * H * 4, 255);
+  for (size_t i = 3; i < black.size(); i += 4) black[i] = 255;
+  CHECK(CompareImages(black.data(), white.data(), W, H, d));
+  CHECK(d.mean > 0.9);
+  CHECK(!CompareImages(nullptr, a.data(), W, H, d));
 }

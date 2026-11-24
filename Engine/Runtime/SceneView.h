@@ -62,6 +62,7 @@ public:
   bool wireframe = false, bounds = false, statsPanel = false;
   bool JumpToBookmark(const EditorModel& model, int slot);     // false: no bookmark with that number
   bool StoreBookmark(EditorModel& model, int slot);            // through commands (one undo step)
+  std::string BookmarkName(const EditorModel& model, int slot) const; // "" when there is none
   bool ChipCenter(const std::string& name, float& x, float& y) const; // test hook: "view", "wire", "bounds", "stats"
   bool localSpace = false; // gizmo axes: the object's own (true) or the world's; scale always uses the object's
   // Gizmo of the current tool and selection in the last view (false: no gizmo).

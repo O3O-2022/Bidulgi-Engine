@@ -135,6 +135,7 @@ add_library(BidulgiEngine STATIC
   Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp
+  Engine/Core/ImageCompare.h Engine/Core/ImageCompare.cpp
   Engine/UI/Theme.h        Engine/UI/Theme.cpp
   Engine/UI/UI.h           Engine/UI/UI.cpp
   Engine/UI/Dock.h         Engine/UI/Dock.cpp

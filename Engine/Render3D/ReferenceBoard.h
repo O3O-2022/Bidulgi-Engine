@@ -19,6 +19,10 @@ public:
   // Stage 2 (queue 3-1b): the standard Khronos test models from `tools/testassets.py fetch` side by side instead
   // of the procedural board. Check() then reports import facts and coverage per model.
   bool InitAssets(RHI& rhi, Renderer3D& renderer, const std::filesystem::path& dir);
+  // Stage 3 (queue 3-9): `instances` cubes (one mesh, every colour different: instancing keeps them in one draw)
+  // and `textures` 4096x4096 BC7 textures with full mips on a wall of quads, for draw call and video memory numbers.
+  bool InitStress(RHI& rhi, Renderer3D& renderer, int instances, int textures);
+  int StressTextures() const { return (int)stressTextures_.size(); }
   // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes
   // (x = -2.0, z = 1.6), clear of every probe Check() reads.
   bool AddModel(const std::filesystem::path& gltf);
@@ -44,6 +48,7 @@ private:
   Model3D probe_, model_;
   struct AssetModel { std::string name; Model3D model; glm::vec3 center{0}; std::string facts; bool ok = false; };
   std::vector<AssetModel> assets_;
+  std::vector<TextureHandle> stressTextures_;
   bool assetMode_ = false;
   bool probeLoaded_ = false;
   TextureHandle letters_;

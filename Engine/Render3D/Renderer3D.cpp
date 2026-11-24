@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <format>
+#include <tuple>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -26,16 +27,35 @@ const char* kSkyFn = R"(vec3 SkyColor(vec3 d, float blur) {
   return mix(uGround.rgb, up, smoothstep(-b, b, d.y));
 }
 )";
-std::string Src(const char* text) { // expands #FRAME_UBO and #SKY_FN
+// Object constants (queue 3-9): one std430 array for the whole frame, indexed per instance, so a run of alike
+// objects is one instanced draw. The old uniform names stay as macros.
+const char* kObjectsCommon = R"(struct Object3D { mat4 model; vec4 baseColor; vec4 params; vec4 emissive; vec4 maps; vec4 extra; };
+layout(std430, binding = 0) readonly buffer Objects3D { Object3D uObjects[]; };
+)";
+const char* kObjectsVS = R"(layout(location = 4) in float aObject; // this instance's index into uObjects
+flat out int vObject;
+#define uModel uObjects[int(aObject + 0.5)].model
+)";
+const char* kObjectsFS = R"(flat in int vObject;
+#define uModel uObjects[vObject].model
+#define uBaseColor uObjects[vObject].baseColor
+#define uParams uObjects[vObject].params
+#define uEmissive uObjects[vObject].emissive
+#define uMaps uObjects[vObject].maps
+#define uExtra uObjects[vObject].extra
+)";
+std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS and #OBJECTS_FS
   std::string s = text;
-  for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}})
+  const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
+  for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
 
 const char* kVS = R"(#version 450 core
 #FRAME_UBO
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+#OBJECTS_VS
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
@@ -43,6 +63,7 @@ layout(location = 3) in vec4 aTangent;
 layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
 out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent; out vec3 vLit;
 void main() {
+  vObject = int(aObject + 0.5);
   vec4 w = uModel * vec4(aPos, 1.0);
   vWorld = w.xyz;
   vNormal = transpose(inverse(mat3(uModel))) * aNormal;
@@ -71,7 +92,7 @@ void main() {
 // occlusion strength, alpha cutoff, -).
 const char* kFS = R"(#version 450 core
 #FRAME_UBO
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+#OBJECTS_FS
 layout(binding = 0) uniform sampler2D uBaseMap;
 layout(binding = 1) uniform sampler2D uMetalRoughMap;
 layout(binding = 2) uniform sampler2D uNormalMap;
@@ -265,14 +286,14 @@ void main() {
 // Shadow casters: depth only; alpha-masked materials cut their holes.
 const char* kShadowVS = R"(#version 450 core
 #FRAME_UBO
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+#OBJECTS_VS
 layout(location = 0) in vec3 aPos;
 layout(location = 2) in vec2 aUV;
 out vec2 vUV;
-void main() { vUV = aUV; gl_Position = uLightViewProj * (uModel * vec4(aPos, 1.0)); }
+void main() { vObject = int(aObject + 0.5); vUV = aUV; gl_Position = uLightViewProj * (uModel * vec4(aPos, 1.0)); }
 )";
 const char* kShadowFS = R"(#version 450 core
-layout(std140, binding = 2) uniform Object3D { mat4 uModel; vec4 uBaseColor; vec4 uParams; vec4 uEmissive; vec4 uMaps; vec4 uExtra; };
+#OBJECTS_FS
 layout(binding = 0) uniform sampler2D uBaseMap;
 in vec2 vUV;
 void main() {
@@ -452,7 +473,7 @@ bool ProjectToPixel(const Camera3D& cam, int32_t w, int32_t h, const glm::vec3& 
 bool Renderer3D::Init(RHI& rhi) {
   rhi_ = &rhi;
   const std::string vs = Src(kVS), fs = Src(kFS), gridVS = Src(kGridVS), gridFS = Src(kGridFS), skyFS = Src(kSkyFS),
-                    shadowVS = Src(kShadowVS);
+                    shadowVS = Src(kShadowVS), shadowFS = Src(kShadowFS);
   PipelineDesc pd;
   pd.vertexSource = vs.c_str();
   pd.fragmentSource = fs.c_str();
@@ -460,8 +481,10 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.attrs[1] = {1, 3, offsetof(Vertex3D, nx)};
   pd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
   pd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
-  pd.attrCount = 4;
+  pd.attrs[4] = {4, 1, 0, 1}; // instance stream: object index
+  pd.attrCount = 5;
   pd.stride = sizeof(Vertex3D);
+  pd.instanceStride = sizeof(float);
   pd.depthTest = true;
   pd.cull = CullMode::Back;
   pd.debugName = "forward3d";
@@ -506,7 +529,7 @@ bool Renderer3D::Init(RHI& rhi) {
   gp.debugName = "sky";
   sky_ = rhi.CreatePipeline(gp);
   pd.vertexSource = shadowVS.c_str();
-  pd.fragmentSource = kShadowFS;
+  pd.fragmentSource = shadowFS.c_str();
   pd.depthTest = true;
   pd.depthWrite = true;
   pd.alphaBlend = false;
@@ -524,8 +547,10 @@ bool Renderer3D::Init(RHI& rhi) {
     wd.attrs[1] = {1, 3, offsetof(Vertex3D, nx)};
     wd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
     wd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
-    wd.attrCount = 4;
+    wd.attrs[4] = {4, 1, 0, 1};
+    wd.attrCount = 5;
     wd.stride = sizeof(Vertex3D);
+    wd.instanceStride = sizeof(float);
     wd.alphaBlend = true;
     wd.wireframe = true;
     wd.depthTest = true;
@@ -569,15 +594,15 @@ bool Renderer3D::Init(RHI& rhi) {
   frameUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FrameData), true);
   const uint8_t white[4] = {255, 255, 255, 255};
   white_ = rhi.CreateTexture2D(1, 1, TextureFormat::SRGBA8, white);
-  size_t a = rhi.UniformAlignment();
-  objectStride_ = (sizeof(ObjectData) + a - 1) / a * a;
+
   return true;
 }
 
 void Renderer3D::Shutdown() {
   if (!rhi_) return;
   rhi_->DestroyBuffer(frameUbo_);
-  rhi_->DestroyBuffer(objectUbo_);
+  rhi_->DestroyBuffer(objectBuffer_);
+  rhi_->DestroyBuffer(instanceIds_);
   rhi_->DestroyTexture(white_);
   for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
@@ -736,16 +761,49 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
-  // All object constants in one buffer, one aligned slice per draw (no buffer rewrite between draws).
-  if (items.size() > objectCapacity_) {
-    rhi_->DestroyBuffer(objectUbo_);
-    objectCapacity_ = std::max<size_t>(items.size(), 64) * 2;
-    objectUbo_ = rhi_->CreateBuffer(BufferUsage::Uniform, nullptr, objectCapacity_ * objectStride_, true);
+  // Draw order (queue 3-9): opaque items sorted so alike ones (same pipeline, mesh and textures) sit together, each
+  // such run one instanced draw; blended items after them, back to front, one by one. Object constants go into the
+  // storage buffer in this order, so a run's instances are consecutive elements.
+  auto pipeOf = [&](const Material3D& m) { return m.alpha == Material3D::Alpha::Blend ? blend_ : m.doubleSided ? twoSided_ : opaque_; };
+  auto runKey = [&](size_t i) {
+    const Material3D& m = items[i].material;
+    return std::make_tuple(pipeOf(m).id, (uintptr_t)items[i].mesh, m.baseMap.id, m.metalRoughMap.id, m.normalMap.id, m.occlusionMap.id,
+                           m.emissiveMap.id);
+  };
+  std::vector<size_t> slots, blended;
+  slots.reserve(items.size());
+  for (size_t i = 0; i < items.size(); ++i)
+    if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : slots).push_back(i);
+  std::stable_sort(slots.begin(), slots.end(), [&](size_t x, size_t y) { return runKey(x) < runKey(y); });
+  auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
+  std::sort(blended.begin(), blended.end(), [&](size_t x, size_t y) { return dist(x) > dist(y); });
+  const size_t opaqueSlots = slots.size();
+  slots.insert(slots.end(), blended.begin(), blended.end());
+  std::vector<uint32_t> slotOf(items.size(), UINT32_MAX);
+  for (size_t k = 0; k < slots.size(); ++k) slotOf[slots[k]] = (uint32_t)k;
+  struct Run { uint32_t first, count; size_t item; };
+  std::vector<Run> runs;
+  for (size_t k = 0; k < slots.size(); ++k) {
+    bool joins = q.instancing && k < opaqueSlots && !runs.empty() && runs.back().first + runs.back().count == k &&
+                 runKey(runs.back().item) == runKey(slots[k]);
+    if (joins) ++runs.back().count;
+    else runs.push_back({(uint32_t)k, 1, slots[k]});
   }
-  std::vector<uint8_t> blob(items.size() * objectStride_, 0);
-  for (size_t i = 0; i < items.size(); ++i) {
-    const DrawItem3D& it = items[i];
-    ObjectData o{};
+  size_t opaqueRuns = 0;
+  while (opaqueRuns < runs.size() && runs[opaqueRuns].first < opaqueSlots) ++opaqueRuns;
+  if (slots.size() > objectCapacity_) { // grow both buffers (they are sized together)
+    rhi_->DestroyBuffer(objectBuffer_);
+    rhi_->DestroyBuffer(instanceIds_);
+    objectCapacity_ = std::max<size_t>(slots.size(), 256) * 2;
+    objectBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, objectCapacity_ * sizeof(ObjectData), true);
+    std::vector<float> ids(objectCapacity_);
+    for (size_t k = 0; k < ids.size(); ++k) ids[k] = (float)k;
+    instanceIds_ = rhi_->CreateBuffer(BufferUsage::Vertex, ids.data(), ids.size() * sizeof(float));
+  }
+  std::vector<ObjectData> objects(slots.size());
+  for (size_t k = 0; k < slots.size(); ++k) {
+    const DrawItem3D& it = items[slots[k]];
+    ObjectData& o = objects[k];
     std::memcpy(o.model, glm::value_ptr(it.model), sizeof(o.model));
     const Material3D& m = it.material;
     o.baseColor[0] = m.baseColor.r; o.baseColor[1] = m.baseColor.g; o.baseColor[2] = m.baseColor.b; o.baseColor[3] = m.baseColor.a;
@@ -754,9 +812,18 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     auto has = [](TextureHandle t) { return t.Valid() ? 1.f : 0.f; };
     o.maps[0] = has(m.baseMap); o.maps[1] = has(m.metalRoughMap); o.maps[2] = has(m.normalMap); o.maps[3] = has(m.occlusionMap);
     o.extra[0] = has(m.emissiveMap); o.extra[1] = m.occlusionStrength; o.extra[2] = m.alphaCutoff;
-    std::memcpy(blob.data() + i * objectStride_, &o, sizeof(o));
   }
-  if (!blob.empty()) rhi_->UpdateBuffer(objectUbo_, blob.data(), blob.size());
+  if (!objects.empty()) rhi_->UpdateBuffer(objectBuffer_, objects.data(), objects.size() * sizeof(ObjectData));
+  rhi_->BindStorageBuffer(0, objectBuffer_);
+  auto drawRun = [&](PipelineHandle p, const Run& r) {
+    const Mesh3D& mesh = *items[r.item].mesh;
+    rhi_->DrawIndexedInstanced(p, mesh.vertices, mesh.indices, mesh.indexCount, r.count, r.first, instanceIds_);
+    ++draws_;
+  };
+  auto bindMaps = [&](const Material3D& m) {
+    const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
+    for (uint32_t slot = 0; slot < 5; ++slot) rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
+  };
 
   rhi_->BindUniformBuffer(1, frameUbo_);
   rhi_->BindUniformBuffer(3, lightsUbo_);
@@ -767,14 +834,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       shadowSize_ = q.shadowMapSize;
     }
     rhi_->BeginRenderTarget(shadowRT_, {0, 0, 0, 0});
-    for (size_t i = 0; i < items.size(); ++i) {
-      const DrawItem3D& it = items[i];
-      if (!it.mesh || !it.mesh->indexCount || it.material.alpha == Material3D::Alpha::Blend) continue;
-      rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
-      rhi_->BindTexture(0, it.material.baseMap.Valid() ? it.material.baseMap : white_);
-      rhi_->DrawIndexed(shadowPipe_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
-      ++draws_;
-      ++stats_.shadowCasters;
+    for (size_t r = 0; r < opaqueRuns; ++r) { // the same runs: alike objects cast in one draw too
+      const Material3D& m = items[runs[r].item].material;
+      rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
+      drawRun(shadowPipe_, runs[r]);
+      stats_.shadowCasters += runs[r].count;
     }
     rhi_->EndRenderTarget();
     if (timing) Mark(timer, "shadow");
@@ -792,11 +856,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     }
     rhi_->BeginRenderTarget(maskRT_, {0, 0, 0, 0});
     for (size_t i : extras->outlined)
-      if (i < items.size() && items[i].mesh && items[i].mesh->indexCount) {
-        rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
-        rhi_->DrawIndexed(mask_, items[i].mesh->vertices, items[i].mesh->indices, items[i].mesh->indexCount);
-        ++draws_;
-      }
+      if (i < items.size() && slotOf[i] != UINT32_MAX) drawRun(mask_, Run{slotOf[i], 1, i});
     rhi_->EndRenderTarget();
   }
   const int samples = std::clamp(q.msaa, 1, 8);
@@ -813,30 +873,21 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
                                    (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.b, 0.f, 1.f) * 255));
   rhi_->BeginRenderTarget(hdrRT_, linearClear);
-  std::vector<size_t> order, blended;
-  for (size_t i = 0; i < items.size(); ++i)
-    if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : order).push_back(i);
-  auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
-  std::sort(blended.begin(), blended.end(), [&](size_t a, size_t b) { return dist(a) > dist(b); }); // back to front
-  size_t opaqueCount = order.size();
-  order.insert(order.end(), blended.begin(), blended.end());
-  for (size_t n = 0; n <= order.size(); ++n) {
-    if (n == opaqueCount && bg.draw) { // sky where no surface was drawn
+  uint32_t sceneDraws = 0;
+  for (size_t r = 0; r <= runs.size(); ++r) {
+    if (r == opaqueRuns && bg.draw) { // sky where no surface was drawn
       rhi_->Draw(sky_, fullscreen_, 3);
       ++draws_;
     }
-    if (n == order.size()) break;
-    size_t i = order[n];
-    const DrawItem3D& it = items[i];
-    const Material3D& m = it.material;
-    rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
-    const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
-    for (uint32_t slot = 0; slot < 5; ++slot) rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
-    PipelineHandle p = m.alpha == Material3D::Alpha::Blend ? blend_ : m.doubleSided ? twoSided_ : opaque_;
-    rhi_->DrawIndexed(p, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
-    ++draws_;
-    triangles_ += it.mesh->indexCount / 3;
+    if (r == runs.size()) break;
+    const Material3D& m = items[runs[r].item].material;
+    bindMaps(m);
+    drawRun(pipeOf(m), runs[r]);
+    ++sceneDraws;
+    triangles_ += (uint64_t)(items[runs[r].item].mesh->indexCount / 3) * runs[r].count;
   }
+  stats_.sceneDraws = sceneDraws;
+  stats_.objects = slots.size();
   rhi_->EndRenderTarget(); // resolves MSAA
   if (timing) Mark(timer, "scene");
 
@@ -890,13 +941,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   // Editor overlays on the finished picture: the grid hides behind objects (scene depth copied over).
   rhi_->CopyDepth(hdrRT_, rt);
   if (extras && extras->wireframe)
-    for (size_t i = 0; i < items.size(); ++i) {
-      const DrawItem3D& it = items[i];
-      if (!it.mesh || !it.mesh->indexCount) continue;
-      rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
-      rhi_->DrawIndexed(wire_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
-      ++draws_;
-    }
+    for (const Run& r : runs) drawRun(wire_, r);
   if (extras && extras->grid) {
     rhi_->Draw(grid_, gridQuad_, 6);
     ++draws_;
@@ -962,8 +1007,8 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
-                     s.msaa, DebugViewName(s.view), s.draws, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
+                     s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
                      s.fxaa ? 1 : 0, s.bloom ? 1 : 0);
 }
 }

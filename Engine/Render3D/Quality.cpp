@@ -128,6 +128,7 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "exposure") q.exposure = v;
     else if (key == "shadowmap") q.shadowMapSize = (int)v;
     else if (key == "view") q.viewDistance = v;
+    else if (key == "instancing") q.instancing = v != 0;
     else { if (error) *error = "unknown quality key " + key; return false; }
   }
   return true;

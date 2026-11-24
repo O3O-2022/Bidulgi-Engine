@@ -263,6 +263,24 @@ jobs:
           if ($log -notmatch 'render passes: .*scene \d') { $errors += 'no GPU pass timings' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 25) Stress (queue 3-9): 10,000 instanced cubes + 16 4K BC7 textures; the same picture without instancing
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-stress'; BDG_STRESS_TEST = '1' } 14
+          if ($log -notmatch 'stress test: draws_instanced=\d{1,2} draws_single=100\d\d same_picture=1') { $errors += 'stress / instancing test failed' }
+          if ($log -notmatch 'stress: objects=10017 .*textures=16x4096 vram_mb=') { $errors += 'stress numbers missing' }
+
+          # 26) Image compare per bookmark (queue 3-9): baselines made, the same build matches them, a change is caught
+          Remove-Item -Recurse -Force "$PWD/ci-compare" -ErrorAction SilentlyContinue
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $cmp = @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_RENDER_COMPARE = "$PWD/ci-compare/base"; BDG_COMPARE_OUT = "$PWD/ci-compare/out" }
+          $log = Invoke-Editor 'Release' $cmp 42
+          if ($log -notmatch 'compare summary: compared=0 created=9 failed=0') { $errors += 'compare: baselines not created' }
+          $log = Invoke-Editor 'Release' $cmp 42
+          if ($log -notmatch 'compare summary: compared=9 created=0 failed=0 worst=0\.00') { $errors += 'compare: the same build differs from its baselines' }
+          $cmp['BDG_QUALITY_SET'] = 'exposure=1.8'
+          $log = Invoke-Editor 'Release' $cmp 42
+          if ($log -notmatch 'compare summary: compared=9 created=0 failed=[1-9]') { $errors += 'compare: a brighter picture was not caught' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 
