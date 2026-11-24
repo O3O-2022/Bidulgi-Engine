@@ -75,6 +75,11 @@ public:
   bool StoreBookmark(EditorModel& model, int slot);            // through commands (one undo step)
   std::string BookmarkName(const EditorModel& model, int slot) const; // "" when there is none
   bool ChipCenter(const std::string& name, float& x, float& y) const; // test hook: "view", "wire", "bounds", "stats"
+  // Scene icons (E-3): size 0 off, 1 small, 2 medium, 3 large (the "Icons" chip steps through them).
+  int iconSize = 2;
+  static float IconPixels(int size) { return size <= 0 ? 0.f : size == 1 ? 16.f : size == 2 ? 22.f : 30.f; }
+  std::vector<std::pair<std::string, std::string>> IconList() const; // test hook: (object id, icon name)
+  int GizmoLines() const { return gizmoLines_; }
   bool localSpace = false; // gizmo axes: the object's own (true) or the world's; scale always uses the object's
   SnapSettings snap;       // grid, rotate and scale steps; `always` = snap without Ctrl (3-3b)
   // Lines up the selected objects' bounds on an axis (0 x, 1 y, 2 z), or gives them equal gaps: one undo step.
@@ -170,8 +175,21 @@ private:
   std::vector<ItemInfo> info_;
   RenderExtras extras_;
   Light3D light_;
-  struct Icon { std::string id; glm::vec3 pos; int kind; }; // 0 sun, 1 light, 2 camera
+  // Scene icons (E-3): one per object that has no surface to click. kind: 0 sun, 1 point light, 2 camera, 3 spot
+  // light, 4 reflection probe, 5 light probe volume, 6 camera bookmark. a, b, c: light range and spot angle /
+  // camera fov, near, far (for the selected object's gizmo: frustum, range, cone).
+  struct Icon {
+    std::string id;
+    glm::vec3 pos;
+    int kind;
+    std::string icon;     // Assets/Icons name
+    Color tint{1, 1, 1, 1};
+    glm::mat4 world{1.f};
+    float a = 0, b = 0, c = 0;
+  };
   std::vector<Icon> icons_;
+  int gizmoLines_ = 0; // segments of the selected objects' shapes drawn last frame (test hook)
+  void DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorModel& model);
   struct Chip { std::string name; float x, y, w, h; };
   std::vector<Chip> chips_; // clickable chips of the last Draw
   std::string bookmarkNote_; // "2 Lights" after a jump, shown for a moment

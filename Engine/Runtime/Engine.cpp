@@ -104,7 +104,8 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
-  bool previewTestOn = false, treeTest = false;
+  bool previewTestOn = false, treeTest = false, sceneIconTest = false;
+  std::string sceneIconTestValues[6];
   std::string treeTestValues[7];
   std::string newSceneTestValues[6];
   std::string importTestValues[8];
@@ -719,6 +720,81 @@ void InjectNewSceneTest(bdg_engine* e, int frame) {
     text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     v[5] = std::format("{}", text.find("\"World Settings\"") != std::string::npos && text.find("bdg:Grid") != std::string::npos ? 1 : 0);
   }
+}
+
+// Scripted check of E-3 (BDG_SCENEICON_TEST=1): the sample scene's camera, sun and lantern get their component
+// icons, the icon is really drawn (pixels change when icons are turned off), a selected camera draws its frustum
+// and a selected point light its range, the Icons chip steps the size, and a click on the sun's icon selects it.
+void InjectSceneIconTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  auto* v = e->sceneIconTestValues;
+  const float s = e->editor->Scale();
+  auto clickAt = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * s, y * s});
+    e->window.InjectEvent({T::MouseDown, x * s, y * s, 1});
+    e->window.InjectEvent({T::MouseUp, x * s, y * s, 1});
+  };
+  auto patch = [&](const char* id) { // average colour around an object's icon, as drawn last frame
+    const bdg::SceneObject* o = m->scene.Find(id);
+    glm::vec3 sum(0);
+    if (!o) return sum;
+    float x = 0, y = 0;
+    if (!sv->ProjectUI(glm::vec3(m->scene.WorldMatrix(id)[3]), x, y)) return sum;
+    int32_t w = 0, h = 0;
+    e->window.GetDrawableSize(w, h);
+    std::vector<uint8_t> px;
+    e->rhi.ReadPixels(w, h, px);
+    int n = 0;
+    for (int dy = -6; dy <= 6; ++dy)
+      for (int dx = -6; dx <= 6; ++dx) {
+        const int X = (int)(x * s) + dx, Y = h - 1 - ((int)(y * s) + dy);
+        if (X < 0 || Y < 0 || X >= w || Y >= h) continue;
+        const uint8_t* p = &px[((size_t)Y * w + X) * 4];
+        sum += glm::vec3(p[0], p[1], p[2]);
+        ++n;
+      }
+    return n ? sum / (float)n : sum;
+  };
+  static glm::vec3 on;
+  static int linesBefore = -1;
+  if (frame == 2) {
+    auto has = [&](const char* id, const char* icon) {
+      for (auto& [i, n] : sv->IconList())
+        if (i == id) return n == icon;
+      return false;
+    };
+    v[0] = std::format("{}", has("g1", "comp-camera") && has("g2", "comp-sun") && has("g9", "comp-light") && sv->iconSize == 2 ? 1 : 0);
+    on = patch("g9");
+    sv->iconSize = 0;
+  }
+  if (frame == 4) {
+    const glm::vec3 off = patch("g9");
+    v[1] = std::format("{}", glm::length(on - off) > 20 ? 1 : 0);
+    sv->iconSize = 2;
+    linesBefore = sv->GizmoLines(); // the Player is selected: no shape
+    m->Select("g1");
+  }
+  if (frame == 6) {
+    // 12 frustum edges; from this view part of the 25 m far plane lies behind the editor camera and is cut away
+    v[2] = std::format("{}", linesBefore == 0 && sv->GizmoLines() >= 8 ? 1 : 0);
+    if (v[2] != "1") bdg::LogError("scene icon test: frustum lines {}", sv->GizmoLines());
+    m->Select("g9");
+  }
+  if (frame == 8) {
+    v[3] = std::format("{}", sv->GizmoLines() >= 60 ? 1 : 0); // three circles of 32 segments
+    if (v[3] != "1") bdg::LogError("scene icon test: range lines {}", sv->GizmoLines());
+    float x, y;
+    if (sv->ChipCenter("icons", x, y)) clickAt(x, y);
+  }
+  if (frame == 10) {
+    v[4] = std::format("{}", sv->iconSize == 3 ? 1 : 0);
+    float x, y;
+    if (sv->ProjectUI(glm::vec3(m->scene.WorldMatrix("g2")[3]), x, y)) clickAt(x, y);
+  }
+  if (frame == 12) v[5] = std::format("{}", m->Selected() == "g2" ? 1 : 0);
 }
 
 // Scripted check of E-2 (BDG_TREE_TEST=1, BDG_FOLDS = a scratch file): guide lines on the sample scene's rows,
@@ -2716,6 +2792,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->newSceneTest = std::getenv("BDG_NEWSCENE_TEST") != nullptr;
   e->previewTestOn = std::getenv("BDG_PREVIEW_TEST") != nullptr;
   e->treeTest = std::getenv("BDG_TREE_TEST") != nullptr;
+  e->sceneIconTest = std::getenv("BDG_SCENEICON_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3170,6 +3247,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->newSceneTest && !e->showGallery) InjectNewSceneTest(e, frames);
     if (e->previewTestOn && !e->showGallery) InjectPreviewTest(e, frames);
     if (e->treeTest && !e->showGallery) InjectTreeTest(e, frames);
+    if (e->sceneIconTest && !e->showGallery) InjectSceneIconTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3535,6 +3613,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->sceneIconTest) {
+        auto* v = e->sceneIconTestValues;
+        bdg::LogInfo("scene icon test: icons={} drawn={} frustum={} range={} chip={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5]);
       }
       if (e->treeTest) {
         auto* v = e->treeTestValues;

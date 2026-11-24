@@ -256,9 +256,33 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
           local.innerAngle = l.innerSpotAngle;
           light_.locals.push_back(local);
         }
-        icons_.push_back({id, glm::vec3(world[3]), directional ? 0 : 1});
+        if (icons_.empty() || icons_.back().id != id) {
+          Icon ic{id, glm::vec3(world[3]), directional ? 0 : l.type == LightType::Spot ? 3 : 1, directional ? "comp-sun" : "comp-light"};
+          const float m = std::max({l.color.r, l.color.g, l.color.b, 1e-3f}); // the light's hue, kept bright
+          ic.tint = {0.5f + 0.5f * l.color.r / m, 0.5f + 0.5f * l.color.g / m, 0.5f + 0.5f * l.color.b / m, 1};
+          ic.world = world;
+          ic.a = l.range;
+          ic.b = l.spotAngle;
+          icons_.push_back(ic);
+        }
       }
-      if (c.type == &Camera::StaticType()) icons_.push_back({id, glm::vec3(world[3]), 2});
+      if (c.type == &Camera::StaticType()) {
+        const Camera& cm = *static_cast<const Camera*>(c.data);
+        if (!icons_.empty() && icons_.back().id == id) icons_.pop_back(); // the camera icon wins
+        Icon ic{id, glm::vec3(world[3]), 2, "comp-camera"};
+        ic.world = world;
+        ic.a = cm.fov;
+        ic.b = cm.nearClip;
+        ic.c = cm.farClip;
+        icons_.push_back(ic);
+      }
+      if ((c.type == &ReflectionProbe::StaticType() || c.type == &LightProbeVolume::StaticType() || c.type == &CameraBookmark::StaticType()) &&
+          (icons_.empty() || icons_.back().id != id)) {
+        const bool rp = c.type == &ReflectionProbe::StaticType(), lp = c.type == &LightProbeVolume::StaticType();
+        Icon ic{id, glm::vec3(world[3]), rp ? 4 : lp ? 5 : 6, rp ? "comp-reflection-probe" : lp ? "comp-light-probe" : "comp-bookmark"};
+        ic.world = world;
+        icons_.push_back(ic);
+      }
       if (c.type == &LightProbeVolume::StaticType() && !hasVolume_) {
         const LightProbeVolume& lv = *static_cast<const LightProbeVolume*>(c.data);
         glm::vec3 centre = glm::vec3(world[3]), half = glm::abs(space::ToGlm(lv.size)) * 0.5f;
@@ -511,9 +535,9 @@ bool SceneView::ProjectUI(const glm::vec3& p, float& x, float& y) const {
 
 std::string SceneView::Pick(const EditorModel& model, float x, float y) const {
   if (pw_ <= 0) return {};
-  // Icons first (lights and cameras have no surface): within 14 UI units of the cursor.
+  // Icons first (lights and cameras have no surface): within the icon's radius of the cursor.
   std::string best;
-  float bestD = 14.f;
+  float bestD = iconSize > 0 ? std::max(IconPixels(iconSize) * 0.6f, 8.f) : 0.f;
   for (const Icon& ic : icons_) {
     float ix, iy;
     if (ProjectUI(ic.pos, ix, iy) && std::hypot(ix - x, iy - y) < bestD) { bestD = std::hypot(ix - x, iy - y); best = ic.id; }
@@ -935,6 +959,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           if (hit) {
             if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 11);
             else if (hit->name == "wire") wireframe = !wireframe;
+            else if (hit->name == "icons") iconSize = (iconSize + 1) % 4; // off -> small -> medium -> large (E-3)
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
             else if (hit->name == "gi") bakeRequested_ = true;
@@ -1344,6 +1369,80 @@ bool SceneView::StoreBookmark(EditorModel& model, int slot) {
   return ok;
 }
 
+std::vector<std::pair<std::string, std::string>> SceneView::IconList() const {
+  std::vector<std::pair<std::string, std::string>> out;
+  for (const Icon& ic : icons_) out.emplace_back(ic.id, ic.icon);
+  return out;
+}
+
+// The selected objects' shapes, like Unity's gizmos: a camera's view frustum (far plane capped at 25 m so it stays
+// readable), a point light's range as three circles, a spot light's cone, a directional light's direction.
+void SceneView::DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorModel& model) {
+  gizmoLines_ = 0;
+  const Camera3D view = camera.ToCamera();
+  const glm::mat4 V = view.View();
+  const float lim = view.nearZ * 1.5f;
+  auto line = [&](glm::vec3 p0, glm::vec3 p1, Color c) {
+    const float d0 = -(V * glm::vec4(p0, 1)).z, d1 = -(V * glm::vec4(p1, 1)).z; // depth in front of the editor camera
+    if (d0 < lim && d1 < lim) return;                                             // wholly behind
+    if (d0 < lim) p0 = glm::mix(p0, p1, (lim - d0) / (d1 - d0));                  // cut at the near plane
+    else if (d1 < lim) p1 = glm::mix(p1, p0, (lim - d1) / (d0 - d1));
+    float x0, y0, x1, y1;
+    if (!ProjectUI(p0, x0, y0) || !ProjectUI(p1, x1, y1)) return;
+    b.Line(x0, y0, x1, y1, 1.2f, c);
+    ++gizmoLines_;
+  };
+  auto circle = [&](const glm::vec3& c, const glm::vec3& u, const glm::vec3& v, float r, Color col) {
+    constexpr int kSeg = 32;
+    for (int k = 0; k < kSeg; ++k) {
+      const float a0 = k * 6.2831853f / kSeg, a1 = (k + 1) * 6.2831853f / kSeg;
+      line(c + (u * std::cos(a0) + v * std::sin(a0)) * r, c + (u * std::cos(a1) + v * std::sin(a1)) * r, col);
+    }
+  };
+  const Color lightCol{1.f, 0.88f, 0.45f, 0.85f}, camCol = WithAlpha(t.C("fg"), 0.8f);
+  for (const Icon& ic : icons_) {
+    if (std::find(model.Selection().begin(), model.Selection().end(), ic.id) == model.Selection().end()) continue;
+    const glm::vec3 p = ic.pos;
+    const glm::vec3 fwd = glm::normalize(glm::vec3(ic.world * glm::vec4(0, 0, -1, 0)));
+    const glm::vec3 up = glm::normalize(glm::vec3(ic.world * glm::vec4(0, 1, 0, 0)));
+    const glm::vec3 right = glm::normalize(glm::cross(fwd, up));
+    if (ic.kind == 2) { // camera frustum (16:9, like the Game view's default)
+      const float tanY = std::tan(glm::radians(std::clamp(ic.a, 1.f, 179.f)) * 0.5f), tanX = tanY * 16.f / 9.f;
+      const float dn = std::max(ic.b, 0.01f), df = std::clamp(ic.c, dn + 0.01f, 25.f);
+      glm::vec3 nearC[4], farC[4];
+      const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
+      for (int k = 0; k < 4; ++k) {
+        nearC[k] = p + fwd * dn + right * (sx[k] * tanX * dn) + up * (sy[k] * tanY * dn);
+        farC[k] = p + fwd * df + right * (sx[k] * tanX * df) + up * (sy[k] * tanY * df);
+      }
+      for (int k = 0; k < 4; ++k) {
+        line(nearC[k], nearC[(k + 1) % 4], camCol);
+        line(farC[k], farC[(k + 1) % 4], camCol);
+        line(nearC[k], farC[k], camCol);
+      }
+    } else if (ic.kind == 1) { // point light range
+      circle(p, {1, 0, 0}, {0, 1, 0}, ic.a, lightCol);
+      circle(p, {1, 0, 0}, {0, 0, 1}, ic.a, lightCol);
+      circle(p, {0, 1, 0}, {0, 0, 1}, ic.a, lightCol);
+    } else if (ic.kind == 3) { // spot cone out to its range
+      const float h = std::tan(glm::radians(std::clamp(ic.b, 1.f, 179.f)) * 0.5f) * ic.a;
+      const glm::vec3 end = p + fwd * ic.a;
+      circle(end, right, up, h, lightCol);
+      for (int k = 0; k < 4; ++k) {
+        const float a = k * 1.5707963f;
+        line(p, end + (right * std::cos(a) + up * std::sin(a)) * h, lightCol);
+      }
+    } else if (ic.kind == 0) { // sun: parallel rays along its direction
+      for (int k = 0; k < 4; ++k) {
+        const float a = k * 1.5707963f;
+        const glm::vec3 o = p + (right * std::cos(a) + up * std::sin(a)) * 0.35f;
+        line(o, o + fwd * 1.5f, lightCol);
+      }
+      line(p, p + fwd * 2.f, lightCol);
+    }
+  }
+}
+
 bool SceneView::ChipCenter(const std::string& name, float& x, float& y) const {
   for (const Chip& c : chips_)
     if (c.name == name) { x = c.x + c.w * 0.5f; y = c.y + c.h * 0.5f; return true; }
@@ -1411,13 +1510,16 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   if (!rt_.Valid()) { b.Rect(w.x, w.y, w.w, w.h, t.C("sunk")); return; }
   b.Image(w.x, w.y, w.w, w.h, rhi_->RenderTargetColor(rt_), 0, 1, 1, 0);
   b.PushClip(w.x, w.y, w.w, w.h);
-  // Light and camera icons (they have no surface to click).
+  if (model) DrawSelectionShapes(b, t, *model); // camera frustum, light range / cone / direction (E-3)
+  // Icons of objects without a surface (lights, cameras, probes, bookmarks), the same size at any distance (E-3).
+  const float isz = IconPixels(iconSize), ir = isz * 0.5f;
   for (const Icon& ic : icons_) {
     float x, y;
-    if (!ProjectUI(ic.pos, x, y)) continue;
+    if (iconSize <= 0 || !ProjectUI(ic.pos, x, y)) continue;
     bool sel = model && std::find(model->Selection().begin(), model->Selection().end(), ic.id) != model->Selection().end();
     Color ring = sel ? Color{1.f, 0.58f, 0.12f, 1} : WithAlpha(t.C("line-strong"), 0.9f);
-    b.Rect(x - 11, y - 11, 22, 22, WithAlpha(t.C("win"), 0.82f), 11, sel ? 2.f : 1.f, ring);
+    b.Rect(x - ir, y - ir, isz, isz, WithAlpha(t.C("win"), 0.82f), ir, sel ? 2.f : 1.f, ring);
+    if (ui.Icon(ic.icon, x - ir * 0.78f, y - ir * 0.78f, ir * 1.56f, ic.tint)) continue;
     if (ic.kind == 0) { // sun: disc and rays
       b.Rect(x - 4, y - 4, 8, 8, {1.f, 0.85f, 0.35f, 1}, 4);
       for (int k = 0; k < 8; ++k) {
@@ -1452,6 +1554,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   struct ChipDef { std::string name, text; bool on; };
   const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
                           {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
+                          {"icons", iconSize == 0 ? "Icons: Off" : iconSize == 1 ? "Icons: S" : iconSize == 2 ? "Icons: M" : "Icons: L", false},
                           {"budget", BudgetOver() ? "Budget ⚠" : "Budget", budgetPanel},
                           {probes_.empty() && !hasVolume_ && !lightmapItems_ ? "" : "gi",
                            probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
