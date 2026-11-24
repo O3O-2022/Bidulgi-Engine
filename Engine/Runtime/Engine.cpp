@@ -31,6 +31,7 @@
 #include <set>
 #include <atomic>
 #include <cmath>
+#include <fstream>
 #include <thread>
 #include <chrono>
 #include <cstdlib>
@@ -101,7 +102,11 @@ struct bdg_engine {
   std::unique_ptr<bdg::UIContext> editor, gallery;
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
-  bool playTest = false, budgetTest = false, refsTest = false;
+  bool playTest = false, budgetTest = false, refsTest = false, themeTest = false;
+  std::string themeTestValues[8];
+  std::string themePath;     // ProjectSettings/Theme.json (BDG_THEME_FILE)
+  std::string themeSelected; // color token open in the picker
+  bool themeRebuild = false; // rebuild the token rows next frame (a row's own click must not delete it)
   std::string refsTestValues[8];
   std::string budgetTestValues[8];
   std::string playTestValues[13];
@@ -477,6 +482,217 @@ void WriteBugReport(bdg_engine* e, int32_t w, int32_t h, float scale, bool openB
   e->window.OpenURL("file:///" + dir.generic_string()); // review first
   e->window.OpenURL("https://github.com/O3O-2022/Bidulgi-Engine/issues/new?template=bug_report.yml&title=" +
                     UrlEncode("[Bug] ") + "&system=" + UrlEncode(sys));
+}
+
+// ---- Theme editor (queue 2-5c) ------------------------------------------------------------------
+// Project Settings > Theme: one row per color token (swatch, name, value, a dot when the project changed it).
+// A click opens the picker under the row: hex field + hue / saturation / brightness / opacity sliders. Every change
+// is an override on top of tokens.json, drawn on the next frame and saved to ProjectSettings/Theme.json.
+void DrawThemeRow(bdg::Widget& w, bdg::UIContext& ui) {
+  const bdg::Theme& t = ui.Tokens();
+  bdg::Batch2D& b = ui.Batch();
+  if (w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("selection"));
+  else if (w.hovered) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"));
+  const float ss = w.h - 8, sw = ss * 1.6f, sx = w.x + 12, sy = w.y + 4;
+  b.Rect(sx - 1, sy - 1, sw + 2, ss + 2, t.C("line-strong"), 3);
+  b.Rect(sx, sy, sw, ss, t.C(w.text), 2);
+  const float fs = t.FontSize("control", 12.5f);
+  ui.Text(sx + sw + 8, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
+  const std::string hex = bdg::Theme::FormatColor(t.C(w.text));
+  const float hx = w.x + w.w - 10 - ui.Measure(11, hex, true);
+  ui.Text(hx, w.y + (w.h - 11) * 0.5f - 1, 11, t.Overridden(w.text) ? t.C("fg") : t.C("fg-faint"), hex, true);
+  if (t.Overridden(w.text)) b.Rect(hx - 10, w.y + w.h * 0.5f - 2.5f, 5, 5, t.C("accent"), 2.5f);
+}
+
+void SaveTheme(bdg_engine* e) {
+  if (!e->theme.SaveOverrides(e->themePath)) bdg::LogWarn("theme: cannot save {}", e->themePath);
+  if (bdg::Widget* n = e->editor->Find("theme.name"))
+    n->text = e->theme.OverrideCount() ? std::format("{} · 바꾼 색 {}개", e->theme.ThemeName(), e->theme.OverrideCount())
+                                       : e->theme.ThemeName() + " · 기본";
+}
+
+// Picker -> the open token. fromSliders: the color comes from the sliders (keep their hue when saturation is 0)
+void SyncThemePicker(bdg_engine* e, bool fromSliders) {
+  const bdg::Color c = e->theme.C(e->themeSelected);
+  float h, s, v;
+  bdg::Theme::ToHSV(c, h, s, v);
+  if (bdg::Widget* f = e->editor->Find("theme.hex")) f->text2 = bdg::Theme::FormatColor(c);
+  if (bdg::Widget* b = e->editor->Find("theme.revert")) b->hidden = !e->theme.Overridden(e->themeSelected); // only when changed
+  if (fromSliders) return;
+  const std::pair<const char*, float> vals[] = {{"theme.h", h}, {"theme.s", s * 100}, {"theme.v", v * 100}, {"theme.a", c.a * 100}};
+  for (auto& [id, x] : vals)
+    if (bdg::Widget* f = e->editor->Find(id)) f->text2 = std::format("{}", (int)std::lround(x));
+}
+
+void RebuildThemeList(bdg_engine* e) {
+  e->themeRebuild = false;
+  bdg::Widget* list = e->editor->Find("settings.theme");
+  if (!list) return;
+  list->children.clear();
+  bdg::Theme& t = e->theme;
+  for (const std::string& name : t.ColorNames()) {
+    auto row = bdg::MakeCustom("theme.row." + name, DrawThemeRow);
+    row->text = name;
+    row->height = bdg::Length::Px(22);
+    row->selected = name == e->themeSelected;
+    row->onClick = [e, name](bdg::Widget&) {
+      e->themeSelected = e->themeSelected == name ? std::string() : name;
+      e->themeRebuild = true;
+    };
+    list->Add(std::move(row));
+    if (name != e->themeSelected) continue;
+    auto& ed = list->Add(bdg::MakeBox(bdg::Axis::Column, 2));
+    ed.id = "theme.editor";
+    ed.padL = 18; ed.padT = 2; ed.padB = 6;
+    auto& hex = ed.Add(bdg::MakeField("theme.hex", "값", ""));
+    hex.onCommit = [e](bdg::Widget& f) {
+      bdg::Color c;
+      if (bdg::Theme::ParseColor(f.text2, c) && e->theme.SetOverride(e->themeSelected, c)) {
+        SaveTheme(e);
+        bdg::LogInfo("theme: {} = {}", e->themeSelected, bdg::Theme::FormatColor(c));
+      }
+      SyncThemePicker(e, false); // a bad value goes back to the current one
+    };
+    const struct { const char* id; const char* label; double max; } sliders[] = {
+        {"theme.h", "색상", 359}, {"theme.s", "채도", 100}, {"theme.v", "밝기", 100}, {"theme.a", "불투명도", 100}};
+    for (auto& sl : sliders) {
+      auto& f = ed.Add(bdg::MakeField(sl.id, sl.label, "0"));
+      f.slider = f.sliderInteger = true;
+      f.sliderMin = 0;
+      f.sliderMax = sl.max;
+      auto apply = [e](bdg::Widget&) {
+        auto num = [e](const char* id) {
+          bdg::Widget* w = e->editor->Find(id);
+          return w ? (float)std::strtod(w->text2.c_str(), nullptr) : 0.f;
+        };
+        const bdg::Color c = bdg::Theme::FromHSV(num("theme.h"), num("theme.s") / 100, num("theme.v") / 100, num("theme.a") / 100);
+        if (e->theme.SetOverride(e->themeSelected, c)) SaveTheme(e);
+        SyncThemePicker(e, true);
+      };
+      f.onChange = apply;
+      f.onCommit = apply;
+    }
+    auto& tools = ed.Add(bdg::MakeBox(bdg::Axis::Row, 6));
+    tools.padL = 12; tools.padT = 2;
+    tools.crossAlign = bdg::Align::Center;
+    auto& revert = tools.Add(bdg::MakeButton("theme.revert", "기본값 " + bdg::Theme::FormatColor(t.Base(name))));
+    revert.onClick = [e](bdg::Widget&) {
+      e->theme.ClearOverride(e->themeSelected);
+      SaveTheme(e);
+      SyncThemePicker(e, false);
+    };
+    std::string usage = t.Usage(name);
+    if (usage.size() > 40) usage = usage.substr(0, usage.find_last_of(' ', 37)) + "..."; // the full note: tokens.json
+    tools.Add(bdg::MakeLabel(usage)).variant = 1;
+  }
+  if (bdg::Widget* n = e->editor->Find("theme.name"))
+    n->text = t.OverrideCount() ? std::format("{} · 바꾼 색 {}개", t.ThemeName(), t.OverrideCount()) : t.ThemeName() + " · 기본";
+  if (!e->themeSelected.empty()) SyncThemePicker(e, false);
+  e->editor->ForgetRemovedWidgets();
+}
+
+void SetupTheme(bdg_engine* e) {
+  const char* custom = std::getenv("BDG_THEME_FILE");
+  e->themePath = custom ? custom : (std::filesystem::current_path() / "ProjectSettings" / "Theme.json").string();
+  std::string err;
+  if (!e->theme.LoadOverrides(e->themePath, &err)) bdg::LogWarn("theme: {}", err);
+  if (bdg::Widget* b = e->editor->Find("theme.reset")) b->onClick = [e](bdg::Widget&) {
+    e->theme.ClearOverrides();
+    SaveTheme(e);
+    bdg::LogInfo("theme: back to {}", e->theme.ThemeName());
+    e->themeRebuild = true;
+  };
+  RebuildThemeList(e);
+}
+
+// Scripted check of 2-5c (BDG_THEME_TEST=1, BDG_THEME_FILE = a Theme.json CI writes with "panel" changed): the
+// project theme is applied at start, a click on the accent row opens the picker, a hex value shows on the next
+// frame (the drawn swatch) and is saved, a slider changes the hue, the token goes back to its default, a hand edit
+// of Theme.json shows up live, and "기본 테마로" removes every override.
+void InjectThemeTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::Theme& t = e->theme;
+  auto* v = e->themeTestValues;
+  const float s = e->editor->Scale();
+  auto click = [&](const std::string& id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("theme test: {} is not clickable", id); return; }
+    const float x = (w->x + w->w * 0.5f) * s, y = (w->y + w->h * 0.5f) * s;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent({T::MouseDown, x, y, 1});
+    e->window.InjectEvent({T::MouseUp, x, y, 1});
+  };
+  auto same = [](bdg::Color a, const char* hex) {
+    bdg::Color b;
+    return bdg::Theme::ParseColor(hex, b) && bdg::Theme::FormatColor(a) == bdg::Theme::FormatColor(b);
+  };
+  auto fileText = [&] {
+    std::ifstream in(std::filesystem::path(e->themePath), std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  auto revertHidden = [&] {
+    bdg::Widget* b = e->editor->Find("theme.revert");
+    return b && b->hidden;
+  };
+  static int handEdit = 0, resetAt = 0;
+  if (frame == 2) {
+    v[0] = std::format("{}", same(t.C("panel"), "#203040") && t.Overridden("panel") ? 1 : 0);
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings");
+  }
+  if (frame == 3)
+    if (bdg::Widget* row = e->editor->Find("theme.row.accent")) e->editor->ScrollIntoView(*row);
+  if (frame == 5) click("theme.row.accent");
+  if (frame == 7) {
+    bdg::Widget* hex = e->editor->Find("theme.hex");
+    v[1] = std::format("{}", e->themeSelected == "accent" && hex && hex->text2 == bdg::Theme::FormatColor(t.Base("accent")) ? 1 : 0);
+    if (hex && hex->onCommit) {
+      hex->text2 = "#3b82f6";
+      hex->onCommit(*hex);
+    }
+  }
+  if (frame == 9) { // the swatch drawn last frame has the new color
+    bool drawn = false;
+    if (bdg::Widget* row = e->editor->Find("theme.row.accent")) {
+      int32_t w = 0, h = 0;
+      e->window.GetDrawableSize(w, h);
+      std::vector<uint8_t> px;
+      e->rhi.ReadPixels(w, h, px);
+      const int x = (int)((row->x + 12 + (row->h - 8) * 0.8f) * s), y = h - 1 - (int)((row->y + row->h * 0.5f) * s);
+      if (x >= 0 && x < w && y >= 0 && y < h) {
+        const uint8_t* p = &px[((size_t)y * w + x) * 4];
+        drawn = std::abs(p[0] - 0x3b) < 6 && std::abs(p[1] - 0x82) < 6 && std::abs(p[2] - 0xf6) < 6;
+      }
+    }
+    v[2] = std::format("{}", same(t.C("accent"), "#3b82f6") && drawn && fileText().find("\"accent\":\"#3b82f6\"") != std::string::npos ? 1 : 0);
+    if (bdg::Widget* f = e->editor->Find("theme.h"); f && f->onChange) {
+      f->text2 = "120";
+      f->onChange(*f);
+    }
+  }
+  if (frame == 10)
+    if (bdg::Widget* b = e->editor->Find("theme.revert")) e->editor->ScrollIntoView(*b);
+  if (frame == 12) {
+    float h = 0, sat = 0, val = 0;
+    bdg::Theme::ToHSV(t.C("accent"), h, sat, val);
+    bdg::Widget* hex = e->editor->Find("theme.hex");
+    v[3] = std::format("{}", std::abs(h - 120) < 2 && sat > 0.5f && hex && hex->text2 == bdg::Theme::FormatColor(t.C("accent")) ? 1 : 0);
+    click("theme.revert");
+  }
+  if (frame == 14) {
+    const std::string text = fileText();
+    v[4] = std::format("{}", !t.Overridden("accent") && same(t.C("accent"), "#f59e32") && text.find("panel") != std::string::npos &&
+                                     text.find("accent") == std::string::npos && revertHidden() ? 1 : 0);
+    std::ofstream(std::filesystem::path(e->themePath), std::ios::binary) << "{\"colors\":{\"ok\":\"#ff00ff\"}}\n"; // by hand
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // the editor polls the file twice a second
+    handEdit = frame;
+  }
+  if (handEdit && !resetAt && frame > handEdit && frame <= handEdit + 20 && same(t.C("ok"), "#ff00ff") && !t.Overridden("panel")) {
+    v[5] = "1";
+    click("theme.reset");
+    resetAt = frame;
+  }
+  if (resetAt && frame == resetAt + 3)
+    v[6] = std::format("{}", t.OverrideCount() == 0 && !std::filesystem::exists(std::filesystem::path(e->themePath)) && same(t.C("panel"), "#1c222b") ? 1 : 0);
 }
 
 // ---- Shortcuts (queue 1-5) ---------------------------------------------------------------------
@@ -2035,6 +2251,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->playTest = std::getenv("BDG_PLAY_TEST") != nullptr;
   e->budgetTest = std::getenv("BDG_BUDGET_TEST") != nullptr;
   e->refsTest = std::getenv("BDG_REFS_TEST") != nullptr;
+  e->themeTest = std::getenv("BDG_THEME_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2268,6 +2485,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     }
   }
   mark("ui");
+  SetupTheme(e);
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
@@ -2466,6 +2684,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->playTest && !e->showGallery) InjectPlayTest(e, frames);
     if (e->budgetTest && !e->showGallery) InjectBudgetTest(e, frames);
     if (e->refsTest && !e->showGallery) InjectRefsTest(e, frames);
+    if (e->themeTest && !e->showGallery) InjectThemeTest(e, frames);
+    if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
@@ -2806,6 +3026,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->themeTest) {
+        auto* v = e->themeTestValues;
+        bdg::LogInfo("theme test: start={} open={} live={} slider={} revert={} file={} reset={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->refsTest) {
         auto* v = e->refsTestValues;

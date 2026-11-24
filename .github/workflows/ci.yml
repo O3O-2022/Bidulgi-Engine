@@ -359,6 +359,15 @@ jobs:
           if ($log -notmatch 'refs test: refs=1 jump=1 unused=1 warn=1 delete=1 replace=1 undo=1 rename=1') { $errors += 'references / unused / replace test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 2-5c theme editor: a project Theme.json applied at start, picker, live swatch, slider, revert, hand edit, reset
+          Remove-Item -Recurse -Force "$PWD/ci-theme" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-theme" | Out-Null
+          [IO.File]::WriteAllText("$PWD/ci-theme/Theme.json", "{`"colors`":{`"panel`":`"#203040`"}}`n")
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_THEME_TEST = '1'; BDG_THEME_FILE = "$PWD/ci-theme/Theme.json" } 45
+          if ($log -notmatch 'theme test: start=1 open=1 live=1 slider=1 revert=1 file=1 reset=1') { $errors += 'theme editor test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

@@ -369,6 +369,17 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   presets.Add(MakeButton("shortcut.preset.unreal", "Unreal"));
   auto& list = settings.Add(MakeBox(Axis::Column));
   list.id = "settings.shortcuts"; // action rows, filled by the engine
+  // Theme (queue 2-5c): every color token; a click opens a picker, changes show at once and are saved per project
+  settings.Add(MakeLabel("Theme")).variant = 2;
+  auto& themeBar = settings.Add(MakeBox(Axis::Row, 6));
+  themeBar.padL = 12; themeBar.padR = 10; themeBar.padT = 2; themeBar.padB = 4;
+  themeBar.crossAlign = Align::Center;
+  themeBar.Add(MakeLabel("")).id = "theme.name";
+  themeBar.children.back()->variant = 1;
+  themeBar.Add(Spacer());
+  themeBar.Add(MakeButton("theme.reset", "기본 테마로"));
+  auto& themeList = settings.Add(MakeBox(Axis::Column));
+  themeList.id = "settings.theme"; // token rows, filled by the engine
 
   // Status bar: build state, live FPS / memory, branch, encoding
   auto& status = root->Add(MakeBox(Axis::Row, 10));
