@@ -347,7 +347,9 @@ void UIContext::DrawWidget(Widget& w) {
       float cx = w.x + 16, cy = w.y + 16;
       if (w.collapsed) { b.Line(cx - 2, cy - 4, cx + 2, cy, 1.5f, t.C("fg-dim")); b.Line(cx + 2, cy, cx - 2, cy + 4, 1.5f, t.C("fg-dim")); }
       else { b.Line(cx - 4, cy - 2, cx, cy + 2, 1.5f, t.C("fg-dim")); b.Line(cx, cy + 2, cx + 4, cy - 2, 1.5f, t.C("fg-dim")); }
-      if (!Icon(w.text2.empty() ? ComponentIconName(w.text) : "comp-script", w.x + 25, w.y + 8, 16)) // a language badge: a script b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
+      // component icon; a language badge (C#, C++ ...) means a script
+      if (!Icon(w.text2.empty() ? ComponentIconName(w.text) : "comp-script", w.x + 25, w.y + 8, 16))
+        b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
       Text(w.x + 44, w.y + (32 - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
       if (!w.text2.empty()) {
         std::string key = w.text2 == "C#" ? "lang-cs" : w.text2 == "C++" ? "lang-cpp" : w.text2 == "Lua" ? "lang-lua"
