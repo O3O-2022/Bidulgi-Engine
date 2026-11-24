@@ -38,6 +38,10 @@ PostEffects3D BlendPostVolumes(const std::vector<PostVolume3D>& volumes, const g
     mix(out.vignetteSmooth, f.vignetteSmooth);
     mix(out.aberration, f.aberration);
     mix(out.grain, f.grain);
+    mix(out.dofBlur, f.dofBlur);
+    mix(out.dofFocus, f.dofFocus);
+    mix(out.dofRange, f.dofRange);
+    mix(out.lensFlare, f.lensFlare);
     if (a >= 0.5f) out.autoExposure = f.autoExposure; // an on/off switch flips half way into the blend
   }
   return out;

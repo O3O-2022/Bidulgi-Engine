@@ -16,6 +16,9 @@ struct PostEffects3D {
   float vignette = 0, vignetteSmooth = 0.5f;
   float aberration = 0;        // chromatic aberration (0..1)
   float grain = 0;             // film grain (0..1)
+  float dofBlur = 0;           // depth of field (E-6b): 0 = off, 1 = the widest blur
+  float dofFocus = 10, dofRange = 2; // metres in focus: from focus - range/2 to focus + range/2
+  float lensFlare = 0;         // ghosts and a halo from the brightest parts (needs bloom)
 };
 
 struct PostVolume3D {

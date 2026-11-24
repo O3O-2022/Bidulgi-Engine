@@ -602,7 +602,8 @@ void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); 
 // uPost = (exposure, bloom intensity, tone map on, bloom on)
 // uPost3 = (vignette, vignette smoothness, chromatic aberration, film grain), uPost4 = (auto exposure on, min EV,
 // max EV, grain seed), uPost5 = (adaptation step 0..1, first frame, aspect w/h, -)   (post-process volumes, E-6)
-#define POST_UBO "layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; vec4 uPost3; vec4 uPost4; vec4 uPost5; };\n"
+// uPost6 = (focus distance m, in-focus range m, widest blur px, depth of field on), uPost7 = (lens flare, -, -, -)
+#define POST_UBO "layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; vec4 uPost3; vec4 uPost4; vec4 uPost5; vec4 uPost6; vec4 uPost7; };\n"
 const char* kToneMapFS = "#version 450 core\n" POST_UBO R"(
 layout(binding = 0) uniform sampler2D uHdr;
 layout(binding = 1) uniform sampler2D uBloom;
@@ -629,6 +630,19 @@ void main() {
     exposure *= exp2(clamp(log2(0.18) - avgLog, uPost4.y, uPost4.z));
   }
   c *= exposure;
+  if (uPost.w > 0.5 && uPost7.x > 0.0) { // lens flare (E-6b): ghosts of what is brighter than white (after exposure), mirrored through the centre, and a halo
+    vec2 toCentre = (vec2(0.5) - vUV) * 0.55;
+    vec3 flare = vec3(0.0);
+    for (int i = 1; i <= 4; ++i) {
+      vec2 g = fract(vUV + toCentre * float(i));
+      float fade = pow(1.0 - clamp(length(vec2(0.5) - g) / 0.7071, 0.0, 1.0), 6.0);
+      vec3 tint = vec3(1.0, 0.85, 0.7) * (i % 2 == 0 ? vec3(0.7, 0.9, 1.2) : vec3(1.0));
+      flare += max(texture(uBloom, g).rgb / 5.0 * exposure - 1.0, 0.0) * fade * tint;
+    }
+    vec2 halo = fract(vUV + normalize(toCentre + 1e-5) * 0.45);
+    flare += max(texture(uBloom, halo).rgb / 5.0 * exposure - 1.0, 0.0) * pow(1.0 - clamp(length(vec2(0.5) - halo) / 0.7071, 0.0, 1.0), 4.0) * 0.5;
+    c += flare * uPost7.x;
+  }
   if (uPost.z > 0.5) c = ACES(c);
   if (uPost2.x > 0.5) { oColor = vec4(c, 1.0); return; } // linear capture: no display curve, no grading
   c = ToSrgb(c);
@@ -640,6 +654,37 @@ void main() {
   }
   if (uPost3.w > 0.0) c += (Hash(gl_FragCoord.xy + vec2(uPost4.w * 7.13, uPost4.w * 3.71)) - 0.5) * uPost3.w * 0.16; // film grain
   oColor = vec4(c, 1.0); // opaque: the UI draws this picture with alpha blending
+}
+)";
+// Depth of field (E-6b): a disc gather around each pixel, as wide as its circle of confusion (from the view depth of
+// the depth/normal prepass); samples count only if their own circle reaches this pixel, so sharp objects do not
+// smear into a blurred background. The sky (cleared depth) is as blurred as far ground.
+const char* kDofFS = "#version 450 core\n" POST_UBO R"(
+layout(binding = 0) uniform sampler2D uHdr;
+layout(binding = 1) uniform sampler2D uGeo; // .w = view depth
+in vec2 vUV;
+out vec4 oColor;
+float CoC(float z) {
+  float d = abs(min(z, 10000.0) - uPost6.x) - uPost6.y * 0.5;
+  return clamp(d / max(uPost6.x * 0.5, 0.05), 0.0, 1.0) * uPost6.z; // pixels
+}
+void main() {
+  vec2 texel = 1.0 / vec2(textureSize(uHdr, 0));
+  float c0 = CoC(texture(uGeo, vUV).w);
+  vec3 sum = texture(uHdr, vUV).rgb;
+  float wsum = 1.0;
+  if (c0 > 0.5) {
+    const float golden = 2.39996323;
+    for (int i = 1; i < 48; ++i) {
+      float r = sqrt(float(i) / 48.0) * c0, a = float(i) * golden;
+      vec2 uv = vUV + vec2(cos(a), sin(a)) * r * texel;
+      float ci = CoC(texture(uGeo, uv).w);
+      float w = clamp(ci - r + 1.0, 0.0, 1.0); // its own blur must reach this far
+      sum += texture(uHdr, uv).rgb * w;
+      wsum += w;
+    }
+  }
+  oColor = vec4(sum / wsum, 1.0);
 }
 )";
 // Auto exposure, pass 1: log2 luminance of the HDR picture on a 32x32 target (16 samples per texel).
@@ -763,7 +808,7 @@ struct FrameData {
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
-struct PostData { float post[4]; float post2[4]; float post3[4]; float post4[4]; float post5[4]; };
+struct PostData { float post[4]; float post2[4]; float post3[4]; float post4[4]; float post5[4]; float post6[4]; float post7[4]; };
 struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4], volMin[4], volMax[4], volCount[4]; };
 struct PrefilterData { float p[4]; };
 
@@ -959,6 +1004,10 @@ bool Renderer3D::Init(RHI& rhi) {
   pp.fragmentSource = kLumFS;
   pp.debugName = "post.lum";
   lum_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kDofFS;
+  pp.debugName = "post.dof";
+  dof_ = rhi.CreatePipeline(pp);
+  if (!dof_.Valid()) return false;
   pp.fragmentSource = kAdaptFS;
   pp.debugName = "post.adapt";
   adapt_ = rhi.CreatePipeline(pp);
@@ -1025,7 +1074,8 @@ void Renderer3D::Shutdown() {
     for (RenderTargetHandle r : a.rt) rhi_->DestroyRenderTarget(r);
   adapt_s.clear();
   if (lumRT_.Valid()) rhi_->DestroyRenderTarget(lumRT_);
-  for (PipelineHandle p : {lum_, adapt_})
+  if (dofRT_.Valid()) rhi_->DestroyRenderTarget(dofRT_);
+  for (PipelineHandle p : {lum_, adapt_, dof_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
@@ -1375,6 +1425,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   f.screen[3] = 1.f / h;
   const bool ssaoOn = q.ssao && q.lighting == LightingMode::Pixel;
   f.flags[0] = ssaoOn ? 1.f : 0.f;
+  // depth of field (E-6b) needs the depth / normal prepass too; only on the lit view, never on captures
+  const bool dofOn = light.post.dofBlur > 0.001f && !(extras && extras->linearOutput) && (!extras || extras->view == DebugView::Lit);
   const int cascades = std::clamp(q.shadowCascades, 1, 4);
   if (light.shadows && q.shadows && q.lighting == LightingMode::Pixel && light.intensity > 0) {
     // Cascades (3-5b): view depth split between uniform and logarithmic (practical split, lambda 0.8); more cascades
@@ -1599,7 +1651,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
-  if (ssaoOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+  if (ssaoOn || dofOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
     const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
     if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
       for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -1616,6 +1668,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       drawRun(m.doubleSided ? prepassTwo_ : prepass_, runs[r]);
     }
     rhi_->EndRenderTarget();
+    ++draws_;
+  }
+  if (ssaoOn) {
     SsaoData sd{{q.ssaoRadius, q.ssaoIntensity, 0, 0}, {0, 0, 0, 0}};
     rhi_->UpdateBuffer(ssaoUbo_, &sd, sizeof(sd));
     rhi_->BindUniformBuffer(8, ssaoUbo_);
@@ -1701,7 +1756,28 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
               {extras && extras->linearOutput ? 1.f : 0.f, grading ? 1.f : 0.f, 0, 0},
               {std::clamp(fx.vignette, 0.f, 1.f), std::clamp(fx.vignetteSmooth, 0.f, 1.f), std::clamp(fx.aberration, 0.f, 1.f), std::clamp(fx.grain, 0.f, 1.f)},
               {fx.autoExposure ? 1.f : 0.f, std::min(fx.autoMinEV, fx.autoMaxEV), std::max(fx.autoMinEV, fx.autoMaxEV), (float)(postFrame_ % 997)},
-              {0, 0, (float)w / (float)std::max(h, 1), 0}};
+              {0, 0, (float)w / (float)std::max(h, 1), 0},
+              {std::max(fx.dofFocus, 0.05f), std::max(fx.dofRange, 0.f), std::clamp(fx.dofBlur, 0.f, 1.f) * 14.f * std::max(h, 1) / 1080.f,
+               dofOn && camFx ? 1.f : 0.f},
+              {std::clamp(fx.lensFlare, 0.f, 1.f), 0, 0, 0}};
+  if (dofOn && camFx) { // blur by depth into a copy the tone map then reads
+    if (!dofRT_.Valid() || dofW_ != w || dofH_ != h) {
+      rhi_->DestroyRenderTarget(dofRT_);
+      dofRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      dofW_ = w;
+      dofH_ = h;
+    }
+    rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
+    rhi_->BindUniformBuffer(4, postUbo_);
+    rhi_->BeginRenderTarget(dofRT_, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(geoRT_));
+    rhi_->Draw(dof_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+    hdr = rhi_->RenderTargetColor(dofRT_);
+    if (timing) Mark(timer, "dof");
+  }
   TextureHandle adapted = white_;
   if (fx.autoExposure) { // average log luminance now, then step the adapted value toward it
     if (!lumRT_.Valid()) lumRT_ = rhi_->CreateRenderTargetEx(32, 32, 1, true, false);

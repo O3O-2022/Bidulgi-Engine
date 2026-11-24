@@ -479,6 +479,12 @@ jobs:
           if ($log -notmatch 'postfx test: vignette=1 grain=1 aberration=1 exposure=1 auto=1 bounded=1 restore=1') { $errors += 'post process volume test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-6b depth of field and lens flare
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_POSTFX2_TEST = '1'; BDG_QUALITY = 'high' } 20
+          if ($log -notmatch 'postfx2 test: blur=1 focus=1 flare=1 restore=1') { $errors += 'depth of field / lens flare test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

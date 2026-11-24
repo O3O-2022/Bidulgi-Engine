@@ -245,8 +245,9 @@ private:
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
   // Auto exposure (E-6): the picture's log luminance on a 32x32 target, then per output target a 1x1 average that
   // moves toward it over time (two 1x1 targets swapped each frame).
-  PipelineHandle lum_, adapt_;
-  RenderTargetHandle lumRT_;
+  PipelineHandle lum_, adapt_, dof_;
+  RenderTargetHandle lumRT_, dofRT_;
+  int32_t dofW_ = 0, dofH_ = 0;
   struct Adapt { RenderTargetHandle rt[2]; int cur = 0; double last = 0; bool primed = false; };
   std::unordered_map<uint32_t, Adapt> adapt_s;
   uint32_t postFrame_ = 0; // grain seed

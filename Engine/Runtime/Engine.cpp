@@ -107,8 +107,8 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false;
-  std::string postTestValues[7];
+  bool postTest = false, post2Test = false;
+  std::string postTestValues[7], post2TestValues[4];
   std::string inspectTestValues[7];
   bool hierarchyKeys = false; // the Hierarchy was clicked last: arrow keys move in it (E-4b)
   std::string uiTestValues[7];
@@ -1275,6 +1275,94 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
     const int n = differ(base, s, 0.0f, 1.0f);
     v[6] = std::format("{}", n >= 0 && n < 50 ? 1 : 0);
     if (v[6] != "1") bdg::LogError("postfx test: after removing, {} pixels differ", n);
+  }
+}
+
+// Scripted check of E-6b (BDG_POSTFX2_TEST=1, BDG_QUALITY=high for bloom): depth of field focused a few cm from
+// the camera blurs the picture (less edge energy), focused on the Player keeps it sharp around the Player, lens
+// flare adds light from a burnt-out picture, and removing the volume gives the first picture back.
+void InjectPostFx2Test(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  auto* v = e->post2TestValues;
+  struct Shot { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+  auto grab = [&] { Shot s; sv->ReadPixels(s.w, s.h, s.px); return s; };
+  auto energy = [](const Shot& s, int x0, int y0, int x1, int y1) { // sharpness: green-channel second differences
+    double sum = 0;                                                    // (smooth shading gradients cancel out)
+    auto g = [&](int x, int y) { return (int)s.px[((size_t)y * s.w + x) * 4 + 1]; };
+    for (int y = std::max(y0, 1); y + 1 < std::min(y1, s.h); ++y)
+      for (int x = std::max(x0, 1); x + 1 < std::min(x1, s.w); ++x)
+        sum += std::abs(4 * g(x, y) - g(x - 1, y) - g(x + 1, y) - g(x, y - 1) - g(x, y + 1));
+    return sum;
+  };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("postfx2 test: {}", err);
+  };
+  auto set = [&](const char* field, const std::string& value) {
+    run("set", "pp", std::format(R"({{"path":"PostProcessVolume.{}","value":{}}})", field, value));
+  };
+  static Shot base, a;
+  static double blurredPatch = 0;
+  static int px = 0, py = 0; // the Player on the picture (rows from the bottom)
+  if (frame == 1) { // the grid and the selection outline are drawn after post-processing: measure the scene alone
+    sv->showGrid = false;
+    m->SetSelection({});
+  }
+  if (frame == 3) {
+    base = grab();
+    run("add", "", R"({"id":"pp","name":"Post Process Volume"})");
+    run("addcomp", "pp", R"({"type":"PostProcessVolume"})");
+    set("dofBlur", "1");
+    set("dofFocusDistance", "0.2");
+    set("dofFocusRange", "0.1");
+  }
+  if (frame == 6) {
+    const Shot s = grab();
+    const double e0 = energy(base, 0, 0, base.w, base.h), e1 = energy(s, 0, 0, s.w, s.h);
+    v[0] = std::format("{}", e1 < e0 * 0.6 ? 1 : 0);
+    if (v[0] != "1") bdg::LogError("postfx2 test: edge energy {:.0f} -> {:.0f}", e0, e1);
+    const bdg::Camera3D cam = sv->camera.ToCamera();
+    const glm::vec3 player = glm::vec3(m->scene.WorldMatrix("g6")[3]);
+    float fx = 0, fy = 0;
+    if (bdg::ProjectToPixel(cam, s.w, s.h, player, fx, fy)) { px = (int)fx; py = (int)fy; }
+    blurredPatch = energy(s, px - 40, py - 40, px + 40, py + 40);
+    set("dofFocusDistance", std::format("{}", glm::length(player - cam.position)));
+    set("dofFocusRange", "1.5");
+  }
+  if (frame == 9) {
+    const Shot s = grab();
+    const double sharp = energy(s, px - 40, py - 40, px + 40, py + 40), orig = energy(base, px - 40, py - 40, px + 40, py + 40);
+    v[1] = std::format("{}", sharp > blurredPatch * 1.4 && sharp > orig * 0.7 ? 1 : 0);
+    if (v[1] != "1") bdg::LogError("postfx2 test: player patch blurred {:.0f}, focused {:.0f}, original {:.0f}", blurredPatch, sharp, orig);
+    set("dofBlur", "0");
+    set("exposureCompensation", "1.5"); // the sky and lit ground above white: something for the flare
+  }
+  if (frame == 12) {
+    a = grab();
+    set("lensFlare", "1");
+  }
+  if (frame == 15) {
+    const Shot s = grab();
+    int brighter = 0;
+    for (size_t i = 0; s.px.size() == a.px.size() && i < s.px.size(); i += 4)
+      brighter += (s.px[i] + s.px[i + 1] + s.px[i + 2]) - (a.px[i] + a.px[i + 1] + a.px[i + 2]) > 6;
+    v[2] = std::format("{}", brighter > 500 ? 1 : 0);
+    if (v[2] != "1") bdg::LogError("postfx2 test: flare brightened {} pixels", brighter);
+    run("del", "pp", "{}");
+  }
+  if (frame == 18) {
+    const Shot s = grab();
+    int n = 0;
+    for (size_t i = 0; s.px.size() == base.px.size() && i < s.px.size(); i += 4)
+      n += std::abs(s.px[i] - base.px[i]) + std::abs(s.px[i + 1] - base.px[i + 1]) + std::abs(s.px[i + 2] - base.px[i + 2]) > 24;
+    v[3] = std::format("{}", s.px.size() == base.px.size() && n < 50 ? 1 : 0);
+    if (v[3] != "1") bdg::LogError("postfx2 test: after removing, {} pixels differ", n);
   }
 }
 
@@ -3257,6 +3345,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->inspectTest = std::getenv("BDG_INSPECT2_TEST") != nullptr;
   e->fbxTest = std::getenv("BDG_FBX_TEST") != nullptr;
   e->postTest = std::getenv("BDG_POSTFX_TEST") != nullptr;
+  e->post2Test = std::getenv("BDG_POSTFX2_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3718,6 +3807,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->inspectTest && !e->showGallery) InjectInspect2Test(e, frames);
     if (e->fbxTest && !e->showGallery) InjectFbxTest(e, frames);
     if (e->postTest && !e->showGallery) InjectPostFxTest(e, frames);
+    if (e->post2Test && !e->showGallery) InjectPostFx2Test(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -4096,6 +4186,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->post2Test) {
+        auto* v = e->post2TestValues;
+        bdg::LogInfo("postfx2 test: blur={} focus={} flare={} restore={}", v[0], v[1], v[2], v[3]);
       }
       if (e->postTest) {
         auto* v = e->postTestValues;

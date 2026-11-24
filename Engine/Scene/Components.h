@@ -129,6 +129,10 @@ public:
   BPROPERTY(Edit, Range = "0,1", ShowIf = "vignette") float vignetteSmoothness = 0.5f;
   BPROPERTY(Edit, Range = "0,1", Tooltip = "Red and blue split toward the edges") float chromaticAberration = 0.f;
   BPROPERTY(Edit, Range = "0,1") float filmGrain = 0.f;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "Lens flare: ghosts and a halo from the brightest parts (needs bloom: High and up)") float lensFlare = 0.f;
+  BPROPERTY(Edit, Header = "Depth of Field", Range = "0,1", Tooltip = "0 = off; how wide out-of-focus parts blur") float dofBlur = 0.f;
+  BPROPERTY(Edit, Range = "0.1,1000", ShowIf = "dofBlur", Tooltip = "Metres from the camera that are sharp") float dofFocusDistance = 10.f;
+  BPROPERTY(Edit, Range = "0,100", ShowIf = "dofBlur", Tooltip = "Depth around the focus distance that stays sharp (m)") float dofFocusRange = 2.f;
 };
 
 // Turns its object while the game is playing (queue 3-6): the first built-in behaviour, so play mode has

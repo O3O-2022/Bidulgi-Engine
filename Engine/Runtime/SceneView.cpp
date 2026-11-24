@@ -199,7 +199,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   info_.clear();
   icons_.clear();
   extras_ = {};
-  extras_.grid = true;
+  extras_.grid = showGrid;
   extras_.view = debugView;
   probes_.clear();
   hasVolume_ = false;
@@ -349,6 +349,10 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         v.fx.vignetteSmooth = pv.vignetteSmoothness;
         v.fx.aberration = pv.chromaticAberration;
         v.fx.grain = pv.filmGrain;
+        v.fx.lensFlare = pv.lensFlare;
+        v.fx.dofBlur = pv.dofBlur;
+        v.fx.dofFocus = pv.dofFocusDistance;
+        v.fx.dofRange = pv.dofFocusRange;
         postVolumes_.push_back(v);
       }
       if (c.type == &WorldSettings::StaticType() && !worldSet) { // fog and exposure (2-6)
