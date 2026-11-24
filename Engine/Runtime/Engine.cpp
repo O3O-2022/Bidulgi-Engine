@@ -14,6 +14,7 @@
 #include "Runtime/SceneView.h"
 #include "Runtime/AssetPreviews.h"
 #include "Scene/GraphLibrary.h"
+#include "Scripting/DotNetHost.h"
 #include "Runtime/MaterialLibrary.h"
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
@@ -108,7 +109,7 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false;
+  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false;
   std::string shakeTestValues[5];
   std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
@@ -1282,6 +1283,47 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
 }
 
 void TogglePlay(bdg_engine* e);
+// Scripted check of 4-1 (BDG_CSHARP_TEST=1): the editor starts .NET, C# finds an object of the open scene, calls
+// Health.Damage, reads Health.Ratio and writes fields; the edits are undo steps from "script" and Ctrl+Z takes
+// them back.
+void InjectCSharpTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || frame != 3) return;
+  bdg::Command add;
+  add.name = "add";
+  add.args = R"({"id":"cs1","name":"Scripted"})";
+  bdg::Command comp;
+  comp.name = "addcomp";
+  comp.target = "cs1";
+  comp.args = R"({"type":"Health","value":{"current":70}})";
+  std::string err;
+  if (!m->bus.Execute(add, &err) || !m->bus.Execute(comp, &err)) bdg::LogError("csharp test: {}", err);
+  if (m->scene.Find("cs1") && !m->scene.Find("cs1")->Find("Transform")) {
+    comp.args = R"({"type":"Transform"})";
+    if (!m->bus.Execute(comp, &err)) bdg::LogError("csharp test: {}", err);
+  }
+  bdg::DotNetHost& host = bdg::DotNetHost::Instance();
+  const bool started = host.Start({}, &err);
+  host.Attach(&m->scene, &m->bus);
+  const size_t depth = m->bus.UndoDepth();
+  const int self = started ? host.SelfTest("Scripted") : -2;
+  const auto* h = m->scene.Find("cs1") ? m->scene.Find("cs1")->Find("Health") : nullptr;
+  std::string current, max;
+  if (h) {
+    bdg::Registry::Get(h->data, *h->type, "current", current);
+    bdg::Registry::Get(h->data, *h->type, "maxHealth", max);
+  }
+  const size_t steps = m->bus.UndoDepth() - depth;
+  const auto hist = m->bus.History();
+  const bool fromScript = !hist.empty() && hist.back().source == "script";
+  for (size_t i = 0; i < steps; ++i) m->bus.Undo();
+  std::string undone;
+  if (h) bdg::Registry::Get(h->data, *h->type, "current", undone);
+  host.Attach(nullptr, nullptr);
+  bdg::LogInfo("csharp test: started={} self={} values={} steps={} script={} undo={}", started ? 1 : 0, self,
+               current == "60" && max == "250" ? 1 : 0, steps, fromScript ? 1 : 0, undone == "70" ? 1 : 0);
+}
+
 // Scripted check of E-9 (BDG_SHAKE_TEST=1): a CameraShakeSource (bdg:Heavy, play on start) near the camera and
 // one far away; Play: only the near one shakes the game camera (the Game view's picture moves frame to frame),
 // it ends after its duration, Camera.Shake run as a Graph node starts another, and Stop leaves no offset.
@@ -3488,6 +3530,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->post2Test = std::getenv("BDG_POSTFX2_TEST") != nullptr;
   e->shaftTest = std::getenv("BDG_SHAFTS_TEST") != nullptr;
   e->shakeTest = std::getenv("BDG_SHAKE_TEST") != nullptr;
+  e->csharpTest = std::getenv("BDG_CSHARP_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3952,6 +3995,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->post2Test && !e->showGallery) InjectPostFx2Test(e, frames);
     if (e->shaftTest && !e->showGallery) InjectShaftsTest(e, frames);
     if (e->shakeTest && !e->showGallery) InjectShakeTest(e, frames);
+    if (e->csharpTest && !e->showGallery) InjectCSharpTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);

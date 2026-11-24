@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- C# scripting runtime (queue 4-1): loaded into the engine with hostfxr. Built by CMake (target
+       BidulgiScripting) into build/<Config>/Managed; the component classes come from reflection
+       (Bindings.g.cs, written by `bdg csharp-bindings`). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Bidulgi</RootNamespace>
+    <AssemblyName>Bidulgi.Scripting</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(BdgBindings)' != ''">
+    <Compile Include="$(BdgBindings)" Link="Generated\Bindings.g.cs" />
+  </ItemGroup>
+</Project>

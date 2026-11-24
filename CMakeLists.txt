@@ -134,6 +134,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
+  Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp Engine/Assets/ModelImport.h Engine/Assets/ModelImport.cpp
@@ -195,9 +196,37 @@ add_custom_command(TARGET bdg POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bdg> ${CMAKE_SOURCE_DIR}/Bin/)
 
+# ---- C# scripting (queue 4-1): Bidulgi.Scripting.dll into <exe folder>/Managed ----
+# The component classes come from reflection: bdg writes Bindings.g.cs, then `dotnet build` compiles the assembly.
+# Without the .NET SDK the engine still builds; C# scripting then reports that the assembly is missing.
+find_program(BDG_DOTNET dotnet)
+if(BDG_DOTNET)
+  set(BDG_BINDINGS ${CMAKE_BINARY_DIR}/Generated/Bindings.g.cs)
+  file(GLOB BDG_SCRIPTING_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Scripting/*.cs ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Scripting/*.csproj)
+  # bdg rewrites Bindings.g.cs only when the text changed, so the C# build reruns only for real API changes
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp BYPRODUCTS ${BDG_BINDINGS}
+    COMMAND $<TARGET_FILE:bdg> csharp-bindings ${BDG_BINDINGS}
+    COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp
+    DEPENDS bdg
+    COMMENT "C# bindings from reflection")
+  set(BDG_MANAGED_DLL ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed/Bidulgi.Scripting.dll)
+  add_custom_command(OUTPUT ${BDG_MANAGED_DLL}
+    COMMAND ${BDG_DOTNET} build ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Scripting/Bidulgi.Scripting.csproj -c $<CONFIG> --nologo -v:q
+            -o ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed -p:BdgBindings=${BDG_BINDINGS}
+    COMMAND ${CMAKE_COMMAND} -E touch ${BDG_MANAGED_DLL}
+    DEPENDS ${BDG_BINDINGS} ${BDG_SCRIPTING_SOURCES}
+    COMMENT "Bidulgi.Scripting.dll (dotnet build)")
+  add_custom_target(BidulgiScripting ALL DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_MANAGED_DLL})
+  add_dependencies(BidulgiEditor BidulgiScripting)
+  add_custom_command(TARGET BidulgiEditor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed ${CMAKE_SOURCE_DIR}/Bin/Managed)
+else()
+  message(WARNING "dotnet not found: C# scripting (Bidulgi.Scripting.dll) is not built")
+endif()
+
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)
@@ -207,4 +236,8 @@ if(MSVC)
 endif()
 # Test data in the source tree (render reference scene, queue 3-8).
 target_compile_definitions(BidulgiTests PRIVATE BDG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(BDG_DOTNET AND NOT BDG_ASAN) # CoreCLR is not loaded into an AddressSanitizer process
+  add_dependencies(BidulgiTests BidulgiScripting)
+  target_compile_definitions(BidulgiTests PRIVATE BDG_HAS_DOTNET=1)
+endif()
 add_test(NAME unit COMMAND BidulgiTests)

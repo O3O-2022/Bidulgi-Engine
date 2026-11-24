@@ -24,6 +24,11 @@ jobs:
           path: build/_deps
           key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
+      - name: .NET SDK (C# scripting, queue 4-1)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
       - name: Configure
         # No -G: CMake picks the newest Visual Studio on the runner (2022 locally, newer on hosted images).
         run: cmake -S . -B build -A x64
@@ -513,6 +518,10 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $val -notmatch '통과') { $errors += 'bdg validate failed on a valid scene' }
           if (Test-Path 'Bidulgi.log') { $errors += 'bdg wrote Bidulgi.log into the project' }
           Pop-Location
+
+          # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)
+          $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1' } 8
+          if ($log -notmatch 'csharp test: started=1 self=1 values=1 steps=3 script=1 undo=1') { $errors += 'C# scripting test failed' }
 
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"

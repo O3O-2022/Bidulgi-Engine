@@ -10,6 +10,7 @@
 #include "Scene/DefaultScene.h"
 #include "Scene/GraphLibrary.h"
 #include "Scene/SceneFile.h"
+#include "Scripting/CSharpBindings.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
@@ -554,6 +555,21 @@ int CmdCall(Ctx& c) {
   return !changes || Save(c, pr, bus, before) ? 0 : 1;
 }
 
+// bdg csharp-bindings <file>: C# classes for the reflected components (4-1); rewrites only when the text changed
+int CmdCSharpBindings(Ctx& c) {
+  const std::string text = GenerateCSharpBindings();
+  if (c.pos.empty()) { c.out += text; return 0; }
+  const fs::path out = U8(c.pos[0]).is_absolute() ? U8(c.pos[0]) : c.cwd / U8(c.pos[0]);
+  std::string old;
+  if (std::ifstream in(out, std::ios::binary); in) old.assign(std::istreambuf_iterator<char>(in), {});
+  if (old == text) return 0;
+  std::error_code ec;
+  if (out.has_parent_path()) fs::create_directories(out.parent_path(), ec);
+  std::ofstream f(out, std::ios::binary);
+  if (!(f << text)) { c.err += std::format("오류: 쓸 수 없음: {}\n", Utf8(out)); return 1; }
+  return 0;
+}
+
 int CmdNew(Ctx& c) {
   if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty]\n"; return 2; }
   SceneTemplate t = SceneTemplate::Basic3D;
@@ -576,6 +592,7 @@ const char* kHelp =
     "  set <target> path=value ... [--dry-run] | add <id> [--name N] [--parent P] [--pos x,y,z] [--comp Type]\n"
     "  del <id>... | addcomp <id> <Type> | rmcomp <id> <Type>\n"
     "  validate [scene] | refs <asset> | unused\n"
+    "  csharp-bindings [file]  (C# 클래스 생성)\n"
     "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
     "공통: --project <dir> --scene <이름 또는 경로>\n";
 
@@ -607,6 +624,7 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   if (cmd == "new") return CmdNew(c);
   if (cmd == "nodes") return CmdNodes(c);
   if (cmd == "call") return CmdCall(c);
+  if (cmd == "csharp-bindings") return CmdCSharpBindings(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;
