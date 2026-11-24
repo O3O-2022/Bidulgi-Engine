@@ -106,6 +106,13 @@ if(MSVC)
   target_compile_options(bc7enc PRIVATE /W0)
 endif()
 set_target_properties(bc7enc PROPERTIES FOLDER ThirdParty)
+# ---- External: xatlas (MIT): lightmap UV charts and packing (GI Tier 0-C) ----
+add_library(xatlas STATIC ThirdParty/xatlas/xatlas.cpp)
+target_include_directories(xatlas SYSTEM PUBLIC ThirdParty/xatlas)
+if(MSVC)
+  target_compile_options(xatlas PRIVATE /W0)
+endif()
+set_target_properties(xatlas PROPERTIES FOLDER ThirdParty)
 
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
@@ -134,6 +141,8 @@ add_library(BidulgiEngine STATIC
   Engine/Render3D/Quality.h Engine/Render3D/Quality.cpp
   Engine/Render3D/Culling.h Engine/Render3D/Culling.cpp
   Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
+  Engine/Render3D/RayScene.h Engine/Render3D/RayScene.cpp
+  Engine/Render3D/Lightmap.h Engine/Render3D/Lightmap.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp
   Engine/Core/ImageCompare.h Engine/Core/ImageCompare.cpp
@@ -149,7 +158,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
 bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----

@@ -19,7 +19,8 @@ struct RenderTargetHandle { uint32_t id = 0; bool Valid() const { return id != 0
 
 enum class BufferUsage { Vertex, Index, Uniform, Storage };
 // SRGBA8: 8-bit sRGB-encoded colour, decoded to linear when sampled (albedo textures, colour pictures).
-enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4 }; // BCn: 4x4 blocks (cooked textures)
+// BCn: 4x4 blocks (cooked textures). RGBA16F: half floats on the GPU, uploaded from 32-bit float RGBA (lightmaps).
+enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4, RGBA16F };
 enum class CullMode { None, Back };
 
 struct TextureDesc {

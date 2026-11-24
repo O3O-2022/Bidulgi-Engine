@@ -7,6 +7,9 @@
 #include "Render3D/Quality.h"
 #include "RHI/RHI.h"
 #include <glm/glm.hpp>
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace bdg {
@@ -14,6 +17,7 @@ struct Mesh3D {
   BufferHandle vertices, indices;
   uint32_t indexCount = 0;
   glm::vec3 boundsMin{0}, boundsMax{0}; // local box (culling); equal = unknown, never culled
+  std::shared_ptr<const MeshData> source; // CPU copy (lightmap unwrap and ray casts); null for meshes made elsewhere
 };
 
 struct Material3D {
@@ -34,6 +38,7 @@ struct DrawItem3D {
   const Mesh3D* mesh = nullptr;
   glm::mat4 model{1.f};
   Material3D material;
+  bool lightmapped = false; // static GI (Tier 0-C): baked into a lightmap; used while mesh and placement stay the same
 };
 
 struct Camera3D {
@@ -101,6 +106,15 @@ struct ReflectionProbe3D {
 };
 constexpr int kMaxProbes = 7; // + the sky
 
+// Lightmap bake settings (GI Tier 0-C, see Render3D/Lightmap.h).
+struct LightmapSettings {
+  float texelsPerMeter = 12;
+  int samples = 64;       // rays per texel and bounce (rounded to a square for stratification)
+  int bounces = 2;
+  int maxSize = 2048;     // atlas side limit; the density drops to fit
+  int padding = 2;        // texels between charts
+};
+
 // Light probe volume (GI Tier 0-B): a grid of SH9 irradiance probes filling a box, one probe at the centre of each
 // cell. Surfaces inside the box blend the 8 nearest probes per pixel (trilinear) for their diffuse light, so the
 // light changes across a floor or wall instead of being one value per object. Reflections still use the probes above.
@@ -135,6 +149,7 @@ struct RenderStats {
   size_t objects = 0;       // objects drawn in the scene pass
   size_t culled = 0;        // objects outside the camera frustum (not drawn)
   size_t shadowCulled = 0;  // opaque objects outside the light's frustum (not drawn into the shadow map)
+  size_t lightmapped = 0;   // objects drawn with a baked lightmap
 };
 
 class Renderer3D {
@@ -166,6 +181,14 @@ public:
   int VolumeProbes() const { return volumeBaked_ ? volume_.count.x * volume_.count.y * volume_.count.z : 0; }
   // Test hook: the volume's diffuse light (ambient / pi) at a point for a normal, from the baked coefficients (CPU).
   glm::vec3 VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const;
+  // Lightmaps (GI Tier 0-C): bakes the items marked `lightmapped` (CPU rays, see Render3D/Lightmap.h). Bake them
+  // before the probes so the probes see the lightmapped surfaces. Returns how many objects got a lightmap.
+  int BakeLightmaps(const std::vector<DrawItem3D>& items, const Light3D& light, const LightmapSettings& settings = {});
+  void ClearLightmaps();
+  int LightmappedObjects() const { return (int)lightmaps_.size(); }
+  std::string DescribeLightmaps() const; // "7 objects, atlas 512x384, 12.0 texels/m, 41230 texels, 1840 ms"
+  // Test hook: the baked value (ambient / pi) of the covered texel nearest to p whose normal is within ~45 deg of n.
+  bool LightmapAt(const glm::vec3& p, const glm::vec3& n, glm::vec3& value) const;
   // Test hooks: one face of a probe's mirror-sharp level (0 = sky), RGB linear, and its SH9 (ambient / pi).
   bool ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size);
   const float (&ProbeSH(int probe) const)[9][3] { return probeSH_[probe]; }
@@ -223,6 +246,18 @@ private:
   int badTexels_ = 0; // non-finite texels skipped by ComputeSHFrom
   TextureHandle smallCube_;
   RenderTargetHandle smallCaptureRT_;
+  void EnsureSmallCapture();
+  glm::vec3 AmbientAt(const glm::vec3& p, const glm::vec3& n) const; // CPU: volume, probe or sky SH (ambient / pi)
+  // Lightmaps: one atlas; each lightmapped item has its own mesh copy with atlas coordinates, matched by the
+  // original mesh and placement (moving the object drops back to the probes until the next bake).
+  struct LightmapInstance { Mesh3D mesh; const Mesh3D* source = nullptr; glm::mat4 model{1.f}; };
+  std::vector<LightmapInstance> lightmaps_;
+  std::unordered_map<uint64_t, int> lightmapIndex_;
+  TextureHandle lightmapTex_;
+  int lightmapW_ = 0, lightmapH_ = 0, lightmapTexels_ = 0;
+  float lightmapDensity_ = 0;
+  double lightmapMs_ = 0;
+  std::vector<glm::vec3> lmTexelPos_, lmTexelN_, lmTexelValue_;
   void UploadProbes();
   // GPU timings: a few frames of timestamp queries in flight, read back when the GPU has finished them.
   static constexpr int kTimerFrames = 4, kMarks = 8;

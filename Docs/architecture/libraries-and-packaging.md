@@ -24,6 +24,7 @@
 | 메시 최적화·LOD | meshoptimizer | MIT | 쿠킹 단계 (v1.3 도입, 3-1) |
 | 텍스처 | stb_image, basis_universal / KTX-Software | 퍼블릭 도메인 / Apache-2.0 | 웹과 모바일은 KTX2 |
 | 텍스처 압축 | bc7enc·rgbcx (bc7enc_rdo) | MIT / 퍼블릭 도메인 | BC7·BC5·BC4 쿠킹 (3-1b 도입) |
+| 라이트맵 UV | xatlas | MIT | 차트 나누기·묶기, `ThirdParty/xatlas` (GI Tier 0-C 도입) |
 | 모델 임포트 | cgltf(glTF), ufbx(FBX) | MIT | Assimp 대신 (cgltf 1.15 도입, 3-1) |
 | 3D 물리 | **Jolt Physics** | MIT | 멀티스레드, 대형 월드에 강함 |
 | 2D 물리 | **Box2D v3** | MIT | |

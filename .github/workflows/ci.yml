@@ -286,14 +286,16 @@ jobs:
 
           # 27) GI Tier 0 (reflection probes, IBL): Cornell box probe faces, mirror reflections of the walls, colour bleeding
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1' } 5
-          if ($log -notmatch 'gi test: .*faces=ok mirror=ok .* bleed=ok volume=ok .* probes_baked=1 volume_probes=48 result=pass') { $errors += 'GI Tier 0 probe test failed' }
+          if ($log -notmatch 'gi test: .*faces=ok mirror=ok .* bleed=ok volume=ok .* lightmaps=ok .* probes_baked=1 volume_probes=48 result=pass') { $errors += 'GI Tier 0 probe test failed' }
+          if ($log -match '(gi: lightmaps: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 27b) the indirect-light debug view of the same box (GI Tier 0-B) renders and still finds the volume
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1'; BDG_RENDER_VIEW = '7' } 5
           if ($log -notmatch 'gi test: .* volume=ok ') { $errors += 'GI indirect view failed' }
 
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
-          $log = Invoke-Editor 'Release' @{ BDG_GI_TEST = '1' } 11
-          if ($log -notmatch 'gi editor test: added=1 baked=1 rebaked=1 after_undo=0 volume=32 volume_after_undo=0') { $errors += 'GI probe editor test failed' }
+          $log = Invoke-Editor 'Release' @{ BDG_GI_TEST = '1' } 12
+          if ($log -notmatch 'gi editor test: added=1 baked=1 rebaked=1 after_undo=0 volume=32 volume_after_undo=0 lightmapped=[1-9]\d* lightmapped_after_undo=0') { $errors += 'GI probe editor test failed' }
+          if ($log -notmatch 'gi: lightmaps: [1-9]\d* objects, atlas \d+x\d+') { $errors += 'GI lightmap bake from the chip missing' }
           if ($log -notmatch 'gi: baked 1 probe\(s\), one more bounce') { $errors += 'GI re-bake from the chip missing' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 

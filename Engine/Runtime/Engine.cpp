@@ -137,7 +137,7 @@ struct bdg_engine {
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bool materialTest = false, qualityTest = false, refSceneTest = false, giTest = false;
-  std::string giTestValues[6];
+  std::string giTestValues[9];
   std::string refSceneTestValues[12];
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
@@ -187,6 +187,7 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
     auto b0 = std::chrono::steady_clock::now();
     e->r3d->SetProbes(e->board->probes);
     e->r3d->SetVolume(e->board->volumes.empty() ? nullptr : &e->board->volumes[0]);
+    if (e->board->lightmaps) e->r3d->BakeLightmaps(e->board->Items(), e->board->light); // before the probes see the room
     e->r3d->BakeProbes(e->board->Items(), e->board->light);
     e->r3d->BakeProbes(e->board->Items(), e->board->light);
     bdg::LogInfo("gi: baked {} probe(s) and {} volume probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(), e->r3d->VolumeProbes(),
@@ -1776,6 +1777,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         c.args = R"({"type":"LightProbeVolume","value":{"size":[12,6,12],"countX":4,"countY":2,"countZ":4}})";
         std::string err;
         if (!e->model->bus.Execute(c, &err)) v[0] += "0(" + err + ")";
+        bdg::Command lm; // and a lightmap on the knight (GI Tier 0-C), baked by the chip below
+        lm.name = "set";
+        lm.target = "g6";
+        lm.args = R"({"path":"MeshRenderer.bakeLightmap","value":true})";
+        if (!e->model->bus.Execute(lm, &err)) v[0] += "0(" + err + ")";
       }
       if (frames == 4) {
         v[1] = std::format("{}", e->r3d->BakedProbes());
@@ -1787,16 +1793,20 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
         }
       }
-      if (frames == 6) v[2] = std::format("{}", e->r3d->BakedProbes());
-      if (frames == 6 || frames == 7) { // undo the volume, then the probe
+      if (frames == 6) {
+        v[2] = std::format("{}", e->r3d->BakedProbes());
+        v[6] = std::format("{}", e->r3d->Stats().lightmapped);
+      }
+      if (frames >= 6 && frames <= 8) { // undo the lightmap flag, the volume, then the probe
         bdg::InputEvent z{T::KeyDown};
         z.key = bdg::Key::Z;
         z.ctrl = true;
         e->window.InjectEvent(z);
       }
-      if (frames == 9) {
+      if (frames == 10) {
         v[3] = std::format("{}", e->r3d->BakedProbes());
         v[5] = std::format("{}", e->r3d->VolumeProbes());
+        v[7] = std::format("{}", e->r3d->Stats().lightmapped);
       }
     }
     if (const char* baseDir = std::getenv("BDG_RENDER_COMPARE"); baseDir && e->sceneView && e->model)
@@ -2042,7 +2052,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
       if (e->giTest) {
         auto* v = e->giTestValues;
-        bdg::LogInfo("gi editor test: added={} baked={} rebaked={} after_undo={} volume={} volume_after_undo={}", v[0], v[1], v[2], v[3], v[4], v[5]);
+        bdg::LogInfo("gi editor test: added={} baked={} rebaked={} after_undo={} volume={} volume_after_undo={} lightmapped={} lightmapped_after_undo={}",
+                     v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
       }
       if (e->refSceneTest) {
         auto* v = e->refSceneTestValues;

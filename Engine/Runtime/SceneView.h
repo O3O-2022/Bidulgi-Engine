@@ -111,6 +111,8 @@ private:
   uint64_t probeKey_ = 0;
   ProbeVolume3D volume_; // the first LightProbeVolume in the scene (GI Tier 0-B)
   bool hasVolume_ = false;
+  size_t lightmapItems_ = 0;                        // items marked bakeLightmap (GI Tier 0-C)
+  uint64_t lightmapKey_ = 0, bakedLightmapKey_ = 0; // their meshes and placements now / at the last bake
   bool bakeRequested_ = false, firstBake_ = false;
   int noteFrames_ = 0;
   float renderMs_ = 0;

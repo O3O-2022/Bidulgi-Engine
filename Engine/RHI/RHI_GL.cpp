@@ -121,7 +121,8 @@ TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
     for (int32_t s = std::max(d.w, d.h); s > 1; s >>= 1) ++levels;
   GLuint t = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &t);
-  GLenum internal = d.format == TextureFormat::R8 ? GL_R8 : d.format == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8 : GL_RGBA8;
+  GLenum internal = d.format == TextureFormat::R8 ? GL_R8 : d.format == TextureFormat::SRGBA8 ? GL_SRGB8_ALPHA8
+                  : d.format == TextureFormat::RGBA16F ? GL_RGBA16F : GL_RGBA8;
   glTextureStorage2D(t, levels, internal, d.w, d.h);
   glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
   glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, d.nearest ? GL_NEAREST : GL_LINEAR);
@@ -132,7 +133,7 @@ TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
     UpdateTexture2D({t}, 0, 0, d.w, d.h, d.format, pixels);
     if (levels > 1) glGenerateTextureMipmap(t);
   }
-  uint64_t bytes = (uint64_t)d.w * d.h * (d.format == TextureFormat::R8 ? 1 : 4);
+  uint64_t bytes = (uint64_t)d.w * d.h * (d.format == TextureFormat::R8 ? 1 : d.format == TextureFormat::RGBA16F ? 8 : 4);
   bytes = levels > 1 ? bytes * 4 / 3 : bytes;
   textureBytes_[t] = bytes;
   mem_.textures += bytes;
@@ -193,7 +194,8 @@ TextureHandle RHI::CreateTexture2D(int32_t w, int32_t h, TextureFormat f, const 
 
 void RHI::UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat f, const void* pixels) {
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glTextureSubImage2D(t.id, 0, x, y, w, h, f == TextureFormat::R8 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+  glTextureSubImage2D(t.id, 0, x, y, w, h, f == TextureFormat::R8 ? GL_RED : GL_RGBA, f == TextureFormat::RGBA16F ? GL_FLOAT : GL_UNSIGNED_BYTE,
+                      pixels);
 }
 
 TextureHandle RHI::CreateCubemap(int32_t size, int32_t levels, int32_t layers) {

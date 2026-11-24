@@ -166,6 +166,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   extras_.view = debugView;
   probes_.clear();
   hasVolume_ = false;
+  lightmapItems_ = 0;
   extras_.wireframe = wireframe;
   light_ = {};
   light_.toLight = {-0.35f, 0.85f, 0.4f};
@@ -258,6 +259,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         if (in.mesh < 0 || in.mesh >= (int)e->model.meshes.size() || !e->model.meshes[in.mesh].indexCount) continue;
         if (sel) extras_.outlined.push_back(items_.size());
         items_.push_back({&e->model.meshes[in.mesh], world * in.world, e->model.materials[in.mesh]});
+        items_.back().lightmapped = mr->bakeLightmap;
         info_.push_back({id, &e->cpuPrims[in.mesh]});
         bool any = false;
         Bounds(e->cpuPrims[in.mesh], items_.back().model, info_.back().lo, info_.back().hi, any);
@@ -265,6 +267,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
     } else {
       if (sel) extras_.outlined.push_back(items_.size());
       items_.push_back({&e->mesh, world, MaterialFor(mr->material)});
+      items_.back().lightmapped = mr->bakeLightmap;
       info_.push_back({id, &e->cpu});
       bool any = false;
       Bounds(e->cpu, world, info_.back().lo, info_.back().hi, any);
@@ -302,6 +305,28 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
       for (float value : {volume_.boxMin.x, volume_.boxMin.y, volume_.boxMin.z, volume_.boxMax.x, volume_.boxMax.y, volume_.boxMax.z,
                           (float)volume_.count.x, (float)volume_.count.y, (float)volume_.count.z, volume_.intensity}) fold(value);
     const bool anyGI = !probes_.empty() || hasVolume_;
+    // Lightmaps (GI Tier 0-C) take longer: they bake from the chip only; the chip lights up while they are stale.
+    uint64_t lmKey = 1469598103934665603ull;
+    for (const DrawItem3D& it : items_) {
+      if (!it.lightmapped) continue;
+      ++lightmapItems_;
+      lmKey = (lmKey ^ (uint64_t)(uintptr_t)it.mesh) * 1099511628211ull;
+      for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r) {
+          uint32_t bits;
+          std::memcpy(&bits, &it.model[c][r], 4);
+          lmKey = (lmKey ^ bits) * 1099511628211ull;
+        }
+    }
+    lightmapKey_ = lightmapItems_ ? lmKey : 0;
+    if (!lightmapItems_ && r_->LightmappedObjects()) {
+      r_->ClearLightmaps();
+      bakedLightmapKey_ = 0;
+    }
+    if (bakeRequested_ && lightmapItems_) {
+      r_->BakeLightmaps(items_, light_);
+      bakedLightmapKey_ = lightmapKey_;
+    }
     if (key != probeKey_) {
       probeKey_ = key;
       r_->SetProbes(probes_);
@@ -790,8 +815,10 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   struct ChipDef { std::string name, text; bool on; };
   const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
                           {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
-                          {probes_.empty() && !hasVolume_ ? "" : "gi",
-                           probes_.empty() && !hasVolume_ ? "" : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0)), false},
+                          {probes_.empty() && !hasVolume_ && !lightmapItems_ ? "" : "gi",
+                           probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
+                               : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0) + lightmapItems_),
+                           lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_},
                           {"", toolChip, false}, {"", spaceChip, false}};
   for (const ChipDef& chip : defs) {
     if (chip.text.empty()) continue;

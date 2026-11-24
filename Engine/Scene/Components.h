@@ -22,6 +22,7 @@ struct MeshRenderer {
 public:
   BPROPERTY(Edit) std::string mesh;
   BPROPERTY(Edit) std::string material;
+  BPROPERTY(Edit, Tooltip = "Static GI: bake its bounced light into a lightmap (Scene view: Bake GI)") bool bakeLightmap = false;
 };
 
 BENUM()

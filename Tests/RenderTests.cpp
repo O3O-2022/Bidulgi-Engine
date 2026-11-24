@@ -7,6 +7,8 @@
 #include "Render3D/Quality.h"
 #include "Core/ImageCompare.h"
 #include "Render3D/Culling.h"
+#include "Render3D/Lightmap.h"
+#include "Render3D/RayScene.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
 #include <filesystem>
@@ -246,4 +248,75 @@ TEST_CASE("culling: frustum planes and transformed boxes (queue 3-10)") {
   glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1.f), {3, 0, 0}), glm::radians(45.f), glm::vec3(0, 1, 0));
   TransformBounds(m, {-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, lo, hi);
   CHECK(std::fabs(hi.x - 3 - 0.70710678f) < 1e-5f && std::fabs(lo.x - 3 + 0.70710678f) < 1e-5f && std::fabs(hi.y - 0.5f) < 1e-6f);
+}
+
+TEST_CASE("gi: ray scene hits, misses and back faces (GI Tier 0-C)") {
+  MeshData box = MakeBox(2, 2, 2); // centred at the origin, faces wound outward
+  std::vector<glm::vec3> tris;
+  for (uint32_t i : box.indices) tris.push_back({box.vertices[i].px, box.vertices[i].py, box.vertices[i].pz});
+  RayScene scene;
+  scene.Build(tris);
+  CHECK(scene.Triangles() == box.indices.size() / 3);
+  RayHit hit;
+  CHECK(scene.Intersect({0, 0, 5}, {0, 0, -1}, 100, hit));
+  CHECK(std::abs(hit.t - 4.f) < 1e-4f);
+  CHECK(!hit.backface);
+  CHECK(scene.Intersect({0, 0, 0}, {1, 0, 0}, 100, hit)); // from inside: the wall's back
+  CHECK(hit.backface && std::abs(hit.t - 1.f) < 1e-4f);
+  CHECK(!scene.Intersect({0, 3, 5}, {0, 0, -1}, 100, hit)); // passes above
+  CHECK(!scene.Occluded({0, 0, 5}, {0, 0, -1}, 3.5f));      // stops short of the box
+  CHECK(scene.Occluded({0, 0, 5}, {0, 0, -1}, 4.5f));
+}
+
+TEST_CASE("gi: lightmap bake on the CPU: open sky, contact shadow, unwrap (GI Tier 0-C)") {
+  // A 10 m floor under a uniform white sky (radiance 1, no lights): open floor gets ambient 1 (E / pi), the floor
+  // under a box sitting on it gets less. Meshes need no GPU: the bake reads Mesh3D::source only.
+  auto cpuMesh = [](const MeshData& d) {
+    Mesh3D m;
+    m.indexCount = (uint32_t)d.indices.size();
+    m.source = std::make_shared<const MeshData>(d);
+    return m;
+  };
+  Mesh3D floor = cpuMesh(MakePlaneXZ(10, 10)), box = cpuMesh(MakeBox(1, 1, 1));
+  std::vector<DrawItem3D> items(2);
+  items[0].mesh = &floor;
+  items[0].lightmapped = true;
+  items[1].mesh = &box;
+  items[1].model = glm::translate(glm::mat4(1.f), glm::vec3(0, 0.5f, 0));
+  Light3D light;
+  light.intensity = 0;
+  LightmapBakeInput in;
+  in.items = &items;
+  in.light = &light;
+  in.sky = [](const glm::vec3&) { return glm::vec3(1); };
+  LightmapSettings s;
+  s.texelsPerMeter = 6;
+  s.samples = 64;
+  s.bounces = 1;
+  LightmapResult r;
+  std::string err;
+  CHECK(BakeLightmapAtlas(in, s, r, &err));
+  CHECK(err.empty());
+  CHECK(r.width > 0 && r.height > 0 && r.rgba.size() == (size_t)r.width * r.height * 4);
+  CHECK(r.itemInstance.size() == 2 && r.itemInstance[0] == 0 && r.itemInstance[1] == -1);
+  CHECK(r.meshes.size() == 1 && !r.meshes[0].indices.empty());
+  bool uvInside = true;
+  for (const Vertex3D& v : r.meshes[0].vertices) uvInside = uvInside && v.lu >= 0 && v.lu <= 1 && v.lv >= 0 && v.lv <= 1;
+  CHECK(uvInside);
+  auto at = [&](glm::vec3 p) { // nearest covered texel
+    float best = 1e30f;
+    float value = -1;
+    for (size_t i = 0; i < r.texelPos.size(); ++i) {
+      float d = glm::distance(r.texelPos[i], p);
+      if (d < best) { best = d; value = r.rgba[r.texelIndex[i] * 4]; }
+    }
+    return value;
+  };
+  float open = at({4, 0, 4}), nearBox = at({0.75f, 0, 0});
+  CHECK(std::abs(open - 1.f) < 0.12f); // the corner sees almost the whole sky (box far away)
+  CHECK(nearBox < open * 0.85f);          // next to the box: part of the sky is blocked
+  LightmapResult none;
+  items[0].lightmapped = false;
+  CHECK(!BakeLightmapAtlas(in, s, none, &err));
+  CHECK(!err.empty());
 }

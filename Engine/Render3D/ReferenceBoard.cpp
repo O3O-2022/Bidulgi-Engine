@@ -303,8 +303,10 @@ bool ReferenceBoard::InitGI(RHI& rhi, Renderer3D& r) {
   volume.boxMax = {3, 4, 3};
   volume.count = {4, 3, 4};
   volumes = {volume};
+  for (DrawItem3D& it : items_) it.lightmapped = true; // walls and spheres: static, baked (GI Tier 0-C)
+  lightmaps = true;
   labels_ = {{kMirror + glm::vec3(-0.5f, -1.15f, 0.9f), "mirror"}, {kMatte + glm::vec3(-0.4f, -1.05f, 0.9f), "rough white"},
-             {{-2.9f, 4.4f, 0}, "GI Tier 0 · reflection probe (box projection) · SH probe volume 4x3x4"}};
+             {{-2.9f, 4.4f, 0}, "GI Tier 0 · reflection probe (box projection) · SH probe volume 4x3x4 · lightmaps"}};
   return true;
 }
 
@@ -351,10 +353,24 @@ std::string ReferenceBoard::CheckGI(Renderer3D& r, const std::vector<uint8_t>& r
   at({2.3f, 0, 1.2f}, fr);
   bool volume = r.VolumeProbes() == 48 && vl.r > vl.g * 1.3f && vr.g > vr.r * 1.3f && (fl[0] - fl[1]) > (fr[0] - fr[1]) + 8;
   if (!volume) fail("volume");
+  // 5) lightmaps: every item baked; the floor right under the rough sphere sees mostly the sphere (contact shadow of
+  //    the bounced light, finer than the probe grid), the floor by the red wall is redder than by the green one
+  glm::vec3 under{0}, open{0}, byRed{0}, byGreen{0};
+  const glm::vec3 up{0, 1, 0};
+  bool lmRead = r.LightmapAt({kMatte.x, 0, kMatte.z}, up, under) && r.LightmapAt({-0.3f, 0, 2.2f}, up, open) &&
+                r.LightmapAt({-2.8f, 0, 0.5f}, up, byRed) && r.LightmapAt({2.8f, 0, 0.5f}, up, byGreen);
+  auto lum = [](glm::vec3 c) { return c.r * 0.2126f + c.g * 0.7152f + c.b * 0.0722f; };
+  bool contact = lmRead && lum(under) < lum(open) * 0.6f;
+  bool lmBleed = lmRead && byRed.r > byRed.g * 1.2f && byGreen.g > byGreen.r * 1.2f;
+  bool lmOk = r.LightmappedObjects() == (int)items_.size() && r.Stats().lightmapped == items_.size() && contact && lmBleed;
+  if (!lmOk) fail("lightmaps");
   return std::format("probe_px=({:.2f},{:.2f},{:.2f}) probe_nx=({:.2f},{:.2f},{:.2f}) faces={} mirror={} ({},{},{} | {},{},{}) bleed={} "
-                     "volume={} (sh left {:.3f},{:.3f} right {:.3f},{:.3f} | floor {},{},{} | {},{},{}) probes_baked={} volume_probes={} result={}",
+                     "volume={} (sh left {:.3f},{:.3f} right {:.3f},{:.3f} | floor {},{},{} | {},{},{}) lightmaps={} (objects {} drawn {} "
+                     "contact {:.3f}/{:.3f} red {:.3f},{:.3f} green {:.3f},{:.3f}) probes_baked={} volume_probes={} result={}",
                      px.r, px.g, px.b, nx.r, nx.g, nx.b, faces ? "ok" : "bad", mirror ? "ok" : "bad", ml[0], ml[1], ml[2], mr[0], mr[1], mr[2],
                      bleed ? "ok" : "bad", volume ? "ok" : "bad", vl.r, vl.g, vr.r, vr.g, fl[0], fl[1], fl[2], fr[0], fr[1], fr[2],
+                     lmOk ? "ok" : "bad", r.LightmappedObjects(), r.Stats().lightmapped, lum(under), lum(open), byRed.r, byRed.g,
+                     byGreen.r, byGreen.g,
                      r.BakedProbes(), r.VolumeProbes(), failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 

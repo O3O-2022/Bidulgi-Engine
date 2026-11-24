@@ -7,7 +7,8 @@
 
 namespace bdg {
 // Tangent xyz + handedness w (glTF TANGENT). w == 0: no tangent, the shader derives one from UV derivatives.
-struct Vertex3D { float px, py, pz, nx, ny, nz, u, v, tx = 0, ty = 0, tz = 0, tw = 0; };
+// lu, lv: lightmap atlas coordinates (GI Tier 0-C), set on the per-object copies the lightmap bake makes.
+struct Vertex3D { float px, py, pz, nx, ny, nz, u, v, tx = 0, ty = 0, tz = 0, tw = 0, lu = 0, lv = 0; };
 
 struct MeshData {
   std::vector<Vertex3D> vertices;

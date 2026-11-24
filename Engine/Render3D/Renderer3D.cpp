@@ -1,6 +1,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Assets/GltfImport.h"
 #include "Render3D/Culling.h"
+#include "Render3D/Lightmap.h"
 #include "Core/Log.h"
 #include <algorithm>
 #include <cmath>
@@ -31,7 +32,7 @@ const char* kSkyFn = R"(vec3 SkyColor(vec3 d, float blur) {
 )";
 // Object constants (queue 3-9): one std430 array for the whole frame, indexed per instance, so a run of alike
 // objects is one instanced draw. The old uniform names stay as macros.
-const char* kObjectsCommon = R"(struct Object3D { mat4 model; vec4 baseColor; vec4 params; vec4 emissive; vec4 maps; vec4 extra; };
+const char* kObjectsCommon = R"(struct Object3D { mat4 model; vec4 baseColor; vec4 params; vec4 emissive; vec4 maps; vec4 extra; vec4 lightmap; };
 layout(std430, binding = 0) readonly buffer Objects3D { Object3D uObjects[]; };
 )";
 const char* kObjectsVS = R"(layout(location = 4) in float aObject; // this instance's index into uObjects
@@ -115,9 +116,11 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec4 aTangent;
+layout(location = 5) in vec2 aLightUV; // lightmap atlas coordinates (GI Tier 0-C)
 layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
+layout(binding = 7) uniform sampler2D uLightmap;
 #PROBES_FN
-out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent; out vec3 vLit;
+out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent; out vec3 vLit; out vec2 vLightUV;
 void main() {
   vObject = int(aObject + 0.5);
   vec4 w = uModel * vec4(aPos, 1.0);
@@ -125,11 +128,13 @@ void main() {
   vNormal = transpose(inverse(mat3(uModel))) * aNormal;
   vTangent = vec4(mat3(uModel) * aTangent.xyz, aTangent.w);
   vUV = aUV;
+  vLightUV = aLightUV;
   vLit = vec3(0.0);
   if (uCounts.y > 0.5 && uCounts.y < 1.5) { // low tier: diffuse light per vertex (sun, sky, local lights)
     vec3 n = normalize(vNormal);
     vLit = uLight.rgb * max(dot(n, normalize(uToLight.xyz)), 0.0) / 3.14159265 +
-           ProbeIrradiance(int(uObjects[int(aObject + 0.5)].extra.w + 0.5), n);
+           (uObjects[int(aObject + 0.5)].lightmap.x > 0.5 ? textureLod(uLightmap, aLightUV, 0.0).rgb
+                                                          : ProbeIrradiance(int(uObjects[int(aObject + 0.5)].extra.w + 0.5), n));
     for (int i = 0; i < int(uCounts.x); ++i) {
       vec3 toL = uLPos[i].xyz - vWorld;
       float d2 = max(dot(toL, toL), 1e-4), range = max(uLPos[i].w, 1e-3);
@@ -154,7 +159,8 @@ layout(binding = 1) uniform sampler2D uMetalRoughMap;
 layout(binding = 2) uniform sampler2D uNormalMap;
 layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
-in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit;
+layout(binding = 7) uniform sampler2D uLightmap;
+in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
 out vec4 oColor;
 const float PI = 3.14159265;
 vec3 ToSrgb(vec3 c) {
@@ -270,6 +276,7 @@ void main() {
     vec3 cell = (uVolMax.xyz - uVolMin.xyz) / max(uVolCount.xyz, vec3(1.0));
     ambient = VolumeIrradiance(vWorld + ng * 0.25 * min(cell.x, min(cell.y, cell.z)), N);
   }
+  if (uObjects[vObject].lightmap.x > 0.5) ambient = textureLod(uLightmap, vLightUV, 0.0).rgb; // baked (GI Tier 0-C)
   if (view >= 2) {
     vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
            : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
@@ -579,7 +586,7 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
   glm::mat4 view = glm::lookAt(center + L * (radius + casterReach), center, up);
   return glm::ortho(-radius, radius, -radius, radius, 0.f, depthRange) * view;
 }
-struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4]; };
+struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4], lightmap[4]; };
 }
 
 glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, up); }
@@ -613,7 +620,8 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
   pd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
   pd.attrs[4] = {4, 1, 0, 1}; // instance stream: object index
-  pd.attrCount = 5;
+  pd.attrs[5] = {5, 2, offsetof(Vertex3D, lu)};
+  pd.attrCount = 6;
   pd.stride = sizeof(Vertex3D);
   pd.instanceStride = sizeof(float);
   pd.depthTest = true;
@@ -679,7 +687,8 @@ bool Renderer3D::Init(RHI& rhi) {
     wd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
     wd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
     wd.attrs[4] = {4, 1, 0, 1};
-    wd.attrCount = 5;
+    wd.attrs[5] = {5, 2, offsetof(Vertex3D, lu)};
+    wd.attrCount = 6;
     wd.stride = sizeof(Vertex3D);
     wd.instanceStride = sizeof(float);
     wd.alphaBlend = true;
@@ -763,6 +772,7 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyTexture(scratchCube_);
   rhi_->DestroyRenderTarget(captureRT_);
   rhi_->DestroyBuffer(volumeBuffer_);
+  ClearLightmaps();
   rhi_->DestroyTexture(smallCube_);
   rhi_->DestroyRenderTarget(smallCaptureRT_);
   rhi_->DestroyPipeline(skyCube_);
@@ -784,6 +794,7 @@ Mesh3D Renderer3D::CreateMesh(const MeshData& d) {
   m.vertices = rhi_->CreateBuffer(BufferUsage::Vertex, d.vertices.data(), d.vertices.size() * sizeof(Vertex3D));
   m.indices = rhi_->CreateBuffer(BufferUsage::Index, d.indices.data(), d.indices.size() * sizeof(uint32_t));
   m.indexCount = (uint32_t)d.indices.size();
+  m.source = std::make_shared<const MeshData>(d);
   for (size_t i = 0; i < d.vertices.size(); ++i) {
     glm::vec3 p(d.vertices[i].px, d.vertices[i].py, d.vertices[i].pz);
     m.boundsMin = i ? glm::min(m.boundsMin, p) : p;
@@ -858,9 +869,39 @@ void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::
       items.push_back({&m.meshes[in.mesh], placement * in.world, m.materials[in.mesh]});
 }
 
+namespace {
+uint64_t LightmapKey(const Mesh3D* mesh, const glm::mat4& model) {
+  uint64_t key = 1469598103934665603ull ^ (uint64_t)(uintptr_t)mesh;
+  const float* f = glm::value_ptr(model);
+  for (int i = 0; i < 16; ++i) {
+    uint32_t bits;
+    std::memcpy(&bits, &f[i], 4);
+    key = (key ^ bits) * 1099511628211ull;
+  }
+  return key;
+}
+} // namespace
+
 void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& camIn, const Light3D& light,
-                        const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras, const QualitySettings* quality) {
+                        const std::vector<DrawItem3D>& itemsIn, Color clear, const RenderExtras* extras, const QualitySettings* quality) {
   if (!rhi_ || !rt.Valid() || w <= 0 || h <= 0) return;
+  // Lightmapped items draw their own mesh copy (atlas coordinates) while mesh and placement match the bake.
+  std::vector<DrawItem3D> swapped;
+  std::vector<uint8_t> usesLightmap;
+  if (!lightmaps_.empty()) {
+    swapped = itemsIn;
+    usesLightmap.assign(swapped.size(), 0);
+    for (size_t i = 0; i < swapped.size(); ++i) {
+      if (!swapped[i].lightmapped) continue;
+      auto found = lightmapIndex_.find(LightmapKey(swapped[i].mesh, swapped[i].model));
+      if (found == lightmapIndex_.end()) continue;
+      const LightmapInstance& li = lightmaps_[found->second];
+      if (li.source != swapped[i].mesh || li.model != swapped[i].model) continue;
+      swapped[i].mesh = &li.mesh;
+      usesLightmap[i] = 1;
+    }
+  }
+  const std::vector<DrawItem3D>& items = lightmaps_.empty() ? itemsIn : swapped;
   QualitySettings q = quality ? *quality : ReferenceQuality();
   const DebugView view = extras ? extras->view : DebugView::Lit;
   if (view != DebugView::Lit) { // show the buffer itself: per-pixel shading, no tone curve or post effects
@@ -1022,6 +1063,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     auto has = [](TextureHandle t) { return t.Valid() ? 1.f : 0.f; };
     o.maps[0] = has(m.baseMap); o.maps[1] = has(m.metalRoughMap); o.maps[2] = has(m.normalMap); o.maps[3] = has(m.occlusionMap);
     o.extra[0] = has(m.emissiveMap); o.extra[1] = m.occlusionStrength; o.extra[2] = m.alphaCutoff;
+    o.lightmap[0] = usesLightmap.empty() ? 0.f : (float)usesLightmap[k];
     glm::vec3 c = (worldLo[k] + worldHi[k]) * 0.5f; // GI Tier 0: the baked probe whose box holds the centre, else the sky
     for (int pi = 0; pi < bakedProbes_ && o.extra[3] == 0; ++pi)
       if (glm::all(glm::greaterThanEqual(c, probes_[pi].boxMin)) && glm::all(glm::lessThanEqual(c, probes_[pi].boxMax)))
@@ -1053,6 +1095,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindUniformBuffer(5, probesUbo_);
   rhi_->BindTexture(6, envArray_);
   rhi_->BindStorageBuffer(1, volumeBuffer_);
+  rhi_->BindTexture(7, lightmapTex_.Valid() ? lightmapTex_ : white_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
     if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize) {
       rhi_->DestroyRenderTarget(shadowRT_);
@@ -1115,6 +1158,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.objects = opaqueList.size() + blendList.size();
   stats_.culled = culled;
   stats_.shadowCulled = shadowCulled;
+  stats_.lightmapped = 0;
+  for (size_t i : opaqueList) stats_.lightmapped += usesLightmap.empty() ? 0 : usesLightmap[i];
   rhi_->EndRenderTarget(); // resolves MSAA
   if (timing) Mark(timer, "scene");
 
@@ -1329,6 +1374,127 @@ glm::vec3 Renderer3D::VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) c
   return glm::max(e, glm::vec3(0)) * volume_.intensity;
 }
 
+void Renderer3D::EnsureSmallCapture() {
+  if (smallCube_.Valid()) return;
+  int levels = 1;
+  for (int sz = kVolumeSize; sz > 1; sz >>= 1) ++levels;
+  smallCube_ = rhi_->CreateCubemap(kVolumeSize, levels);
+  smallCaptureRT_ = rhi_->CreateRenderTargetEx(kVolumeSize, kVolumeSize, 1, true, true);
+}
+
+namespace {
+glm::vec3 EvalSH(const float (&sh)[9][3], const glm::vec3& n) {
+  const float b[9] = {0.282095f, 0.488603f * n.y, 0.488603f * n.z, 0.488603f * n.x, 1.092548f * n.x * n.y, 1.092548f * n.y * n.z,
+                      0.315392f * (3 * n.z * n.z - 1), 1.092548f * n.x * n.z, 0.546274f * (n.x * n.x - n.y * n.y)};
+  glm::vec3 e(0);
+  for (int k = 0; k < 9; ++k) e += b[k] * glm::vec3(sh[k][0], sh[k][1], sh[k][2]);
+  return glm::max(e, glm::vec3(0));
+}
+} // namespace
+
+glm::vec3 Renderer3D::AmbientAt(const glm::vec3& p, const glm::vec3& n) const {
+  if (hasVolume_ && volumeBaked_ && glm::all(glm::greaterThanEqual(p, volume_.boxMin)) && glm::all(glm::lessThanEqual(p, volume_.boxMax)))
+    return VolumeIrradiance(p, n);
+  for (int i = 0; i < bakedProbes_; ++i)
+    if (glm::all(glm::greaterThanEqual(p, probes_[i].boxMin)) && glm::all(glm::lessThanEqual(p, probes_[i].boxMax)))
+      return EvalSH(probeSH_[i + 1], n) * probes_[i].intensity;
+  return EvalSH(probeSH_[0], n);
+}
+
+void Renderer3D::ClearLightmaps() {
+  if (!rhi_) return;
+  for (LightmapInstance& li : lightmaps_) DestroyMesh(li.mesh);
+  lightmaps_.clear();
+  lightmapIndex_.clear();
+  rhi_->DestroyTexture(lightmapTex_);
+  lightmapTex_ = {};
+  lightmapW_ = lightmapH_ = lightmapTexels_ = 0;
+  lmTexelPos_.clear();
+  lmTexelN_.clear();
+  lmTexelValue_.clear();
+}
+
+int Renderer3D::BakeLightmaps(const std::vector<DrawItem3D>& items, const Light3D& light, const LightmapSettings& settings) {
+  if (!rhi_) return 0;
+  ClearLightmaps();
+  // The sky cube is baked by Render when the sky changes: one small render makes sure it matches this light.
+  EnsureSmallCapture();
+  {
+    const RenderStats keep = stats_;
+    QualitySettings q = ReferenceQuality();
+    q.msaa = 1;
+    RenderExtras extras;
+    extras.linearOutput = true;
+    Render(smallCaptureRT_, kVolumeSize, kVolumeSize, Camera3D{}, light, {}, {0, 0, 0, 1}, &extras, &q);
+    stats_ = keep;
+  }
+  // Rays that leave the scene see the sky (a CPU copy of the sky cube's 64^2 level, layer 0).
+  std::vector<float> env;
+  const int skySize = kEnvSize >> 1;
+  rhi_->ReadTextureLevel(envArray_, 1, env);
+  LightmapBakeInput in;
+  in.items = &items;
+  in.light = &light;
+  in.sky = [&](const glm::vec3& d) {
+    const glm::vec3 a = glm::abs(d);
+    int face;
+    float sc, tc, ma;
+    if (a.x >= a.y && a.x >= a.z) { face = d.x > 0 ? 0 : 1; ma = a.x; sc = d.x > 0 ? -d.z : d.z; tc = -d.y; }
+    else if (a.y >= a.z) { face = d.y > 0 ? 2 : 3; ma = a.y; sc = d.x; tc = d.y > 0 ? d.z : -d.z; }
+    else { face = d.z > 0 ? 4 : 5; ma = a.z; sc = d.z > 0 ? d.x : -d.x; tc = -d.y; }
+    const int x = std::clamp((int)((sc / ma * 0.5f + 0.5f) * skySize), 0, skySize - 1);
+    const int y = std::clamp((int)((tc / ma * 0.5f + 0.5f) * skySize), 0, skySize - 1);
+    const size_t at = (((size_t)face * skySize + y) * skySize + x) * 4;
+    return at + 2 < env.size() ? glm::vec3(env[at], env[at + 1], env[at + 2]) : glm::vec3(0);
+  };
+  in.ambient = [this](const glm::vec3& p, const glm::vec3& n) { return AmbientAt(p, n); };
+  LightmapResult r;
+  std::string err;
+  if (!BakeLightmapAtlas(in, settings, r, &err)) {
+    LogWarn("gi: lightmaps not baked: {}", err);
+    return 0;
+  }
+  TextureDesc td;
+  td.w = r.width;
+  td.h = r.height;
+  td.format = TextureFormat::RGBA16F;
+  lightmapTex_ = rhi_->CreateTexture(td, r.rgba.data());
+  for (size_t k = 0; k < r.meshes.size(); ++k) {
+    LightmapInstance li;
+    li.mesh = CreateMesh(r.meshes[k]);
+    li.source = items[r.instanceItem[k]].mesh;
+    li.model = items[r.instanceItem[k]].model;
+    lightmapIndex_[LightmapKey(li.source, li.model)] = (int)lightmaps_.size();
+    lightmaps_.push_back(std::move(li));
+  }
+  lightmapW_ = r.width;
+  lightmapH_ = r.height;
+  lightmapTexels_ = (int)r.texelIndex.size();
+  lightmapDensity_ = r.texelsPerMeter;
+  lightmapMs_ = r.ms;
+  lmTexelPos_ = std::move(r.texelPos);
+  lmTexelN_ = std::move(r.texelNormal);
+  for (uint32_t idx : r.texelIndex) lmTexelValue_.push_back({r.rgba[idx * 4], r.rgba[idx * 4 + 1], r.rgba[idx * 4 + 2]});
+  LogInfo("gi: lightmaps: {}{}", DescribeLightmaps(), r.insideTexels ? std::format(", {} texels inside geometry filled", r.insideTexels) : "");
+  return (int)lightmaps_.size();
+}
+
+std::string Renderer3D::DescribeLightmaps() const {
+  return std::format("{} objects, atlas {}x{}, {:.1f} texels/m, {} texels, {:.0f} ms", lightmaps_.size(), lightmapW_, lightmapH_,
+                     lightmapDensity_, lightmapTexels_, lightmapMs_);
+}
+
+bool Renderer3D::LightmapAt(const glm::vec3& p, const glm::vec3& n, glm::vec3& value) const {
+  float best = 1e30f;
+  for (size_t i = 0; i < lmTexelPos_.size(); ++i) {
+    if (glm::dot(lmTexelN_[i], n) < 0.7f) continue;
+    const glm::vec3 d = lmTexelPos_[i] - p;
+    const float d2 = glm::dot(d, d);
+    if (d2 < best) { best = d2; value = lmTexelValue_[i]; }
+  }
+  return best < 1e30f;
+}
+
 int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light) {
   if ((probes_.empty() && !hasVolume_) || !rhi_) return 0;
   badTexels_ = 0;
@@ -1341,12 +1507,7 @@ int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& 
     ComputeSH((int)i + 1);
   }
   if (hasVolume_) { // the grid: small captures, SH from the 16^2 level; all probes see the previous bounce
-    if (!smallCube_.Valid()) {
-      int levels = 1;
-      for (int sz = kVolumeSize; sz > 1; sz >>= 1) ++levels;
-      smallCube_ = rhi_->CreateCubemap(kVolumeSize, levels);
-      smallCaptureRT_ = rhi_->CreateRenderTargetEx(kVolumeSize, kVolumeSize, 1, true, true);
-    }
+    EnsureSmallCapture();
     const glm::ivec3 cnt = volume_.count;
     const size_t n = (size_t)cnt.x * cnt.y * cnt.z;
     std::vector<float> next(n * 36, 0.f);
