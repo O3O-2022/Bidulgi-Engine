@@ -198,6 +198,8 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(high.shadowCascades == 3 && high.shadowSoftness > 0 && high.ssao);
   CHECK(medium.shadowCascades == 1 && medium.shadowSoftness == 0 && !medium.ssao);
   CHECK(ref.shadowCascades == 1 && !ref.ssao);
+  CHECK(high.clustered && high.maxLights == 256 && QualityPreset(QualityTier::Ultra).maxLights == kMaxClusteredLights);
+  CHECK(!medium.clustered && !ref.clustered && ref.maxLights == 16); // Forward+ only on the high tiers
   CHECK(ApplyQualityOverrides("cascades=9,softness=0.05,ssao=1,aoradius=0.8", q, &err));
   CHECK(q.shadowCascades == 4 && q.shadowSoftness == 0.05f && q.ssao && q.ssaoRadius == 0.8f); // cascades clamped to 4
 

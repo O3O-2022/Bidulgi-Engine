@@ -29,6 +29,8 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   vec4 uShadow2;                                 // cascades, softness (m), blend band (share of a split), -
   vec4 uScreen;                                  // target w, h, 1 / w, 1 / h
   vec4 uFlags;                                   // x: SSAO on (3-5b)
+  vec4 uCluster;                                 // tiles x, y, depth slices, per-pixel lights (Forward+, 3-5b)
+  vec4 uCluster2;                                // near, slices / log(far / near), clustered on, -
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -172,6 +174,8 @@ layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
 layout(binding = 7) uniform sampler2D uLightmap;
 layout(binding = 8) uniform sampler2D uSSAO; // screen-space ambient occlusion, half resolution (3-5b)
+layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; }; // per light: pos + range, colour, dir + cos outer, cos inner + spot
+layout(std430, binding = 3) readonly buffer Clusters3D { uint uCl[]; };  // per cluster: first, count; then light indices
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
 out vec4 oColor;
 const float PI = 3.14159265;
@@ -264,15 +268,25 @@ float ShadowFactor(vec3 world, vec3 n) { // 1 = lit
   }
   return s;
 }
-vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) {
-  vec3 toL = uLPos[i].xyz - world;
+vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) { // light i of the light list
+  vec4 lp = uLL[i * 4], lc = uLL[i * 4 + 1], ld = uLL[i * 4 + 2], lk = uLL[i * 4 + 3];
+  vec3 toL = lp.xyz - world;
   float d2 = max(dot(toL, toL), 1e-4);
+  float range = max(lp.w, 1e-3);
+  if (d2 >= range * range) return vec3(0.0);
   vec3 L = toL * inversesqrt(d2);
-  float range = max(uLPos[i].w, 1e-3);
   float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
   float atten = win * win / (d2 + 1.0); // windowed inverse square (no hard cut at the range)
-  if (uLCone[i].y > 0.5) atten *= smoothstep(uLDir[i].w, uLCone[i].x, dot(-L, uLDir[i].xyz)); // spot cone
-  return Brdf(N, V, L, diffuse, f0, a) * uLColor[i].rgb * atten;
+  if (lk.y > 0.5) atten *= smoothstep(ld.w, lk.x, dot(-L, ld.xyz)); // spot cone
+  return Brdf(N, V, L, diffuse, f0, a) * lc.rgb * atten;
+}
+void ClusterLights(vec3 world, out uint first, out uint count) { // this pixel's cluster (Forward+, 3-5b)
+  ivec2 tile = clamp(ivec2(gl_FragCoord.xy * uScreen.zw * uCluster.xy), ivec2(0), ivec2(uCluster.xy) - 1);
+  float z = max(dot(world - uCamPos.xyz, uCamFwd.xyz), uCluster2.x);
+  int slice = clamp(int(log(z / uCluster2.x) * uCluster2.y), 0, int(uCluster.z) - 1);
+  int c = (slice * int(uCluster.y) + tile.y) * int(uCluster.x) + tile.x;
+  first = uCl[c * 2];
+  count = uCl[c * 2 + 1];
 }
 void main() {
   // Every map is sampled and every derivative taken before any branch (implicit LOD needs uniform control flow).
@@ -286,7 +300,7 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades, 9 ao
+  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades, 9 ao, 10 lights
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
   if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
   if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
@@ -327,8 +341,13 @@ void main() {
   }
   if (uObjects[vObject].lightmap.x > 0.5) ambient = textureLod(uLightmap, vLightUV, 0.0).rgb; // baked (GI Tier 0-C)
   float ssao = uFlags.x > 0.5 ? textureLod(uSSAO, gl_FragCoord.xy * uScreen.zw, 0.0).r : 1.0;
+  uint lightFirst = 0u, lightCount = uint(uCluster.w + 0.5);
+  if (uCluster2.z > 0.5) ClusterLights(vWorld, lightFirst, lightCount);
   if (view >= 2) {
-    vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
+    float heat = clamp(float(lightCount) / 16.0, 0.0, 1.0); // lights this pixel evaluates: blue 0, green 8, red 16+
+    vec3 d = view == 10 ? (lightCount == 0u ? vec3(0.05) : mix(mix(vec3(0.1, 0.2, 1.0), vec3(0.1, 1.0, 0.2), min(heat * 2.0, 1.0)),
+                                                              vec3(1.0, 0.15, 0.1), max(heat * 2.0 - 1.0, 0.0)))
+           : view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
            : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
            : view == 7 ? ambient / (1.0 + ambient)                                                   // indirect light, compressed
            : view == 9 ? vec3(ssao)                                                                 // ambient occlusion
@@ -341,7 +360,10 @@ void main() {
   }
   vec3 f0 = mix(vec3(0.04), base.rgb, metallic), diffuse = base.rgb * (1.0 - metallic);
   vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
-  for (int i = 0; i < int(uCounts.x); ++i) color += LocalLight(i, vWorld, N, V, diffuse, f0, a);
+  if (uCluster2.z > 0.5)
+    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(uCl[lightFirst + k]), vWorld, N, V, diffuse, f0, a);
+  else
+    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   vec2 ab = EnvBRDFApprox(NoV, rough);
@@ -676,6 +698,7 @@ struct FrameData {
   float camFwd[4];
   float cascadeVP[4][16], cascadeSplit[4], cascadeInfo[4][4], shadow2[4];
   float screen[4], flags[4];
+  float cluster[4], cluster2[4];
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
@@ -922,6 +945,8 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(postUbo_);
   rhi_->DestroyBuffer(shadowPassUbo_);
   rhi_->DestroyBuffer(ssaoUbo_);
+  rhi_->DestroyBuffer(lightBuffer_);
+  rhi_->DestroyBuffer(clusterBuffer_);
   for (PipelineHandle p : {prepass_, prepassTwo_, ssao_, aoBlur_}) rhi_->DestroyPipeline(p);
   for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
   rhi_->DestroyBuffer(probesUbo_);
@@ -1113,13 +1138,15 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     f.sun[0] = 1.f;
   }
   Put(f.sky, light.sky);
-  int locals = std::min({(int)light.locals.size(), kMaxLocalLights, q.lighting == LightingMode::Unlit ? 0 : q.maxLights});
-  f.counts[0] = (float)locals;
+  // Per-pixel lights go to a storage buffer (up to the tier's limit); the first 16 also feed per-vertex lighting.
+  const int locals = std::min({(int)light.locals.size(), kMaxClusteredLights, q.lighting == LightingMode::Unlit ? 0 : q.maxLights});
+  const int vertexLights = std::min(locals, kMaxLocalLights);
+  f.counts[0] = (float)vertexLights;
   f.counts[1] = (float)q.lighting; // 0 unlit, 1 per vertex, 2 per pixel
   f.counts[2] = q.textureBias;
   f.counts[3] = (float)view;
   LightsData ld{};
-  for (int i = 0; i < locals; ++i) {
+  for (int i = 0; i < vertexLights; ++i) {
     const LocalLight3D& l = light.locals[i];
     Put(ld.pos[i], l.position, l.range);
     Put(ld.color[i], l.color, l.intensity);
@@ -1128,6 +1155,95 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     ld.cone[i][1] = l.spot ? 1.f : 0.f;
   }
   rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
+  {
+    std::vector<float> list((size_t)std::max(locals, 1) * 16, 0.f);
+    for (int i = 0; i < locals; ++i) {
+      const LocalLight3D& l = light.locals[i];
+      float* o = &list[(size_t)i * 16];
+      Put(o, l.position, l.range);
+      Put(o + 4, l.color, l.intensity);
+      Put(o + 8, glm::normalize(l.direction), std::cos(glm::radians(std::max(l.outerAngle, 0.1f) * 0.5f)));
+      o[12] = std::cos(glm::radians(std::clamp(l.innerAngle, 0.f, l.outerAngle - 0.01f) * 0.5f));
+      o[13] = l.spot ? 1.f : 0.f;
+    }
+    if (list.size() * 4 > lightCapacity_) {
+      rhi_->DestroyBuffer(lightBuffer_);
+      lightCapacity_ = list.size() * 4 * 2;
+      lightBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, lightCapacity_, true);
+    }
+    rhi_->UpdateBuffer(lightBuffer_, list.data(), list.size() * 4);
+  }
+  // Forward+ (3-5b): each light's sphere is projected to a range of screen tiles and depth slices; the clusters in
+  // that range list it. Two passes: count, then fill (first, count per cluster; then the indices).
+  const bool clustered = q.clustered && q.lighting == LightingMode::Pixel && locals > 0;
+  const float clusterNear = std::max(cam.nearZ, 0.05f), clusterFar = std::max(cam.farZ, clusterNear * 2);
+  const float sliceScale = kClusterZ / std::log(clusterFar / clusterNear);
+  f.cluster[0] = kClusterX;
+  f.cluster[1] = kClusterY;
+  f.cluster[2] = kClusterZ;
+  f.cluster[3] = (float)locals;
+  f.cluster2[0] = clusterNear;
+  f.cluster2[1] = sliceScale;
+  f.cluster2[2] = clustered ? 1.f : 0.f;
+  uint32_t clusterRefs = 0, clusterMax = 0, clustersUsed = 0;
+  {
+    constexpr int kClusters = kClusterX * kClusterY * kClusterZ;
+    std::vector<uint32_t> cl(kClusters * 2, 0);
+    if (clustered) {
+      struct Range { int x0, x1, y0, y1, z0, z1; };
+      std::vector<Range> ranges;
+      std::vector<int> owner;
+      const glm::mat4 viewM = cam.View(), proj = cam.Projection(aspect);
+      auto slice = [&](float z) { return std::clamp((int)std::floor(std::log(std::max(z, clusterNear) / clusterNear) * sliceScale), 0, kClusterZ - 1); };
+      for (int i = 0; i < locals; ++i) {
+        const LocalLight3D& l = light.locals[i];
+        const glm::vec3 c = glm::vec3(viewM * glm::vec4(l.position, 1));
+        const float d = -c.z, r = std::max(l.range, 1e-3f);
+        if (d + r < clusterNear || d - r > clusterFar) continue;
+        Range g{0, kClusterX - 1, 0, kClusterY - 1, slice(d - r), slice(d + r)};
+        if (d - r > clusterNear) { // wholly in front: the screen rectangle of its box
+          glm::vec2 lo(1e9f), hi(-1e9f);
+          for (int k = 0; k < 8; ++k) {
+            glm::vec4 p = proj * glm::vec4(c + glm::vec3((k & 1) ? r : -r, (k & 2) ? r : -r, (k & 4) ? r : -r), 1);
+            glm::vec2 ndc = glm::vec2(p) / p.w;
+            lo = glm::min(lo, ndc);
+            hi = glm::max(hi, ndc);
+          }
+          if (lo.x > 1 || lo.y > 1 || hi.x < -1 || hi.y < -1) continue; // off screen
+          g.x0 = std::clamp((int)std::floor((lo.x * 0.5f + 0.5f) * kClusterX), 0, kClusterX - 1);
+          g.x1 = std::clamp((int)std::floor((hi.x * 0.5f + 0.5f) * kClusterX), 0, kClusterX - 1);
+          g.y0 = std::clamp((int)std::floor((lo.y * 0.5f + 0.5f) * kClusterY), 0, kClusterY - 1);
+          g.y1 = std::clamp((int)std::floor((hi.y * 0.5f + 0.5f) * kClusterY), 0, kClusterY - 1);
+        }
+        ranges.push_back(g);
+        owner.push_back(i);
+      }
+      auto each = [&](const Range& g, auto&& fn) {
+        for (int z = g.z0; z <= g.z1; ++z)
+          for (int y = g.y0; y <= g.y1; ++y)
+            for (int x = g.x0; x <= g.x1; ++x) fn((z * kClusterY + y) * kClusterX + x);
+      };
+      for (const Range& g : ranges) each(g, [&](int c) { ++cl[c * 2 + 1]; });
+      uint32_t at = kClusters * 2;
+      for (int c = 0; c < kClusters; ++c) {
+        cl[c * 2] = at;
+        at += cl[c * 2 + 1];
+        clusterMax = std::max(clusterMax, cl[c * 2 + 1]);
+        clustersUsed += cl[c * 2 + 1] ? 1 : 0;
+      }
+      clusterRefs = at - kClusters * 2;
+      cl.resize(at);
+      std::vector<uint32_t> fill(kClusters, 0);
+      for (size_t k = 0; k < ranges.size(); ++k)
+        each(ranges[k], [&](int c) { cl[cl[c * 2] + fill[c]++] = (uint32_t)owner[k]; });
+    }
+    if (cl.size() * 4 > clusterCapacity_) {
+      rhi_->DestroyBuffer(clusterBuffer_);
+      clusterCapacity_ = cl.size() * 4 * 2;
+      clusterBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, clusterCapacity_, true);
+    }
+    rhi_->UpdateBuffer(clusterBuffer_, cl.data(), cl.size() * 4);
+  }
   Put(f.camFwd, glm::normalize(cam.target - cam.position));
   f.screen[0] = (float)w;
   f.screen[1] = (float)h;
@@ -1298,6 +1414,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindUniformBuffer(5, probesUbo_);
   rhi_->BindTexture(6, envArray_);
   rhi_->BindStorageBuffer(1, volumeBuffer_);
+  rhi_->BindStorageBuffer(2, lightBuffer_);
+  rhi_->BindStorageBuffer(3, clusterBuffer_);
   rhi_->BindTexture(7, lightmapTex_.Valid() ? lightmapTex_ : white_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
     if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize || shadowTiles_ != cascades) { // one tile per cascade
@@ -1325,6 +1443,10 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_ = RenderStats{w, h, std::clamp(q.msaa, 1, 8), f.shadow[0] > 0.5f ? q.shadowMapSize : 0, locals, stats_.shadowCasters, 0, 0,
                        q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
   stats_.cascades = f.shadow[0] > 0.5f ? cascades : 0;
+  stats_.clustered = clustered;
+  stats_.clusterRefs = clusterRefs;
+  stats_.clusterMax = clusterMax;
+  stats_.clustersUsed = clustersUsed;
   bool outline = extras && !extras->outlined.empty();
   if (outline) { // selection mask first (its own target, no depth: the outline shows through other objects)
     if (!maskRT_.Valid() || maskW_ != w || maskH_ != h) {
@@ -1850,6 +1972,7 @@ const char* DebugViewName(DebugView v) {
     case DebugView::Indirect: return "Indirect";
     case DebugView::Cascades: return "Cascades";
     case DebugView::AO: return "AO";
+    case DebugView::LightCount: return "Lights";
   }
   return "Lit";
 }
@@ -1866,8 +1989,8 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={}", s.w, s.h,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={} clustered={} cluster_refs={} cluster_max={}", s.w, s.h,
                      s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
-                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0);
+                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0, s.clustered ? 1 : 0, s.clusterRefs, s.clusterMax);
 }
 }

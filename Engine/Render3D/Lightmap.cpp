@@ -238,7 +238,7 @@ bool BakeLightmapAtlas(const LightmapBakeInput& in, const LightmapSettings& s, L
       const float nl = glm::dot(n, l);
       if (nl > 0 && !scene.Occluded(o, l, 1e30f)) e += Rgb(light.color) * light.intensity * nl;
     }
-    const size_t locals = std::min<size_t>(light.locals.size(), kMaxLocalLights);
+    const size_t locals = std::min<size_t>(light.locals.size(), kMaxClusteredLights);
     for (size_t i = 0; i < locals; ++i) {
       const LocalLight3D& L = light.locals[i];
       const glm::vec3 toL = L.position - p;

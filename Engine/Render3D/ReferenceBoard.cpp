@@ -549,6 +549,99 @@ std::string ReferenceBoard::CheckAO(Renderer3D& r, int32_t w, int32_t h) {
                      tiers ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
+bool ReferenceBoard::InitLights(RHI& rhi, Renderer3D& r) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  Material3D floor;
+  floor.baseColor = {0.6f, 0.6f, 0.6f, 1};
+  floor.roughness = 0.6f;
+  items_.push_back({&plane_, At({0, 0, 0}, 40, 1, 40), floor});
+  Material3D block = floor;
+  block.baseColor = {0.8f, 0.8f, 0.8f, 1};
+  for (int i = 0; i < 9; ++i) items_.push_back({&box_, At({-12.f + 12.f * (i % 3), 0.75f, -12.f + 12.f * (i / 3)}, 1.5f, 1.5f, 1.5f), block});
+  light = {};
+  light.intensity = 0; // only the point lights
+  light.sky = {0.01f, 0.01f, 0.012f, 1};
+  light.ground = {0.005f, 0.005f, 0.005f, 1};
+  for (int z = 0; z < 16; ++z)
+    for (int x = 0; x < 16; ++x) {
+      LocalLight3D l;
+      l.position = {-18.f + 2.4f * x, 0.6f, -18.f + 2.4f * z};
+      const float hue = (float)((x * 7 + z * 3) % 16) / 16.f; // a spread of colours
+      glm::vec3 c = glm::clamp(glm::abs(glm::mod(hue * 6.f + glm::vec3(0, 4, 2), 6.f) - 3.f) - 1.f, 0.f, 1.f);
+      l.color = {0.25f + 0.75f * c.r, 0.25f + 0.75f * c.g, 0.25f + 0.75f * c.b, 1};
+      l.intensity = 2.f;
+      l.range = 2.2f;
+      light.locals.push_back(l);
+    }
+  camera.position = {0, 11, 24};
+  camera.target = {0, 0, -3};
+  camera.fovY = 55.f;
+  labels_ = {{{-18, 3, -18}, "3-5b Forward+ · 256 point lights · CheckLights compares clusters with every light"}};
+  return true;
+}
+
+std::string ReferenceBoard::CheckLights(Renderer3D& r, int32_t w, int32_t h) {
+  RenderTargetHandle rt = rhi_->CreateRenderTarget(w, h, 1);
+  RenderStats stats;
+  auto render = [&](QualitySettings q, DebugView view, std::vector<uint8_t>& px) {
+    q.msaa = 1;
+    q.fxaa = q.bloom = q.toneMap = false;
+    q.ssao = false;
+    RenderExtras ex;
+    ex.view = view;
+    r.Render(rt, w, h, camera, light, items_, clear, &ex, &q);
+    stats = r.Stats();
+    int32_t rw = 0, rh = 0;
+    rhi_->ReadRenderTarget(rt, rw, rh, px);
+  };
+  std::vector<uint8_t> clustered, flat, medium, heat;
+  QualitySettings high = QualityPreset(QualityTier::High), flatQ = high, med = QualityPreset(QualityTier::Medium);
+  flatQ.clustered = false;
+  render(high, DebugView::Lit, clustered);
+  const RenderStats cs = stats;
+  render(flatQ, DebugView::Lit, flat);
+  const RenderStats fs = stats;
+  render(med, DebugView::Lit, medium);
+  const RenderStats ms = stats;
+  render(high, DebugView::LightCount, heat);
+  rhi_->DestroyRenderTarget(rt);
+  // 1) clusters change nothing: the same picture as every light per pixel
+  double sum = 0;
+  int maxDiff = 0;
+  for (size_t i = 0; i < clustered.size(); i += 4)
+    for (int c = 0; c < 3; ++c) {
+      int d = std::abs((int)clustered[i + c] - (int)flat[i + c]);
+      sum += d;
+      maxDiff = std::max(maxDiff, d);
+    }
+  const double meanDiff = sum / (clustered.size() / 4 * 3);
+  // 2) lit share: pixels clearly lit by some light; medium keeps 8 of 256
+  auto litShare = [&](const std::vector<uint8_t>& px) {
+    size_t lit = 0;
+    for (size_t i = 0; i < px.size(); i += 4) lit += (px[i] + px[i + 1] + px[i + 2]) > 150 ? 1 : 0; // above the background
+    return (double)lit / (px.size() / 4);
+  };
+  const double litHigh = litShare(clustered), litMed = litShare(medium);
+  // 3) a pixel looks at a handful of lights, not 256
+  const double avg = cs.clustersUsed ? (double)cs.clusterRefs / cs.clustersUsed : 0;
+  std::string failed;
+  auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
+  bool same = meanDiff < 0.05 && maxDiff <= 3;
+  bool lights = cs.localLights == 256 && cs.clustered && !fs.clustered && ms.localLights == 8 && litHigh > litMed * 4;
+  bool lists = avg > 0 && avg < 24 && cs.clusterMax < 64;
+  if (!same) fail("same");
+  if (!lights) fail("lights");
+  if (!lists) fail("lists");
+  return std::format("high lights={} clustered={} refs={} clusters_used={} avg={:.1f} max={} | flat diff mean={:.4f} max={} | lit share high={:.3f} "
+                     "medium={:.3f} (lights {}) | same={} lights={} lists={} result={}",
+                     cs.localLights, cs.clustered ? 1 : 0, cs.clusterRefs, cs.clustersUsed, avg, cs.clusterMax, meanDiff, maxDiff, litHigh, litMed,
+                     ms.localLights, same ? "ok" : "bad", lights ? "ok" : "bad", lists ? "ok" : "bad",
+                     failed.empty() ? "pass" : "FAIL(" + failed + ")");
+}
+
 bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {
   rhi_ = &rhi;
   renderer_ = &r;

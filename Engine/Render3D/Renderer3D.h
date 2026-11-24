@@ -74,10 +74,12 @@ struct Light3D {
   Color sky{0.3f, 0.36f, 0.45f, 1}, ground{0.1f, 0.09f, 0.08f, 1}; // ambient hemisphere (linear) without a sky
   bool shadows = false;                  // directional shadow map fitted to the camera
   float shadowDistance = 40.f;           // metres from the camera that get shadows
-  std::vector<LocalLight3D> locals;      // the first kMaxLocalLights are used
+  std::vector<LocalLight3D> locals;      // per pixel: up to the tier's maxLights (<= kMaxClusteredLights); per vertex: first 16
   SkyBackground3D background;
 };
-constexpr int kMaxLocalLights = 16;
+constexpr int kMaxLocalLights = 16;        // per-vertex lighting (low tier), uniform buffer
+constexpr int kMaxClusteredLights = 1024;  // per-pixel lighting, storage buffer (Forward+, 3-5b)
+constexpr int kClusterX = 16, kClusterY = 9, kClusterZ = 24; // screen tiles and depth slices (logarithmic)
 
 Color SrgbToLinear(uint8_t r, uint8_t g, uint8_t b); // exact sRGB transfer function
 // World point -> pixel in a w x h target (x from the left, y from the BOTTOM, like the render target rows).
@@ -126,7 +128,7 @@ struct ProbeVolume3D {
 };
 
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
-enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades, AO };
+enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades, AO, LightCount };
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
 
 struct RenderExtras {
@@ -153,6 +155,8 @@ struct RenderStats {
   size_t lightmapped = 0;   // objects drawn with a baked lightmap
   int cascades = 0;         // shadow cascades drawn (3-5b)
   bool ssao = false;        // screen-space ambient occlusion pass ran (3-5b)
+  bool clustered = false;   // Forward+ light lists were used (3-5b)
+  uint32_t clusterRefs = 0, clusterMax = 0, clustersUsed = 0; // light references, most lights in one cluster, clusters with any
 };
 
 class Renderer3D {
@@ -231,6 +235,9 @@ private:
   RenderTargetHandle geoRT_, aoRT_[2];
   int32_t geoW_ = 0, geoH_ = 0;
   BufferHandle ssaoUbo_;
+  // Forward+ (3-5b): every per-pixel light (4 vec4 each) and the cluster lists (first, count per cluster; indices).
+  BufferHandle lightBuffer_, clusterBuffer_;
+  size_t lightCapacity_ = 0, clusterCapacity_ = 0;
   BufferHandle postUbo_;
   RenderTargetHandle hdrRT_, ldrRT_;
   int32_t hdrW_ = 0, hdrH_ = 0, hdrSamples_ = 0;

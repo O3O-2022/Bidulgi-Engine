@@ -230,7 +230,7 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
   }
   auto t0 = std::chrono::steady_clock::now();
   bdg::RenderExtras boardExtras; // BDG_RENDER_VIEW=0..7: debug view of the board screens (7 = indirect light only)
-  if (const char* rv = std::getenv("BDG_RENDER_VIEW")) boardExtras.view = (bdg::DebugView)std::clamp(std::atoi(rv), 0, 9);
+  if (const char* rv = std::getenv("BDG_RENDER_VIEW")) boardExtras.view = (bdg::DebugView)std::clamp(std::atoi(rv), 0, 10);
   e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, &boardExtras, &e->boardQuality);
   e->boardRenderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -1490,7 +1490,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   const bool boardScreen = screen && (std::string(screen) == "render-ref" || std::string(screen) == "render-assets" ||
                                       std::string(screen) == "render-stress" || std::string(screen) == "render-gi" ||
-                                      std::string(screen) == "render-shadows" || std::string(screen) == "render-ao");
+                                      std::string(screen) == "render-shadows" || std::string(screen) == "render-ao" ||
+                                      std::string(screen) == "render-lights");
   if (!boardScreen) { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
     e->r3d = std::make_unique<bdg::Renderer3D>();
     e->sceneView = std::make_unique<bdg::SceneView>();
@@ -1553,6 +1554,13 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     e->boardQuality = bdg::QualityPreset(bdg::QualityTier::High);
     if (e->r3d->Init(e->rhi) && e->board->InitShadows(e->rhi, *e->r3d)) e->editor->SetRoot(BuildRenderReferenceScreen(e));
     else { bdg::LogError("render-shadows: the 3D renderer did not start"); e->board.reset(); }
+  }
+  if (screen && std::string(screen) == "render-lights") { // Forward+ (3-5b), shown at the high tier
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->board = std::make_unique<bdg::ReferenceBoard>();
+    e->boardQuality = bdg::QualityPreset(bdg::QualityTier::High);
+    if (e->r3d->Init(e->rhi) && e->board->InitLights(e->rhi, *e->r3d)) e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    else { bdg::LogError("render-lights: the 3D renderer did not start"); e->board.reset(); }
   }
   if (screen && std::string(screen) == "render-ao") { // SSAO (3-5b), shown at the high tier
     e->r3d = std::make_unique<bdg::Renderer3D>();
@@ -2073,6 +2081,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           if (scr && std::string(scr) == "render-gi") bdg::LogInfo("gi test: {}", e->board->CheckGI(*e->r3d, px, rw, rh));
           else if (scr && std::string(scr) == "render-shadows") bdg::LogInfo("shadow test: {}", e->board->CheckShadows(*e->r3d, rw, rh));
           else if (scr && std::string(scr) == "render-ao") bdg::LogInfo("ao test: {}", e->board->CheckAO(*e->r3d, rw, rh));
+          else if (scr && std::string(scr) == "render-lights") bdg::LogInfo("lights test: {}", e->board->CheckLights(*e->r3d, rw, rh));
           else bdg::LogInfo("render test: {}x{} {}", rw, rh, e->board->Check(px, rw, rh));
         } else bdg::LogError("render test: no reference board (run with BDG_SCREEN=render-ref)");
       }

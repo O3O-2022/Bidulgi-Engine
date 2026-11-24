@@ -550,7 +550,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
           if (hit) {
-            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 10);
+            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 11);
             else if (hit->name == "wire") wireframe = !wireframe;
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;

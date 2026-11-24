@@ -36,6 +36,10 @@ public:
   // occlusion view and the lit picture at medium (no SSAO) and high.
   bool InitAO(RHI& rhi, Renderer3D& renderer);
   std::string CheckAO(Renderer3D& renderer, int32_t w, int32_t h);
+  // Forward+ (3-5b): 256 coloured point lights over a 40 m floor with a few boxes. CheckLights() renders high with
+  // cluster lists and with every light per pixel (the same picture), and medium (8 lights).
+  bool InitLights(RHI& rhi, Renderer3D& renderer);
+  std::string CheckLights(Renderer3D& renderer, int32_t w, int32_t h);
   std::vector<ReflectionProbe3D> probes; // baked by the engine before the first frame
   std::vector<ProbeVolume3D> volumes;    // the room's probe grid (GI Tier 0-B), baked with the probes
   bool lightmaps = false;                // bake lightmaps for the items marked lightmapped (GI Tier 0-C) first

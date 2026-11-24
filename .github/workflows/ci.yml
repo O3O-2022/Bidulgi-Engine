@@ -324,6 +324,10 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ao'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'ao test: .*flat=ok contact=ok tiers=ok result=pass') { $errors += 'SSAO test failed' }
           if ($log -match '(ao test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 30) 3-5b Forward+: 256 lights, cluster lists give the same picture as every light per pixel
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-lights'; BDG_RENDER_TEST = '1' } 5
+          if ($log -notmatch 'lights test: .*same=ok lights=ok lists=ok result=pass') { $errors += 'Forward+ test failed' }
+          if ($log -match '(lights test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
