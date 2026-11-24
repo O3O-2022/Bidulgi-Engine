@@ -27,7 +27,7 @@
 - [ ] UI 위젯 시스템 → [ui-widgets](../features/ui-widgets.md)
 - [ ] 타임라인 애니메이션 → [animation](../features/animation.md)
 - [ ] 그래프 비주얼 스크립팅 (VM → AOT 네이티브) → [visual-scripting](../features/visual-scripting.md)
-- [ ] VFX (언리얼 Niagara식 모듈 스택)
+- [ ] VFX (언리얼 Niagara식 모듈 스택) — 설계안 [particles](../features/particles.md), QUEUE 6-VFX
 - [ ] 내비메시와 길찾기, 비헤이비어 트리
 - [ ] 터레인과 폴리지
 - [ ] 라이트 베이크, 포스트 프로세스 볼륨
