@@ -13,6 +13,9 @@
 #include <format>
 
 namespace bdg {
+namespace {
+Color WithAlphaUI(Color c, float a) { c.a = a; return c; }
+}
 constexpr long long kCaretBlinkMs = 530; // text caret on/off period
 // ---- Builders ------------------------------------------------------------------------------
 namespace {
@@ -418,7 +421,40 @@ void UIContext::DrawWidget(Widget& w) {
       FieldInputBox(w, ix, iy, iw, ih);
       bool focus = focused_ == &w;
       if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
-      Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked ? t.C("accent") : t.C("fg-dim"), w.text);
+      Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked || scrub_ == &w ? t.C("accent") : w.scrub && w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
+      const auto parts = w.axes > 0 ? FieldParts(w.text2, w.axes) : std::vector<std::pair<size_t, size_t>>{};
+      if (!parts.empty() && w.composing.empty()) { // vector: one box per number with its axis tag (E-4b)
+        static const char* tags[] = {"X", "Y", "Z", "W"};
+        static const char* tagColors[] = {"axis-x", "axis-y", "axis-z", "fg-faint"};
+        const std::string& v = w.text2;
+        const size_t selA = std::min(w.cursor, w.anchor), selZ = std::max(w.cursor, w.anchor);
+        for (int k = 0; k < (int)parts.size(); ++k) {
+          float bx, bw;
+          AxisBox(w, k, bx, bw);
+          const auto [a, z] = parts[(size_t)k];
+          const bool here = focus && w.cursor >= a && w.cursor <= z;
+          b.Rect(bx, iy, bw, ih, t.C("sunk"), rsm, 1, here ? t.C("accent") : t.C("line"));
+          Color tag = t.C(tagColors[k]);
+          b.Rect(bx + 1, iy + 1, 14, ih - 2, WithAlphaUI(tag, scrub_ == &w && scrubAxis_ == k ? 0.55f : 0.28f), rsm);
+          Text(bx + 4, iy + (ih - 10) * 0.5f - 1, 10, tag, tags[k]);
+          const float tx = bx + 18, ty = iy + (ih - fs) * 0.5f - 1;
+          b.PushClip(bx + 16, iy, bw - 17, ih);
+          if (focus && selZ > selA && selA < z && selZ > a) { // selection inside this number
+            const size_t s0 = std::max(selA, a), s1 = std::min(selZ, z);
+            const float sx = tx + Measure(fs, v.substr(a, s0 - a)), ex = tx + Measure(fs, v.substr(a, s1 - a));
+            b.Rect(sx, iy + 3, ex - sx, ih - 6, t.C("accent-soft"));
+          }
+          Text(tx, ty, fs, t.C("fg"), v.substr(a, z - a));
+          if (here) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            const float cx = tx + Measure(fs, v.substr(a, w.cursor - a));
+            if ((ms / kCaretBlinkMs) % 2 == 0) b.Rect(cx, iy + 4, 1.f, ih - 8, t.C("fg"));
+            if (window_) window_->SetTextInputArea(bx * scale_, iy * scale_, bw * scale_, ih * scale_, (int)((cx - bx) * scale_));
+          }
+          b.PopClip();
+        }
+        break;
+      }
       b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;
@@ -446,6 +482,12 @@ void UIContext::DrawWidget(Widget& w) {
         caretX = px;
       }
       Text(px, ty, fs, t.C("fg"), after);
+      if (w.swatch) { // colour box (E-4b): the value itself, a click opens the picker
+        float sx, sy, sw, sh;
+        SwatchBox(w, sx, sy, sw, sh);
+        b.Rect(sx - 1, sy - 1, sw + 2, sh + 2, t.C("line-strong"), 3);
+        b.Rect(sx, sy, sw, sh, w.swatchColor, 2);
+      }
       if (focus) {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         if ((ms / kCaretBlinkMs) % 2 == 0 || !w.composing.empty()) b.Rect(caretX, iy + 4, 1.f, ih - 8, t.C("fg"));
@@ -601,6 +643,7 @@ void UIContext::ForgetRemovedWidgets() {
   if (!reachable(dragSource_)) { dragSource_ = nullptr; dragging_ = false; }
   if (!reachable(dropTarget_)) dropTarget_ = nullptr;
   if (!reachable(sliderDrag_)) sliderDrag_ = nullptr;
+  if (!reachable(scrub_)) scrub_ = nullptr;
 }
 
 Widget* UIContext::DropTargetAt(float x, float y) {
@@ -792,6 +835,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
     switch (e.type) {
       case InputEvent::Type::MouseMove: {
         if (sliderDrag_) { SliderSet(*sliderDrag_, e.x); break; }
+        if (scrub_) { ScrubTo(e.x, e.shift); break; }
         if (dragSource_) { // drag and drop: starts after 6 units so clicks stay clicks
           dragX_ = e.x; dragY_ = e.y;
           if (!dragging_ && std::hypot(e.x - pressX_, e.y - pressY_) > 6.f) dragging_ = true;
@@ -803,9 +847,38 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         if (hit) hit->hovered = true;
         break;
       }
-      case InputEvent::Type::MouseDown:
+      case InputEvent::Type::MouseDown: {
         if (e.button != 1) break;
-        pressed_ = HitTest(*root_, e.x, e.y);
+        Widget* under = HitTest(*root_, e.x, e.y);
+        if (under && under->kind == WidgetKind::Field) {
+          float ix, iy, iw, ih, sx, sy, sw, sh;
+          FieldInputBox(*under, ix, iy, iw, ih);
+          if (SwatchBox(*under, sx, sy, sw, sh) && e.x >= sx && e.x < sx + sw && e.y >= sy && e.y < sy + sh) { // colour box
+            if (under->onSwatch) under->onSwatch(*under);
+            break;
+          }
+          int axis = -2; // label drag: on the label (-1) or on an axis tag (k)
+          if (under->scrub && e.x < ix && under->axes == 0) axis = -1;
+          for (int k = 0; under->scrub && k < under->axes; ++k) {
+            float bx, bw;
+            if (AxisBox(*under, k, bx, bw) && e.x >= bx && e.x < bx + 15) axis = k;
+          }
+          const auto parts = under->axes > 0 ? FieldParts(under->text2, under->axes) : std::vector<std::pair<size_t, size_t>>{};
+          if (axis >= -1 && (axis < 0 || !parts.empty())) {
+            double start = 0;
+            const std::string num = axis < 0 ? under->text2 : under->text2.substr(parts[(size_t)axis].first, parts[(size_t)axis].second - parts[(size_t)axis].first);
+            start = std::strtod(num.c_str(), nullptr);
+            if (axis < 0 || under->axes > 0) {
+              SetFocus(nullptr);
+              scrub_ = under;
+              scrubAxis_ = axis;
+              scrubStart_ = start;
+              scrubX_ = e.x;
+              break;
+            }
+          }
+        }
+        pressed_ = under;
         if (pressed_) pressed_->pressed = true;
         dragSource_ = pressed_ && pressed_->draggable ? pressed_ : nullptr;
         dragging_ = false;
@@ -813,14 +886,20 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         pressX_ = dragX_ = e.x; pressY_ = dragY_ = e.y;
         SetFocus((pressed_ && pressed_->focusable) ? pressed_ : nullptr);
         if (focused_ && focused_->kind == WidgetKind::Field) focused_->cursor = focused_->anchor = FieldHit(*focused_, e.x);
+        if (focused_ && focused_->kind == WidgetKind::Field && focused_->axes > 0) { // a click in a vector box selects that number
+          for (const auto& [a, z] : FieldParts(focused_->text2, focused_->axes))
+            if (focused_->cursor >= a && focused_->cursor <= z) { focused_->anchor = a; focused_->cursor = z; break; }
+        }
         if (focused_ && focused_->kind == WidgetKind::Field && focused_->slider) {
           float ix, iy, iw, ih;
           FieldInputBox(*focused_, ix, iy, iw, ih);
           if (e.x >= ix && e.x < ix + iw && e.y >= iy && e.y < iy + ih) { sliderDrag_ = focused_; SliderSet(*focused_, e.x); }
         }
         break;
+      }
       case InputEvent::Type::MouseUp: {
         if (e.button != 1) break;
+        if (scrub_) { scrub_ = nullptr; scrubAxis_ = -1; break; }
         if (sliderDrag_) { sliderDrag_ = nullptr; if (pressed_) pressed_->pressed = false; pressed_ = nullptr; break; }
         Widget* hit = HitTest(*root_, e.x, e.y);
         if (dragging_) { // a drop, not a click
@@ -972,6 +1051,71 @@ void UIContext::SliderSet(Widget& f, float mouseX) {
   if (f.onChange) f.onChange(f);
 }
 
+std::vector<std::pair<size_t, size_t>> UIContext::FieldParts(const std::string& v, int count) {
+  std::vector<std::pair<size_t, size_t>> out;
+  size_t start = 0;
+  for (size_t i = 0; i <= v.size(); ++i)
+    if (i == v.size() || v[i] == ',') {
+      size_t a = start, z = i;
+      while (a < z && v[a] == ' ') ++a;
+      while (z > a && v[z - 1] == ' ') --z;
+      out.emplace_back(a, z);
+      start = i + 1;
+    }
+  if ((int)out.size() != count) out.clear();
+  return out;
+}
+
+bool UIContext::AxisBox(const Widget& f, int k, float& x, float& w) const {
+  if (f.axes <= 0 || k < 0 || k >= f.axes) return false;
+  float ix, iy, iw, ih;
+  FieldInputBox(f, ix, iy, iw, ih);
+  const float gap = 4, bw = (iw - gap * (f.axes - 1)) / f.axes;
+  x = ix + k * (bw + gap);
+  w = bw;
+  return true;
+}
+
+bool UIContext::SwatchBox(const Widget& f, float& x, float& y, float& w, float& h) const {
+  if (!f.swatch) return false;
+  float ix, iy, iw, ih;
+  FieldInputBox(f, ix, iy, iw, ih);
+  w = 22;
+  h = ih - 6;
+  x = ix + iw - w - 3;
+  y = iy + 3;
+  return true;
+}
+
+// Label drag (E-4b): the number moves with the mouse, about 1 % of its size per unit (at least 0.01), whole steps
+// for integers; Shift is ten times finer.
+void UIContext::ScrubTo(float x, bool fine) {
+  Widget& f = *scrub_;
+  const double dx = x - scrubX_;
+  const double step = f.sliderInteger ? 0.25 : std::max(0.01, std::abs(scrubStart_) * 0.01);
+  double v = scrubStart_ + dx * step * (fine ? 0.1 : 1.0);
+  std::string text;
+  if (f.sliderInteger) text = std::to_string((long long)std::llround(v));
+  else {
+    text = std::format("{:.3f}", v);
+    while (text.back() == '0') text.pop_back();
+    if (text.back() == '.') text.pop_back();
+    if (text == "-0") text = "0";
+  }
+  if (scrubAxis_ < 0) {
+    if (text == f.text2) return;
+    f.text2 = text;
+  } else {
+    const auto parts = FieldParts(f.text2, f.axes);
+    if (parts.empty()) return;
+    const auto [a, z] = parts[(size_t)scrubAxis_];
+    if (f.text2.substr(a, z - a) == text) return;
+    f.text2.replace(a, z - a, text);
+  }
+  f.cursor = f.anchor = f.text2.size();
+  if (f.onChange) f.onChange(f);
+}
+
 void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {
   const Theme& t = theme_;
   float labelW = std::max(80.f, f.w * 0.4f);
@@ -984,6 +1128,23 @@ void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, flo
 size_t UIContext::FieldHit(const Widget& f, float mouseX) const {
   float x, y, w, h, fs = theme_.FontSize("label", 12);
   FieldInputBox(f, x, y, w, h);
+  if (const auto parts = f.axes > 0 ? FieldParts(f.text2, f.axes) : std::vector<std::pair<size_t, size_t>>{}; !parts.empty()) {
+    for (int k = (int)parts.size() - 1; k >= 0; --k) { // the box under the mouse, then the character in it
+      float bx, bw;
+      AxisBox(f, k, bx, bw);
+      if (mouseX < bx && k > 0) continue;
+      const auto [a, z] = parts[(size_t)k];
+      const float local = mouseX - (bx + 18);
+      size_t best = a;
+      float bestDist = 1e9f;
+      for (size_t i = a;; i = NextBoundary(f.text2, i)) {
+        const float d = std::abs(Measure(fs, f.text2.substr(a, i - a)) - local);
+        if (d < bestDist) { bestDist = d; best = i; }
+        if (i >= z) break;
+      }
+      return best;
+    }
+  }
   float local = mouseX - (x + theme_.N("space-3", 6));
   size_t best = 0;
   float bestDist = 1e9f;

@@ -76,6 +76,14 @@ struct Widget {
   bool marked = false; // Field: changed while playing (3-6b): accent label and a dot
   double sliderMin = 0, sliderMax = 1;
   std::function<void(Widget&)> onChange;      // value changed while dragging (each step; edits merge into one undo)
+  // Inspector conveniences (E-4b). axes: the value is "x, y, z" — drawn as one box per number with an X/Y/Z/W tag
+  // (axis colours), a click selects that number. scrub: dragging on the label (or an axis tag) changes the number
+  // (Shift = finer; sliderInteger = whole numbers). swatch: a colour box at the end of the input; a click on it
+  // calls onSwatch (the Inspector opens its picker).
+  int axes = 0;
+  bool scrub = false, swatch = false;
+  Color swatchColor{0, 0, 0, 0};
+  std::function<void(Widget&)> onSwatch;
   bool edited = false;
 
   // Computed each frame.
@@ -123,6 +131,11 @@ public:
   void CloseMenu() { menu_.clear(); }
   bool MenuOpen() const { return !menu_.empty(); }
   bool MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
+  // Byte ranges of the numbers in "x, y, z" (spaces trimmed); empty when the text has another shape.
+  static std::vector<std::pair<size_t, size_t>> FieldParts(const std::string& v, int count);
+  bool AxisBox(const Widget& f, int k, float& x, float& w) const; // a vector field's box k (UI units)
+  bool SwatchBox(const Widget& f, float& x, float& y, float& w, float& h) const;
+  bool Scrubbing() const { return scrub_ != nullptr; }
   const std::vector<MenuItem>& Menu() const { return menu_; }
   void SetClipboard(const std::string& text);
   std::string Clipboard() const;
@@ -191,6 +204,11 @@ private:
   bool dragging_ = false;
   bool clickCtrl_ = false, clickShift_ = false, clickAlt_ = false;
   std::vector<MenuItem> menu_;
+  Widget* scrub_ = nullptr; // label drag in progress (E-4b)
+  int scrubAxis_ = -1;
+  double scrubStart_ = 0;
+  float scrubX_ = 0;
+  void ScrubTo(float x, bool fine);
   float menuX_ = 0, menuY_ = 0, menuW_ = 0;
   int menuHot_ = -1, menuPressed_ = -1;
   bool MenuEvent(const InputEvent& e); // true: the open menu used it

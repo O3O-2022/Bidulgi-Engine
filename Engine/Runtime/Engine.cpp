@@ -105,7 +105,9 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
-  bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false;
+  bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false;
+  std::string inspectTestValues[7];
+  bool hierarchyKeys = false; // the Hierarchy was clicked last: arrow keys move in it (E-4b)
   std::string uiTestValues[7];
   float uiZoom = 1;          // user's UI scale on top of the display's (E-4): 0.7 .. 2
   std::string prefsPath;     // .cache/EditorPrefs.json ("" = automated run: not saved)
@@ -1026,6 +1028,124 @@ void InjectUiEditTest(bdg_engine* e, int frame) {
   if (frame == 21) v[6] = std::format("{}", v[6] == "1" && e->uiZoom == 1.f ? 1 : 0);
 }
 
+// Scripted check of E-4b (BDG_INSPECT2_TEST=1): dragging a number's label, dragging a vector's Y tag (only Y
+// moves), a click in the Z box selects that number for typing, the colour box opens a picker that changes the
+// colour, a Project item dropped on a text field, and arrow keys in the Hierarchy.
+void InjectInspect2Test(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto* v = e->inspectTestValues;
+  const float s = e->editor->Scale();
+  auto ev = [&](T type, float x, float y, int button = 1) { e->window.InjectEvent({type, x * s, y * s, button}); };
+  auto key = [&](bdg::Key k) { bdg::InputEvent kv{T::KeyDown}; kv.key = k; e->window.InjectEvent(kv); };
+  auto get = [&](const char* id, const char* comp, const char* field) {
+    std::string out;
+    bdg::SceneObject* o = m->scene.Find(id);
+    if (bdg::Component* c = o ? o->Find(comp) : nullptr) bdg::Registry::Get(c->data, *c->type, field, out);
+    return out;
+  };
+  auto drag = [&](float x0, float y0, float dx) {
+    ev(T::MouseMove, x0, y0, 0);
+    ev(T::MouseDown, x0, y0);
+    ev(T::MouseMove, x0 + dx * 0.5f, y0, 0);
+    ev(T::MouseMove, x0 + dx, y0, 0);
+    ev(T::MouseUp, x0 + dx, y0);
+  };
+  static std::string health0;
+  static size_t depth0;
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("inspector");
+    m->Select("g6");
+  }
+  if (frame == 4) { // drag the label of Health.maxHealth 40 units right: +10 (whole numbers, 0.25 per unit)
+    health0 = get("g6", "Health", "maxHealth");
+    depth0 = m->bus.UndoDepth();
+    if (bdg::Widget* f = e->editor->Find("f.Health.maxHealth")) drag(f->x + 20, f->y + f->h * 0.5f, 40);
+  }
+  if (frame == 6) {
+    const std::string h1 = get("g6", "Health", "maxHealth");
+    v[0] = std::format("{}", std::atof(h1.c_str()) - std::atof(health0.c_str()) == 10 && m->bus.UndoDepth() == depth0 + 1 ? 1 : 0);
+    if (v[0] != "1") bdg::LogError("inspect2 test: maxHealth {} -> {}, undo {} -> {}", health0, h1, depth0, m->bus.UndoDepth());
+    float bx = 0, bw = 0; // the Y tag of Transform.position: 20 units right = +0.2 (1 % of 1 per unit)
+    bdg::Widget* f = e->editor->Find("f.Transform.position");
+    if (f && e->editor->AxisBox(*f, 1, bx, bw)) drag(bx + 6, f->y + f->h * 0.5f, 20);
+  }
+  if (frame == 8) {
+    const std::string pos = get("g6", "Transform", "position");
+    v[1] = std::format("{}", pos == "[0,1.2,0]" ? 1 : 0);
+    if (v[1] != "1") bdg::LogError("inspect2 test: position {}", pos);
+    float bx = 0, bw = 0; // click in the Z box: its number is selected; typing replaces only it
+    bdg::Widget* f = e->editor->Find("f.Transform.position");
+    if (f && e->editor->AxisBox(*f, 2, bx, bw)) {
+      ev(T::MouseMove, bx + bw * 0.6f, f->y + f->h * 0.5f, 0);
+      ev(T::MouseDown, bx + bw * 0.6f, f->y + f->h * 0.5f);
+      ev(T::MouseUp, bx + bw * 0.6f, f->y + f->h * 0.5f);
+    }
+  }
+  if (frame == 9) {
+    bdg::InputEvent t{T::Text};
+    t.text = "7";
+    e->window.InjectEvent(t);
+    key(bdg::Key::Enter);
+  }
+  if (frame == 11) {
+    const std::string pos = get("g6", "Transform", "position");
+    v[2] = std::format("{}", pos == "[0,1.2,7]" ? 1 : 0);
+    if (v[2] != "1") bdg::LogError("inspect2 test: typed position {}", pos);
+    m->Select("g9"); // Lantern: Light.color
+  }
+  if (frame == 13) {
+    float sx, sy, sw, sh;
+    bdg::Widget* f = e->editor->Find("f.Light.color");
+    if (f && e->editor->SwatchBox(*f, sx, sy, sw, sh)) {
+      ev(T::MouseMove, sx + sw * 0.5f, sy + sh * 0.5f, 0);
+      ev(T::MouseDown, sx + sw * 0.5f, sy + sh * 0.5f);
+      ev(T::MouseUp, sx + sw * 0.5f, sy + sh * 0.5f);
+    }
+  }
+  if (frame == 15) {
+    bdg::Widget* val = e->editor->Find("pick.Light.color.v");
+    if (val && val->onChange) {
+      val->text2 = "50";
+      val->onChange(*val);
+    }
+  }
+  if (frame == 17) {
+    const std::string col = get("g9", "Light", "color"); // was [1,0.75,0.45,1]: brightness 50 % -> 0.5 at most
+    float r = 0, g = 0, b = 0, a = 0;
+    sscanf_s(col.c_str(), "[%f,%f,%f,%f]", &r, &g, &b, &a);
+    v[3] = std::format("{}", m->OpenColorPicker() == "Light.color" && std::abs(r - 0.5f) < 0.01f && std::abs(g - 0.375f) < 0.01f && a == 1 ? 1 : 0);
+    if (v[3] != "1") bdg::LogError("inspect2 test: colour {}", col);
+    m->Select("g6");
+  }
+  if (frame == 19) { // a Project item dropped on MeshRenderer.mesh
+    bdg::Widget* f = e->editor->Find("f.MeshRenderer.mesh");
+    bdg::Widget item;
+    item.id = "p.item.Models/Rock.glb";
+    if (f && f->onDrop) f->onDrop(item);
+  }
+  if (frame == 21) {
+    v[4] = std::format("{}", get("g6", "MeshRenderer", "mesh") == "\"Models/Rock.glb\"" ? 1 : 0);
+    if (bdg::Widget* row = e->editor->Find("h.g6")) { // click Player in the Hierarchy, then arrows
+      ev(T::MouseMove, row->x + row->w * 0.6f, row->y + row->h * 0.5f, 0);
+      ev(T::MouseDown, row->x + row->w * 0.6f, row->y + row->h * 0.5f);
+      ev(T::MouseUp, row->x + row->w * 0.6f, row->y + row->h * 0.5f);
+    }
+  }
+  static std::string trail;
+  if (frame == 23) key(bdg::Key::Left);   // fold Player
+  if (frame == 25) { trail += m->Folded("g6") ? "F" : "-"; key(bdg::Key::Right); }  // open it
+  if (frame == 27) { trail += m->Folded("g6") ? "F" : "O"; key(bdg::Key::Right); }  // into Weapon
+  if (frame == 29) { trail += m->Selected(); key(bdg::Key::Left); }                    // back to Player
+  if (frame == 31) { trail += m->Selected(); key(bdg::Key::Down); }                    // next row: Weapon
+  if (frame == 33) {
+    trail += m->Selected();
+    v[5] = std::format("{}", trail == "FOg7g6g7" ? 1 : 0);
+    if (v[5] != "1") bdg::LogError("inspect2 test: keys {}", trail);
+  }
+}
+
 // ---- Asset previews (queue E-1) -------------------------------------------------------------------
 // The Inspector's preview box: the live render (square, centred) or the image (aspect kept).
 void DrawAssetPreview(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
@@ -1518,7 +1638,12 @@ void SetupShortcuts(bdg_engine* e) {
     for (std::string id : {std::string("shortcut.") + p, std::string("shortcut.preset.") + p})
       if (bdg::Widget* b = e->editor->Find(id)) b->onClick = [e, p](bdg::Widget&) { UsePreset(e, p); };
   }
-  e->editor->SetKeyHandler([e](const bdg::InputEvent& ev) { return e->shortcuts.Handle(ev); });
+  e->editor->SetKeyHandler([e](const bdg::InputEvent& ev) {
+    if (e->hierarchyKeys && e->model && ev.type == bdg::InputEvent::Type::KeyDown && !ev.ctrl && !ev.alt && !ev.shift &&
+        e->model->HierarchyKey(ev.key))
+      return true; // arrows in the Hierarchy (E-4b)
+    return e->shortcuts.Handle(ev);
+  });
   RebuildShortcutList(e);
 }
 
@@ -2947,6 +3072,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->treeTest = std::getenv("BDG_TREE_TEST") != nullptr;
   e->sceneIconTest = std::getenv("BDG_SCENEICON_TEST") != nullptr;
   e->uiTest = std::getenv("BDG_UIEDIT_TEST") != nullptr;
+  e->inspectTest = std::getenv("BDG_INSPECT2_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3405,6 +3531,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->treeTest && !e->showGallery) InjectTreeTest(e, frames);
     if (e->sceneIconTest && !e->showGallery) InjectSceneIconTest(e, frames);
     if (e->uiTest && !e->showGallery) InjectUiEditTest(e, frames);
+    if (e->inspectTest && !e->showGallery) InjectInspect2Test(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3594,6 +3721,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
       }
       if (&ui == e->editor.get()) PreviewOrbit(e, events); // drag / wheel on the Inspector preview (E-1)
+      if (&ui == e->editor.get()) // which panel gets the arrow keys: the Hierarchy when it was clicked last (E-4b)
+        if (bdg::Widget* hw = ui.Find("hierarchy"))
+          for (const bdg::InputEvent& ev : events)
+            if (ev.type == bdg::InputEvent::Type::MouseDown)
+              e->hierarchyKeys = ev.x >= hw->x && ev.y >= hw->y && ev.x < hw->x + hw->w && ev.y < hw->y + hw->h;
       if (&ui == e->editor.get()) // Ctrl+wheel zooms the UI (E-4), except over the Scene view, which zooms the camera
         std::erase_if(events, [&](const bdg::InputEvent& ev) {
           if (ev.type != bdg::InputEvent::Type::Wheel || !ev.ctrl) return false;
@@ -3778,6 +3910,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->inspectTest) {
+        auto* v = e->inspectTestValues;
+        bdg::LogInfo("inspect2 test: scrub={} axis={} select={} color={} drop={} keys={}", v[0], v[1], v[2], v[3], v[4], v[5]);
       }
       if (e->uiTest) {
         auto* v = e->uiTestValues;

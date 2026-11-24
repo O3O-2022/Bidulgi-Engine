@@ -278,6 +278,7 @@ void EditorModel::RebuildProject() {
       tile.width = Length::Px(kTileW);
       tile.height = Length::Px(kTileH);
       tile.onClick = [click = it.click](Widget&) { click(); };
+      tile.draggable = true; // onto an Inspector text field (E-4b) or the Hierarchy later
     }
   }
   if (ui_) ui_->ForgetRemovedWidgets();

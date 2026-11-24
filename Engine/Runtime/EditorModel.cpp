@@ -1,5 +1,6 @@
 #include "Runtime/EditorModel.h"
 #include "Core/Expr.h"
+#include "UI/Theme.h"
 #include <fstream>
 #include "Core/Log.h"
 #include "Scene/Components.h"
@@ -268,6 +269,35 @@ void EditorModel::SaveFolds() const {
   fs::create_directories(p.parent_path(), ec);
   std::ofstream out(p, std::ios::binary);
   for (const std::string& l : keep) out << l << '\n';
+}
+
+bool EditorModel::HierarchyKey(Key k) {
+  if (k != Key::Up && k != Key::Down && k != Key::Left && k != Key::Right) return false;
+  std::vector<std::string> rows; // the visible rows in order
+  std::function<void(const std::string&)> walk = [&](const std::string& id) {
+    rows.push_back(id);
+    if (folded_.count(id)) return;
+    if (const SceneObject* o = scene.Find(id))
+      for (const std::string& c : o->children) walk(c);
+  };
+  for (const std::string& r : scene.Roots()) walk(r);
+  if (rows.empty()) return false;
+  const auto at = std::find(rows.begin(), rows.end(), selected_);
+  if (at == rows.end()) { Select(rows.front()); return true; }
+  const SceneObject* o = scene.Find(selected_);
+  switch (k) {
+    case Key::Up: if (at != rows.begin()) Select(*(at - 1)); break;
+    case Key::Down: if (at + 1 != rows.end()) Select(*(at + 1)); break;
+    case Key::Left:
+      if (o && !o->children.empty() && !folded_.count(selected_)) SetFolded(selected_, true);
+      else if (o && !o->parent.empty()) Select(o->parent);
+      break;
+    default: // Right
+      if (o && !o->children.empty() && folded_.count(selected_)) SetFolded(selected_, false);
+      else if (o && !o->children.empty()) Select(o->children.front());
+      break;
+  }
+  return true;
 }
 
 bool EditorModel::Autosave() {
@@ -720,6 +750,10 @@ void EditorModel::Rebuild() {
           FieldType type = f.value.type;
           auto& field = card.Add(MakeField("f." + path, Pretty(f.name), DisplayFor(targets, path, type)));
           bool numeric = type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double;
+          // E-4b: drag the label to change a number; vectors get one box per axis (drag the X / Y / Z tag)
+          field.scrub = (numeric || (IsVectorLike(type) && type != FieldType::Color)) && !multi;
+          field.sliderInteger = type == FieldType::Int32;
+          field.axes = multi ? 0 : type == FieldType::Vec2 ? 2 : type == FieldType::Vec3 ? 3 : type == FieldType::Vec4 || type == FieldType::Quat ? 4 : 0;
           if (f.meta.hasRange && numeric && !multi) { // Range -> slider (drag edits merge into one undo step)
             field.slider = true;
             field.sliderInteger = type == FieldType::Int32;
@@ -739,6 +773,22 @@ void EditorModel::Rebuild() {
           };
           field.onChange = set;
           field.onCommit = set;
+          if (type == FieldType::Color && !multi) { // colour box + HSV picker under the field (E-4b)
+            field.swatch = true;
+            double rgba[4] = {0, 0, 0, 1};
+            sscanf_s(field.text2.c_str(), "%lf , %lf , %lf , %lf", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+            field.swatchColor = {(float)rgba[0], (float)rgba[1], (float)rgba[2], 1};
+            field.onSwatch = [this, path](Widget&) {
+              openColor_ = openColor_ == path ? std::string() : path;
+              needRebuild_ = true;
+            };
+          }
+          if (type == FieldType::String) // a Project item dropped on a text field puts its path there (E-4b)
+            field.onDrop = [set, fp = &field](Widget& dropped) {
+              if (dropped.id.rfind("p.item.", 0) != 0) return;
+              fp->text2 = dropped.id.substr(7);
+              set(*fp);
+            };
           // Right-click (E-4): back to the type's default, copy the value, paste one (Unity's field menu)
           field.onContext = [this, t = &t, fieldName = f.name, path, type, set](Widget& w, float x, float y) {
             if (!ui_) return;
@@ -764,6 +814,38 @@ void EditorModel::Rebuild() {
             ui_->OpenMenu(x, y, std::move(items));
           };
           bindings_.push_back({&field, targets, path, type});
+          if (type == FieldType::Color && openColor_ == path && !multi) { // the open picker: hue, saturation, value, alpha
+            double rgba[4] = {0, 0, 0, 1};
+            sscanf_s(field.text2.c_str(), "%lf , %lf , %lf , %lf", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+            float h, sv, vv;
+            Theme::ToHSV({(float)rgba[0], (float)rgba[1], (float)rgba[2], 1}, h, sv, vv);
+            if (sv > 0.001f) pickerHue_ = h;
+            auto& picker = card.Add(MakeBox(Axis::Column, 2));
+            picker.id = "pick." + path;
+            picker.padL = 18; picker.padB = 4;
+            Widget* colorField = &field;
+            const struct { const char* id; const char* label; double max; double value; } rows[] = {
+                {"h", "색상", 359, pickerHue_}, {"s", "채도", 100, sv * 100}, {"v", "밝기", 100, vv * 100}, {"a", "불투명도", 100, rgba[3] * 100}};
+            for (auto& r : rows) {
+              auto& sl = picker.Add(MakeField("pick." + path + "." + r.id, r.label, std::format("{}", (int)std::lround(r.value))));
+              sl.slider = sl.sliderInteger = true;
+              sl.sliderMin = 0;
+              sl.sliderMax = r.max;
+              auto apply = [this, path, colorField, set](Widget&) {
+                auto num = [&](const char* k) {
+                  Widget* w = ui_ ? ui_->Find("pick." + path + "." + k) : nullptr;
+                  return w ? (float)std::strtod(w->text2.c_str(), nullptr) : 0.f;
+                };
+                pickerHue_ = num("h");
+                const Color col = Theme::FromHSV(num("h"), num("s") / 100, num("v") / 100, num("a") / 100);
+                colorField->text2 = std::format("{}, {}, {}, {}", col.r, col.g, col.b, col.a);
+                colorField->swatchColor = {col.r, col.g, col.b, 1};
+                set(*colorField);
+              };
+              sl.onChange = apply;
+              sl.onCommit = apply;
+            }
+          }
         }
       for (const TypeInfo* x : chain) // BFUNCTION(Button): one button per function, run as an undoable "call"
         for (const FunctionInfo& fn : x->functions) {

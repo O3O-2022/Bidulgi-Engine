@@ -70,6 +70,11 @@ public:
   // Hierarchy folding (E-2). A click on a row's arrow folds or opens it (Alt: with everything under it); selecting
   // a hidden object opens its parents. Remembered per scene in foldsPath ("" = not saved: automated runs).
   void SetFolded(const std::string& id, bool folded, bool withChildren = false);
+  // Hierarchy keys (E-4b, Unity's): Up / Down = previous / next row, Left = fold (or go to the parent), Right =
+  // open (or go to the first child). The engine calls this when the Hierarchy was clicked last and no text field
+  // has the keys. true = used.
+  bool HierarchyKey(Key k);
+  const std::string& OpenColorPicker() const { return openColor_; } // the colour field whose picker is open
   bool Folded(const std::string& id) const { return folded_.count(id) != 0; }
   std::string foldsPath;
   void LoadFolds();
@@ -142,6 +147,8 @@ private:
   Widget* project_ = nullptr;
   std::string inspectAsset_;
   std::set<std::string> folded_;
+  std::string openColor_; // E-4b: path of the colour field with the HSV picker under it
+  float pickerHue_ = 0;   // kept while saturation is 0 (grey has no hue)
   std::string pendingFold_;
   bool pendingFoldAll_ = false;
   void SaveFolds() const;
