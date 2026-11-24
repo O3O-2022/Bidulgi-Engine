@@ -10,7 +10,7 @@
 | 에셋 | 검증할 것 | 라이선스 |
 |---|---|---|
 | **Khronos glTF Sample Assets**: MetalRoughSpheres, DamagedHelmet, FlightHelmet, NormalTangentTest, AlphaBlendModeTest, TextureCoordinateTest | PBR 정확도, 노멀·탄젠트, 알파 모드, UV 방향 | 모델마다 다름 (CC0, CC-BY 4.0 등) |
-| **Sponza** (Intel/Crytek 버전) | 실내외 조명, 그림자, AO, GI | CC-BY 계열 (버전별 확인) |
+| ~~Sponza~~ (Khronos판은 CRYENGINE 라이선스라 쓰지 않음, 2026-11-24) → 라이선스가 분명한 실내 장면으로 대체(3-8b) | 실내외 조명, 그림자, AO, GI | 대체 장면 확인 필요 |
 | **Utah Teapot** | 곡면 노멀, 스페큘러, 스무딩 | 퍼블릭 도메인 |
 | **Stanford Dragon / Bunny** | 고밀도 메시, 노멀, LOD | Stanford 3D Scanning Repository 이용 조건 (연구·테스트용) |
 
@@ -55,7 +55,7 @@ bookmark  zone                 FLIP    base     result
 | 단계 | 내용 | 대기열 |
 |---|---|---|
 | **1단계 기본 파이프라인** | 단색 평면 + 방향광 1개 + MetalRoughSpheres + ⑥ 좌표·색 기준판. 좌표계, 와인딩, 감마부터 확정 | M3 3-0 |
-| **2단계 복합 씬** | Sponza로 텍스처 로딩, 다중 라이트, 그림자 품질 조정 | M3 3-8 |
+| **2단계 복합 씬** | `Tests/RenderReference` 구역 ①~⑦ + 북마크·렌더 패스 뷰어(3-8 완료), 실내 장면으로 텍스처 로딩·다중 라이트·그림자 품질 | M3 3-8 / 3-8b |
 | **3단계 스트레스** | 같은 메시 1만 개 인스턴싱, 4K 텍스처 다수 → 드로우콜·VRAM 측정 | M3 3-9 |
 | **회귀 CI** | 북마크 스크린샷 자동 비교를 매 커밋마다 (기준 GPU 1대 + 소프트웨어 렌더러로 보조) | 1.0 |
 

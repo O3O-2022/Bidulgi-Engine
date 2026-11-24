@@ -1,0 +1,4 @@
+{"material":"M_GlassClear","shading":"lit","blend":"translucent","twoSided":true,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#e8f0ff"}
+{"param":"Roughness","type":"float","value":0.05}
+{"param":"Opacity","type":"float","value":0.35}

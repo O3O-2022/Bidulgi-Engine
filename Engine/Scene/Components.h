@@ -42,6 +42,20 @@ public:
   bool castShadows = true;
 };
 
+// Camera bookmark (queue 3-8): number key `slot` (1-9) over the scene view jumps to this view, Ctrl + key stores the
+// current view here. Saved with the scene, so test zones keep fixed cameras. The object's name is the label.
+BCLASS(Component)
+struct CameraBookmark {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Range = "1,9", Tooltip = "Number key that jumps here (Ctrl + the key stores the current view)") int32_t slot = 1;
+  BPROPERTY(Edit, Header = "View") Vec3 pivot;
+  BPROPERTY(Edit, Range = "-360,360") float yaw = 35.f;
+  BPROPERTY(Edit, Range = "-89,89") float pitch = -24.f;
+  BPROPERTY(Edit, Range = "0.05,20000") float distance = 11.f;
+  BPROPERTY(Edit, Tooltip = "Quality tier for this view (potato ... ultra); empty keeps the current one") std::string tier;
+};
+
 // Sky and ambient light (queue 3-4): the background of the scene view and the light it gives to every surface.
 // The sun disk follows the first directional light.
 BCLASS(Component)

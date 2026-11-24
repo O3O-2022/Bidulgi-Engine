@@ -89,9 +89,26 @@ struct Model3D {
 };
 
 // Editor additions to a render (queue 3-2).
+// What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
+enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow };
+const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
+
 struct RenderExtras {
   bool grid = false;             // ground grid at y = 0: 1 m and 10 m lines, red X axis and blue Z axis lines, fades out
   std::vector<size_t> outlined;  // indices into the item list: drawn with a selection outline, visible through walls
+  DebugView view = DebugView::Lit;
+  bool wireframe = false;        // triangle edges over the picture
+};
+
+// What the last Render() did (stats overlay, `bdg render stats`).
+struct RenderStats {
+  int32_t w = 0, h = 0, msaa = 1, shadowMap = 0, localLights = 0, shadowCasters = 0;
+  uint32_t draws = 0;
+  uint64_t triangles = 0;
+  bool toneMap = false, fxaa = false, bloom = false;
+  DebugView view = DebugView::Lit;
+  struct Pass { const char* name; double ms; };
+  std::vector<Pass> passes; // GPU time per pass of the newest finished frame (empty until one is ready)
 };
 
 class Renderer3D {
@@ -112,6 +129,9 @@ public:
   void NewFrame() { draws_ = 0; triangles_ = 0; } // stats count every Render() since the last call
   uint32_t DrawsLastFrame() const { return draws_; }
   uint64_t TrianglesLastFrame() const { return triangles_; }
+  const RenderStats& Stats() const { return stats_; }
+  std::string DescribePasses() const; // "shadow 0.21 ms | scene 0.80 ms | ..." (GPU)
+  std::string DescribeStats() const;  // resolution, MSAA, draws, triangles, lights, shadow casters, post
 
 private:
   RHI* rhi_ = nullptr;
@@ -135,6 +155,15 @@ private:
   RenderTargetHandle bloom_[kBloomLevels];
   int32_t bloomW_ = 0, bloomH_ = 0;
   QualitySettings lastQuality_;
+  PipelineHandle wire_;
+  RenderStats stats_;
+  // GPU timings: a few frames of timestamp queries in flight, read back when the GPU has finished them.
+  static constexpr int kTimerFrames = 4, kMarks = 8;
+  struct TimerFrame { uint32_t q[kMarks] = {}; const char* names[kMarks] = {}; int marks = 0; bool pending = false; };
+  TimerFrame timers_[kTimerFrames];
+  int timerFrame_ = 0;
+  void Mark(TimerFrame& t, const char* passEnded);
+  void CollectTimers();
 public:
   const QualitySettings& LastQuality() const { return lastQuality_; }
 private:

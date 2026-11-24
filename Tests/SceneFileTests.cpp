@@ -106,3 +106,24 @@ TEST_CASE("scene file: mutated files never crash the loader") {
   }
   CHECK(loaded >= 0);
 }
+
+TEST_CASE("scene files: the rendering reference scene loads cleanly (queue 3-8)") {
+  Scene s;
+  std::string name, error;
+  std::vector<std::string> warnings;
+  CHECK(LoadSceneFile(s, std::string(BDG_SOURCE_DIR) + "/Tests/RenderReference/Assets/Scenes/RenderReference.scene", &name, &warnings, &error));
+  CHECK(error.empty() && warnings.empty() && name == "RenderReference");
+  CHECK(s.ObjectCount() == 290);
+  int bookmarks = 0, slots = 0;
+  for (const std::string& root : s.Roots())
+    if (const SceneObject* o = s.Find(root); o && o->name == "Bookmarks")
+      for (const std::string& c : o->children)
+        if (SceneObject* b = s.Find(c); b && b->Find("CameraBookmark")) {
+          ++bookmarks;
+          std::string slot;
+          Component* comp = b->Find("CameraBookmark");
+          Registry::Get(comp->data, *comp->type, "slot", slot);
+          slots |= 1 << std::stoi(slot);
+        }
+  CHECK(bookmarks == 9 && slots == 0x3fe); // keys 1..9, each once
+}

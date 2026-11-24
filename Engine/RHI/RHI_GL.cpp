@@ -352,7 +352,7 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
     glVertexArrayAttribBinding(vao, a.location, 0);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.additive, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.additive, d.wireframe, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -375,8 +375,14 @@ const RHI::PipelineGL* RHI::Bind(PipelineHandle p, BufferHandle vertices) {
   else glDisable(GL_BLEND);
   if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(g.depthWrite ? GL_TRUE : GL_FALSE); }
   else { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); }
-  if (g.biasC != 0 || g.biasS != 0) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(g.biasS, g.biasC); }
-  else glDisable(GL_POLYGON_OFFSET_FILL);
+  glPolygonMode(GL_FRONT_AND_BACK, g.wireframe ? GL_LINE : GL_FILL);
+  if (g.biasC != 0 || g.biasS != 0) {
+    glEnable(g.wireframe ? GL_POLYGON_OFFSET_LINE : GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(g.biasS, g.biasC);
+  } else {
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDisable(GL_POLYGON_OFFSET_LINE);
+  }
   if (g.cull == CullMode::Back) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(GL_CCW); }
   else glDisable(GL_CULL_FACE);
   return &g;
@@ -394,6 +400,28 @@ void RHI::DrawIndexed(PipelineHandle p, BufferHandle vertices, BufferHandle indi
   glVertexArrayElementBuffer(g->vao, indices.id);
   glDrawElements(GL_TRIANGLES, (GLsizei)count, GL_UNSIGNED_INT, nullptr);
   ++drawCalls_;
+}
+
+uint32_t RHI::CreateQuery() {
+  GLuint q = 0;
+  glCreateQueries(GL_TIMESTAMP, 1, &q);
+  return q;
+}
+
+void RHI::DestroyQuery(uint32_t q) {
+  if (q) glDeleteQueries(1, &q);
+}
+
+void RHI::Timestamp(uint32_t q) { glQueryCounter(q, GL_TIMESTAMP); }
+
+bool RHI::QueryNs(uint32_t q, uint64_t& ns) {
+  GLint ready = 0;
+  glGetQueryObjectiv(q, GL_QUERY_RESULT_AVAILABLE, &ready);
+  if (!ready) return false;
+  GLuint64 v = 0;
+  glGetQueryObjectui64v(q, GL_QUERY_RESULT, &v);
+  ns = v;
+  return true;
 }
 
 Color RHI::ReadPixel(int32_t x, int32_t y) {

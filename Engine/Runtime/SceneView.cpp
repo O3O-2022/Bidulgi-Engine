@@ -162,6 +162,8 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   icons_.clear();
   extras_ = {};
   extras_.grid = true;
+  extras_.view = debugView;
+  extras_.wireframe = wireframe;
   light_ = {};
   light_.toLight = {-0.35f, 0.85f, 0.4f};
   light_.intensity = 2.6f;
@@ -234,11 +236,15 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         if (sel) extras_.outlined.push_back(items_.size());
         items_.push_back({&e->model.meshes[in.mesh], world * in.world, e->model.materials[in.mesh]});
         info_.push_back({id, &e->cpuPrims[in.mesh]});
+        bool any = false;
+        Bounds(e->cpuPrims[in.mesh], items_.back().model, info_.back().lo, info_.back().hi, any);
       }
     } else {
       if (sel) extras_.outlined.push_back(items_.size());
       items_.push_back({&e->mesh, world, MaterialFor(mr->material)});
       info_.push_back({id, &e->cpu});
+      bool any = false;
+      Bounds(e->cpu, world, info_.back().lo, info_.back().hi, any);
     }
   }
   if ((int)light_.locals.size() > kMaxLocalLights) // nearest to what the camera looks at
@@ -425,6 +431,19 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     bool used = false;
     switch (e.type) {
       case T::MouseDown:
+        if (drag_ == Drag::None && inside(e) && e.button == 1) { // chips first
+          const Chip* hit = nullptr;
+          for (const Chip& c : chips_)
+            if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
+          if (hit) {
+            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 7);
+            else if (hit->name == "wire") wireframe = !wireframe;
+            else if (hit->name == "bounds") bounds = !bounds;
+            else if (hit->name == "stats") statsPanel = !statsPanel;
+            used = true;
+            break;
+          }
+        }
         if (drag_ == Drag::None && inside(e) && e.button == 1 && !e.alt) { // a gizmo handle wins over picking
           GizmoMode mode;
           GizmoFrame frame;
@@ -539,6 +558,14 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           used = true;
           break;
         }
+        if (e.key >= Key::Num1 && e.key <= Key::Num9 && hover_ && !textFocused && drag_ == Drag::None) {
+          int n = (int)e.key - (int)Key::Num0;
+          if (e.alt) debugView = (DebugView)std::min(n - 1, 6);              // Alt + 1..7: what the picture shows
+          else if (e.ctrl) StoreBookmark(model, n);                       // Ctrl + 1..9: remember this view
+          else if (!JumpToBookmark(model, n)) LogInfo("scene view: no camera bookmark {}", n);
+          used = true;
+          break;
+        }
         if (e.key == Key::X && hover_ && !textFocused && !e.ctrl && !e.alt && drag_ == Drag::None) {
           localSpace = !localSpace;
           used = true;
@@ -573,6 +600,85 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     if (held_.count(Key::Q)) move -= glm::vec3(0, 1, 0);
     if (glm::length(move) > 0) camera.pivot += glm::normalize(move) * flySpeed_ * (float)std::clamp(dt, 0.0, 0.1);
   }
+}
+
+namespace {
+// Every CameraBookmark component in the scene: (object id, component).
+std::vector<std::pair<std::string, CameraBookmark*>> Bookmarks(const EditorModel& model) {
+  std::vector<std::pair<std::string, CameraBookmark*>> out;
+  std::vector<std::string> stack(model.scene.Roots().rbegin(), model.scene.Roots().rend());
+  while (!stack.empty()) {
+    std::string id = stack.back();
+    stack.pop_back();
+    const SceneObject* o = model.scene.Find(id);
+    if (!o) continue;
+    for (auto c = o->children.rbegin(); c != o->children.rend(); ++c) stack.push_back(*c);
+    for (const Component& c : o->components)
+      if (c.type == &CameraBookmark::StaticType()) out.push_back({id, static_cast<CameraBookmark*>(c.data)});
+  }
+  return out;
+}
+}
+
+bool SceneView::JumpToBookmark(const EditorModel& model, int slot) {
+  for (auto& [id, b] : Bookmarks(model)) {
+    if (b->slot != slot) continue;
+    camera.pivot = space::ToGlm(b->pivot);
+    camera.yaw = b->yaw;
+    camera.pitch = std::clamp(b->pitch, -89.f, 89.f);
+    camera.distance = std::max(b->distance, 0.05f);
+    QualityTier tier;
+    if (!b->tier.empty() && TierFromString(b->tier, tier)) quality = QualityPreset(tier);
+    const SceneObject* o = model.scene.Find(id);
+    bookmarkNote_ = std::format("{}  ·  {}", slot, o ? o->name : id);
+    noteFrames_ = 90;
+    return true;
+  }
+  return false;
+}
+
+bool SceneView::StoreBookmark(EditorModel& model, int slot) {
+  std::string target;
+  for (auto& [id, b] : Bookmarks(model))
+    if (b->slot == slot) target = id;
+  auto run = [&](const char* name, const std::string& id, const std::string& args) {
+    Command c;
+    c.name = name;
+    c.target = id;
+    c.args = args;
+    std::string err;
+    if (!model.bus.Execute(c, &err)) { LogWarn("bookmark: {}", err); return false; }
+    return true;
+  };
+  model.bus.BeginGroup(std::format("Store camera bookmark {}", slot), "ui");
+  bool ok = true;
+  std::string view = std::format(R"({{"slot":{},"pivot":[{},{},{}],"yaw":{},"pitch":{},"distance":{}}})", slot, camera.pivot.x,
+                                 camera.pivot.y, camera.pivot.z, camera.yaw, camera.pitch, camera.distance);
+  if (target.empty()) { // a new object under "Bookmarks" when the scene has one
+    std::string parent;
+    for (const std::string& r : model.scene.Roots())
+      if (const SceneObject* o = model.scene.Find(r); o && o->name == "Bookmarks") parent = r;
+    target = model.scene.NewId();
+    ok = run("add", "", std::format(R"({{"name":"Bookmark {}","id":"{}"{}}})", slot, target,
+                                    parent.empty() ? "" : std::format(R"(,"parent":"{}")", parent))) &&
+         run("addcomp", target, std::format(R"({{"type":"CameraBookmark","value":{}}})", view));
+  } else {
+    ok = run("set", target, std::format(R"({{"path":"CameraBookmark.pivot","value":[{},{},{}]}})", camera.pivot.x, camera.pivot.y,
+                                        camera.pivot.z)) &&
+         run("set", target, std::format(R"({{"path":"CameraBookmark.yaw","value":{}}})", camera.yaw)) &&
+         run("set", target, std::format(R"({{"path":"CameraBookmark.pitch","value":{}}})", camera.pitch)) &&
+         run("set", target, std::format(R"({{"path":"CameraBookmark.distance","value":{}}})", camera.distance));
+  }
+  model.bus.EndGroup();
+  bookmarkNote_ = std::format("{}  ·  stored", slot);
+  noteFrames_ = 90;
+  return ok;
+}
+
+bool SceneView::ChipCenter(const std::string& name, float& x, float& y) const {
+  for (const Chip& c : chips_)
+    if (c.name == name) { x = c.x + c.w * 0.5f; y = c.y + c.h * 0.5f; return true; }
+  return false;
 }
 
 void SceneView::ReadPixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) { rhi_->ReadRenderTarget(rt_, w, h, rgba); }
@@ -617,17 +723,60 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
                        : model->tool == "scale" ? "Scale (R)" : "Select";
   std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
   std::string tierChip = std::string(TierLabel(quality.tier)) + (quality.lighting == LightingMode::Unlit ? " · Unlit" : "");
-  for (const std::string& chip : {std::string("Perspective"), tierChip, toolChip, spaceChip}) {
-    if (chip.empty()) continue;
-    float cw = ui.Measure(11, chip) + 18;
-    b.Rect(px, w.y + 8, cw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-    ui.Text(px + 9, w.y + 12, 11, t.C("fg-dim"), chip);
+  chips_.clear();
+  struct ChipDef { std::string name, text; bool on; };
+  const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
+                          {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
+                          {"", toolChip, false}, {"", spaceChip, false}};
+  for (const ChipDef& chip : defs) {
+    if (chip.text.empty()) continue;
+    float cw = ui.Measure(11, chip.text) + 18;
+    b.Rect(px, w.y + 8, cw, 22, chip.on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
+    ui.Text(px + 9, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
+    if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, w.y + 8, cw, 22});
     px += cw + 6;
+  }
+  if (bounds) // world-space boxes of every drawn mesh
+    for (size_t i = 0; i < info_.size(); ++i) {
+      glm::vec3 lo = info_[i].lo, hi = info_[i].hi, c[8];
+      for (int k = 0; k < 8; ++k) c[k] = {(k & 1) ? hi.x : lo.x, (k & 2) ? hi.y : lo.y, (k & 4) ? hi.z : lo.z};
+      float sx[8], sy[8];
+      bool ok = true;
+      for (int k = 0; k < 8 && ok; ++k) ok = ProjectUI(c[k], sx[k], sy[k]);
+      if (!ok) continue;
+      bool sel = model && std::find(model->Selection().begin(), model->Selection().end(), info_[i].owner) != model->Selection().end();
+      Color col = sel ? Color{1.f, 0.58f, 0.12f, 0.95f} : Color{1.f, 0.9f, 0.3f, 0.55f};
+      for (int k = 0; k < 8; ++k)
+        for (int bit : {1, 2, 4})
+          if (!(k & bit)) b.Line(sx[k], sy[k], sx[k | bit], sy[k | bit], 1.f, col);
+    }
+  if (statsPanel) { // what the renderer did, and the GPU time of each pass
+    const RenderStats& st = r_->Stats();
+    std::vector<std::string> lines = {
+      std::format("{} · {}x{} · MSAA {}x", TierLabel(quality.tier), st.w, st.h, st.msaa),
+      std::format("draws {} · triangles {}", st.draws, st.triangles),
+      std::format("lights {} · shadow map {} · casters {}", st.localLights, st.shadowMap, st.shadowCasters),
+      std::format("post: tone map {} · FXAA {} · bloom {}", st.toneMap ? "on" : "off", st.fxaa ? "on" : "off", st.bloom ? "on" : "off")};
+    double total = 0;
+    for (const RenderStats::Pass& p : st.passes) { lines.push_back(std::format("{:<14} {:6.3f} ms", p.name, p.ms)); total += p.ms; }
+    lines.push_back(st.passes.empty() ? std::string("GPU timings: waiting for the GPU") : std::format("{:<14} {:6.3f} ms", "GPU total", total));
+    float pw = 0;
+    for (const std::string& l : lines) pw = std::max(pw, ui.Measure(11, l, true));
+    float bx = w.x + 10, by = w.y + 38;
+    b.Rect(bx, by, pw + 20, lines.size() * 16.f + 12, WithAlpha(t.C("win"), 0.88f), 6, 1, t.C("line"));
+    for (size_t i = 0; i < lines.size(); ++i) ui.Text(bx + 10, by + 6 + i * 16.f, 11, t.C("fg"), lines[i], true);
+  }
+  if (noteFrames_ > 0) { // the bookmark just jumped to
+    --noteFrames_;
+    float nw = ui.Measure(13, bookmarkNote_) + 24;
+    b.Rect(w.x + (w.w - nw) * 0.5f, w.y + 44, nw, 28, WithAlpha(t.C("win"), 0.9f), 14, 1, t.C("accent"));
+    ui.Text(w.x + (w.w - nw) * 0.5f + 12, w.y + 49, 13, t.C("fg"), bookmarkNote_);
   }
   std::string stats = std::format("Draw {}  ·  Tris {}  ·  {:.2f} ms", r_->DrawsLastFrame(), r_->TrianglesLastFrame(), renderMs_);
   float sw = ui.Measure(11, stats) + 18;
-  b.Rect(w.x + w.w - sw - 10, w.y + 8, sw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-  ui.Text(w.x + w.w - sw - 1, w.y + 12, 11, t.C("fg-dim"), stats);
+  float sy = px + 10 > w.x + w.w - sw - 10 ? w.y + 34 : w.y + 8; // a second row when the chips need the width
+  b.Rect(w.x + w.w - sw - 10, sy, sw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
+  ui.Text(w.x + w.w - sw - 1, sy + 4, 11, t.C("fg-dim"), stats);
   // Axis widget (bottom-left): world axes turned by the view.
   float ax = w.x + 36, ay = w.y + w.h - 36;
   b.Rect(ax - 26, ay - 26, 52, 52, WithAlpha(t.C("win"), 0.6f), 26);

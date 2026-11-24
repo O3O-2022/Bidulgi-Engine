@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <format>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -141,9 +142,11 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  if (uParams.z > 0.5) { oColor = vec4(base.rgb, alpha); return; }                     // unlit material
-  if (uCounts.y < 0.5) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
-  if (uCounts.y < 1.5) { oColor = vec4(base.rgb * vLit + emissive, alpha); return; }   // low tier: per vertex
+  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow
+  if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
+  if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
+  if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
+  if (uCounts.y < 1.5 && view == 0) { oColor = vec4(base.rgb * vLit + emissive, alpha); return; }   // low tier: per vertex
 
   vec3 ng = normalize(vNormal);
   // Tangent frame: from the mesh when it has tangents, otherwise from screen-space UV derivatives
@@ -172,6 +175,13 @@ void main() {
   metallic = clamp(metallic, 0.0, 1.0);
   rough = clamp(rough, 0.045, 1.0);
   float a = rough * rough;
+  if (view >= 2) {
+    vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
+           : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
+           : vec3(ShadowFactor(vWorld, ng));
+    oColor = vec4(pow(d, vec3(2.2)), 1.0); // data, not colour: undo the display curve applied in post
+    return;
+  }
   vec3 f0 = mix(vec3(0.04), base.rgb, metallic), diffuse = base.rgb * (1.0 - metallic);
   vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
   for (int i = 0; i < int(uCounts.x); ++i) color += LocalLight(i, vWorld, N, V, diffuse, f0, a);
@@ -244,8 +254,8 @@ vec3 ToSrgb(vec3 c) {
 void main() {
   vec4 p = uInvViewProj * vec4(vNdc, 1.0, 1.0);
   vec3 d = normalize(p.xyz / p.w - uCamPos.xyz);
-  vec3 c = SkyColor(d, 0.0);
-  if (uSun.x < 1.0) { // sun disk with a soft rim
+  vec3 c = uCounts.w > 0.5 ? vec3(0.0) : SkyColor(d, 0.0);
+  if (uSun.x < 1.0 && uCounts.w < 0.5) { // sun disk with a soft rim
     float k = smoothstep(uSun.x - 0.00008, uSun.x + 0.00008, dot(d, normalize(uToLight.xyz)));
     c += uLight.rgb * 4.0 * k;
   }
@@ -346,6 +356,11 @@ void main() {
          + texture(uSrc, vUV + t * vec2(-1, -1)).rgb + 2.0 * texture(uSrc, vUV + t * vec2(0, -1)).rgb + texture(uSrc, vUV + t * vec2(1, -1)).rgb;
   oColor = vec4(s / 16.0, 1.0);
 }
+)";
+
+const char* kWireFS = R"(#version 450 core
+out vec4 oColor;
+void main() { oColor = vec4(0.25, 0.9, 1.0, 0.55); }
 )";
 
 // Selection: selected items are drawn white into a mask; the outline pass marks pixels within 2 px of the mask.
@@ -501,6 +516,28 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.debugName = "shadow";
   shadowPipe_ = rhi.CreatePipeline(pd);
   if (!mask_.Valid() || !grid_.Valid() || !outline_.Valid() || !sky_.Valid() || !shadowPipe_.Valid()) return false;
+  {
+    PipelineDesc wd;
+    wd.vertexSource = vs.c_str();
+    wd.fragmentSource = kWireFS;
+    wd.attrs[0] = {0, 3, offsetof(Vertex3D, px)};
+    wd.attrs[1] = {1, 3, offsetof(Vertex3D, nx)};
+    wd.attrs[2] = {2, 2, offsetof(Vertex3D, u)};
+    wd.attrs[3] = {3, 4, offsetof(Vertex3D, tx)};
+    wd.attrCount = 4;
+    wd.stride = sizeof(Vertex3D);
+    wd.alphaBlend = true;
+    wd.wireframe = true;
+    wd.depthTest = true;
+    wd.depthWrite = false;
+    wd.depthBiasConstant = -2.f; // lines win over their own faces
+    wd.depthBiasSlope = -1.f;
+    wd.debugName = "editor.wireframe";
+    wire_ = rhi.CreatePipeline(wd);
+    if (!wire_.Valid()) return false;
+  }
+  for (TimerFrame& t : timers_)
+    for (uint32_t& q : t.q) q = rhi.CreateQuery();
   lightsUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(LightsData), true);
   postUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PostData), true);
   PipelineDesc pp; // fullscreen post passes
@@ -542,8 +579,10 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectUbo_);
   rhi_->DestroyTexture(white_);
-  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_})
+  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
+  for (TimerFrame& t : timers_)
+    for (uint32_t& q : t.q) rhi_->DestroyQuery(q);
   rhi_->DestroyBuffer(postUbo_);
   for (RenderTargetHandle t : bloom_) rhi_->DestroyRenderTarget(t);
   rhi_->DestroyRenderTarget(hdrRT_);
@@ -634,8 +673,20 @@ void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::
 void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& camIn, const Light3D& light,
                         const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras, const QualitySettings* quality) {
   if (!rhi_ || !rt.Valid() || w <= 0 || h <= 0) return;
-  const QualitySettings q = quality ? *quality : ReferenceQuality();
+  QualitySettings q = quality ? *quality : ReferenceQuality();
+  const DebugView view = extras ? extras->view : DebugView::Lit;
+  if (view != DebugView::Lit) { // show the buffer itself: per-pixel shading, no tone curve or post effects
+    q.lighting = LightingMode::Pixel;
+    q.toneMap = q.bloom = q.fxaa = false;
+    q.exposure = 1;
+  }
   lastQuality_ = q;
+  CollectTimers();
+  stats_.shadowCasters = 0;
+  TimerFrame& timer = timers_[timerFrame_];
+  timerFrame_ = (timerFrame_ + 1) % kTimerFrames;
+  bool timing = !timer.pending; // this slot's previous queries were read (or never used)
+  if (timing) { timer.marks = 0; rhi_->Timestamp(timer.q[timer.marks++]); }
   Camera3D cam = camIn;
   cam.farZ *= q.viewDistance;
   FrameData f{};
@@ -663,6 +714,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   f.counts[0] = (float)locals;
   f.counts[1] = (float)q.lighting; // 0 unlit, 1 per vertex, 2 per pixel
   f.counts[2] = q.textureBias;
+  f.counts[3] = (float)view;
   LightsData ld{};
   for (int i = 0; i < locals; ++i) {
     const LocalLight3D& l = light.locals[i];
@@ -722,10 +774,14 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       rhi_->BindTexture(0, it.material.baseMap.Valid() ? it.material.baseMap : white_);
       rhi_->DrawIndexed(shadowPipe_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
       ++draws_;
+      ++stats_.shadowCasters;
     }
     rhi_->EndRenderTarget();
+    if (timing) Mark(timer, "shadow");
   }
   rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
+  stats_ = RenderStats{w, h, std::clamp(q.msaa, 1, 8), f.shadow[0] > 0.5f ? q.shadowMapSize : 0, locals, stats_.shadowCasters, 0, 0,
+                       q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
   bool outline = extras && !extras->outlined.empty();
   if (outline) { // selection mask first (its own target, no depth: the outline shows through other objects)
     if (!maskRT_.Valid() || maskW_ != w || maskH_ != h) {
@@ -782,6 +838,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     triangles_ += it.mesh->indexCount / 3;
   }
   rhi_->EndRenderTarget(); // resolves MSAA
+  if (timing) Mark(timer, "scene");
 
   // Bloom: blur the bright parts over a chain of half-size targets.
   TextureHandle hdr = rhi_->RenderTargetColor(hdrRT_);
@@ -809,6 +866,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       rhi_->EndRenderTarget();
       ++draws_;
     }
+    if (timing) Mark(timer, "bloom");
   }
   PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f}};
   rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
@@ -828,8 +886,17 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->Draw(toneMap_, fullscreen_, 3);
     ++draws_;
   }
+  if (timing) Mark(timer, q.fxaa ? "tonemap+fxaa" : "tonemap");
   // Editor overlays on the finished picture: the grid hides behind objects (scene depth copied over).
   rhi_->CopyDepth(hdrRT_, rt);
+  if (extras && extras->wireframe)
+    for (size_t i = 0; i < items.size(); ++i) {
+      const DrawItem3D& it = items[i];
+      if (!it.mesh || !it.mesh->indexCount) continue;
+      rhi_->BindUniformBufferRange(2, objectUbo_, i * objectStride_, sizeof(ObjectData));
+      rhi_->DrawIndexed(wire_, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
+      ++draws_;
+    }
   if (extras && extras->grid) {
     rhi_->Draw(grid_, gridQuad_, 6);
     ++draws_;
@@ -840,5 +907,63 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     ++draws_;
   }
   rhi_->EndRenderTarget();
+  if (timing) {
+    Mark(timer, "overlays");
+    timer.pending = true;
+  }
+  stats_.draws = draws_;
+  stats_.triangles = triangles_;
+}
+
+void Renderer3D::Mark(TimerFrame& t, const char* passEnded) {
+  if (t.marks >= kMarks) return;
+  t.names[t.marks] = passEnded;
+  rhi_->Timestamp(t.q[t.marks++]);
+}
+
+void Renderer3D::CollectTimers() {
+  // The oldest pending frame first; stop at the first one the GPU has not finished.
+  for (int k = 1; k <= kTimerFrames; ++k) {
+    TimerFrame& t = timers_[(timerFrame_ + k) % kTimerFrames];
+    if (!t.pending) continue;
+    std::vector<uint64_t> ns(t.marks);
+    bool ready = true;
+    for (int i = 0; i < t.marks && ready; ++i) ready = rhi_->QueryNs(t.q[i], ns[i]);
+    if (!ready) break;
+    std::vector<RenderStats::Pass> passes;
+    for (int i = 1; i < t.marks; ++i) passes.push_back({t.names[i], (double)(ns[i] - ns[i - 1]) / 1e6});
+    stats_.passes = std::move(passes);
+    t.pending = false;
+  }
+}
+
+const char* DebugViewName(DebugView v) {
+  switch (v) {
+    case DebugView::Lit: return "Lit";
+    case DebugView::Albedo: return "Albedo";
+    case DebugView::Normal: return "Normal";
+    case DebugView::Roughness: return "Roughness";
+    case DebugView::Metallic: return "Metallic";
+    case DebugView::Depth: return "Depth";
+    case DebugView::Shadow: return "Shadow";
+  }
+  return "Lit";
+}
+
+std::string Renderer3D::DescribePasses() const {
+  std::string out;
+  double total = 0;
+  for (const RenderStats::Pass& p : stats_.passes) {
+    out += std::format("{}{} {:.2f} ms", out.empty() ? "" : " | ", p.name, p.ms);
+    total += p.ms;
+  }
+  return out.empty() ? "(no GPU timings yet)" : out + std::format(" | total {:.2f} ms", total);
+}
+
+std::string Renderer3D::DescribeStats() const {
+  const RenderStats& s = stats_;
+  return std::format("{}x{} msaa={} view={} draws={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
+                     s.msaa, DebugViewName(s.view), s.draws, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
+                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0);
 }
 }

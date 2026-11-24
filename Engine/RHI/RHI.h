@@ -43,6 +43,7 @@ struct PipelineDesc {
   uint32_t    stride = 0;               // bytes per vertex
   bool        alphaBlend = false;
   bool        additive = false;         // ONE + ONE (bloom upsampling); wins over alphaBlend
+  bool        wireframe = false;        // triangle edges only (debug overlay)
   bool        depthTest = false;        // less-or-equal test (3D); 2D pipelines leave it off
   bool        depthWrite = true;        // with depthTest: false for blended surfaces
   CullMode    cull = CullMode::None;    // front faces wind counter-clockwise (Core/Space.h)
@@ -97,6 +98,13 @@ public:
   void Draw(PipelineHandle pipeline, BufferHandle vertices, uint32_t vertexCount, uint32_t firstVertex = 0);
   void DrawIndexed(PipelineHandle pipeline, BufferHandle vertices, BufferHandle indices, uint32_t indexCount);
 
+  // GPU timestamps (render pass timings): Timestamp() records when the GPU reaches this point; the result is
+  // read later without waiting (false while the GPU has not got there yet).
+  uint32_t CreateQuery();
+  void     DestroyQuery(uint32_t q);
+  void     Timestamp(uint32_t q);
+  bool     QueryNs(uint32_t q, uint64_t& ns);
+
   Color ReadPixel(int32_t x, int32_t y); // test hook (slow): reads the back buffer
   void  ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba); // whole back buffer, bottom-up rows
   void  DebugTriggerError();             // test hook: issues an invalid GL call to verify debug output
@@ -104,7 +112,7 @@ public:
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
-  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, additive = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
+  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, additive = false, wireframe = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
   struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; };
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;

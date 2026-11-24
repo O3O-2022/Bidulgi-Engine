@@ -1,0 +1,3 @@
+{"material":"M_Concrete","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#bcbcb8"}
+{"param":"Roughness","type":"float","value":0.85}

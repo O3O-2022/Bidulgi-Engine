@@ -1,0 +1,4 @@
+{"material":"M_GlowWarm","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#ffcc88"}
+{"param":"Emissive","type":"color","value":"#ffb060"}
+{"param":"EmissiveStrength","type":"float","value":12.0}

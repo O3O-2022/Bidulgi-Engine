@@ -131,7 +131,8 @@ struct bdg_engine {
   bool renderTest = false;
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
-  bool materialTest = false, qualityTest = false;
+  bool materialTest = false, qualityTest = false, refSceneTest = false;
+  std::string refSceneTestValues[12];
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
   std::string materialTestValues[8];
@@ -805,6 +806,126 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 24) v[9] = m->Selected();
 }
 
+// Scripted render reference check (BDG_REFSCENE_TEST=1 with the Tests/RenderReference project, queue 3-8):
+// bookmarks 1 / 2 / 8 by key, the Albedo / Normal / Depth / Shadow views (Alt + digit), the wireframe chip,
+// Ctrl + 5 storing a bookmark (one undo step), GPU pass timings.
+void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->refSceneTestValues;
+  bdg::Widget* sw = e->editor->Find("scene");
+  if (!sw) return;
+  float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.5f;
+  auto key = [&](bdg::Key k, bool ctrl = false, bool alt = false) {
+    e->window.InjectEvent({T::MouseMove, cx * scale, cy * scale});
+    bdg::InputEvent i{T::KeyDown};
+    i.key = k;
+    i.ctrl = ctrl;
+    i.alt = alt;
+    e->window.InjectEvent(i);
+  };
+  struct Shot { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+  auto grab = [&] { Shot s; sv->ReadPixels(s.w, s.h, s.px); return s; };
+  auto at = [&](const Shot& s, glm::vec3 p, int c[3]) {
+    float x, y;
+    c[0] = c[1] = c[2] = -1;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), s.w, s.h, p, x, y) || x < 0 || y < 0 || x >= s.w || y >= s.h) return false;
+    const uint8_t* q = &s.px[((size_t)y * s.w + (size_t)x) * 4];
+    c[0] = q[0]; c[1] = q[1]; c[2] = q[2];
+    return true;
+  };
+  // Zone 1: the matrix sphere r3 m0 (white dielectric) faces the camera at (0, 0.6, -1) + its radius toward +Z.
+  const glm::vec3 sphereFront{0, 0.6f, -1 + 0.32f}, nearGold{0, 0.35f, 1}, farWall{0, 5.4f, -1};
+  // Zone 2: the floating sphere's sun shadow on the ground, and open ground beside it.
+  static const glm::vec3 toL = -glm::normalize(glm::vec3(0.321f, -0.766f, -0.557f)); // Sun rotation (-50, -30, 0)
+  const glm::vec3 ball{31.8f, 1.4f, 0.5f};
+  const glm::vec3 shade = ball - toL * (ball.y / toL.y), open{shade.x, 0, 1.6f};
+  if (frame == 2) {
+    v[0] = std::format("{}", m->scene.ObjectCount());
+    key(bdg::Key::Num1);
+  }
+  if (frame == 4) {
+    v[1] = std::format("{}", sv->camera.pivot.y == 2.4f && sv->camera.yaw == 0.f && sv->camera.distance == 10.5f ? 1 : 0);
+    key(bdg::Key::Num2, false, true); // Alt + 2: albedo
+  }
+  if (frame == 6) {
+    int c[3];
+    at(grab(), sphereFront, c); // linear 0.85 white -> sRGB 237
+    v[2] = sv->debugView == bdg::DebugView::Albedo && std::abs(c[0] - 237) <= 3 && std::abs(c[2] - 237) <= 3 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
+    key(bdg::Key::Num3, false, true); // normal
+  }
+  if (frame == 8) {
+    int c[3];
+    at(grab(), sphereFront, c); // facing +Z: (0.5, 0.5, 1) -> (128, 128, 255)
+    v[3] = c[2] > 235 && std::abs(c[0] - 128) < 30 && std::abs(c[1] - 128) < 30 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
+    key(bdg::Key::Num6, false, true); // depth
+  }
+  if (frame == 10) {
+    Shot s = grab();
+    int n[3], f[3];
+    at(s, nearGold, n);
+    at(s, farWall, f);
+    v[4] = n[0] >= 0 && f[0] > n[0] + 5 ? "1" : std::format("0({}<{})", n[0], f[0]); // farther = brighter
+    key(bdg::Key::Num2);                      // bookmark 2: lights and shadows
+    key(bdg::Key::Num7, false, true);         // shadow view
+  }
+  if (frame == 12) {
+    Shot s = grab();
+    int in[3], out[3];
+    at(s, shade, in);
+    at(s, open, out);
+    v[5] = in[0] >= 0 && in[0] < 90 && out[0] > 200 ? "1" : std::format("0({},{})", in[0], out[0]);
+    key(bdg::Key::Num1, false, true); // back to lit
+  }
+  static long long wireBefore = 0;
+  auto cyan = [](const Shot& s) {
+    long long n = 0;
+    for (size_t i = 0; i + 3 < s.px.size(); i += 4) n += s.px[i] < 140 && s.px[i + 1] > 170 && s.px[i + 2] > 190;
+    return n;
+  };
+  if (frame == 14) {
+    wireBefore = cyan(grab());
+    float x, y;
+    if (sv->ChipCenter("wire", x, y)) {
+      e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+      e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+      e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+    }
+  }
+  static size_t undo0;
+  if (frame == 16) {
+    long long after = cyan(grab());
+    v[6] = sv->wireframe && after > wireBefore + 500 ? "1" : std::format("0({}->{})", wireBefore, after);
+    sv->camera.yaw = 42.f; // a new view, stored on key 5
+    undo0 = m->bus.UndoDepth();
+    key(bdg::Key::Num5, true);
+  }
+  if (frame == 18) {
+    sv->camera.yaw = 0.f;
+    bool stored = sv->JumpToBookmark(*m, 5) && sv->camera.yaw == 42.f && m->bus.UndoDepth() == undo0 + 1;
+    v[7] = std::format("{}", stored ? 1 : 0);
+    bdg::InputEvent z{T::KeyDown};
+    z.key = bdg::Key::Z;
+    z.ctrl = true;
+    e->window.InjectEvent(z);
+  }
+  if (frame == 20) {
+    sv->camera.yaw = 7.f;
+    sv->JumpToBookmark(*m, 5);
+    v[8] = std::format("{}", sv->camera.yaw == 0.f ? 1 : 0); // back to the generated "5 Post" view
+    key(bdg::Key::Num8); // the materials zone at the potato tier
+  }
+  if (frame == 22) {
+    v[9] = bdg::TierKey(sv->quality.tier);
+    const auto& passes = e->r3d->Stats().passes;
+    bool timed = false;
+    for (const auto& p : passes) timed = timed || (std::string(p.name) == "scene" && p.ms > 0);
+    v[10] = std::format("{}", timed ? 1 : 0);
+  }
+}
+
 // Scripted quality tier check (BDG_QUALITY_TEST=1, queue 3-5): the same scene at potato / low / medium / high.
 // Lighting: the Crystal's top and front faces differ only when lit. Shadows: ground in the Crystal's sun shadow
 // is darker only from medium up. FXAA lowers the sum of squared neighbour differences (edges get softer); bloom brightens the ground beside a
@@ -1209,6 +1330,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
+  e->refSceneTest = std::getenv("BDG_REFSCENE_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -1533,6 +1655,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
+    if (e->refSceneTest && !e->showGallery) InjectRefSceneTest(e, frames, scale);
+    if (frames == 1 && e->sceneView && e->model)                // BDG_BOOKMARK=N: open the Scene view at a camera bookmark
+      if (const char* bm = std::getenv("BDG_BOOKMARK"); bm && !e->sceneView->JumpToBookmark(*e->model, std::atoi(bm)))
+        bdg::LogWarn("scene view: no camera bookmark {}", bm);
     if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
@@ -1691,6 +1817,15 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->sceneViewTestValues;
         bdg::LogInfo("sceneview test: drawn={} pick={} outline={} orbit={} zoom={} frame={} pan={} fly={} deselect={} icon={}",
                      v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
+      }
+      if (std::getenv("BDG_RENDER_STATS") && e->r3d) { // `bdg render passes` / `bdg render stats` until the CLI exists (2-7)
+        bdg::LogInfo("render passes: {}", e->r3d->DescribePasses());
+        bdg::LogInfo("render stats: {}", e->r3d->DescribeStats());
+      }
+      if (e->refSceneTest) {
+        auto* v = e->refSceneTestValues;
+        bdg::LogInfo("refscene test: objects={} jump={} albedo={} normal={} depth={} shadow={} wire={} store={} undo={} tier={} timers={}",
+                     v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10]);
       }
       if (e->qualityTest) {
         auto* v = e->qualityTestValues;

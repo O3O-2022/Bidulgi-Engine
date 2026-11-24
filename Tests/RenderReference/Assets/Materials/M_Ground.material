@@ -1,0 +1,3 @@
+{"material":"M_Ground","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#818184"}
+{"param":"Roughness","type":"float","value":0.9}

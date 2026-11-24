@@ -177,4 +177,6 @@ if(MSVC)
   target_compile_options(BidulgiTests PRIVATE /W4 /utf-8)
   target_compile_definitions(BidulgiTests PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+# Test data in the source tree (render reference scene, queue 3-8).
+target_compile_definitions(BidulgiTests PRIVATE BDG_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME unit COMMAND BidulgiTests)
