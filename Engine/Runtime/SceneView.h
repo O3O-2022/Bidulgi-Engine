@@ -11,6 +11,9 @@
 // while moving rests the object on the surface under the mouse. With two or more objects selected the Align chip
 // opens min / centre / max / distribute per axis (one undo step each). The Measure tool (M) drags a ruler between
 // two surface points (V snaps its ends to vertices).
+// Greybox (queue 3-3c): the Blockout tool (B) shows chips that add a box, stairs, ramp or cylinder in front of the
+// camera, and handles on the faces of the selected block: dragging one pushes or pulls that face (grid snapping
+// applies, the opposite face stays put, one undo step).
 // Debug tools (queue 3-8): keys 1-9 jump to CameraBookmark views (Ctrl + key stores the current view), Alt + 1-7
 // pick what is shown (Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow), chips toggle wireframe, bounding
 // boxes and a stats panel with GPU time per render pass.
@@ -87,6 +90,10 @@ public:
   bool ObjectBounds(const EditorModel& model, const std::string& id, glm::vec3& lo, glm::vec3& hi) const;
   const Measure* CurrentMeasure() const { return hasMeasure_ ? &measure_ : nullptr; } // the ruler (Measure tool)
   bool SnapTarget(glm::vec3& p) const { p = snapTarget_; return hasSnapTarget_; }    // vertex / surface under the drag
+  // Greybox (3-3c): adds a block where the view looks (on the surface there, on the grid), selected; one undo step.
+  std::string CreateBlock(EditorModel& model, int shape); // BlockoutShape as int; returns the new object's id
+  // Face handle of the selected block: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (test hook; false: none there).
+  bool FaceHandlePoint(const EditorModel& model, int face, float& x, float& y) const;
   // Gizmo of the current tool and selection in the last view (false: no gizmo).
   bool CurrentGizmo(const EditorModel& model, GizmoMode& mode, GizmoFrame& frame, GizmoView& view) const;
   bool GizmoPoint(const EditorModel& model, GizmoHandle h, float& x, float& y) const; // test hook
@@ -118,6 +125,13 @@ private:
   float vx_ = 0, vy_ = 0, vw_ = 1, vh_ = 1; // last view rect (UI units)
   std::unordered_map<std::string, MeshEntry> meshes_;
   std::unordered_map<std::string, MeshEntry> builtins_;
+  std::unordered_map<std::string, MeshEntry> blocks_; // greybox meshes by shape and size (unused ones are dropped)
+  TextureHandle gridTex_;                             // the greybox 1 m grid
+  const MeshEntry* BlockMesh(int shape, const glm::vec3& size, int steps);
+  struct FaceHandle { int face; glm::vec3 center, normal; };
+  std::vector<FaceHandle> FaceHandles(const EditorModel& model) const; // of the primary selection's block
+  struct FaceStart { std::string id; int face = 0; Vec3 size, position; glm::mat4 world{1.f}, parentWorld{1.f}; } face_;
+  int hotFace_ = -1;
   std::vector<DrawItem3D> items_;
   struct ItemInfo { std::string owner; const MeshData* cpu; glm::vec3 lo{0}, hi{0}; glm::mat4 ownerWorld{1.f}; }; // world bounds
   glm::mat4 ItemMatrix(const EditorModel& model, size_t i) const; // item i as the scene is now (moved since the render)
@@ -146,7 +160,7 @@ private:
   int noteFrames_ = 0;
   float renderMs_ = 0;
 
-  enum class Drag { None, Click, Orbit, Pan, Fly, Gizmo, Measure } drag_ = Drag::None;
+  enum class Drag { None, Click, Orbit, Pan, Fly, Gizmo, Measure, Face } drag_ = Drag::None;
   // 3-3b: vertex / surface snapping during a move drag, the ruler, the align chips
   bool vHeld_ = false, vertexSourceSet_ = false, hasSnapTarget_ = false, hasMeasure_ = false, alignOpen_ = false;
   glm::vec3 vertexSource_{0}, lastMove_{0}, snapTarget_{0}, startLo_{0}, startHi_{0};

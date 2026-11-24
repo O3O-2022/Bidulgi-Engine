@@ -89,6 +89,24 @@ bool SceneView::Init(RHI& rhi, Renderer3D& r) {
   add("sphere", MakeSphere(0.5f));
   add("cylinder", Centered(MakeCylinder(0.5f, 1)));
   add("cone", Centered(MakeCone(0.5f, 1)));
+  { // greybox grid (3-3c): light grey with darker lines at the edges of every 1 m tile, a fine line every 25 cm
+    std::vector<uint8_t> px(128 * 128 * 4);
+    for (int y = 0; y < 128; ++y)
+      for (int x = 0; x < 128; ++x) {
+        const bool edge = x < 2 || y < 2 || x > 125 || y > 125, fine = x % 32 == 0 || y % 32 == 0;
+        const uint8_t c = edge ? 150 : fine ? 190 : 214;
+        uint8_t* o = &px[(y * 128 + x) * 4];
+        o[0] = o[1] = c;
+        o[2] = (uint8_t)std::min(255, c + 6);
+        o[3] = 255;
+      }
+    TextureDesc td;
+    td.w = td.h = 128;
+    td.format = TextureFormat::SRGBA8;
+    td.mipmaps = true;
+    td.repeat = true;
+    gridTex_ = rhi.CreateTexture(td, px.data());
+  }
   return true;
 }
 
@@ -159,6 +177,10 @@ Material3D SceneView::MaterialFor(const std::string& name) {
 }
 
 void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
+  for (auto it = blocks_.begin(); it != blocks_.end();) { // greybox meshes nobody used last frame
+    if (it->second.hash == 0) { r_->DestroyMesh(it->second.mesh); it = blocks_.erase(it); }
+    else { it->second.hash = 0; ++it; }
+  }
   items_.clear();
   info_.clear();
   icons_.clear();
@@ -195,8 +217,10 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
     for (auto c = o->children.rbegin(); c != o->children.rend(); ++c) stack.push_back(*c);
     glm::mat4 world = scene.WorldMatrix(id);
     const MeshRenderer* mr = nullptr;
+    const Blockout* bo = nullptr;
     for (const Component& c : o->components) {
       if (c.type == &MeshRenderer::StaticType()) mr = static_cast<const MeshRenderer*>(c.data);
+      if (c.type == &Blockout::StaticType()) bo = static_cast<const Blockout*>(c.data);
       if (c.type == &Light::StaticType()) {
         const Light& l = *static_cast<const Light*>(c.data);
         bool directional = l.type == LightType::Directional;
@@ -276,6 +300,22 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         light_.background.intensity = sky.intensity;
         light_.background.sunSize = sky.sunSize;
       }
+    }
+    if (bo) { // greybox block (3-3c)
+      const MeshEntry* be = BlockMesh((int)bo->shape, space::ToGlm(bo->size), bo->steps);
+      Material3D bm;
+      if (!bo->material.empty()) bm = MaterialFor(bo->material);
+      else {
+        bm.baseColor = {0.78f, 0.78f, 0.8f, 1};
+        bm.roughness = 0.85f;
+        bm.baseMap = gridTex_;
+      }
+      if (isSelected(id)) extras_.outlined.push_back(items_.size());
+      items_.push_back({&be->mesh, world, bm});
+      info_.push_back({id, &be->cpu});
+      info_.back().ownerWorld = world;
+      bool any = false;
+      Bounds(be->cpu, world, info_.back().lo, info_.back().hi, any);
     }
     if (!mr) continue;
     const MeshEntry* e = Resolve(mr->mesh, assets);
@@ -538,6 +578,69 @@ bool SceneView::MeasurePoint(const EditorModel& model, float x, float y, glm::ve
   return true;
 }
 
+const SceneView::MeshEntry* SceneView::BlockMesh(int shape, const glm::vec3& size, int steps) {
+  const std::string key = std::format("{}|{}|{}|{}|{}", shape, size.x, size.y, size.z, shape == (int)BlockoutShape::Stairs ? steps : 0);
+  auto it = blocks_.find(key);
+  if (it == blocks_.end()) {
+    MeshEntry e;
+    e.cpu = MakeBlock((BlockShape)shape, std::abs(size.x), std::abs(size.y), std::abs(size.z), steps);
+    e.mesh = r_->CreateMesh(e.cpu);
+    it = blocks_.emplace(key, std::move(e)).first;
+  }
+  it->second.hash = 1; // used this frame
+  return &it->second;
+}
+
+std::vector<SceneView::FaceHandle> SceneView::FaceHandles(const EditorModel& model) const {
+  std::vector<FaceHandle> out;
+  if (model.tool != "blockout" || model.Selected().empty()) return out;
+  SceneObject* o = const_cast<SceneObject*>(model.scene.Find(model.Selected()));
+  Component* c = o ? o->Find("Blockout") : nullptr;
+  if (!c) return out;
+  const glm::vec3 s = space::ToGlm(static_cast<const Blockout*>(c->data)->size);
+  const glm::mat4 w = model.scene.WorldMatrix(o->id);
+  const glm::vec3 centers[6] = {{s.x * 0.5f, s.y * 0.5f, 0}, {-s.x * 0.5f, s.y * 0.5f, 0}, {0, s.y, 0}, {0, 0, 0},
+                                {0, s.y * 0.5f, s.z * 0.5f}, {0, s.y * 0.5f, -s.z * 0.5f}};
+  const glm::vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  const glm::mat3 nm = glm::transpose(glm::inverse(glm::mat3(w)));
+  for (int f = 0; f < 6; ++f) out.push_back({f, glm::vec3(w * glm::vec4(centers[f], 1)), glm::normalize(nm * dirs[f])});
+  return out;
+}
+
+bool SceneView::FaceHandlePoint(const EditorModel& model, int face, float& x, float& y) const {
+  for (const FaceHandle& h : FaceHandles(model))
+    if (h.face == face) return ProjectUI(h.center, x, y);
+  return false;
+}
+
+std::string SceneView::CreateBlock(EditorModel& model, int shape) {
+  static const char* names[] = {"Box", "Stairs", "Ramp", "Cylinder"};
+  static const char* sizes[] = {"[1,1,1]", "[1,1,2]", "[1,1,2]", "[1,1,1]"};
+  shape = std::clamp(shape, 0, 3);
+  glm::vec3 at{0}, n;
+  if (!RaycastUI(model, vx_ + vw_ * 0.5f, vy_ + vh_ * 0.5f, {}, at, n)) at = glm::vec3(camera.pivot.x, 0, camera.pivot.z);
+  const float step = snap.always ? snap.move : 0.5f; // on the grid
+  at.x = SnapValue(at.x, step);
+  at.z = SnapValue(at.z, step);
+  std::string id;
+  for (int k = 1; id.empty() || model.scene.Find(id); ++k) id = std::format("b{}", k);
+  model.bus.BeginGroup(std::format("Add {}", names[shape]), "ui");
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!model.bus.Execute(c, &err)) LogWarn("blockout: {}", err);
+  };
+  run("add", "", std::format(R"({{"id":"{}","name":"{}"}})", id, names[shape]));
+  run("addcomp", id, std::format(R"({{"type":"Blockout","value":{{"shape":"{}","size":{}}}}})", names[shape], sizes[shape]));
+  run("set", id, std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", at.x, at.y, at.z));
+  model.bus.EndGroup();
+  model.Select(id);
+  return id;
+}
+
 bool SceneView::AlignSelection(EditorModel& model, int axis, AlignMode mode) {
   std::set<std::string> sel(model.Selection().begin(), model.Selection().end());
   std::vector<std::string> ids;
@@ -719,6 +822,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
               snap.always = next > 0;
               if (next > 0) snap.move = next;
             } else if (hit->name == "align") alignOpen_ = !alignOpen_;
+            else if (hit->name.starts_with("bo.")) CreateBlock(model, hit->name[3] - '0'); // bo.<shape>
             else if (hit->name.starts_with("al.")) { // al.<axis>.<mode>
               const int axis = hit->name[3] - 'x';
               const std::string m = hit->name.substr(5);
@@ -767,6 +871,34 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
             used = true;
             break;
           }
+        }
+        if (drag_ == Drag::None && inside(e) && e.button == 1 && !e.alt && model.tool == "blockout") { // a face handle (3-3c)
+          for (const FaceHandle& fh : FaceHandles(model)) {
+            float hx, hy;
+            if (!ProjectUI(fh.center, hx, hy) || std::hypot(hx - e.x, hy - e.y) > 9.f) continue;
+            const SceneObject* o = model.scene.Find(model.Selected());
+            Component* tc = const_cast<SceneObject*>(o)->Find("Transform");
+            Component* bc = const_cast<SceneObject*>(o)->Find("Blockout");
+            if (!tc || !bc) break;
+            GizmoView gv;
+            gv.camera = camera.ToCamera();
+            gv.x = vx_; gv.y = vy_; gv.w = vw_; gv.h = vh_;
+            GizmoFrame f;
+            f.origin = fh.center;
+            const glm::vec3 helper = std::abs(fh.normal.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+            const glm::vec3 t1 = glm::normalize(glm::cross(helper, fh.normal));
+            f.axes = glm::mat3(fh.normal, t1, glm::cross(fh.normal, t1));
+            if (!gizmo_.Begin(GizmoMode::Move, GizmoHandle::X, f, gv, {e.x, e.y})) break;
+            face_ = {o->id, fh.face, static_cast<const Blockout*>(bc->data)->size, static_cast<const Transform*>(tc->data)->position,
+                     model.scene.WorldMatrix(o->id), o->parent.empty() ? glm::mat4(1.f) : model.scene.WorldMatrix(o->parent)};
+            static const char* faceNames[] = {"+X", "-X", "top", "bottom", "+Z", "-Z"};
+            model.bus.BeginGroup(std::format("Resize {} ({})", o->name, faceNames[fh.face]), "ui");
+            drag_ = Drag::Face;
+            dragButton_ = 1;
+            used = true;
+            break;
+          }
+          if (used) break;
         }
         if (drag_ == Drag::None && inside(e) && e.button == 1 && !e.alt && model.tool == "measure") { // the ruler (3-3b)
           glm::vec3 p;
@@ -829,11 +961,44 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           used = true;
           break;
         }
+        if (drag_ == Drag::Face) { // push / pull: the size grows on that side, the opposite face stays
+          const GizmoDelta d = gizmo_.Update({e.x, e.y}, snap.always != e.ctrl, snap);
+          const int a = face_.face / 2;
+          const float sign = face_.face % 2 == 0 ? 1.f : -1.f;
+          const glm::vec3 normal = gizmo_.Frame().axes[0];
+          const float scaleOnAxis = std::max(glm::length(glm::vec3(face_.world[a])), 1e-6f);
+          const glm::vec3 size0 = space::ToGlm(face_.size);
+          glm::vec3 size = size0;
+          size[a] = std::max(size0[a] + glm::dot(d.move, normal) / scaleOnAxis, 0.05f);
+          const float grown = size[a] - size0[a];
+          glm::vec3 shift(0); // pivot (bottom centre) in the block's own space
+          if (a != 1) shift[a] = sign * grown * 0.5f;
+          else if (sign < 0) shift.y = -grown;
+          const glm::vec3 world = glm::vec3(face_.world * glm::vec4(shift, 1.f));
+          const glm::vec3 local = glm::vec3(glm::inverse(face_.parentWorld) * glm::vec4(world, 1.f));
+          auto set = [&](const char* path, const glm::vec3& v) {
+            Command c;
+            c.name = "set";
+            c.target = face_.id;
+            c.args = std::format(R"({{"path":"{}","value":[{},{},{}]}})", path, v.x, v.y, v.z);
+            std::string err;
+            if (!model.bus.Execute(c, &err)) LogWarn("blockout: {}", err);
+          };
+          set("Blockout.size", size);
+          set("Transform.position", local);
+          used = true;
+          break;
+        }
         if (drag_ == Drag::None) {
           GizmoMode mode;
           GizmoFrame frame;
           GizmoView gv;
           hot_ = hover_ && CurrentGizmo(model, mode, frame, gv) ? GizmoHit(mode, frame, gv, {e.x, e.y}) : GizmoHandle::None;
+          hotFace_ = -1;
+          for (const FaceHandle& fh : FaceHandles(model)) {
+            float hx, hy;
+            if (hover_ && ProjectUI(fh.center, hx, hy) && std::hypot(hx - e.x, hy - e.y) <= 9.f) hotFace_ = fh.face;
+          }
           break;
         }
         float dx = e.x - lastX_, dy = e.y - lastY_;
@@ -860,6 +1025,12 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           model.bus.EndGroup();
           drag_ = Drag::None;
           hasSnapTarget_ = false;
+          used = true;
+          break;
+        }
+        if (drag_ == Drag::Face && e.button == 1) {
+          model.bus.EndGroup();
+          drag_ = Drag::None;
           used = true;
           break;
         }
@@ -902,6 +1073,13 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         if (e.key == Key::Escape && hasMeasure_ && drag_ != Drag::Gizmo && hover_) {
           hasMeasure_ = false;
           drag_ = drag_ == Drag::Measure ? Drag::None : drag_;
+          used = true;
+          break;
+        }
+        if (drag_ == Drag::Face && e.key == Key::Escape) {
+          std::string err;
+          if (!model.bus.CancelGroup(&err)) LogWarn("blockout: cancel failed: {}", err);
+          drag_ = Drag::None;
           used = true;
           break;
         }
@@ -1084,7 +1262,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   // Chips (top-left) and stats (top-right).
   float px = w.x + 10;
   std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
-                       : model->tool == "scale" ? "Scale (R)" : model->tool == "measure" ? "Measure (M)" : "Select";
+                       : model->tool == "scale" ? "Scale (R)" : model->tool == "measure" ? "Measure (M)"
+                       : model->tool == "blockout" ? "Blockout (B)" : "Select";
   std::string snapChip = snap.always ? std::format("Snap {} m", snap.move) : "Snap: Ctrl";
   const bool several = model && model->Selection().size() >= 2;
   std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
@@ -1106,6 +1285,24 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     ui.Text(px + 9, w.y + 12, 11, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
     if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, w.y + 8, cw, 22});
     px += cw + 6;
+  }
+  if (model && model->tool == "blockout") { // greybox (3-3c): add blocks; handles on the selected block's faces
+    float bx2 = w.x + 10, by2 = w.y + (several && alignOpen_ ? 62 : 36);
+    for (int s = 0; s < 4; ++s) {
+      static const char* labels[] = {"+ Box", "+ Stairs", "+ Ramp", "+ Cylinder"};
+      const float cw = ui.Measure(11, labels[s]) + 16;
+      b.Rect(bx2, by2, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("accent"));
+      ui.Text(bx2 + 8, by2 + 3, 11, t.C("fg"), labels[s]);
+      chips_.push_back({std::format("bo.{}", s), bx2, by2, cw, 20});
+      bx2 += cw + 4;
+    }
+    for (const FaceHandle& fh : FaceHandles(*model)) {
+      float hx, hy;
+      if (!ProjectUI(fh.center, hx, hy)) continue;
+      const bool hot = (drag_ == Drag::Face && face_.face == fh.face) || (drag_ != Drag::Face && hotFace_ == fh.face);
+      const Color col = hot ? Color{1.f, 0.85f, 0.2f, 1} : fh.face / 2 == 0 ? t.C("axis-x") : fh.face / 2 == 1 ? t.C("axis-y") : t.C("axis-z");
+      b.Rect(hx - 6, hy - 6, 12, 12, col, 2, 1.5f, {0, 0, 0, 0.6f});
+    }
   }
   if (several && alignOpen_) { // second row: align / distribute per axis
     float ax2 = w.x + 10;

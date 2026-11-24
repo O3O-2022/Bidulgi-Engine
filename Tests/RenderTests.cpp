@@ -424,3 +424,34 @@ TEST_CASE("editor: grid, rest-on-surface, align and distribute maths (queue 3-3b
   Measure ruler{{1, 0, 0}, {4, 4, 0}};
   CHECK(std::abs(ruler.Length() - 5.f) < 1e-6f && ruler.Delta() == glm::vec3(3, 4, 0));
 }
+
+TEST_CASE("render: greybox blocks are closed, sized from the bottom centre, with world-scale UVs (queue 3-3c)") {
+  for (BlockShape s : {BlockShape::Box, BlockShape::Stairs, BlockShape::Ramp, BlockShape::Cylinder}) {
+    MeshData m = MakeBlock(s, 2, 1.5f, 3, 5);
+    CHECK(!m.indices.empty() && m.indices.size() % 3 == 0);
+    CHECK(CountInwardTriangles(m) == 0);
+    glm::vec3 lo(1e9f), hi(-1e9f);
+    for (const Vertex3D& v : m.vertices) {
+      lo = glm::min(lo, glm::vec3(v.px, v.py, v.pz));
+      hi = glm::max(hi, glm::vec3(v.px, v.py, v.pz));
+    }
+    CHECK(glm::length(lo - glm::vec3(-1, 0, -1.5f)) < 1e-4f && glm::length(hi - glm::vec3(1, 1.5f, 1.5f)) < 1e-4f);
+  }
+  // stairs: five treads at 0.3, 0.6 ... 1.5 m, the lowest at the +Z end
+  MeshData st = MakeBlock(BlockShape::Stairs, 2, 1.5f, 3, 5);
+  std::vector<float> treads;
+  for (const Vertex3D& v : st.vertices)
+    if (v.ny > 0.99f && std::find_if(treads.begin(), treads.end(), [&](float t) { return std::abs(t - v.py) < 1e-4f; }) == treads.end())
+      treads.push_back(v.py);
+  std::sort(treads.begin(), treads.end());
+  CHECK(treads.size() == 5 && std::abs(treads[0] - 0.3f) < 1e-4f && std::abs(treads[4] - 1.5f) < 1e-4f);
+  bool lowFront = false;
+  for (const Vertex3D& v : st.vertices) lowFront = lowFront || (v.ny > 0.99f && std::abs(v.py - 0.3f) < 1e-4f && v.pz > 1.4f);
+  CHECK(lowFront);
+  // world-scale UVs: across the top of a 2 m box the texture repeats twice
+  MeshData box = MakeBlock(BlockShape::Box, 2, 1, 1);
+  float umin = 1e9f, umax = -1e9f;
+  for (const Vertex3D& v : box.vertices)
+    if (v.ny > 0.99f) { umin = std::min(umin, v.u); umax = std::max(umax, v.u); }
+  CHECK(std::abs((umax - umin) - 2.f) < 1e-4f);
+}

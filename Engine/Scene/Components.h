@@ -94,6 +94,23 @@ public:
   BPROPERTY(Edit, Range = "0,10", Tooltip = "Sun disk size in degrees (0 = no disk)") float sunSize = 1.5f;
 };
 
+// Greybox block (queue 3-3c): a box, stairs, ramp or cylinder built from its size, for laying out a level before
+// the art exists. The pivot is the bottom centre. In the scene view's Blockout tool (B) its faces have handles:
+// drag one to push or pull that face (the opposite face stays). Physics will use it as a collider (M6).
+BENUM()
+enum class BlockoutShape { Box, Stairs, Ramp, Cylinder };
+
+BCLASS(Component)
+struct Blockout {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit) BlockoutShape shape = BlockoutShape::Box;
+  BPROPERTY(Edit, Tooltip = "Width, height, depth in metres (pivot at the bottom centre)") Vec3 size{1, 1, 1};
+  BPROPERTY(Edit, Range = "1,64", ShowIf = "shape == Stairs", Tooltip = "Steps from the front (+Z) up to the back") int32_t steps = 6;
+  BPROPERTY(Edit, Tooltip = "Project material; empty = the grey 1 m grid") std::string material;
+  BPROPERTY(Edit, Tooltip = "Physics uses the block as a collider (M6)") bool collider = true;
+};
+
 // Colour grading (3-5b): the final picture through a look-up table (.cube from Resolve, Photoshop ...) and a few
 // controls. The first one in the scene is used.
 BCLASS(Component)

@@ -23,6 +23,11 @@ MeshData MakeSphere(float radius, int slices = 48, int stacks = 24);
 MeshData MakeCylinder(float radius, float height, int slices = 24); // along +Y from y = 0, capped
 MeshData MakeCone(float radius, float height, int slices = 24);     // base at y = 0, apex at +Y
 
+// Greybox blocks (queue 3-3c): the pivot is the bottom centre, sizes in metres, flat faces, world-scale UVs
+// (1 m = 1 texture repeat). Stairs rise toward -Z (forward) in `steps` steps; the ramp's slope rises toward -Z too.
+enum class BlockShape { Box, Stairs, Ramp, Cylinder };
+MeshData MakeBlock(BlockShape shape, float sx, float sy, float sz, int steps = 6);
+
 // Triangles whose winding disagrees with their vertex normals (0 = every face is CCW seen from outside).
 int CountInwardTriangles(const MeshData& m);
 }

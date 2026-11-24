@@ -1,4 +1,5 @@
 #include "Render3D/MeshGen.h"
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -140,5 +141,82 @@ int CountInwardTriangles(const MeshData& m) {
     if (Dot(Cross(pb - pa, pc - pa), n) <= 0) ++bad;
   }
   return bad;
+}
+}
+
+namespace bdg {
+namespace {
+// World-scale texture coordinates (1 unit = 1 m) projected along each face's main axis: a 1 m grid texture lies the
+// same on every block whatever its size (greybox, queue 3-3c).
+void WorldUVs(MeshData& m) {
+  for (Vertex3D& v : m.vertices) {
+    const float ax = std::fabs(v.nx), ay = std::fabs(v.ny), az = std::fabs(v.nz);
+    if (ax >= ay && ax >= az) { v.u = v.nx > 0 ? -v.pz : v.pz; v.v = -v.py; }
+    else if (ay >= az) { v.u = v.px; v.v = v.ny > 0 ? v.pz : -v.pz; }
+    else { v.u = v.nz > 0 ? v.px : -v.px; v.v = -v.py; }
+  }
+}
+void FlatTri(MeshData& m, V3 a, V3 b, V3 c) { // counter-clockwise seen from the front
+  V3 n = Normalize(Cross(b - a, c - a));
+  uint32_t i = Push(m, a, n, 0, 0), j = Push(m, b, n, 0, 0), k = Push(m, c, n, 0, 0);
+  Tri(m, i, j, k);
+}
+} // namespace
+
+MeshData MakeBlock(BlockShape shape, float sx, float sy, float sz, int steps) {
+  sx = std::max(sx, 0.01f);
+  sy = std::max(sy, 0.01f);
+  sz = std::max(sz, 0.01f);
+  const float x = sx * 0.5f, z = sz * 0.5f;
+  MeshData m;
+  switch (shape) {
+    case BlockShape::Box: {
+      const float y = sy * 0.5f;
+      Face(m, {0, y, z}, {x, 0, 0}, {0, y, 0});    // +Z
+      Face(m, {0, y, -z}, {-x, 0, 0}, {0, y, 0});  // -Z
+      Face(m, {x, y, 0}, {0, 0, -z}, {0, y, 0});   // +X
+      Face(m, {-x, y, 0}, {0, 0, z}, {0, y, 0});   // -X
+      Face(m, {0, sy, 0}, {x, 0, 0}, {0, 0, -z});  // +Y
+      Face(m, {0, 0, 0}, {x, 0, 0}, {0, 0, z});    // -Y
+      break;
+    }
+    case BlockShape::Stairs: { // rising toward -Z (forward), the first step at the +Z end
+      const int n = std::clamp(steps, 1, 256);
+      const float d = sz / n, h = sy / n;
+      for (int k = 0; k < n; ++k) {
+        const float zFront = z - k * d, zMid = zFront - d * 0.5f, top = h * (k + 1), below = h * k;
+        Face(m, {0, top, zMid}, {x, 0, 0}, {0, 0, -d * 0.5f});                   // tread
+        Face(m, {0, (top + below) * 0.5f, zFront}, {x, 0, 0}, {0, h * 0.5f, 0}); // riser
+        Face(m, {x, top * 0.5f, zMid}, {0, 0, -d * 0.5f}, {0, top * 0.5f, 0});   // +X side of this step's column
+        Face(m, {-x, top * 0.5f, zMid}, {0, 0, d * 0.5f}, {0, top * 0.5f, 0});   // -X side
+      }
+      Face(m, {0, sy * 0.5f, -z}, {-x, 0, 0}, {0, sy * 0.5f, 0}); // back
+      Face(m, {0, 0, 0}, {x, 0, 0}, {0, 0, z});                   // bottom
+      break;
+    }
+    case BlockShape::Ramp: { // the slope rises from the +Z edge on the ground to the top of the -Z edge
+      Face(m, {0, sy * 0.5f, 0}, {x, 0, 0}, {0, sy * 0.5f, -z});  // slope
+      Face(m, {0, sy * 0.5f, -z}, {-x, 0, 0}, {0, sy * 0.5f, 0}); // back
+      Face(m, {0, 0, 0}, {x, 0, 0}, {0, 0, z});                   // bottom
+      FlatTri(m, {x, 0, z}, {x, 0, -z}, {x, sy, -z});            // +X side
+      FlatTri(m, {-x, 0, z}, {-x, sy, -z}, {-x, 0, -z});         // -X side
+      break;
+    }
+    case BlockShape::Cylinder: {
+      m = MakeCylinder(0.5f, 1.f, 32);
+      for (Vertex3D& v : m.vertices) {
+        v.px *= sx;
+        v.py *= sy;
+        v.pz *= sz;
+        V3 n = Normalize(V3{v.nx / sx, v.ny / sy, v.nz / sz}); // normals of a stretched shape
+        v.nx = n.x;
+        v.ny = n.y;
+        v.nz = n.z;
+      }
+      break;
+    }
+  }
+  WorldUVs(m);
+  return m;
 }
 }

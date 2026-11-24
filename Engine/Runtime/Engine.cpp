@@ -143,7 +143,8 @@ struct bdg_engine {
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
   std::string materialTestValues[8];
-  bool sceneViewTest = false, gizmoTest = false, snapTest = false;
+  bool sceneViewTest = false, gizmoTest = false, snapTest = false, blockoutTest = false;
+  std::string blockoutTestValues[8];
   std::string gizmoTestValues[8];
   std::string snapTestValues[8];
   std::string sceneViewTestValues[10];
@@ -578,7 +579,7 @@ void SetupShortcuts(bdg_engine* e) {
     if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
     bdg::LogInfo("play: {}", m->playing ? "on" : "off");
   });
-  for (const char* t : {"view", "select", "move", "rotate", "scale", "measure"})
+  for (const char* t : {"view", "select", "move", "rotate", "scale", "measure", "blockout"})
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
   s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->Frame(*m); });
   s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
@@ -1392,6 +1393,125 @@ void InjectSnapTest(bdg_engine* e, int frame, float scale) {
   }
 }
 
+// Scripted check of 3-3c (BDG_BLOCKOUT_TEST=1): the Blockout tool (B) adds a box from its chip, a face handle drag
+// pushes +X out onto the 0.5 m grid (the -X face stays), the top is pulled up, Esc cancels a drag, Ctrl+Z undoes a
+// drag in one step, stairs / ramp / cylinder chips add the other shapes and a click picks a block.
+void InjectBlockoutTest(bdg_engine* e, int frame, float scale) {
+  using T = bdg::InputEvent::Type;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->blockoutTestValues;
+  auto ev = [&](T type, float x, float y, int button = 0) { e->window.InjectEvent({type, x * scale, y * scale, button}); };
+  auto key = [&](bdg::Key k, bool ctrl = false) { bdg::InputEvent i{T::KeyDown}; i.key = k; i.ctrl = ctrl; e->window.InjectEvent(i); };
+  auto click = [&](const char* chip) {
+    float x, y;
+    if (!sv->ChipCenter(chip, x, y)) { bdg::LogError("blockout test: no chip {}", chip); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    ev(T::MouseUp, x, y, 1);
+  };
+  auto block = [&](const std::string& id, glm::vec3& size, glm::vec3& lo, glm::vec3& hi) {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("Blockout") : nullptr;
+    if (!c) return false;
+    size = bdg::space::ToGlm(static_cast<const bdg::Blockout*>(c->data)->size);
+    return sv->ObjectBounds(*m, id, lo, hi);
+  };
+  // Drag a face handle along the screen direction of `worldDir` by `px` UI units; `release` false keeps holding.
+  auto dragFace = [&](int face, glm::vec3 worldDir, float px, bool release = true) {
+    float x, y, ox, oy, ax, ay;
+    glm::vec3 lo, hi, size;
+    if (!sv->FaceHandlePoint(*m, face, x, y) || !block(m->Selected(), size, lo, hi)) { bdg::LogError("blockout test: no face {}", face); return; }
+    glm::vec3 c = (lo + hi) * 0.5f;
+    sv->ProjectUI(c, ox, oy);
+    sv->ProjectUI(c + worldDir, ax, ay);
+    glm::vec2 dir = glm::normalize(glm::vec2(ax - ox, ay - oy));
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + dir.x * px * k / 4, y + dir.y * px * k / 4);
+    if (release) ev(T::MouseUp, x + dir.x * px, y + dir.y * px, 1);
+  };
+  static std::string id;
+  static glm::vec3 lo0, hi0, size0;
+  static size_t depth0;
+  if (frame == 2) {
+    sv->camera.pivot = {4, 0.5f, 4};
+    sv->camera.yaw = 20;
+    sv->camera.pitch = -30;
+    sv->camera.distance = 7;
+    sv->snap.always = true; // 0.5 m grid
+    sv->snap.move = 0.5f;
+    key(bdg::Key::B);
+  }
+  if (frame == 4) {
+    depth0 = m->bus.UndoDepth();
+    click("bo.0");
+  }
+  if (frame == 6) {
+    id = m->Selected();
+    bool ok = !id.empty() && block(id, size0, lo0, hi0) && size0 == glm::vec3(1) && std::abs(lo0.y) < 1e-3f && m->bus.UndoDepth() == depth0 + 1 &&
+              m->tool == "blockout";
+    v[0] = std::format("{}", ok ? 1 : 0);
+    dragFace(0, {1, 0, 0}, 70); // push +X out
+  }
+  if (frame == 8) {
+    glm::vec3 lo, hi, size;
+    block(id, size, lo, hi);
+    const float r = hi.x / 0.5f;
+    v[1] = std::format("{}", size.x > 1.2f && std::abs(lo.x - lo0.x) < 1e-3f && std::abs(r - std::round(r)) < 1e-3f && size.y == 1 ? 1 : 0);
+    dragFace(2, {0, 1, 0}, 60); // pull the top up
+  }
+  if (frame == 10) {
+    glm::vec3 lo, hi, size;
+    block(id, size, lo, hi);
+    v[2] = std::format("{}", size.y > 1.2f && std::abs(lo.y) < 1e-3f ? 1 : 0);
+    size0 = size;
+    dragFace(5, {0, 0, -1}, 60, false); // pull -Z, then Esc
+  }
+  if (frame == 11) key(bdg::Key::Escape);
+  if (frame == 12) {
+    float x, y;
+    sv->FaceHandlePoint(*m, 5, x, y);
+    ev(T::MouseUp, x, y, 1);
+  }
+  if (frame == 14) {
+    glm::vec3 lo, hi, size;
+    block(id, size, lo, hi);
+    v[3] = std::format("{}", size == size0 ? 1 : 0);
+    depth0 = m->bus.UndoDepth();
+    key(bdg::Key::Z, true); // undo the top pull
+  }
+  if (frame == 16) {
+    glm::vec3 lo, hi, size;
+    block(id, size, lo, hi);
+    v[4] = std::format("{}", size.y == 1 && size.x > 1.2f && m->bus.UndoDepth() == depth0 - 1 ? 1 : 0);
+    sv->camera.pivot = {-4, 0.5f, 6}; // somewhere empty for the other shapes
+    click("bo.1");
+  }
+  if (frame == 18) {
+    sv->camera.pivot = {-7, 0.5f, 6};
+    click("bo.2");
+  }
+  if (frame == 20) {
+    sv->camera.pivot = {-10, 0.5f, 6};
+    click("bo.3");
+  }
+  if (frame == 22) {
+    int shapes = 0;
+    for (const char* sid : {"b2", "b3", "b4"}) {
+      bdg::SceneObject* o = m->scene.Find(sid);
+      bdg::Component* c = o ? o->Find("Blockout") : nullptr;
+      shapes += c ? 1 : 0;
+    }
+    v[5] = std::format("{}", shapes);
+    glm::vec3 lo, hi, size;
+    float x, y;
+    bool picked = block("b2", size, lo, hi) && sv->ProjectUI((lo + hi) * 0.5f + glm::vec3(0, 0.2f, 0.3f), x, y) && sv->Pick(*m, x, y) == "b2";
+    v[6] = std::format("{}", picked && size == glm::vec3(1, 1, 2) ? 1 : 0);
+  }
+}
+
 void InjectGizmoTest(bdg_engine* e, int frame, float scale) {
   using T = bdg::InputEvent::Type;
   bdg::SceneView* sv = e->sceneView.get();
@@ -1589,6 +1709,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   e->snapTest = std::getenv("BDG_SNAP_TEST") != nullptr;
+  e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
   e->refSceneTest = std::getenv("BDG_REFSCENE_TEST") != nullptr;
@@ -1963,6 +2084,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->snapTest && !e->showGallery) InjectSnapTest(e, frames, scale);
+    if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
     if (e->refSceneTest && !e->showGallery) InjectRefSceneTest(e, frames, scale);
@@ -2278,6 +2400,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->materialTestValues;
         bdg::LogInfo("material test: red={} blue={} texture={} presets={} cooked={} reused={} formats={} undo={}", v[0], v[1], v[2], v[3],
                      v[4], v[5], v[6], v[7]);
+      }
+      if (e->blockoutTest) {
+        auto* v = e->blockoutTestValues;
+        bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->snapTest) {
         auto* v = e->snapTestValues;
