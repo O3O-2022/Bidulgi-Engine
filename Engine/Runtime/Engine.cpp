@@ -1686,10 +1686,34 @@ void InjectProjectTest(bdg_engine* e, int frame, float scale) {
 
 extern "C" {
 
+namespace {
+// Started from somewhere else (the Start menu, a pinned taskbar icon, a shortcut): the working folder holds none of
+// the engine's data, so tokens, fonts and icons would be missing (all-magenta UI) and the log would go nowhere.
+// Then work from the engine folder above the executable instead. BDG_KEEP_CWD=1 keeps the folder as it is.
+void UseEngineFolder() {
+  namespace fs = std::filesystem;
+  if (std::getenv("BDG_KEEP_CWD")) return;
+  auto engineFolder = [](fs::path base) -> fs::path {
+    std::error_code ec;
+    for (int up = 0; up < 4 && !base.empty(); ++up, base = base.parent_path())
+      if (fs::exists(base / "design-system" / "project" / "tokens.json", ec)) return base;
+    return {};
+  };
+  std::error_code ec;
+  if (!engineFolder(fs::current_path(ec)).empty()) return; // started inside the engine tree: nothing to do
+  wchar_t exe[MAX_PATH] = {};
+  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return;
+  const fs::path root = engineFolder(fs::path(exe).parent_path());
+  if (!root.empty()) fs::current_path(root, ec);
+}
+} // namespace
+
 bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
+  UseEngineFolder(); // before the first log line: Bidulgi.log opens in the working folder
   if (!desc || !out) { bdg::LogWarn("bdg_engine_create: desc and out must not be null"); return BDG_ERR_INVALID_ARG; }
   *out = nullptr;
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
+  bdg::LogInfo("folder: {}", std::filesystem::current_path().string());
   auto* e = new (std::nothrow) bdg_engine();
   if (!e) return BDG_ERR_PLATFORM;
   e->createdAt = std::chrono::steady_clock::now();

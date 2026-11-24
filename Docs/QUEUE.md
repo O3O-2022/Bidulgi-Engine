@@ -60,6 +60,7 @@ cmake --build build --config Release --target BidulgiEditor
 | `BDG_BLOCKOUT_TEST=1` | 3-3c Blockout 도구: 칩으로 만들기, 면 밀고 당기기(그리드·Esc·되돌리기), 모양 3개, 피킹 자동 테스트 |
 | `BDG_ICONS=<폴더>` | 에디터 아이콘 PNG 폴더(기본 `Assets/Icons`; 빈 폴더면 예전 도형) |
 | `BDG_SHOW_WINDOW=1` | 자동 실행(`--frames N`, 유휴 테스트)도 창을 보이게 함 — 기본은 숨긴 창 + 화면 밖 버퍼(테스트가 창을 띄우거나 포커스를 빼앗지 않음) |
+| `BDG_KEEP_CWD=1` | 작업 폴더를 그대로 둠(기본: 엔진 데이터가 없는 폴더에서 시작하면 실행 파일 위의 엔진 폴더로 옮김) |
 | `BDG_HIDDEN=1` | 어떤 실행이든 창을 숨기고 화면 밖 버퍼에 그림 |
 | `BDG_SNAP_TEST=1` | 3-3b 그리드·꼭짓점·표면 스냅, 정렬·간격 칩, 측정 도구 자동 테스트 |
 | `BDG_SCREEN=render-lights` | 3-5b Forward+ 보드(점광원 256개), `BDG_RENDER_TEST=1`이면 `lights test:` 판정 |
