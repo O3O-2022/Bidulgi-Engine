@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -174,6 +175,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   light_.shadows = true;
   light_.background.draw = true; // default sky until a Sky component says otherwise
   bool sun = false, skySet = false;
+  hasGrading_ = false;
   const Scene& scene = model.scene;
   std::set<std::string> selected(model.Selection().begin(), model.Selection().end());
   auto isSelected = [&](std::string id) { // the object or one of its parents
@@ -240,6 +242,31 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         p.intensity = rp.intensity;
         probes_.push_back(p);
       }
+      if (c.type == &ColorGrading::StaticType() && !hasGrading_) { // 3-5b
+        const ColorGrading& cg = *static_cast<const ColorGrading*>(c.data);
+        hasGrading_ = true;
+        grading_ = {};
+        grading_.intensity = cg.intensity;
+        grading_.contrast = cg.contrast;
+        grading_.saturation = cg.saturation;
+        grading_.temperature = cg.temperature;
+        grading_.tint = cg.tint;
+        if (cg.lut != lutPath_) { // read the .cube file once per path
+          lutPath_ = cg.lut;
+          lutCache_.clear();
+          lutCacheSize_ = 0;
+          if (!cg.lut.empty() && assets) {
+            fs::path full = fs::path(std::u8string((const char8_t*)assets->Root().c_str())) / fs::path(std::u8string((const char8_t*)cg.lut.c_str()));
+            std::ifstream in(full, std::ios::binary);
+            std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            std::string err;
+            if (!in && text.empty()) LogWarn("scene view: colour grading table {} not found", cg.lut);
+            else if (!ParseCubeLut(text, lutCacheSize_, lutCache_, &err)) LogWarn("scene view: {}: {}", cg.lut, err);
+          }
+        }
+        grading_.lutSize = lutCacheSize_;
+        grading_.lut = lutCache_;
+      }
       if (c.type == &Sky::StaticType() && !skySet) {
         const Sky& sky = *static_cast<const Sky*>(c.data);
         skySet = true;
@@ -291,6 +318,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   }
   auto t0 = std::chrono::steady_clock::now();
   BuildItems(model, assets);
+  r_->SetColorGrading(hasGrading_ ? &grading_ : nullptr);
   { // GI Tier 0: probes or the volume changed (added, moved, resized) -> bake again, two bounces; the chip adds one more
     uint64_t key = 1469598103934665603ull;
     auto fold = [&](float value) {

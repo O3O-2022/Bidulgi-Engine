@@ -597,6 +597,7 @@ const char* kToneMapFS = R"(#version 450 core
 layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; }; // uPost2.x: linear output (probe capture)
 layout(binding = 0) uniform sampler2D uHdr;
 layout(binding = 1) uniform sampler2D uBloom;
+layout(binding = 2) uniform sampler3D uGrading; // 32^3 colour grading table (3-5b), uPost2.y = on
 in vec2 vUV;
 out vec4 oColor;
 vec3 ACES(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); } // Narkowicz fit
@@ -609,7 +610,10 @@ void main() {
   if (uPost.w > 0.5) c += texture(uBloom, vUV).rgb * (uPost.y / 5.0); // the chain sums 5 levels: average them
   c *= uPost.x;
   if (uPost.z > 0.5) c = ACES(c);
-  oColor = vec4(uPost2.x > 0.5 ? c : ToSrgb(c), 1.0); // opaque: the UI draws this picture with alpha blending
+  if (uPost2.x > 0.5) { oColor = vec4(c, 1.0); return; } // linear capture: no display curve, no grading
+  c = ToSrgb(c);
+  if (uPost2.y > 0.5) c = textureLod(uGrading, c * (31.0 / 32.0) + 0.5 / 32.0, 0.0).rgb;
+  oColor = vec4(c, 1.0); // opaque: the UI draws this picture with alpha blending
 }
 )";
 // FXAA (the compact NVIDIA FXAA 2 kernel): blends along the local edge direction where contrast is high.
@@ -928,6 +932,21 @@ bool Renderer3D::Init(RHI& rhi) {
   frameUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FrameData), true);
   const uint8_t white[4] = {255, 255, 255, 255};
   white_ = rhi.CreateTexture2D(1, 1, TextureFormat::SRGBA8, white);
+  { // blob shadow spot (3-5b): white, alpha falling off smoothly from the centre
+    std::vector<uint8_t> spot(64 * 64 * 4, 255);
+    for (int y = 0; y < 64; ++y)
+      for (int x = 0; x < 64; ++x) {
+        const float d = std::min(glm::length(glm::vec2(x + 0.5f, y + 0.5f) / 32.f - 1.f), 1.f);
+        // full under the object (its footprint is 1 / 1.6 of the spot), fading out over the rest
+        const float t = std::clamp((d - 0.6f) / 0.4f, 0.f, 1.f);
+        spot[(y * 64 + x) * 4 + 3] = (uint8_t)std::lround(255 * (1 - t * t * (3 - 2 * t)));
+      }
+    TextureDesc sd;
+    sd.w = sd.h = 64;
+    sd.mipmaps = true;
+    blobTex_ = rhi.CreateTexture(sd, spot.data());
+    blobQuad_ = CreateMesh(MakePlaneXZ(1, 1));
+  }
 
   return true;
 }
@@ -946,6 +965,9 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(shadowPassUbo_);
   rhi_->DestroyBuffer(ssaoUbo_);
   rhi_->DestroyBuffer(lightBuffer_);
+  rhi_->DestroyTexture(gradingLut_);
+  rhi_->DestroyTexture(blobTex_);
+  DestroyMesh(blobQuad_);
   rhi_->DestroyBuffer(clusterBuffer_);
   for (PipelineHandle p : {prepass_, prepassTwo_, ssao_, aoBlur_}) rhi_->DestroyPipeline(p);
   for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -1087,7 +1109,10 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   // Lightmapped items draw their own mesh copy (atlas coordinates) while mesh and placement match the bake.
   std::vector<DrawItem3D> swapped;
   std::vector<uint8_t> usesLightmap;
-  if (!lightmaps_.empty()) {
+  const QualitySettings& tierIn = quality ? *quality : ReferenceQuality();
+  const bool blobs = tierIn.blobShadows && light.shadows && light.intensity > 0 && tierIn.lighting != LightingMode::Unlit &&
+                     !(tierIn.shadows && tierIn.lighting == LightingMode::Pixel);
+  if (!lightmaps_.empty() || blobs) {
     swapped = itemsIn;
     usesLightmap.assign(swapped.size(), 0);
     for (size_t i = 0; i < swapped.size(); ++i) {
@@ -1100,7 +1125,29 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       usesLightmap[i] = 1;
     }
   }
-  const std::vector<DrawItem3D>& items = lightmaps_.empty() ? itemsIn : swapped;
+  size_t blobCount = 0;
+  if (blobs) { // low tier (3-5b): a soft dark spot under each standing object, drawn with the blended objects
+    for (const DrawItem3D& it : itemsIn) {
+      if (!it.mesh || !it.mesh->indexCount || it.mesh->boundsMin == it.mesh->boundsMax || it.material.alpha == Material3D::Alpha::Blend) continue;
+      glm::vec3 lo, hi;
+      TransformBounds(it.model, it.mesh->boundsMin, it.mesh->boundsMax, lo, hi);
+      const glm::vec3 size = hi - lo;
+      const float wide = std::max(size.x, size.z);
+      if (size.y < 0.1f * wide || wide > 8.f) continue; // floors and big flat things throw no blob
+      DrawItem3D b;
+      b.mesh = &blobQuad_;
+      b.model = glm::scale(glm::translate(glm::mat4(1.f), glm::vec3((lo.x + hi.x) * 0.5f, lo.y + 0.01f, (lo.z + hi.z) * 0.5f)),
+                           glm::vec3(std::max(size.x * 1.6f, 0.3f), 1, std::max(size.z * 1.6f, 0.3f)));
+      b.material.unlit = true;
+      b.material.alpha = Material3D::Alpha::Blend;
+      b.material.baseColor = {0, 0, 0, 0.6f};
+      b.material.baseMap = blobTex_;
+      swapped.push_back(b);
+      ++blobCount;
+    }
+    usesLightmap.resize(swapped.size(), 0);
+  }
+  const std::vector<DrawItem3D>& items = lightmaps_.empty() && !blobs ? itemsIn : swapped;
   QualitySettings q = quality ? *quality : ReferenceQuality();
   const DebugView view = extras ? extras->view : DebugView::Lit;
   if (view != DebugView::Lit) { // show the buffer itself: per-pixel shading, no tone curve or post effects
@@ -1395,9 +1442,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->DrawIndexedInstanced(p, mesh.vertices, mesh.indices, mesh.indexCount, r.count, r.first, instanceIds_);
     ++draws_;
   };
+  const float aniso = std::min((float)std::max(q.anisotropy, 1), rhi_->MaxAnisotropy());
   auto bindMaps = [&](const Material3D& m) {
     const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
-    for (uint32_t slot = 0; slot < 5; ++slot) rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
+    for (uint32_t slot = 0; slot < 5; ++slot) {
+      if (maps[slot].Valid()) rhi_->SetTextureAnisotropy(maps[slot], aniso); // 3-5b
+      rhi_->BindTexture(slot, maps[slot].Valid() ? maps[slot] : white_);
+    }
   };
 
   rhi_->BindUniformBuffer(1, frameUbo_);
@@ -1444,6 +1495,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
                        q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
   stats_.cascades = f.shadow[0] > 0.5f ? cascades : 0;
   stats_.clustered = clustered;
+  stats_.anisotropy = (int)aniso;
+  stats_.blobs = blobCount;
   stats_.clusterRefs = clusterRefs;
   stats_.clusterMax = clusterMax;
   stats_.clustersUsed = clustersUsed;
@@ -1561,8 +1614,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     }
     if (timing) Mark(timer, "bloom");
   }
+  const bool grading = gradingLut_.Valid() && !(extras && extras->linearOutput) && view == DebugView::Lit;
   PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
-              {extras && extras->linearOutput ? 1.f : 0.f, 0, 0, 0}};
+              {extras && extras->linearOutput ? 1.f : 0.f, grading ? 1.f : 0.f, 0, 0}};
+  stats_.grading = grading;
+  if (grading) rhi_->BindTexture(2, gradingLut_);
   rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
   rhi_->BindUniformBuffer(4, postUbo_);
   rhi_->BindTexture(0, hdr);
@@ -1711,6 +1767,25 @@ void Renderer3D::CaptureCube(const glm::vec3& at, RenderTargetHandle rt, int siz
     rhi_->CopyToCubeFace(rhi_->RenderTargetColor(rt), size, cube, face);
   }
   rhi_->GenerateMips(cube);
+}
+
+void Renderer3D::SetColorGrading(const ColorGrading3D* g) {
+  if (!rhi_) return;
+  uint64_t key = 0;
+  if (g && !g->Neutral()) {
+    key = 1469598103934665603ull;
+    auto fold = [&](const void* p, size_t n) {
+      for (size_t i = 0; i < n; ++i) key = (key ^ static_cast<const uint8_t*>(p)[i]) * 1099511628211ull;
+    };
+    const float v[6] = {g->contrast, g->saturation, g->temperature, g->tint, g->intensity, (float)g->lutSize};
+    fold(v, sizeof(v));
+    fold(g->lut.data(), g->lut.size() * sizeof(float));
+  }
+  if (key == gradingKey_) return;
+  gradingKey_ = key;
+  rhi_->DestroyTexture(gradingLut_);
+  gradingLut_ = {};
+  if (key) gradingLut_ = rhi_->CreateTexture3D(32, BuildGradingLut(*g, 32).data());
 }
 
 void Renderer3D::SetVolume(const ProbeVolume3D* volume) {
@@ -1989,8 +2064,9 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={} clustered={} cluster_refs={} cluster_max={}", s.w, s.h,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={} clustered={} cluster_refs={} cluster_max={} aniso={} blobs={} grading={}", s.w, s.h,
                      s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
-                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0, s.clustered ? 1 : 0, s.clusterRefs, s.clusterMax);
+                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0, s.clustered ? 1 : 0, s.clusterRefs, s.clusterMax, s.anisotropy,
+                     s.blobs, s.grading ? 1 : 0);
 }
 }

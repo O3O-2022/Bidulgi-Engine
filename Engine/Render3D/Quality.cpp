@@ -20,6 +20,7 @@ QualitySettings QualityPreset(QualityTier t) {
     case QualityTier::Low:
       q.lighting = LightingMode::Vertex;
       q.maxLights = 4;
+      q.blobShadows = true; // no shadow maps here: a soft spot under objects instead (3-5b)
       q.shadows = false;
       q.textureBias = 2;
       q.toneMap = true;
@@ -27,11 +28,13 @@ QualitySettings QualityPreset(QualityTier t) {
       q.viewDistance = 0.5f;
       break;
     case QualityTier::Medium:
-      break; // the defaults above are medium
+      q.anisotropy = 4;
+      break; // the other defaults above are medium
     case QualityTier::High:
     case QualityTier::Ultra:
       q.maxLights = t == QualityTier::Ultra ? 1024 : 256; // clustered (3-5b)
       q.clustered = true;
+      q.anisotropy = t == QualityTier::Ultra ? 16 : 8;
       q.shadowMapSize = 2048;
       q.textureBias = 0;
       q.fxaa = false; // MSAA instead
@@ -59,6 +62,7 @@ QualitySettings ReferenceQuality() {
   q.ssao = false;
   q.maxLights = 16;
   q.clustered = false;
+  q.anisotropy = 1;
   return q;
 }
 
@@ -140,6 +144,8 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "softness") q.shadowSoftness = std::max(v, 0.f);
     else if (key == "ssao") q.ssao = v != 0;
     else if (key == "clustered") q.clustered = v != 0;
+    else if (key == "aniso") q.anisotropy = std::clamp((int)v, 1, 16);
+    else if (key == "blob") q.blobShadows = v != 0;
     else if (key == "aoradius") q.ssaoRadius = std::max(v, 0.01f);
     else if (key == "aointensity") q.ssaoIntensity = std::max(v, 0.f);
     else if (key == "view") q.viewDistance = v;

@@ -41,6 +41,7 @@ public:
   bool InitLights(RHI& rhi, Renderer3D& renderer);
   std::string CheckLights(Renderer3D& renderer, int32_t w, int32_t h);
   std::vector<ReflectionProbe3D> probes; // baked by the engine before the first frame
+  TextureHandle floorTex_;               // AO board floor (anisotropy check)
   std::vector<ProbeVolume3D> volumes;    // the room's probe grid (GI Tier 0-B), baked with the probes
   bool lightmaps = false;                // bake lightmaps for the items marked lightmapped (GI Tier 0-C) first
   // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes

@@ -86,6 +86,12 @@ public:
   bool          ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& rgba);
   // Writes `faces` faces (arrays: face + 6 * cube) of one mip level from RGBA floats (cached bakes).
   void          UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int32_t faces, const float* rgba);
+  // Anisotropic filtering (3-5b): up to MaxAnisotropy() (1 when the driver has none). Cached: cheap to repeat.
+  void          SetTextureAnisotropy(TextureHandle t, float level);
+  float         TextureAnisotropy(TextureHandle t) const;
+  float         MaxAnisotropy() const { return maxAniso_; }
+  // size^3 RGBA8 volume, trilinear, clamped (colour grading tables).
+  TextureHandle CreateTexture3D(int32_t size, const uint8_t* rgba);
   void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
   void          DestroyTexture(TextureHandle t);
   void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D
@@ -148,6 +154,8 @@ private:
   std::unordered_map<uint32_t, TexInfo> texInfo_; // cubemaps (render-to-face sizes)
   uint32_t texFbo_ = 0;
   bool nvxMemory_ = false;
+  float maxAniso_ = 1;
+  std::unordered_map<uint32_t, float> texAniso_;
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;
   int32_t frameW_ = 0, frameH_ = 0;

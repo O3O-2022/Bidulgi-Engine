@@ -390,6 +390,7 @@ bool ReferenceBoard::InitShadows(RHI& rhi, Renderer3D& r) {
   pole.baseColor = {0.7f, 0.3f, 0.2f, 1};
   pole.roughness = 0.7f;
   for (float z : kPoleZ) items_.push_back({&box_, At({-1, 1, z}, 0.25f, 2, 3), pole}); // walls along z: their shadows reach +x
+  items_.push_back({&box_, At({-4.5f, 0.5f, 0}, 1, 1, 1), pole}); // a cube for the low tier's blob shadow
   camera.position = {0, 3, 8};
   camera.target = {0, 0, -20};
   camera.fovY = 50.f;
@@ -458,6 +459,24 @@ std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
     return c.r > c.g && c.r > c.b ? 0 : c.g > c.b ? 1 : 2;
   };
   int c0 = dominant({1.8f, 0, 2.5f}), c1 = dominant({1.8f, 0, -6}), c2 = dominant({1.8f, 0, -40});
+  // Low tier (no shadow maps): a blob under each object; the ground at the cube's foot is darker with it than
+  // without it. Medium has real shadows and no blobs.
+  auto foot = [&](QualityTier tier, bool blob, size_t& blobs) {
+    QualitySettings q = QualityPreset(tier);
+    q.blobShadows = blob && q.blobShadows;
+    q.msaa = 1;
+    q.fxaa = q.bloom = q.toneMap = false;
+    std::vector<uint8_t> px;
+    r.Render(rt, w, h, camera, light, items_, clear, nullptr, &q);
+    int32_t rw = 0, rh = 0;
+    rhi_->ReadRenderTarget(rt, rw, rh, px);
+    blobs = r.Stats().blobs;
+    return lum(px, {-4.5f, 0, 0.56f});
+  };
+  size_t lowBlobs = 0, noBlobs = 0, medBlobs = 0;
+  const float withBlob = foot(QualityTier::Low, true, lowBlobs), without = foot(QualityTier::Low, false, noBlobs);
+  foot(QualityTier::Medium, true, medBlobs);
+  const float lowFoot = without > 0 ? withBlob / without : -1.f, medFoot = (float)medBlobs;
   rhi_->DestroyRenderTarget(rt);
   std::string failed;
   auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
@@ -467,11 +486,14 @@ std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
   if (!nearOk) fail("near");
   bool farOk = high.ratio[3] < 0.6f && med.ratio[3] > 0.9f; // 73 m: inside high's reach, beyond medium's
   if (!farOk) fail("far");
+  bool blobOk = lowBlobs == 5 && noBlobs == 0 && medBlobs == 0 && lowFoot > 0 && lowFoot < 0.85f;
+  if (!blobOk) fail("blob");
   return std::format("medium cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} penumbra={:.3f}m | high cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} "
-                     "penumbra={:.3f}m | cascade_view={},{},{} | cascades={} near={} far={} result={}",
+                     "penumbra={:.3f}m | cascade_view={},{},{} | blob low foot with/without={:.2f} ({} blobs) medium blobs={:.0f} ({}) | cascades={} near={} far={} blob={} result={}",
                      med.cascades, med.ratio[0], med.ratio[1], med.ratio[2], med.ratio[3], med.penumbra, high.cascades, high.ratio[0],
-                     high.ratio[1], high.ratio[2], high.ratio[3], high.penumbra, c0, c1, c2, cascadesOk ? "ok" : "bad", nearOk ? "ok" : "bad",
-                     farOk ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
+                     high.ratio[1], high.ratio[2], high.ratio[3], high.penumbra, c0, c1, c2, lowFoot, lowBlobs, medFoot, medBlobs,
+                     cascadesOk ? "ok" : "bad", nearOk ? "ok" : "bad", farOk ? "ok" : "bad", blobOk ? "ok" : "bad",
+                     failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
 // SSAO board (3-5b): points on the floor in the open, at the box's foot and in the walls' inside corner.
@@ -485,7 +507,18 @@ bool ReferenceBoard::InitAO(RHI& rhi, Renderer3D& r) {
   Material3D white;
   white.baseColor = {0.75f, 0.75f, 0.75f, 1};
   white.roughness = 0.9f;
-  items_.push_back({&plane_, At({0, 0, 0}, 20, 1, 20), white});
+  { // a plain white mipmapped texture on the floor: anisotropic filtering (3-5b) has a texture to act on
+    std::vector<uint8_t> px(64 * 64 * 4, 255);
+    TextureDesc td;
+    td.w = td.h = 64;
+    td.format = TextureFormat::SRGBA8;
+    td.mipmaps = true;
+    td.repeat = true;
+    floorTex_ = rhi.CreateTexture(td, px.data());
+  }
+  Material3D floorMat = white;
+  floorMat.baseMap = floorTex_;
+  items_.push_back({&plane_, At({0, 0, 0}, 20, 1, 20), floorMat});
   items_.push_back({&box_, At({-1.5f, 0.5f, 0}, 1, 1, 1), white});
   items_.push_back({&box_, At({2.5f, 1, -1}, 3, 2, 0.2f), white});  // wall along x
   items_.push_back({&box_, At({3.9f, 1, 0.4f}, 0.2f, 2, 3), white}); // wall along z: an inside corner with the first
@@ -525,12 +558,32 @@ std::string ReferenceBoard::CheckAO(Renderer3D& r, int32_t w, int32_t h) {
       }
     return sum / 9;
   };
-  std::vector<uint8_t> aoHigh, aoMed, litHigh, litMed;
+  std::vector<uint8_t> aoHigh, aoMed, litHigh, litMed, warm;
   bool ranHigh = render(QualityTier::High, DebugView::AO, aoHigh);
   bool ranMed = render(QualityTier::Medium, DebugView::AO, aoMed);
   render(QualityTier::High, DebugView::Lit, litHigh);
   render(QualityTier::Medium, DebugView::Lit, litMed);
+  // Anisotropic filtering (3-5b): the floor texture follows the tier (ultra 16x, or what the driver allows)
+  render(QualityTier::Ultra, DebugView::Lit, warm);
+  const float anisoUltra = rhi_->TextureAnisotropy(floorTex_), anisoMax = rhi_->MaxAnisotropy();
+  // Colour grading (3-5b): a warm white balance turns the grey floor orange
+  ColorGrading3D grade;
+  grade.temperature = 0.8f;
+  r.SetColorGrading(&grade);
+  render(QualityTier::High, DebugView::Lit, warm);
+  const bool graded = r.Stats().grading;
+  r.SetColorGrading(nullptr);
   rhi_->DestroyRenderTarget(rt);
+  auto rgbAt = [&](const std::vector<uint8_t>& px, const glm::vec3& p) {
+    float x, y;
+    glm::vec3 c{0};
+    if (ProjectToPixel(camera, w, h, p, x, y) && x >= 0 && y >= 0 && x < w && y < h) {
+      const uint8_t* q = &px[((size_t)y * w + (size_t)x) * 4];
+      c = {q[0], q[1], q[2]};
+    }
+    return c;
+  };
+  const glm::vec3 plain = rgbAt(litHigh, kAOOpen), warmed = rgbAt(warm, kAOOpen);
   float open = value(aoHigh, kAOOpen), foot = value(aoHigh, kAOBoxFoot), corner = value(aoHigh, kAOCorner), top = value(aoHigh, kAOBoxTop);
   float medFoot = value(aoMed, kAOBoxFoot);
   float litRatioHigh = value(litHigh, kAOBoxFoot) / std::max(value(litHigh, kAOOpen), 1e-3f);
@@ -543,10 +596,15 @@ std::string ReferenceBoard::CheckAO(Renderer3D& r, int32_t w, int32_t h) {
   if (!flat) fail("flat");
   if (!contact) fail("contact");
   if (!tiers) fail("tiers");
+  bool aniso = anisoUltra == std::min(16.f, anisoMax);
+  bool grading = graded && warmed.r - warmed.b > plain.r - plain.b + 25;
+  if (!aniso) fail("aniso");
+  if (!grading) fail("grading");
   return std::format("ao open={:.2f} top={:.2f} foot={:.2f} corner={:.2f} | medium ao={} foot={:.2f} | lit foot/open high={:.2f} medium={:.2f} | "
-                     "flat={} contact={} tiers={} result={}",
-                     open, top, foot, corner, ranMed ? 1 : 0, medFoot, litRatioHigh, litRatioMed, flat ? "ok" : "bad", contact ? "ok" : "bad",
-                     tiers ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
+                     "aniso {:.0f}/{:.0f} | grading r-b {:.0f} -> {:.0f} | flat={} contact={} tiers={} aniso={} grading={} result={}",
+                     open, top, foot, corner, ranMed ? 1 : 0, medFoot, litRatioHigh, litRatioMed, anisoUltra, anisoMax, plain.r - plain.b,
+                     warmed.r - warmed.b, flat ? "ok" : "bad", contact ? "ok" : "bad", tiers ? "ok" : "bad", aniso ? "ok" : "bad",
+                     grading ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
 bool ReferenceBoard::InitLights(RHI& rhi, Renderer3D& r) {
@@ -731,6 +789,7 @@ void ReferenceBoard::Shutdown() {
   assets_.clear();
   for (Mesh3D* m : {&plane_, &sphere_, &quad_, &quadCW_, &cylinder_, &cone_, &box_}) renderer_->DestroyMesh(*m);
   rhi_->DestroyTexture(letters_);
+  rhi_->DestroyTexture(floorTex_);
   renderer_->DestroyModel(probe_);
   renderer_->DestroyModel(model_);
   items_.clear();

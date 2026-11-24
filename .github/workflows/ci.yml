@@ -318,11 +318,11 @@ jobs:
 
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
-          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok result=pass') { $errors += 'cascaded shadow test failed' }
+          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }
           if ($log -match '(shadow test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 29) 3-5b SSAO: open flat surfaces stay unoccluded, a box's foot and an inside corner darken, only on high
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ao'; BDG_RENDER_TEST = '1' } 5
-          if ($log -notmatch 'ao test: .*flat=ok contact=ok tiers=ok result=pass') { $errors += 'SSAO test failed' }
+          if ($log -notmatch 'ao test: .*flat=ok contact=ok tiers=ok aniso=ok grading=ok result=pass') { $errors += 'SSAO / anisotropy / grading test failed' }
           if ($log -match '(ao test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 30) 3-5b Forward+: 256 lights, cluster lists give the same picture as every light per pixel
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-lights'; BDG_RENDER_TEST = '1' } 5

@@ -231,7 +231,9 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
   auto t0 = std::chrono::steady_clock::now();
   bdg::RenderExtras boardExtras; // BDG_RENDER_VIEW=0..7: debug view of the board screens (7 = indirect light only)
   if (const char* rv = std::getenv("BDG_RENDER_VIEW")) boardExtras.view = (bdg::DebugView)std::clamp(std::atoi(rv), 0, 10);
-  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, &boardExtras, &e->boardQuality);
+  bdg::QualitySettings boardQ = e->boardQuality; // BDG_QUALITY_SET also applies to the board screens (experiments)
+  if (const char* set = std::getenv("BDG_QUALITY_SET")) bdg::ApplyQualityOverrides(set, boardQ, nullptr);
+  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, &boardExtras, &boardQ);
   e->boardRenderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 }

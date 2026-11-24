@@ -359,3 +359,45 @@ TEST_CASE("gi: baked GI cache key follows every input (GI Tier 0-D)") {
   r.SetVolume(&v); // the probes and volume set on the renderer count too
   CHECK(r.GIInputHash(items, light) != base);
 }
+
+TEST_CASE("render: colour grading table and .cube files (queue 3-5b)") {
+  // an identity .cube (2^3, red fastest) with comments, title and the 0..1 domain
+  const char* identity = "# made by hand\nTITLE \"identity\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n"
+                         "0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+  int size = 0;
+  std::vector<float> rgb;
+  std::string err;
+  CHECK(ParseCubeLut(identity, size, rgb, &err));
+  CHECK(size == 2 && rgb.size() == 24);
+  CHECK(!ParseCubeLut("LUT_3D_SIZE 2\n0 0 0\n", size, rgb, &err) && err.find("values") != std::string::npos); // too few
+  CHECK(!ParseCubeLut("LUT_1D_SIZE 16\n", size, rgb, &err));
+  CHECK(!ParseCubeLut("LUT_3D_SIZE 2\nDOMAIN_MAX 2 2 2\n", size, rgb, &err));
+  CHECK(!ParseCubeLut("0 0 0\n", size, rgb, &err));
+
+  ColorGrading3D g;
+  CHECK(g.Neutral());
+  const glm::vec3 c{0.8f, 0.4f, 0.2f};
+  CHECK(glm::distance(ApplyGrading(g, c), c) < 1e-5f); // neutral: unchanged
+  ColorGrading3D table;
+  CHECK(ParseCubeLut(identity, table.lutSize, table.lut, &err));
+  CHECK(!table.Neutral());
+  CHECK(glm::distance(ApplyGrading(table, c), c) < 1e-5f); // identity table: unchanged (trilinear)
+  ColorGrading3D grey;
+  grey.saturation = 0;
+  glm::vec3 gc = ApplyGrading(grey, c);
+  CHECK(std::abs(gc.r - gc.g) < 1e-5f && std::abs(gc.g - gc.b) < 1e-5f);
+  ColorGrading3D warm;
+  warm.temperature = 1;
+  glm::vec3 wc = ApplyGrading(warm, glm::vec3(0.5f));
+  CHECK(wc.r > 0.55f && wc.b < 0.45f);
+  warm.intensity = 0; // fully blended back
+  CHECK(glm::distance(ApplyGrading(warm, glm::vec3(0.5f)), glm::vec3(0.5f)) < 1e-5f);
+  std::vector<uint8_t> lut = BuildGradingLut(g, 8);
+  CHECK(lut.size() == 8 * 8 * 8 * 4);
+  CHECK(lut[((7 * 8 + 0) * 8 + 7) * 4 + 0] == 255 && lut[((7 * 8 + 0) * 8 + 7) * 4 + 1] == 0 && lut[((7 * 8 + 0) * 8 + 7) * 4 + 2] == 255);
+
+  // the other 3-5b tier settings: anisotropy and blob shadows
+  CHECK(QualityPreset(QualityTier::Ultra).anisotropy == 16 && QualityPreset(QualityTier::Medium).anisotropy == 4);
+  CHECK(ReferenceQuality().anisotropy == 1);
+  CHECK(QualityPreset(QualityTier::Low).blobShadows && !QualityPreset(QualityTier::Medium).blobShadows);
+}

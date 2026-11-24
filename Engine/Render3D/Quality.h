@@ -27,6 +27,8 @@ struct QualitySettings {
   int shadowCascades = 1;     // 1..4 (3-5b): more = sharp near the camera and shadows further away
   float shadowSoftness = 0;   // penumbra radius in metres (0 = the plain 3x3 filter)
   bool clustered = false;     // Forward+ (3-5b): each pixel lights itself with its screen cluster's lights only
+  int anisotropy = 1;         // texture filtering at grazing angles (3-5b): 1 off .. 16
+  bool blobShadows = false;   // a soft dark spot under each object where there are no shadow maps (3-5b, low)
   bool ssao = false;          // screen-space ambient occlusion on indirect light (3-5b)
   float ssaoRadius = 0.5f;    // metres
   float ssaoIntensity = 1.5f; // exponent on the occlusion

@@ -4,6 +4,7 @@
 // FXAA, queue 3-5) writes the display-encoded result into the caller's RGBA8 target, which the UI shows as an
 // image. Editor overlays (grid, selection outline) go on top of the final picture with the scene's depth.
 #include "Render3D/MeshGen.h"
+#include "Render3D/ColorGrading.h"
 #include "Render3D/Quality.h"
 #include "RHI/RHI.h"
 #include <glm/glm.hpp>
@@ -157,6 +158,9 @@ struct RenderStats {
   bool ssao = false;        // screen-space ambient occlusion pass ran (3-5b)
   bool clustered = false;   // Forward+ light lists were used (3-5b)
   uint32_t clusterRefs = 0, clusterMax = 0, clustersUsed = 0; // light references, most lights in one cluster, clusters with any
+  int anisotropy = 1;       // texture filtering used (3-5b)
+  size_t blobs = 0;         // blob shadows drawn (low tier)
+  bool grading = false;     // colour grading table applied
 };
 
 class Renderer3D {
@@ -185,6 +189,8 @@ public:
   int BakedProbes() const { return bakedProbes_; }
   // Probe volume (GI Tier 0-B): nullptr removes it. Baked by BakeProbes together with the reflection probes.
   void SetVolume(const ProbeVolume3D* volume);
+  // Colour grading (3-5b): nullptr or neutral settings remove it. Rebuilds the table only when the settings change.
+  void SetColorGrading(const ColorGrading3D* grading);
   int VolumeProbes() const { return volumeBaked_ ? volume_.count.x * volume_.count.y * volume_.count.z : 0; }
   // Test hook: the volume's diffuse light (ambient / pi) at a point for a normal, from the baked coefficients (CPU).
   glm::vec3 VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const;
@@ -237,6 +243,9 @@ private:
   BufferHandle ssaoUbo_;
   // Forward+ (3-5b): every per-pixel light (4 vec4 each) and the cluster lists (first, count per cluster; indices).
   BufferHandle lightBuffer_, clusterBuffer_;
+  TextureHandle gradingLut_, blobTex_; // 32^3 grading table; radial spot for blob shadows
+  uint64_t gradingKey_ = 0;
+  Mesh3D blobQuad_;
   size_t lightCapacity_ = 0, clusterCapacity_ = 0;
   BufferHandle postUbo_;
   RenderTargetHandle hdrRT_, ldrRT_;

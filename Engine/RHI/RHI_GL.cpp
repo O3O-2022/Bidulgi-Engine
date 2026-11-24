@@ -48,7 +48,15 @@ bool RHI::Init(Window&) {
   GLint extensions = 0;
   glGetIntegerv(GL_NUM_EXTENSIONS, &extensions);
   for (GLint i = 0; i < extensions; ++i)
-    if (const char* x = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i); x && std::string_view(x) == "GL_NVX_gpu_memory_info") nvxMemory_ = true;
+    if (const char* x = (const char*)glGetStringi(GL_EXTENSIONS, (GLuint)i)) {
+      const std::string_view name(x);
+      if (name == "GL_NVX_gpu_memory_info") nvxMemory_ = true;
+      if (name == "GL_ARB_texture_filter_anisotropic" || name == "GL_EXT_texture_filter_anisotropic") { // core in GL 4.6
+        GLfloat most = 1;
+        glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &most);
+        maxAniso_ = std::max(most, 1.f);
+      }
+    }
   GLint align = 256;
   glGetIntegerv(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, &align);
   uboAlign_ = (size_t)std::max(align, 16);
@@ -256,10 +264,42 @@ void RHI::UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int
   glTextureSubImage3D(t.id, level, 0, 0, firstFace, s, s, faces, GL_RGBA, GL_FLOAT, rgba);
 }
 
+void RHI::SetTextureAnisotropy(TextureHandle t, float level) {
+  if (!t.Valid()) return;
+  level = std::clamp(level, 1.f, maxAniso_);
+  auto it = texAniso_.find(t.id);
+  if (it != texAniso_.end() ? it->second == level : level == 1.f) return;
+  if (maxAniso_ > 1) glTextureParameterf(t.id, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */, level);
+  texAniso_[t.id] = level;
+}
+
+float RHI::TextureAnisotropy(TextureHandle t) const {
+  if (!t.Valid() || maxAniso_ <= 1) return 1;
+  GLfloat v = 1;
+  glGetTextureParameterfv(t.id, 0x84FE, &v);
+  return v;
+}
+
+TextureHandle RHI::CreateTexture3D(int32_t size, const uint8_t* rgba) {
+  GLuint t = 0;
+  glCreateTextures(GL_TEXTURE_3D, 1, &t);
+  glTextureStorage3D(t, 1, GL_RGBA8, size, size, size);
+  for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTextureParameteri(t, w, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  if (rgba) glTextureSubImage3D(t, 0, 0, 0, 0, size, size, size, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+  const uint64_t bytes = (uint64_t)size * size * size * 4;
+  textureBytes_[t] = bytes;
+  mem_.textures += bytes;
+  return {t};
+}
+
 void RHI::DestroyTexture(TextureHandle t) {
   if (!t.Valid()) return;
   if (auto it = textureBytes_.find(t.id); it != textureBytes_.end()) { mem_.textures -= it->second; textureBytes_.erase(it); }
   texInfo_.erase(t.id);
+  texAniso_.erase(t.id);
   glDeleteTextures(1, &t.id);
 }
 

@@ -94,6 +94,20 @@ public:
   BPROPERTY(Edit, Range = "0,10", Tooltip = "Sun disk size in degrees (0 = no disk)") float sunSize = 1.5f;
 };
 
+// Colour grading (3-5b): the final picture through a look-up table (.cube from Resolve, Photoshop ...) and a few
+// controls. The first one in the scene is used.
+BCLASS(Component)
+struct ColorGrading {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Optional .cube file in the project (3D table, 0..1 domain)") std::string lut;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "How much of the grading shows over the original") float intensity = 1.f;
+  BPROPERTY(Edit, Range = "0,2") float contrast = 1.f;
+  BPROPERTY(Edit, Range = "0,2") float saturation = 1.f;
+  BPROPERTY(Edit, Range = "-1,1", Tooltip = "Cool (blue) to warm (orange)") float temperature = 0.f;
+  BPROPERTY(Edit, Range = "-1,1", Tooltip = "Green to magenta") float tint = 0.f;
+};
+
 BCLASS(Component)
 struct Camera {
   GENERATED_BODY()
