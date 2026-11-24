@@ -67,6 +67,8 @@ bool RHI::Init(Window&) {
 void RHI::Shutdown() {
   for (uint32_t i = 1; i < pipelines_.size(); ++i) DestroyPipeline({i});
   for (uint32_t i = 1; i < targets_.size(); ++i) DestroyRenderTarget({i});
+  if (texFbo_) glDeleteFramebuffers(1, &texFbo_);
+  texFbo_ = 0;
 }
 
 void RHI::BeginFrame(int32_t w, int32_t h, Color c) {
@@ -194,9 +196,60 @@ void RHI::UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int3
   glTextureSubImage2D(t.id, 0, x, y, w, h, f == TextureFormat::R8 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 }
 
+TextureHandle RHI::CreateCubemap(int32_t size, int32_t levels, int32_t layers) {
+  GLuint t = 0;
+  glCreateTextures(layers > 0 ? GL_TEXTURE_CUBE_MAP_ARRAY : GL_TEXTURE_CUBE_MAP, 1, &t);
+  if (layers > 0) glTextureStorage3D(t, levels, GL_RGBA16F, size, size, 6 * layers);
+  else glTextureStorage2D(t, levels, GL_RGBA16F, size, size);
+  glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, levels > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+  glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  for (GLenum w : {GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, GL_TEXTURE_WRAP_R}) glTextureParameteri(t, w, GL_CLAMP_TO_EDGE);
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+  uint64_t bytes = (uint64_t)size * size * 8 * 6 * std::max(layers, 1) * (levels > 1 ? 4 : 3) / 3;
+  textureBytes_[t] = bytes;
+  mem_.textures += bytes;
+  texInfo_[t] = {size, layers, true};
+  return {t};
+}
+
+void RHI::BeginTextureTarget(TextureHandle t, int32_t level, int32_t layer) {
+  auto it = texInfo_.find(t.id);
+  if (!t.Valid() || it == texInfo_.end()) return;
+  if (!texFbo_) glCreateFramebuffers(1, &texFbo_);
+  glNamedFramebufferTextureLayer(texFbo_, GL_COLOR_ATTACHMENT0, t.id, level, layer);
+  glBindFramebuffer(GL_FRAMEBUFFER, texFbo_);
+  int32_t s = std::max(it->second.size >> level, 1);
+  glViewport(0, 0, s, s);
+}
+
+void RHI::EndTextureTarget() {
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, frameW_, frameH_);
+}
+
+void RHI::CopyToCubeFace(TextureHandle src, int32_t size, TextureHandle cube, int32_t layer, int32_t level) {
+  auto it = texInfo_.find(cube.id);
+  if (it == texInfo_.end()) return;
+  GLenum target = it->second.layers > 0 ? GL_TEXTURE_CUBE_MAP_ARRAY : GL_TEXTURE_CUBE_MAP;
+  glCopyImageSubData(src.id, GL_TEXTURE_2D, 0, 0, 0, 0, cube.id, target, level, 0, 0, layer, size, size, 1);
+}
+
+void RHI::GenerateMips(TextureHandle t) { if (t.Valid()) glGenerateTextureMipmap(t.id); }
+
+bool RHI::ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& rgba) {
+  auto it = texInfo_.find(t.id);
+  if (!t.Valid() || it == texInfo_.end()) return false;
+  int32_t s = std::max(it->second.size >> level, 1), faces = 6 * std::max(it->second.layers, 1);
+  rgba.resize((size_t)s * s * faces * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glGetTextureImage(t.id, level, GL_RGBA, GL_FLOAT, (GLsizei)(rgba.size() * sizeof(float)), rgba.data());
+  return true;
+}
+
 void RHI::DestroyTexture(TextureHandle t) {
   if (!t.Valid()) return;
   if (auto it = textureBytes_.find(t.id); it != textureBytes_.end()) { mem_.textures -= it->second; textureBytes_.erase(it); }
+  texInfo_.erase(t.id);
   glDeleteTextures(1, &t.id);
 }
 

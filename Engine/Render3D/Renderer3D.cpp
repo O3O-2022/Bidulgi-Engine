@@ -453,7 +453,7 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4]; };
 }
 
-glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, glm::vec3(0, 1, 0)); }
+glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, up); }
 glm::mat4 Camera3D::Projection(float aspect) const { return glm::perspective(glm::radians(fovY), aspect, nearZ, farZ); }
 
 Color SrgbToLinear(uint8_t r, uint8_t g, uint8_t b) {

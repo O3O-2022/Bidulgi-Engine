@@ -38,6 +38,7 @@ struct DrawItem3D {
 
 struct Camera3D {
   glm::vec3 position{0, 2, 8}, target{0, 1, 0};
+  glm::vec3 up{0, 1, 0};
   float fovY = 45.f;                     // degrees, vertical
   float nearZ = 0.1f, farZ = 500.f;
   glm::mat4 View() const;

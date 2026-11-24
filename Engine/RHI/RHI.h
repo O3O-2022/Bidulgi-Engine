@@ -73,6 +73,16 @@ public:
   TextureHandle CreateTexture(const TextureDesc& desc, const void* pixels); // pixels: level 0, top row first
   // Every mip level given (level 0 first, top row first); block formats take ceil(w/4) x ceil(h/4) blocks.
   TextureHandle CreateTextureMips(const TextureDesc& desc, const std::vector<const void*>& levels, const std::vector<size_t>& sizes);
+  // Cubemaps (image-based lighting, GI Tier 0): RGBA16F, trilinear, faces in GL order +X -X +Y -Y +Z -Z.
+  // layers > 0 makes a cube map array (GLSL samplerCubeArray) with that many cubes.
+  TextureHandle CreateCubemap(int32_t size, int32_t levels, int32_t layers = 0);
+  // Renders into one face (layer = face + 6 * cube for arrays) of one mip level; viewport = that level's size.
+  void          BeginTextureTarget(TextureHandle t, int32_t level, int32_t layer);
+  void          EndTextureTarget();
+  void          CopyToCubeFace(TextureHandle src2D, int32_t size, TextureHandle cube, int32_t layer, int32_t level = 0);
+  void          GenerateMips(TextureHandle t);
+  // A whole mip level as RGBA floats (cubemaps: the 6 faces one after another).
+  bool          ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& rgba);
   void          UpdateTexture2D(TextureHandle t, int32_t x, int32_t y, int32_t w, int32_t h, TextureFormat format, const void* pixels);
   void          DestroyTexture(TextureHandle t);
   void          BindTexture(uint32_t slot, TextureHandle t); // GLSL: layout(binding = slot) uniform sampler2D
@@ -129,6 +139,9 @@ private:
   struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; uint64_t bytes = 0; };
   MemoryStats mem_;
   std::unordered_map<uint32_t, uint64_t> bufferBytes_, textureBytes_;
+  struct TexInfo { int32_t size = 0, layers = 0; bool cube = false; };
+  std::unordered_map<uint32_t, TexInfo> texInfo_; // cubemaps (render-to-face sizes)
+  uint32_t texFbo_ = 0;
   bool nvxMemory_ = false;
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;
