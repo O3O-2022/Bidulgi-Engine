@@ -32,6 +32,7 @@
 #include <set>
 #include <atomic>
 #include <cmath>
+#include <yyjson.h>
 #include <fstream>
 #include <thread>
 #include <chrono>
@@ -104,7 +105,10 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
-  bool previewTestOn = false, treeTest = false, sceneIconTest = false;
+  bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false;
+  std::string uiTestValues[7];
+  float uiZoom = 1;          // user's UI scale on top of the display's (E-4): 0.7 .. 2
+  std::string prefsPath;     // .cache/EditorPrefs.json ("" = automated run: not saved)
   std::string sceneIconTestValues[6];
   std::string treeTestValues[7];
   std::string newSceneTestValues[6];
@@ -876,6 +880,152 @@ void InjectTreeTest(bdg_engine* e, int frame) {
   }
 }
 
+// ---- UI zoom (queue E-4) ------------------------------------------------------------------------
+void SetUiZoom(bdg_engine* e, float zoom) {
+  zoom = std::clamp(std::round(zoom * 10.f) / 10.f, 0.7f, 2.f);
+  if (zoom == e->uiZoom) return;
+  e->uiZoom = zoom;
+  if (bdg::Widget* f = e->editor->Find("s.uizoom")) f->text2 = std::format("{}", (int)std::lround(zoom * 100));
+  bdg::LogInfo("ui: zoom {}%", (int)std::lround(zoom * 100));
+  if (e->prefsPath.empty()) return;
+  std::error_code ec;
+  std::filesystem::create_directories(std::filesystem::path(e->prefsPath).parent_path(), ec);
+  std::ofstream(std::filesystem::path(e->prefsPath), std::ios::binary) << std::format("{{\"uiZoom\":{}}}\n", zoom);
+}
+
+void LoadEditorPrefs(bdg_engine* e, bool automated) {
+  const char* custom = std::getenv("BDG_PREFS");
+  e->prefsPath = custom ? custom : automated ? "" : (std::filesystem::current_path() / ".cache" / "EditorPrefs.json").string();
+  if (bdg::Widget* f = e->editor->Find("s.uizoom")) {
+    f->onCommit = [e](bdg::Widget& w) { SetUiZoom(e, (float)std::strtod(w.text2.c_str(), nullptr) / 100.f); };
+    f->onChange = f->onCommit;
+  }
+  if (e->prefsPath.empty()) return;
+  std::ifstream in(std::filesystem::path(e->prefsPath), std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0)) {
+    if (yyjson_val* z = yyjson_obj_get(yyjson_doc_get_root(doc), "uiZoom"); yyjson_is_num(z)) {
+      e->uiZoom = std::clamp((float)yyjson_get_num(z), 0.7f, 2.f);
+      if (bdg::Widget* f = e->editor->Find("s.uizoom")) f->text2 = std::format("{}", (int)std::lround(e->uiZoom * 100));
+    }
+    yyjson_doc_free(doc);
+  }
+}
+
+// Scripted check of E-4a (BDG_UIEDIT_TEST=1, BDG_PREFS = a scratch file): arithmetic in a number field and in a
+// vector, a right-click menu on a field (default value, copy, paste), the menu closing on a click outside, and the
+// UI zoom by Ctrl+wheel and Ctrl+0, saved.
+void InjectUiEditTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto* v = e->uiTestValues;
+  const float s = e->editor->Scale();
+  auto get = [&](const char* id, const char* comp, const char* field) {
+    std::string out;
+    bdg::SceneObject* o = m->scene.Find(id);
+    if (bdg::Component* c = o ? o->Find(comp) : nullptr) bdg::Registry::Get(c->data, *c->type, field, out);
+    return out;
+  };
+  auto commit = [&](const char* id, const char* text) {
+    bdg::Widget* f = e->editor->Find(id);
+    if (!f || !f->onCommit) { bdg::LogError("ui test: no field {}", id); return; }
+    f->text2 = text;
+    f->onCommit(*f);
+  };
+  auto mouse = [&](T type, float x, float y, int button) {
+    bdg::InputEvent ev{type, x * s, y * s, button};
+    e->window.InjectEvent(ev);
+  };
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("inspector");
+    m->Select("g9"); // Lantern Light: Light.range is a number, Transform.position a vector
+  }
+  if (frame == 4) {
+    commit("f.Light.range", "4*3");
+    commit("f.Transform.position", "1+1, 10/4, -(1+2)");
+  }
+  if (frame == 6) {
+    v[0] = std::format("{}", get("g9", "Light", "range") == "12" ? 1 : 0);
+    const std::string pos = get("g9", "Transform", "position");
+    v[1] = std::format("{}", pos == "[2,2.5,-3]" ? 1 : 0);
+    if (v[1] != "1") bdg::LogError("ui test: position {}", pos);
+    if (bdg::Widget* f = e->editor->Find("f.Light.range")) { // right-click the field
+      mouse(T::MouseMove, f->x + f->w * 0.7f, f->y + f->h * 0.5f, 0);
+      mouse(T::MouseDown, f->x + f->w * 0.7f, f->y + f->h * 0.5f, 3);
+      mouse(T::MouseUp, f->x + f->w * 0.7f, f->y + f->h * 0.5f, 3);
+    }
+  }
+  if (frame == 8) {
+    const auto& items = e->editor->Menu();
+    bool ok = e->editor->MenuOpen() && items.size() == 3 && items[0].label.find("10") != std::string::npos; // default range 10
+    float x, y, w, h;
+    if (e->editor->MenuItemRect(1, x, y, w, h)) { // "값 복사"
+      mouse(T::MouseMove, x + 20, y + h * 0.5f, 0);
+      mouse(T::MouseDown, x + 20, y + h * 0.5f, 1);
+      mouse(T::MouseUp, x + 20, y + h * 0.5f, 1);
+    } else ok = false;
+    v[2] = std::format("{}", ok ? 1 : 0);
+  }
+  if (frame == 10) {
+    const bool copied = e->window.GetClipboardText() == "12" && !e->editor->MenuOpen();
+    commit("f.Light.range", "5");
+    bdg::Widget* f = e->editor->Find("f.Light.range");
+    if (f && f->onContext) f->onContext(*f, f->x + 40, f->y + 10);
+    float x, y, w, h;
+    if (e->editor->MenuItemRect(2, x, y, w, h)) { // "값 붙여넣기" -> 12 again
+      mouse(T::MouseMove, x + 20, y + h * 0.5f, 0);
+      mouse(T::MouseDown, x + 20, y + h * 0.5f, 1);
+      mouse(T::MouseUp, x + 20, y + h * 0.5f, 1);
+    }
+    v[3] = copied ? "1" : "0";
+  }
+  if (frame == 12) {
+    const bool pasted = get("g9", "Light", "range") == "12";
+    bdg::Widget* f = e->editor->Find("f.Light.range");
+    if (f && f->onContext) f->onContext(*f, f->x + 40, f->y + 10);
+    float x, y, w, h;
+    if (e->editor->MenuItemRect(0, x, y, w, h)) { // "기본값으로" -> 10
+      mouse(T::MouseMove, x + 20, y + h * 0.5f, 0);
+      mouse(T::MouseDown, x + 20, y + h * 0.5f, 1);
+      mouse(T::MouseUp, x + 20, y + h * 0.5f, 1);
+    }
+    v[4] = pasted ? "1" : "0";
+  }
+  if (frame == 14) {
+    const bool reset = get("g9", "Light", "range") == "10";
+    bdg::Widget* f = e->editor->Find("f.Light.range");
+    if (f && f->onContext) f->onContext(*f, f->x + 40, f->y + 10);
+    v[4] = std::format("{}", v[4] == "1" && reset ? 1 : 0);
+  }
+  if (frame == 15) { // a click elsewhere closes the menu and does nothing else
+    const std::string sel = m->Selected();
+    mouse(T::MouseDown, 5, 5, 1);
+    mouse(T::MouseUp, 5, 5, 1);
+    v[5] = sel; // checked next frame
+  }
+  if (frame == 17) {
+    v[5] = std::format("{}", !e->editor->MenuOpen() && m->Selected() == v[5] ? 1 : 0);
+    bdg::Widget* h = e->editor->Find("hierarchy"); // Ctrl+wheel over the Hierarchy: zoom in
+    bdg::InputEvent wh{T::Wheel, (h ? h->x + 40 : 40) * s, (h ? h->y + 60 : 300) * s};
+    wh.wheel = 1;
+    wh.ctrl = true;
+    e->window.InjectEvent(wh);
+  }
+  if (frame == 19) {
+    const bool zoomed = std::abs(e->uiZoom - 1.1f) < 1e-4f && std::abs(e->editor->Scale() - 1.1f * e->window.GetDisplayScale()) < 0.02f;
+    std::ifstream in(std::filesystem::path(e->prefsPath), std::ios::binary);
+    const std::string saved((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    bdg::InputEvent k{T::KeyDown};
+    k.key = bdg::Key::Num0;
+    k.ctrl = true;
+    e->window.InjectEvent(k);
+    v[6] = zoomed && saved.find("1.1") != std::string::npos ? "1" : "0";
+    if (v[6] != "1") bdg::LogError("ui test: zoom {} scale {} saved '{}'", e->uiZoom, e->editor->Scale(), saved);
+  }
+  if (frame == 21) v[6] = std::format("{}", v[6] == "1" && e->uiZoom == 1.f ? 1 : 0);
+}
+
 // ---- Asset previews (queue E-1) -------------------------------------------------------------------
 // The Inspector's preview box: the live render (square, centred) or the image (aspect kept).
 void DrawAssetPreview(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
@@ -1340,6 +1490,9 @@ void SetupShortcuts(bdg_engine* e) {
   });
   s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
   s.Register("file.new", "New Scene", [m] { m->NewScene(bdg::SceneTemplate::Basic3D); }); // 2-6
+  s.Register("view.zoomIn", "UI Zoom In", [e] { SetUiZoom(e, e->uiZoom + 0.1f); });  // E-4
+  s.Register("view.zoomOut", "UI Zoom Out", [e] { SetUiZoom(e, e->uiZoom - 0.1f); });
+  s.Register("view.zoomReset", "UI Zoom 100%", [e] { SetUiZoom(e, 1.f); });
   s.Register("play.toggle", "Play / Stop", [e, m] { TogglePlay(e); });
   s.Register("play.pause", "Pause", [e] { SetPlayPaused(e, !e->play.Paused()); });
   s.Register("play.step", "Step One Frame", [e] { StepPlay(e); });
@@ -2793,6 +2946,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->previewTestOn = std::getenv("BDG_PREVIEW_TEST") != nullptr;
   e->treeTest = std::getenv("BDG_TREE_TEST") != nullptr;
   e->sceneIconTest = std::getenv("BDG_SCENEICON_TEST") != nullptr;
+  e->uiTest = std::getenv("BDG_UIEDIT_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3029,6 +3183,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   }
   mark("ui");
   SetupTheme(e);
+  LoadEditorPrefs(e, desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST") != nullptr); // UI zoom (E-4)
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
@@ -3213,6 +3368,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     float scale = e->window.GetDisplayScale();
     if (const char* s = std::getenv("BDG_UI_SCALE")) scale = std::strtof(s, nullptr);
     if (scale < 0.5f) scale = 1.f;
+    scale *= e->uiZoom; // the user's UI zoom (E-4)
     if (e->selfTest && e->showGallery) InjectSelfTest(e, frames, scale);
     if (e->dockTest && !e->showGallery) InjectDockTest(e, frames, scale);
     if (e->cmdTest && !e->showGallery) InjectCommandTest(e, frames, scale);
@@ -3248,6 +3404,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->previewTestOn && !e->showGallery) InjectPreviewTest(e, frames);
     if (e->treeTest && !e->showGallery) InjectTreeTest(e, frames);
     if (e->sceneIconTest && !e->showGallery) InjectSceneIconTest(e, frames);
+    if (e->uiTest && !e->showGallery) InjectUiEditTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3437,6 +3594,14 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
       }
       if (&ui == e->editor.get()) PreviewOrbit(e, events); // drag / wheel on the Inspector preview (E-1)
+      if (&ui == e->editor.get()) // Ctrl+wheel zooms the UI (E-4), except over the Scene view, which zooms the camera
+        std::erase_if(events, [&](const bdg::InputEvent& ev) {
+          if (ev.type != bdg::InputEvent::Type::Wheel || !ev.ctrl) return false;
+          if (sceneWidget && ev.x >= sceneWidget->x && ev.y >= sceneWidget->y && ev.x < sceneWidget->x + sceneWidget->w && ev.y < sceneWidget->y + sceneWidget->h)
+            return false;
+          SetUiZoom(e, e->uiZoom + (ev.wheel > 0 ? 0.1f : -0.1f));
+          return true;
+        });
       ui.SetScale(scale);
       ui.HandleEvents(events);
       if (&ui == e->editor.get() && e->model) e->model->Update(); // panels follow the scene (after edits/undo)
@@ -3613,6 +3778,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->uiTest) {
+        auto* v = e->uiTestValues;
+        bdg::LogInfo("ui edit test: expr={} vector={} menu={} copy={} paste+default={} close={} zoom={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->sceneIconTest) {
         auto* v = e->sceneIconTestValues;

@@ -11,7 +11,8 @@ enum class Key {
   None, Tab, Enter, Space, Escape, Backspace, Delete, Left, Right, Up, Down, Home, End, PageUp, PageDown, Insert,
   F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
   A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
-  Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9
+  Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+  Minus, Equals // also the keypad's - and + (UI zoom: Ctrl+- / Ctrl+=)
 };
 const char* KeyName(Key k);            // "A", "F5", "Delete", "0"
 Key KeyFromName(std::string_view name); // inverse of KeyName (case-insensitive); Key::None if unknown
@@ -65,6 +66,7 @@ public:
 
 private:
   bool hidden_ = false;
+  std::string clipboard_; // hidden (automated) runs: a private clipboard
   std::vector<InputEvent> events_;
   SDL_Window* window_ = nullptr;
   void* glContext_ = nullptr;

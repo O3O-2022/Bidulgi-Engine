@@ -430,6 +430,14 @@ jobs:
           if ($log -notmatch 'scene icon test: icons=1 drawn=1 frustum=1 range=1 chip=1 pick=1') { $errors += 'scene icon test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-4a inspector and UI: field arithmetic, right-click menu (default / copy / paste), UI zoom saved
+          Remove-Item -Recurse -Force "$PWD/ci-uiedit" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-uiedit" | Out-Null
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_UIEDIT_TEST = '1'; BDG_PREFS = "$PWD/ci-uiedit/prefs.json" } 23
+          if ($log -notmatch 'ui edit test: expr=1 vector=1 menu=1 copy=1 paste\+default=1 close=1 zoom=1') { $errors += 'inspector / UI edit test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

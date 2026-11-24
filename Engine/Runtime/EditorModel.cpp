@@ -1,4 +1,5 @@
 #include "Runtime/EditorModel.h"
+#include "Core/Expr.h"
 #include <fstream>
 #include "Core/Log.h"
 #include "Scene/Components.h"
@@ -579,6 +580,25 @@ std::string EditorModel::ShowIfState() const {
 std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
   std::string t = Trim(text);
   if (type == FieldType::String) return Q(text);
+  // Arithmetic (E-4): "2*3" in a number, or in each part of a vector ("1+1, 0, 90/2")
+  auto eval = [](const std::string& part, bool integer) {
+    double v = 0;
+    if (!EvalExpression(part, v)) return Trim(part);
+    if (integer) return std::to_string((long long)std::llround(v));
+    std::string s = std::format("{}", (float)v);
+    return s;
+  };
+  if (type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double) return eval(t, type == FieldType::Int32);
+  if (IsVectorLike(type) && !t.empty() && t[0] != '[' && t[0] != '{' && t[0] != '"') {
+    std::string out = "[";
+    size_t start = 0;
+    for (size_t k = 0; k <= t.size(); ++k)
+      if (k == t.size() || t[k] == ',') {
+        out += (start ? "," : "") + eval(t.substr(start, k - start), false);
+        start = k + 1;
+      }
+    return out + "]";
+  }
   if (type == FieldType::Enum) return !t.empty() && t[0] == '"' ? t : Q(t);
   if (IsVectorLike(type) && !t.empty() && t[0] != '[' && t[0] != '{' && t[0] != '"') return "[" + t + "]";
   return t;
@@ -719,6 +739,30 @@ void EditorModel::Rebuild() {
           };
           field.onChange = set;
           field.onCommit = set;
+          // Right-click (E-4): back to the type's default, copy the value, paste one (Unity's field menu)
+          field.onContext = [this, t = &t, fieldName = f.name, path, type, set](Widget& w, float x, float y) {
+            if (!ui_) return;
+            std::string def;
+            if (t->create) {
+              void* fresh = t->create();
+              Registry::Get(fresh, *t, fieldName, def);
+              if (t->destroy) t->destroy(fresh);
+            }
+            Widget* wp = &w;
+            std::vector<UIContext::MenuItem> items;
+            items.push_back({"기본값으로" + (def.empty() ? std::string() : "  (" + ToDisplay(def, type) + ")"), [this, wp, def, type, set] {
+                               wp->text2 = ToDisplay(def, type);
+                               set(*wp);
+                             }, !def.empty()});
+            items.push_back({"값 복사", [this, wp] { ui_->SetClipboard(wp->text2); }, wp->text2 != kMixed});
+            items.push_back({"값 붙여넣기", [this, wp, set] {
+                               const std::string clip = ui_->Clipboard();
+                               if (clip.empty()) return;
+                               wp->text2 = clip;
+                               set(*wp);
+                             }, true});
+            ui_->OpenMenu(x, y, std::move(items));
+          };
           bindings_.push_back({&field, targets, path, type});
         }
       for (const TypeInfo* x : chain) // BFUNCTION(Button): one button per function, run as an undoable "call"

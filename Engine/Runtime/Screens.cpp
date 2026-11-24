@@ -359,6 +359,11 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto& settings = dock.Add(MakeBox(Axis::Column, 2));
   settings.id = "settings";
   settings.padT = 4;
+  settings.Add(MakeLabel("Editor")).variant = 2;
+  auto& zoom = settings.Add(MakeField("s.uizoom", "UI 배율 %", "100")); // Ctrl+휠, Ctrl+= / Ctrl+- / Ctrl+0 (E-4)
+  zoom.slider = zoom.sliderInteger = true;
+  zoom.sliderMin = 70;
+  zoom.sliderMax = 200;
   settings.Add(MakeLabel("Rendering")).variant = 2;
   settings.Add(MakeField("s.quality", "Quality", "Medium"));
   settings.Add(MakeField("s.vsync", "VSync", "Adaptive"));

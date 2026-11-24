@@ -646,7 +646,84 @@ void UIContext::Draw() {
   DrawWidget(*root_);
   for (Widget* d : docks_) DrawDockOverlay(*d); // drag previews above everything
   DrawDragOverlay();
+  DrawMenu();
 }
+
+// ---- Popup menu (E-4) ------------------------------------------------------------------------
+namespace {
+constexpr float kMenuRow = 26, kMenuPad = 4;
+}
+
+void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items) {
+  menu_ = std::move(items);
+  menuHot_ = menuPressed_ = -1;
+  const float fs = theme_.FontSize("control", 12.5f);
+  menuW_ = 160;
+  for (const MenuItem& it : menu_) menuW_ = std::max(menuW_, Measure(fs, it.label) + 32);
+  const float h = menu_.size() * kMenuRow + kMenuPad * 2;
+  menuX_ = root_ ? std::min(x, root_->w - menuW_ - 2) : x; // keep it on screen
+  menuY_ = root_ ? std::min(y, root_->h - h - 2) : y;
+}
+
+bool UIContext::MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const {
+  if (i >= menu_.size()) return false;
+  x = menuX_;
+  y = menuY_ + kMenuPad + i * kMenuRow;
+  w = menuW_;
+  h = kMenuRow;
+  return true;
+}
+
+bool UIContext::MenuEvent(const InputEvent& e) {
+  if (menu_.empty()) return false;
+  auto itemAt = [&](float x, float y) {
+    if (x < menuX_ || x >= menuX_ + menuW_ || y < menuY_ + kMenuPad) return -1;
+    const int i = (int)((y - menuY_ - kMenuPad) / kMenuRow);
+    return i < (int)menu_.size() ? i : -1;
+  };
+  switch (e.type) {
+    case InputEvent::Type::MouseMove: menuHot_ = itemAt(e.x, e.y); return true;
+    case InputEvent::Type::MouseDown:
+      menuPressed_ = itemAt(e.x, e.y);
+      if (menuPressed_ < 0) menu_.clear(); // outside: close (the click does nothing else)
+      return true;
+    case InputEvent::Type::MouseUp: {
+      const int i = itemAt(e.x, e.y);
+      if (i >= 0 && i == menuPressed_ && menu_[(size_t)i].enabled) {
+        std::function<void()> run = menu_[(size_t)i].run; // the item may open another menu
+        menu_.clear();
+        if (run) run();
+      }
+      menuPressed_ = -1;
+      return true;
+    }
+    case InputEvent::Type::KeyDown:
+      if (e.key == Key::Escape) { menu_.clear(); return true; }
+      return false;
+    case InputEvent::Type::Wheel: return true;
+    default: return false;
+  }
+}
+
+void UIContext::DrawMenu() {
+  if (menu_.empty()) return;
+  const Theme& t = theme_;
+  Batch2D& b = batch_;
+  const float h = menu_.size() * kMenuRow + kMenuPad * 2;
+  const Theme::Shadow sh = t.S("shadow-pop");
+  if (sh.color.a > 0) b.Shadow(menuX_ + sh.x, menuY_ + sh.y, menuW_, h, sh.color, 6, sh.blur);
+  else b.Shadow(menuX_, menuY_ + 4, menuW_, h, {0, 0, 0, 0.45f}, 6, 14);
+  b.Rect(menuX_, menuY_, menuW_, h, t.C("raise"), 6, 1, t.C("line-strong"));
+  const float fs = t.FontSize("control", 12.5f);
+  for (size_t i = 0; i < menu_.size(); ++i) {
+    const float y = menuY_ + kMenuPad + i * kMenuRow;
+    if ((int)i == menuHot_ && menu_[i].enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
+    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, menu_[i].enabled ? t.C("fg") : t.C("fg-faint"), menu_[i].label);
+  }
+}
+
+void UIContext::SetClipboard(const std::string& text) { if (window_) window_->SetClipboardText(text); }
+std::string UIContext::Clipboard() const { return window_ ? window_->GetClipboardText() : std::string(); }
 
 // ---- Input ----------------------------------------------------------------------------------
 Widget* UIContext::HitTest(Widget& w, float x, float y) {
@@ -702,7 +779,15 @@ void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
 void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
   if (!root_) return;
   for (const InputEvent& e : events) {
+    if (MenuEvent(e)) continue; // an open popup menu takes the mouse (and Esc)
     bool mouse = e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseDown || e.type == InputEvent::Type::MouseUp;
+    if (e.type == InputEvent::Type::MouseDown && e.button == 3) { // right-click: the widget's menu (E-4)
+      for (Widget* w = HitTest(*root_, e.x, e.y); w;) {
+        if (w->onContext) w->onContext(*w, e.x, e.y);
+        break;
+      }
+      continue;
+    }
     if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse
     switch (e.type) {
       case InputEvent::Type::MouseMove: {

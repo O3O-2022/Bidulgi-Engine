@@ -56,6 +56,8 @@ struct Widget {
 
   std::vector<std::unique_ptr<Widget>> children;
   std::function<void(Widget&)> onClick;
+  // Right-click (E-4): x, y in UI units. Usually opens a menu with UIContext::OpenMenu.
+  std::function<void(Widget&, float x, float y)> onContext;
   // ListRow as a tree row (Hierarchy, E-2). tree: one entry per level, 0 nothing, 1 a guide line passes (an ancestor
   // has siblings below), 2 this row's branch with more siblings after it, 3 this row's branch as the last one (└).
   // fold: -1 no children, 0 open (▼), 1 folded (▶). Non-empty tree replaces `indent` for the row's offset.
@@ -115,6 +117,15 @@ public:
   bool ClickAlt() const { return clickAlt_; }
   float ClickX() const { return clickX_; }               // UI units, of the click being handled
   bool OnTreeArrow(const Widget& row, float x) const;    // x is on a tree row's fold arrow (E-2)
+  // Popup menu (E-4): drawn above everything at (x, y); a click on an item runs it, a click elsewhere or Esc closes.
+  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; };
+  void OpenMenu(float x, float y, std::vector<MenuItem> items);
+  void CloseMenu() { menu_.clear(); }
+  bool MenuOpen() const { return !menu_.empty(); }
+  bool MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
+  const std::vector<MenuItem>& Menu() const { return menu_; }
+  void SetClipboard(const std::string& text);
+  std::string Clipboard() const;
   void SetScale(float scale) { scale_ = scale; }       // UI units -> drawable pixels (display scale)
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
@@ -179,6 +190,11 @@ private:
   Widget* dropTarget_ = nullptr; // widget under the mouse that accepts the drop
   bool dragging_ = false;
   bool clickCtrl_ = false, clickShift_ = false, clickAlt_ = false;
+  std::vector<MenuItem> menu_;
+  float menuX_ = 0, menuY_ = 0, menuW_ = 0;
+  int menuHot_ = -1, menuPressed_ = -1;
+  bool MenuEvent(const InputEvent& e); // true: the open menu used it
+  void DrawMenu();
   float clickX_ = 0;
   Widget* sliderDrag_ = nullptr;
   void SliderSet(Widget& f, float mouseX);

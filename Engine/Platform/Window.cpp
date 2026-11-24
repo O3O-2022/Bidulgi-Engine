@@ -57,6 +57,8 @@ Key MapKey(SDL_Keycode k) {
     case SDLK_ESCAPE: return Key::Escape; case SDLK_BACKSPACE: return Key::Backspace; case SDLK_DELETE: return Key::Delete;
     case SDLK_LEFT: return Key::Left;     case SDLK_RIGHT: return Key::Right;   case SDLK_UP: return Key::Up;
     case SDLK_DOWN: return Key::Down;     case SDLK_HOME: return Key::Home;     case SDLK_END: return Key::End;
+    case SDLK_MINUS: case SDLK_KP_MINUS: return Key::Minus;
+    case SDLK_EQUALS: case SDLK_KP_PLUS: return Key::Equals;
     default: return Key::None;
   }
 }
@@ -92,6 +94,7 @@ bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) 
       out.push_back(ev); break;
     case SDL_EVENT_MOUSE_WHEEL:
       ev.type = InputEvent::Type::Wheel; ev.x = e.wheel.mouse_x * density; ev.y = e.wheel.mouse_y * density;
+      { SDL_Keymod m = SDL_GetModState(); ev.ctrl = (m & SDL_KMOD_CTRL) != 0; ev.shift = (m & SDL_KMOD_SHIFT) != 0; ev.alt = (m & SDL_KMOD_ALT) != 0; }
       ev.wheel = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
       out.push_back(ev); break;
     case SDL_EVENT_DROP_FILE: // dragged in from Explorer (one event per file or folder)
@@ -160,7 +163,7 @@ namespace {
 const char* kKeyNames[] = {"", "Tab", "Enter", "Space", "Escape", "Backspace", "Delete", "Left", "Right", "Up", "Down", "Home",
                            "End", "PageUp", "PageDown", "Insert", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10",
                            "F11", "F12", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
-                           "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"};
+                           "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "="};
 }
 const char* KeyName(Key k) { return (size_t)k < sizeof kKeyNames / sizeof *kKeyNames ? kKeyNames[(int)k] : ""; }
 Key KeyFromName(std::string_view name) {
@@ -203,13 +206,17 @@ void Window::SetTextInputArea(float x, float y, float w, float h, int cursorOffs
 }
 
 std::string Window::GetClipboardText() const {
+  if (hidden_) return clipboard_; // automated runs keep their own clipboard: tests never touch the user's
   char* t = SDL_GetClipboardText();
   std::string s = t ? t : "";
   SDL_free(t);
   return s;
 }
 
-void Window::SetClipboardText(const std::string& text) { SDL_SetClipboardText(text.c_str()); }
+void Window::SetClipboardText(const std::string& text) {
+  if (hidden_) { clipboard_ = text; return; }
+  SDL_SetClipboardText(text.c_str());
+}
 bool Window::OpenURL(const std::string& url) { return SDL_OpenURL(url.c_str()); }
 void* Window::NativeHandle() const {
   return window_ ? SDL_GetPointerProperty(SDL_GetWindowProperties(window_), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr) : nullptr;
