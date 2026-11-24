@@ -8,6 +8,7 @@
 #include "Core/Command.h"
 #include "Scene/Scene.h"
 #include "UI/UI.h"
+#include <functional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -56,6 +57,16 @@ public:
   bool OpenProjectItem();                              // default app (a pair opens both files)
   std::vector<std::string> ProjectItemFiles(const std::string& key) const;
   const std::string& ProjectSelected() const { return projectSelected_; }
+  // Previews (E-1). The engine sets these: a thumbnail texture for a Project tile (invalid = draw the type icon),
+  // and the drawing of the Inspector's preview of an asset.
+  std::function<TextureHandle(const AssetRecord&)> thumbnailFor;
+  std::function<void(Widget&, UIContext&, const std::string& path)> drawPreview;
+  bool projectTiles = true;                 // Project panel: tiles with thumbnails (false: list rows)
+  void SetProjectTiles(bool on) { projectTiles = on; needProject_ = true; }
+  // The asset the Inspector shows (a Project item was clicked); "" = the selected objects. Selecting an object
+  // in the Hierarchy or the Scene view goes back to the objects.
+  const std::string& InspectedAsset() const { return inspectAsset_; }
+  void InspectAsset(const std::string& path) { inspectAsset_ = path; needRebuild_ = true; }
   void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
   AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
@@ -123,6 +134,9 @@ private:
   std::vector<AssetIssue> shownIssues_;      // Rules view
   AssetRuleChecker ruleChecker_;      // Unused view
   Widget* project_ = nullptr;
+  std::string inspectAsset_;
+  float lastProjectW_ = 0; // tiles per row follow the panel width
+  void BuildAssetInspector();
   std::string projectFolder_, projectSelected_; // current folder; selected item (path, or folder/stem of a C++ pair)
   std::string showIfState_; // which ShowIf fields are visible; a change rebuilds the Inspector
   std::string ShowIfState() const;

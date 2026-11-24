@@ -12,6 +12,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
+#include "Runtime/AssetPreviews.h"
 #include "Runtime/MaterialLibrary.h"
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
@@ -103,6 +104,7 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
+  bool previewTestOn = false;
   std::string newSceneTestValues[6];
   std::string importTestValues[8];
   std::string themeTestValues[8];
@@ -154,6 +156,14 @@ struct bdg_engine {
   std::string stressTestValues[10];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
+  bdg::AssetPreviews previews;                // Project thumbnails and the Inspector preview (E-1)
+  bool previewsReady = false;
+  bdg::TextureHandle previewTex;              // what the Inspector preview shows this frame
+  bool previewFlip = false, previewDrag = false;
+  float previewYaw = 35, previewPitch = -25, previewZoom = 1, previewLastX = 0, previewLastY = 0;
+  std::string previewPath;
+  bool previewTest = false;
+  std::string previewTestValues[8];
   bool materialTest = false, qualityTest = false, refSceneTest = false, giTest = false;
   std::string giTestValues[9];
   std::string refSceneTestValues[12];
@@ -707,6 +717,139 @@ void InjectNewSceneTest(bdg_engine* e, int frame) {
     std::ifstream in(std::filesystem::path(std::u8string((const char8_t*)m->scenePath.c_str())), std::ios::binary);
     text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     v[5] = std::format("{}", text.find("\"World Settings\"") != std::string::npos && text.find("bdg:Grid") != std::string::npos ? 1 : 0);
+  }
+}
+
+// ---- Asset previews (queue E-1) -------------------------------------------------------------------
+// The Inspector's preview box: the live render (square, centred) or the image (aspect kept).
+void DrawAssetPreview(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
+  const bdg::Theme& t = ui.Tokens();
+  const float ax = w.x + 12, ay = w.y + 4, aw = w.w - 24, ah = w.h - 8;
+  if (!e->previewTex.Valid()) {
+    const char* msg = "미리보기 없음";
+    const float fs = t.FontSize("label", 12);
+    ui.Text(w.x + (w.w - ui.Measure(fs, msg)) * 0.5f, w.y + (w.h - fs) * 0.5f, fs, t.C("fg-faint"), msg);
+    return;
+  }
+  const float aspect = e->previews.LiveAspect();
+  float dw = aw, dh = aw / aspect;
+  if (dh > ah) { dh = ah; dw = ah * aspect; }
+  const float dx = ax + (aw - dw) * 0.5f, dy = ay + (ah - dh) * 0.5f;
+  if (e->previewFlip) ui.Batch().Image(dx, dy, dw, dh, e->previewTex, 0, 1, 1, 0);
+  else ui.Batch().Image(dx, dy, dw, dh, e->previewTex);
+}
+
+// Dragging on the preview turns the asset, the wheel zooms (events in UI units).
+void PreviewOrbit(bdg_engine* e, const std::vector<bdg::InputEvent>& events) {
+  bdg::Widget* pv = e->editor->Find("insp.preview");
+  if (!pv || pv->hidden) {
+    e->previewDrag = false;
+    return;
+  }
+  using T = bdg::InputEvent::Type;
+  for (const bdg::InputEvent& ev : events) {
+    const bool inside = ev.x >= pv->x && ev.y >= pv->y && ev.x < pv->x + pv->w && ev.y < pv->y + pv->h;
+    if (ev.type == T::MouseDown && ev.button == 1 && inside) {
+      e->previewDrag = true;
+      e->previewLastX = ev.x;
+      e->previewLastY = ev.y;
+    } else if (ev.type == T::MouseMove && e->previewDrag) {
+      e->previewYaw -= (ev.x - e->previewLastX) * 0.6f;
+      e->previewPitch = std::clamp(e->previewPitch - (ev.y - e->previewLastY) * 0.6f, -85.f, 85.f);
+      e->previewLastX = ev.x;
+      e->previewLastY = ev.y;
+    } else if (ev.type == T::MouseUp) {
+      e->previewDrag = false;
+    } else if (ev.type == T::Wheel && inside) {
+      e->previewZoom = std::clamp(e->previewZoom * std::pow(1.15f, ev.wheel), 0.3f, 5.f);
+    }
+  }
+}
+
+// Scripted check of E-1 (BDG_PREVIEW_TEST=1, BDG_ASSETS = a project with T_Red.png, Tri.gltf + Tri.bin and a red
+// M_Red.material): tiles, thumbnails for all three (rendered ones cached as PNG; the material's is red; the
+// model's shows something), clicking a tile shows the asset in the Inspector with a live preview that turns when
+// dragged, the Hierarchy brings the objects back, and the list layout still works.
+void InjectPreviewTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen || !e->previewsReady) return;
+  auto* v = e->previewTestValues;
+  const float s = e->editor->Scale();
+  auto click = [&](const std::string& id) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("preview test: {} is not clickable", id); return; }
+    const float x = (w->x + w->w * 0.5f) * s, y = (w->y + w->h * 0.5f) * s;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent({T::MouseDown, x, y, 1});
+    e->window.InjectEvent({T::MouseUp, x, y, 1});
+  };
+  const std::filesystem::path cache = std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / ".cache" / "thumbnails";
+  auto rendered = [&](const char* path, std::vector<uint8_t>& px) {
+    const bdg::AssetRecord* r = e->assets.ByPath(path);
+    int32_t w = 0, h = 0;
+    return r && bdg::LoadImageRGBA(cache / std::format("{}-{:016x}-r1.png", r->guid, r->hash), w, h, px) && w == 64 && h == 64;
+  };
+  static int ready = 0;
+  static std::vector<uint8_t> liveA;
+  if (frame == 2)
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("project");
+  if (frame == 4) {
+    bdg::Widget* tile = e->editor->Find("p.item.T_Red.png");
+    v[0] = std::format("{}", tile && tile->kind == bdg::WidgetKind::Custom && std::abs(tile->w - 84) < 1 ? 1 : 0);
+  }
+  if (frame > 4 && !ready && frame < 60) {
+    bool all = true;
+    for (const char* p : {"T_Red.png", "Tri.gltf", "M_Red.material"})
+      if (const bdg::AssetRecord* r = e->assets.ByPath(p)) all = all && e->previews.Thumbnail(*r).Valid();
+      else all = false;
+    if (all) {
+      ready = frame;
+      v[1] = "1";
+      std::vector<uint8_t> mat, mdl;
+      const bool okMat = rendered("M_Red.material", mat), okMdl = rendered("Tri.gltf", mdl);
+      const uint8_t* c = okMat ? &mat[(32 * 64 + 32) * 4] : nullptr;
+      v[2] = std::format("{}", okMat && okMdl && c[0] > c[1] + 60 && c[0] > c[2] + 60 ? 1 : 0);
+      int differ = 0; // the model's picture is not just the background
+      if (okMdl)
+        for (int i = 0; i < 64 * 64; ++i)
+          differ += std::abs(mdl[i * 4] - mdl[0]) + std::abs(mdl[i * 4 + 1] - mdl[1]) + std::abs(mdl[i * 4 + 2] - mdl[2]) > 30;
+      v[3] = std::format("{}", differ > 40 ? 1 : 0);
+      click("p.item.Tri.gltf");
+    }
+  }
+  if (ready && frame == ready + 3) {
+    bdg::Widget* kind = e->editor->Find("insp.asset.종류");
+    v[4] = std::format("{}", m->InspectedAsset() == "Tri.gltf" && e->editor->Find("insp.preview") && kind && kind->text2 == "Model" ? 1 : 0);
+    int32_t w = 0, h = 0;
+    e->previews.ReadLive(w, h, liveA);
+    if (bdg::Widget* pv = e->editor->Find("insp.preview")) { // drag across the preview
+      const float x = (pv->x + pv->w * 0.5f) * s, y = (pv->y + pv->h * 0.5f) * s;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseMove, x + 100 * s, y + 20 * s});
+      e->window.InjectEvent({T::MouseUp, x + 100 * s, y + 20 * s, 1});
+    }
+  }
+  if (ready && frame == ready + 6) {
+    int32_t w = 0, h = 0;
+    std::vector<uint8_t> liveB;
+    e->previews.ReadLive(w, h, liveB);
+    int differ = 0;
+    for (size_t i = 0; i + 3 < std::min(liveA.size(), liveB.size()); i += 4)
+      differ += std::abs(liveA[i] - liveB[i]) + std::abs(liveA[i + 1] - liveB[i + 1]) + std::abs(liveA[i + 2] - liveB[i + 2]) > 30;
+    v[5] = std::format("{}", !liveA.empty() && liveA.size() == liveB.size() && differ > 100 && std::abs(e->previewYaw - 35) > 20 ? 1 : 0);
+    if (v[5] != "1") bdg::LogError("preview test: orbit differ={} yaw={} sizes {} {}", differ, e->previewYaw, liveA.size(), liveB.size());
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("inspector");
+    click("h.g8");
+  }
+  if (ready && frame == ready + 9) {
+    v[6] = std::format("{}", m->InspectedAsset().empty() && !e->editor->Find("insp.preview") && m->Selected() == "g8" ? 1 : 0);
+    click("p.layout");
+  }
+  if (ready && frame == ready + 12) {
+    bdg::Widget* row = e->editor->Find("p.item.T_Red.png");
+    v[7] = std::format("{}", row && row->kind == bdg::WidgetKind::ListRow ? 1 : 0);
   }
 }
 
@@ -2491,6 +2634,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->themeTest = std::getenv("BDG_THEME_TEST") != nullptr;
   e->importTest = std::getenv("BDG_IMPORT_TEST") != nullptr;
   e->newSceneTest = std::getenv("BDG_NEWSCENE_TEST") != nullptr;
+  e->previewTestOn = std::getenv("BDG_PREVIEW_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2566,6 +2710,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (e->r3d->Init(e->rhi) && e->sceneView->Init(e->rhi, *e->r3d)) {
       e->materials.Init(e->rhi);
       e->sceneView->SetMaterials(&e->materials);
+      e->previews.Init(e->rhi, *e->r3d, &e->materials);
+      e->previewsReady = true;
       // Quality tier (queue 3-5): the project's range, BDG_QUALITY for tests, the top-bar badge to switch.
       {
         std::vector<uint8_t> text;
@@ -2751,6 +2897,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
     else {
       e->materials.SetAssets(&e->assets);
+      if (e->previewsReady)
+        e->previews.SetAssets(&e->assets, std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / ".cache" / "thumbnails");
       e->assetWatcher.Start(e->assets.Root(), [](void* p) {
         auto* eng = static_cast<bdg_engine*>(p);
         eng->assetsChanged = true;
@@ -2759,6 +2907,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     }
   } else {
     bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
+  }
+  if (e->model && e->assetsOpen) { // previews (E-1): thumbnails on Project tiles, the Inspector's preview
+    e->model->thumbnailFor = [e](const bdg::AssetRecord& r) { return e->previewsReady ? e->previews.Thumbnail(r) : bdg::TextureHandle{}; };
+    e->model->drawPreview = [e](bdg::Widget& w, bdg::UIContext& ui, const std::string&) { DrawAssetPreview(e, w, ui); };
   }
   if (e->model && e->assetsOpen)
     if (bdg::Widget* project = e->editor->Find("project")) e->model->AttachProject(*project, &e->assets);
@@ -2929,6 +3081,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->themeTest && !e->showGallery) InjectThemeTest(e, frames);
     if (e->importTest && !e->showGallery) InjectImportTest(e, frames);
     if (e->newSceneTest && !e->showGallery) InjectNewSceneTest(e, frames);
+    if (e->previewTestOn && !e->showGallery) InjectPreviewTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3117,6 +3270,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         else
           std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
       }
+      if (&ui == e->editor.get()) PreviewOrbit(e, events); // drag / wheel on the Inspector preview (E-1)
       ui.SetScale(scale);
       ui.HandleEvents(events);
       if (&ui == e->editor.get() && e->model) e->model->Update(); // panels follow the scene (after edits/undo)
@@ -3128,6 +3282,22 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (bdg::Widget* game = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("game") : nullptr;
           game && !game->hidden && game->w >= 2 && game->h >= 2)
         e->sceneView->RenderGame(*e->model, e->assetsOpen ? &e->assets : nullptr, *game, scale);
+      if (e->previewsReady && e->model && &ui == e->editor.get()) { // thumbnails a few per frame, the Inspector preview
+        if (e->previews.Update(2) > 0 || e->previews.Pending() > 0) pending = std::max(pending, 2);
+        e->previewTex = {};
+        bdg::Widget* pv = ui.Find("insp.preview");
+        if (pv && !pv->hidden && pv->w > 20 && pv->h > 20) {
+          const std::string& path = e->model->InspectedAsset();
+          if (path != e->previewPath) { // a new asset: start from the default view
+            e->previewPath = path;
+            e->previewYaw = 35;
+            e->previewPitch = -25;
+            e->previewZoom = 1;
+          }
+          e->previewTex = e->previews.Live(path, (int32_t)((pv->w - 16) * scale), (int32_t)(pv->h * scale), e->previewYaw, e->previewPitch,
+                                           e->previewZoom, e->previewFlip);
+        }
+      }
       ui.Draw();
       if (e->play.Playing() && &ui == e->editor.get()) { // play mode frame: edits now go to a world that will be thrown away
         const bdg::Color c = e->play.Paused() ? e->theme.C("warn") : e->theme.C("accent");
@@ -3278,6 +3448,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
+      if (e->previewTestOn) {
+        auto* v = e->previewTestValues;
+        bdg::LogInfo("preview test: tiles={} thumbs={} material={} model={} inspect={} orbit={} back={} list={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+      }
       if (e->newSceneTest) {
         auto* v = e->newSceneTestValues;
         bdg::LogInfo("new scene test: scene={} camera={} grid={} fog={} exposure={} saved={}", v[0], v[1], v[2], v[3], v[4], v[5]);
@@ -3401,6 +3575,7 @@ void bdg_engine_destroy(bdg_engine* e) {
   e->editor.reset();
   e->gallery.reset();
   if (e->board) e->board->Shutdown();
+  e->previews.Shutdown();
   e->materials.Shutdown();
   if (e->sceneView) e->sceneView->Shutdown();
   e->rhi.DestroyRenderTarget(e->viewRT);

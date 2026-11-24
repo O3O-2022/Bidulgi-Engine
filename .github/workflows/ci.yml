@@ -397,6 +397,25 @@ jobs:
           if (-not (Test-Path "$PWD/ci-newscene/New Scene.scene")) { $errors += 'new scene file missing' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-1 previews: a red texture, a glTF triangle, a red material; tiles, thumbnails, Inspector preview turning
+          Remove-Item -Recurse -Force "$PWD/ci-preview" -ErrorAction SilentlyContinue
+          $pv = "$PWD/ci-preview/Assets"
+          New-Item -ItemType Directory -Force $pv | Out-Null
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 16, 16
+          $gfx = [System.Drawing.Graphics]::FromImage($bmp); $gfx.Clear([System.Drawing.Color]::Red); $gfx.Dispose()
+          $bmp.Save("$pv/T_Red.png", [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+          $tri = New-Object byte[] 36
+          [BitConverter]::GetBytes([single]1).CopyTo($tri, 12)
+          [BitConverter]::GetBytes([single]1).CopyTo($tri, 28)
+          [IO.File]::WriteAllBytes("$pv/Tri.bin", $tri)
+          [IO.File]::WriteAllText("$pv/Tri.gltf", '{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],"buffers":[{"uri":"Tri.bin","byteLength":36}],"bufferViews":[{"buffer":0,"byteLength":36}],"accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}],"materials":[{"doubleSided":true}]}')
+          [IO.File]::WriteAllText("$pv/M_Red.material", "{`"material`":`"M_Red`"}`n{`"param`":`"BaseColor`",`"type`":`"color`",`"value`":`"#e02020`"}`n")
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_PREVIEW_TEST = '1'; BDG_ASSETS = $pv } 80
+          if ($log -notmatch 'preview test: tiles=1 thumbs=1 material=1 model=1 inspect=1 orbit=1 back=1 list=1') { $errors += 'asset preview test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

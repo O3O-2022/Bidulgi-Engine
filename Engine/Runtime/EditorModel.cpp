@@ -385,6 +385,7 @@ void EditorModel::Update() {
   fieldChanges += Registry::Instance().TakeChanges().size();
   if (!pendingSelect_.empty()) {
     if (scene.Find(pendingSelect_)) ApplySelection(pendingSelect_, pendingSelectMode_);
+    inspectAsset_.clear(); // back to the objects (E-1)
     pendingSelect_.clear();
     pendingSelectMode_ = 0;
     needRebuild_ = true;
@@ -406,6 +407,10 @@ void EditorModel::Update() {
     std::string err;
     if (!bus.JumpTo((size_t)pendingJump_, &err)) LogWarn("history: {}", err);
     pendingJump_ = -1;
+  }
+  if (project_ && projectTiles && project_->w > 1 && std::abs(project_->w - lastProjectW_) > 1) { // tiles per row
+    lastProjectW_ = project_->w;
+    needProject_ = true;
   }
   if (needProject_) RebuildProject();
   bool historyChanged = needRebuild_ || needRefresh_;
@@ -547,7 +552,9 @@ void EditorModel::Rebuild() {
   std::vector<std::string> targets;
   for (auto& id : selection_) if (scene.Find(id)) targets.push_back(id);
   const SceneObject* o = scene.Find(selected_);
-  if (!o || targets.empty()) {
+  if (!inspectAsset_.empty() && assets && assets->ByPath(inspectAsset_)) {
+    BuildAssetInspector();
+  } else if (!o || targets.empty()) {
     inspector_->Add(MakeLabel("Nothing selected")).variant = 1;
   } else {
     bool multi = targets.size() > 1;

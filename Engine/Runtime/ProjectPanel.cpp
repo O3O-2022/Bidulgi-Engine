@@ -5,6 +5,8 @@
 #include "Core/Log.h"
 #include "Core/Reflection.h"
 #include "Runtime/EditorModel.h"
+#include "Render2D/Batch2D.h"
+#include "UI/Theme.h"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -39,6 +41,36 @@ std::string TypeLabel(const AssetRecord& r) {
       {"font", "Font"}, {"scene", "Scene"}, {"prefab", "Prefab"}, {"material", "Material"}, {"graph", "Graph"}};
   auto it = names.find(r.importer);
   return it != names.end() ? it->second : "File";
+}
+// Editor icon for a Project item (Assets/Icons)
+std::string IconFor(const AssetRecord* r, bool folder, bool cppClass) {
+  if (folder) return "folder";
+  if (cppClass) return "file-cpp";
+  if (!r) return "file";
+  const std::string e = Ext(r->path);
+  if (e == ".cs") return "file-cs";
+  if (e == ".h" || e == ".hpp") return "file-h";
+  if (IsSource(e)) return "file-cpp";
+  if (e == ".matinst") return "file-matinst";
+  if (e == ".cube") return "file-lut";
+  if (e == ".json" || e == ".jsonl") return "file-json";
+  if (e == ".glsl" || e == ".hlsl" || e == ".shader") return "file-shader";
+  static const std::map<std::string, std::string> byImporter = {{"texture", "file-texture"}, {"model", "file-model"},
+      {"audio", "file-audio"}, {"scene", "file-scene"}, {"prefab", "file-prefab"}, {"material", "file-material"}};
+  auto it = byImporter.find(r->importer);
+  return it != byImporter.end() ? it->second : "file";
+}
+
+// "a very long name.png" -> "a very lo…" to fit `maxW` at font size `fs`
+std::string Ellipsize(UIContext& ui, float fs, const std::string& s, float maxW) {
+  if (ui.Measure(fs, s) <= maxW) return s;
+  std::string t = s;
+  while (!t.empty() && ui.Measure(fs, t + "…") > maxW) {
+    size_t cut = t.size() - 1;
+    while (cut > 0 && ((unsigned char)t[cut] & 0xC0) == 0x80) --cut; // whole UTF-8 characters
+    t.erase(cut);
+  }
+  return t + "…";
 }
 }
 
@@ -107,6 +139,7 @@ void EditorModel::RebuildProject() {
   bar.Add(MakeButton("p.unused", "안 쓰는 것", projectView == ProjectView::Unused)).onClick = [this](Widget&) {
     ShowProjectView(projectView == ProjectView::Unused ? ProjectView::Files : ProjectView::Unused);
   };
+  bar.Add(MakeButton("p.layout", projectTiles ? "목록" : "타일")).onClick = [this](Widget&) { SetProjectTiles(!projectTiles); }; // E-1
   bar.Add(MakeButton("p.rules", "규칙", projectView == ProjectView::Rules)).onClick = [this](Widget&) { // 2-5d
     ShowProjectView(projectView == ProjectView::Rules ? ProjectView::Files : ProjectView::Rules);
   };
@@ -167,12 +200,13 @@ void EditorModel::RebuildProject() {
     return;
   }
 
-  // Subfolders, then files; .h + .cpp with the same name become one C++ class item
+  // Subfolders, then files; .h + .cpp with the same name become one C++ class item. Tiles (E-1): a thumbnail or
+  // the type icon over the name, as many per row as the panel is wide; list: one row each.
+  struct Item { std::string key, name, type, icon; std::function<void()> click; int indent = 0; bool selected = false; };
+  std::vector<Item> items;
   for (const std::string& f : folders)
-    if (Folder(f) == projectFolder_) {
-      auto& row = right.Add(MakeListRow("p.item." + f, FileName(f), "Folder"));
-      row.onClick = [this, f](Widget&) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; };
-    }
+    if (Folder(f) == projectFolder_)
+      items.push_back({"p.item." + f, FileName(f), "Folder", "folder", [this, f] { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }});
   std::map<std::string, std::vector<const AssetRecord*>> pairs; // stem -> header/source files
   std::vector<const AssetRecord*> files;
   for (const AssetRecord* r : all) {
@@ -181,25 +215,70 @@ void EditorModel::RebuildProject() {
     if (IsHeader(e) || IsSource(e)) pairs[Stem(FileName(r->path))].push_back(r);
     else files.push_back(r);
   }
+  auto pick = [this](const std::string& key) {
+    return [this, key] { projectSelected_ = key; needProject_ = true; InspectAsset(assets && assets->ByPath(key) ? key : ""); };
+  };
   for (auto& [stem, list] : pairs) {
     bool pair = list.size() >= 2;
     std::string key = pair ? (projectFolder_.empty() ? stem : projectFolder_ + "/" + stem) : list[0]->path;
-    auto& row = right.Add(MakeListRow("p.item." + key, pair ? stem : FileName(list[0]->path), pair ? "C++ class" : "C++"));
-    row.selected = key == projectSelected_;
-    row.onClick = [this, key](Widget&) { projectSelected_ = key; needProject_ = true; };
+    items.push_back({"p.item." + key, pair ? stem : FileName(list[0]->path), pair ? "C++ class" : "C++", IconFor(pair ? nullptr : list[0], false, pair),
+                     pick(key), 0, key == projectSelected_});
     if (pair) // nested: the files of the class
-      for (const AssetRecord* r : list) {
-        auto& sub = right.Add(MakeListRow("p.item." + r->path, FileName(r->path), IsHeader(Ext(r->path)) ? "Header" : "Source", 1));
-        std::string path = r->path;
-        sub.selected = path == projectSelected_;
-        sub.onClick = [this, path](Widget&) { projectSelected_ = path; needProject_ = true; };
-      }
+      for (const AssetRecord* r : list)
+        items.push_back({"p.item." + r->path, FileName(r->path), IsHeader(Ext(r->path)) ? "Header" : "Source", IconFor(r, false, false), pick(r->path), 1,
+                         r->path == projectSelected_});
   }
-  for (const AssetRecord* r : files) {
-    auto& row = right.Add(MakeListRow("p.item." + r->path, FileName(r->path), TypeLabel(*r)));
-    std::string path = r->path;
-    row.selected = path == projectSelected_;
-    row.onClick = [this, path](Widget&) { projectSelected_ = path; needProject_ = true; };
+  for (const AssetRecord* r : files)
+    items.push_back({"p.item." + r->path, FileName(r->path), TypeLabel(*r), IconFor(r, false, false), pick(r->path), 0, r->path == projectSelected_});
+
+  if (!projectTiles) {
+    for (Item& it : items) {
+      auto& row = right.Add(MakeListRow(it.key, it.name, it.type, it.indent));
+      row.selected = it.selected;
+      row.onClick = [click = it.click](Widget&) { click(); };
+    }
+  } else {
+    constexpr float kTileW = 84, kTileH = 96, kGap = 6;
+    const float width = std::max(0.f, project_->w - 221 - 16);
+    const int cols = std::max(1, (int)((width + kGap) / (kTileW + kGap)));
+    Widget* rowBox = nullptr;
+    for (size_t i = 0; i < items.size(); ++i) {
+      if (i % (size_t)cols == 0) {
+        rowBox = &right.Add(MakeBox(Axis::Row, kGap));
+        rowBox->padL = 8;
+        rowBox->width = Length::Fill(); // tiles from the left
+        rowBox->padT = i == 0 ? 4.f : 0.f;
+        rowBox->padB = kGap;
+      }
+      Item& it = items[i];
+      const std::string path = it.key.substr(7), icon = it.icon;
+      auto& tile = rowBox->Add(MakeCustom(it.key, [this, path, icon](Widget& w, UIContext& ui) {
+        const Theme& t = ui.Tokens();
+        Batch2D& b = ui.Batch();
+        if (w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("selection"), 4);
+        else if (w.hovered) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"), 4);
+        const float ts = 64, tx = w.x + (w.w - ts) * 0.5f, ty = w.y + 4;
+        const AssetRecord* r = assets ? assets->ByPath(path) : nullptr;
+        TextureHandle tex = r && thumbnailFor ? thumbnailFor(*r) : TextureHandle{};
+        if (tex.Valid()) {
+          b.Rect(tx - 1, ty - 1, ts + 2, ts + 2, t.C("line"), 3);
+          b.Image(tx, ty, ts, ts, tex);
+        } else if (!ui.Icon(icon, tx + 8, ty + 8, ts - 16)) {
+          b.Rect(tx + 12, ty + 12, ts - 24, ts - 24, t.C("raise"), 4);
+        }
+        const float fs = 11;
+        const std::string name = Ellipsize(ui, fs, w.text, w.w - 6);
+        ui.Text(w.x + (w.w - ui.Measure(fs, name)) * 0.5f, ty + ts + 6, fs, w.selected ? t.C("fg") : t.C("fg-dim"), name);
+        if (w.indent > 0) b.Rect(w.x + 3, w.y + 3, 3, ts - 6, t.C("line-strong"), 1.5f); // a file of a C++ class
+      }));
+      tile.text = it.name;
+      tile.text2 = it.type;
+      tile.indent = it.indent;
+      tile.selected = it.selected;
+      tile.width = Length::Px(kTileW);
+      tile.height = Length::Px(kTileH);
+      tile.onClick = [click = it.click](Widget&) { click(); };
+    }
   }
   if (ui_) ui_->ForgetRemovedWidgets();
 }
@@ -240,6 +319,32 @@ std::vector<AssetRef> EditorModel::FindReferences(const std::string& assetPath) 
     out.insert(out.end(), r.begin(), r.end());
   }
   return out;
+}
+
+// Inspector for a Project asset (E-1): what it is, where, how big, its GUID, and a preview (models and materials
+// turn when dragged, wheel zooms; images show the picture).
+void EditorModel::BuildAssetInspector() {
+  const AssetRecord* r = assets->ByPath(inspectAsset_);
+  auto& head = inspector_->Add(MakeLabel(FileName(r->path)));
+  head.variant = 2;
+  auto info = [&](const std::string& label, const std::string& value) {
+    auto& f = inspector_->Add(MakeField("insp.asset." + label, label, value));
+    f.onCommit = [](Widget&) {}; // read-only: shown, not applied
+  };
+  const double kb = (double)r->size / 1024.0;
+  info("종류", TypeLabel(*r));
+  info("경로", r->path);
+  info("크기", kb < 1024 ? std::format("{:.1f} KB", kb) : std::format("{:.2f} MB", kb / 1024.0));
+  info("GUID", r->guid);
+  auto& preview = inspector_->Add(MakeCustom("insp.preview", [this, path = r->path](Widget& w, UIContext& ui) {
+    const Theme& t = ui.Tokens();
+    ui.Batch().Rect(w.x + 8, w.y, w.w - 16, w.h, t.C("sunk"), 4);
+    if (drawPreview) drawPreview(w, ui, path);
+  }));
+  preview.height = Length::Px(260);
+  const std::string e = Ext(r->path);
+  if (r->importer == "model" || e == ".material" || e == ".matinst")
+    inspector_->Add(MakeLabel("끌어서 돌리기 · 휠로 확대")).variant = 1;
 }
 
 std::vector<AssetIssue> EditorModel::CheckAssetRules(const std::vector<std::string>* only) {
