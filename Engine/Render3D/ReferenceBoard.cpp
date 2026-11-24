@@ -474,6 +474,81 @@ std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
                      farOk ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
+// SSAO board (3-5b): points on the floor in the open, at the box's foot and in the walls' inside corner.
+const glm::vec3 kAOOpen{-0.5f, 0, 2.5f}, kAOBoxFoot{-1.5f, 0, 0.56f}, kAOCorner{3.75f, 0, -0.75f}, kAOBoxTop{-1.5f, 1, 0};
+
+bool ReferenceBoard::InitAO(RHI& rhi, Renderer3D& r) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
+  plane_ = r.CreateMesh(MakePlaneXZ(1, 1));
+  Material3D white;
+  white.baseColor = {0.75f, 0.75f, 0.75f, 1};
+  white.roughness = 0.9f;
+  items_.push_back({&plane_, At({0, 0, 0}, 20, 1, 20), white});
+  items_.push_back({&box_, At({-1.5f, 0.5f, 0}, 1, 1, 1), white});
+  items_.push_back({&box_, At({2.5f, 1, -1}, 3, 2, 0.2f), white});  // wall along x
+  items_.push_back({&box_, At({3.9f, 1, 0.4f}, 0.2f, 2, 3), white}); // wall along z: an inside corner with the first
+  camera.position = {0, 4, 6};
+  camera.target = {1, 0, -0.5f};
+  camera.fovY = 50.f;
+  light = {};
+  light.intensity = 0.4f; // mostly sky light, so the occlusion shows
+  light.sky = {0.7f, 0.75f, 0.8f, 1};
+  light.ground = {0.35f, 0.33f, 0.3f, 1};
+  labels_ = {{kAOBoxTop + glm::vec3(-0.6f, 0.4f, 0), "box"}, {kAOCorner + glm::vec3(-0.8f, 2.3f, 0), "inside corner"},
+             {{-4, 3.5f, -2}, "3-5b SSAO · CheckAO renders medium and high"}};
+  return true;
+}
+
+std::string ReferenceBoard::CheckAO(Renderer3D& r, int32_t w, int32_t h) {
+  RenderTargetHandle rt = rhi_->CreateRenderTarget(w, h, 1);
+  auto render = [&](QualityTier tier, DebugView view, std::vector<uint8_t>& px) {
+    QualitySettings q = QualityPreset(tier);
+    q.msaa = 1;
+    q.fxaa = q.bloom = q.toneMap = false;
+    RenderExtras ex;
+    ex.view = view;
+    r.Render(rt, w, h, camera, light, items_, clear, &ex, &q);
+    int32_t rw = 0, rh = 0;
+    rhi_->ReadRenderTarget(rt, rw, rh, px);
+    return r.Stats().ssao;
+  };
+  auto value = [&](const std::vector<uint8_t>& px, const glm::vec3& p) { // 3x3 average (the occlusion is dithered)
+    float x, y;
+    if (!ProjectToPixel(camera, w, h, p, x, y) || x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return -1.f;
+    float sum = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const uint8_t* q = &px[((size_t)(y + dy) * w + (size_t)(x + dx)) * 4];
+        sum += (q[0] * 0.2126f + q[1] * 0.7152f + q[2] * 0.0722f) / 255.f;
+      }
+    return sum / 9;
+  };
+  std::vector<uint8_t> aoHigh, aoMed, litHigh, litMed;
+  bool ranHigh = render(QualityTier::High, DebugView::AO, aoHigh);
+  bool ranMed = render(QualityTier::Medium, DebugView::AO, aoMed);
+  render(QualityTier::High, DebugView::Lit, litHigh);
+  render(QualityTier::Medium, DebugView::Lit, litMed);
+  rhi_->DestroyRenderTarget(rt);
+  float open = value(aoHigh, kAOOpen), foot = value(aoHigh, kAOBoxFoot), corner = value(aoHigh, kAOCorner), top = value(aoHigh, kAOBoxTop);
+  float medFoot = value(aoMed, kAOBoxFoot);
+  float litRatioHigh = value(litHigh, kAOBoxFoot) / std::max(value(litHigh, kAOOpen), 1e-3f);
+  float litRatioMed = value(litMed, kAOBoxFoot) / std::max(value(litMed, kAOOpen), 1e-3f);
+  std::string failed;
+  auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
+  bool flat = open > 0.9f && top > 0.9f;                 // no false occlusion on open flat surfaces
+  bool contact = foot < 0.75f && corner < 0.7f;          // darker where surfaces meet
+  bool tiers = ranHigh && !ranMed && medFoot > 0.97f && litRatioHigh < litRatioMed * 0.92f;
+  if (!flat) fail("flat");
+  if (!contact) fail("contact");
+  if (!tiers) fail("tiers");
+  return std::format("ao open={:.2f} top={:.2f} foot={:.2f} corner={:.2f} | medium ao={} foot={:.2f} | lit foot/open high={:.2f} medium={:.2f} | "
+                     "flat={} contact={} tiers={} result={}",
+                     open, top, foot, corner, ranMed ? 1 : 0, medFoot, litRatioHigh, litRatioMed, flat ? "ok" : "bad", contact ? "ok" : "bad",
+                     tiers ? "ok" : "bad", failed.empty() ? "pass" : "FAIL(" + failed + ")");
+}
+
 bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {
   rhi_ = &rhi;
   renderer_ = &r;

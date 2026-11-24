@@ -194,6 +194,12 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(ApplyQualityOverrides("msaa=8,bloom=1,lights=2,exposure=1.5", q, &err));
   CHECK(q.msaa == 8 && q.bloom && q.maxLights == 2 && q.exposure == 1.5f && q.fxaa);
   CHECK(!ApplyQualityOverrides("sparkle=1", q, &err));
+  // 3-5b: high and ultra get 3 shadow cascades, soft shadows and SSAO; medium and the reference stay as they were
+  CHECK(high.shadowCascades == 3 && high.shadowSoftness > 0 && high.ssao);
+  CHECK(medium.shadowCascades == 1 && medium.shadowSoftness == 0 && !medium.ssao);
+  CHECK(ref.shadowCascades == 1 && !ref.ssao);
+  CHECK(ApplyQualityOverrides("cascades=9,softness=0.05,ssao=1,aoradius=0.8", q, &err));
+  CHECK(q.shadowCascades == 4 && q.shadowSoftness == 0.05f && q.ssao && q.ssaoRadius == 0.8f); // cascades clamped to 4
 
   CHECK(ToneMapACES(0.f) == 0.f && ToneMapACES(100.f) == 1.f);
   float prev = 0;

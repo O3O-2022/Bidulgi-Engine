@@ -126,7 +126,7 @@ struct ProbeVolume3D {
 };
 
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
-enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades };
+enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades, AO };
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
 
 struct RenderExtras {
@@ -152,6 +152,7 @@ struct RenderStats {
   size_t shadowCulled = 0;  // opaque objects outside the light's frustum (not drawn into the shadow map)
   size_t lightmapped = 0;   // objects drawn with a baked lightmap
   int cascades = 0;         // shadow cascades drawn (3-5b)
+  bool ssao = false;        // screen-space ambient occlusion pass ran (3-5b)
 };
 
 class Renderer3D {
@@ -225,6 +226,11 @@ private:
   BufferHandle shadowPassUbo_;
   // Post-processing: HDR scene, LDR copy for FXAA, bloom chain (half size down to 1/32).
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
+  // SSAO (3-5b): normals + view depth of opaque objects (full size), occlusion and its blur (half size).
+  PipelineHandle prepass_, prepassTwo_, ssao_, aoBlur_;
+  RenderTargetHandle geoRT_, aoRT_[2];
+  int32_t geoW_ = 0, geoH_ = 0;
+  BufferHandle ssaoUbo_;
   BufferHandle postUbo_;
   RenderTargetHandle hdrRT_, ldrRT_;
   int32_t hdrW_ = 0, hdrH_ = 0, hdrSamples_ = 0;

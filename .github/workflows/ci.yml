@@ -320,6 +320,10 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok result=pass') { $errors += 'cascaded shadow test failed' }
           if ($log -match '(shadow test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 29) 3-5b SSAO: open flat surfaces stay unoccluded, a box's foot and an inside corner darken, only on high
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ao'; BDG_RENDER_TEST = '1' } 5
+          if ($log -notmatch 'ao test: .*flat=ok contact=ok tiers=ok result=pass') { $errors += 'SSAO test failed' }
+          if ($log -match '(ao test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'

@@ -27,6 +27,8 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   mat4 uCascadeVP[4]; vec4 uCascadeSplit;        // cascaded shadows (3-5b): matrices, far view depth of each
   vec4 uCascadeInfo[4];                          // per cascade: depth bias, normal offset, texels per metre, -
   vec4 uShadow2;                                 // cascades, softness (m), blend band (share of a split), -
+  vec4 uScreen;                                  // target w, h, 1 / w, 1 / h
+  vec4 uFlags;                                   // x: SSAO on (3-5b)
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -169,6 +171,7 @@ layout(binding = 2) uniform sampler2D uNormalMap;
 layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
 layout(binding = 7) uniform sampler2D uLightmap;
+layout(binding = 8) uniform sampler2D uSSAO; // screen-space ambient occlusion, half resolution (3-5b)
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
 out vec4 oColor;
 const float PI = 3.14159265;
@@ -283,7 +286,7 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades
+  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades, 9 ao
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
   if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
   if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
@@ -323,10 +326,12 @@ void main() {
     ambient = VolumeIrradiance(vWorld + ng * 0.25 * min(cell.x, min(cell.y, cell.z)), N);
   }
   if (uObjects[vObject].lightmap.x > 0.5) ambient = textureLod(uLightmap, vLightUV, 0.0).rgb; // baked (GI Tier 0-C)
+  float ssao = uFlags.x > 0.5 ? textureLod(uSSAO, gl_FragCoord.xy * uScreen.zw, 0.0).r : 1.0;
   if (view >= 2) {
     vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
            : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
            : view == 7 ? ambient / (1.0 + ambient)                                                   // indirect light, compressed
+           : view == 9 ? vec3(ssao)                                                                 // ambient occlusion
            : view == 8 ? (uShadow.x < 0.5 ? vec3(0.3)
                           : vec3[](vec3(1.0, 0.35, 0.3), vec3(0.35, 1.0, 0.35), vec3(0.35, 0.5, 1.0), vec3(1.0, 0.9, 0.3))[ShadowCascade(vWorld)]
                             * (0.4 + 0.6 * ShadowFactor(vWorld, ng)))                              // shadow cascades, darkened in shadow
@@ -340,7 +345,7 @@ void main() {
   vec3 R = reflect(-V, N);
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   vec2 ab = EnvBRDFApprox(NoV, rough);
-  float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
+  float ao = (uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0) * ssao; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
   color += emissive;
   // Linear light; tone mapping and display encoding happen in post. Capped below the half-float maximum: a sharp
@@ -489,6 +494,77 @@ void main() {
 )";
 
 // ---- Post-processing (queue 3-5) ----
+// SSAO (3-5b). Prepass: opaque objects' world normal and view depth (no geometry: depth 65000).
+const char* kPrepassFS = R"(#version 450 core
+#FRAME_UBO
+#OBJECTS_FS
+layout(binding = 0) uniform sampler2D uBaseMap;
+in vec3 vWorld; in vec3 vNormal; in vec2 vUV;
+out vec4 oColor;
+void main() {
+  if (uParams.w > 0.5 && uParams.w < 1.5 && uBaseColor.a * (uMaps.x > 0.5 ? texture(uBaseMap, vUV).a : 1.0) < uExtra.z) discard;
+  vec3 n = normalize(vNormal);
+  if (!gl_FrontFacing) n = -n;
+  oColor = vec4(n, dot(vWorld - uCamPos.xyz, uCamFwd.xyz));
+}
+)";
+// Occlusion: 12 cosine-weighted samples in the normal's hemisphere within uAO.x metres, turned per pixel; a sample
+// counts when the visible surface at its pixel is in front of it, by no more than the radius (range check).
+// uAO = (radius, intensity, -, -); uAO2 = (blur step x, y in texels, -, -)
+const char* kSsaoFS = R"(#version 450 core
+#FRAME_UBO
+layout(std140, binding = 8) uniform Ssao3D { vec4 uAO; vec4 uAO2; };
+layout(binding = 0) uniform sampler2D uGeo;
+in vec2 vUV;
+out vec4 oColor;
+vec3 WorldAt(vec2 uv, float depth) {
+  vec4 p = uInvViewProj * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+  vec3 ray = normalize(p.xyz / p.w - uCamPos.xyz);
+  return uCamPos.xyz + ray * (depth / dot(ray, uCamFwd.xyz));
+}
+void main() {
+  vec4 g = textureLod(uGeo, vUV, 0.0);
+  if (g.w > 60000.0) { oColor = vec4(1.0); return; }
+  vec3 n = normalize(g.xyz), p = WorldAt(vUV, g.w);
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  vec3 helper = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 t = normalize(cross(helper, n)), b = cross(n, t);
+  float radius = uAO.x, bias = 0.01 + g.w * 0.002, occ = 0.0;
+  const int N = 12;
+  for (int i = 0; i < N; ++i) {
+    float u = fract((float(i) + 0.5) / float(N) + noise), phi = 6.2831853 * fract(float(i) * 0.618034 + noise * 3.1);
+    float rr = sqrt(u), z = sqrt(1.0 - u), len = mix(0.15, 1.0, fract(float(i) * 0.37 + noise * 1.7));
+    vec3 s = p + n * 0.02 + (t * (rr * cos(phi)) + b * (rr * sin(phi)) + n * z) * radius * len;
+    vec4 c = uViewProj * vec4(s, 1.0);
+    vec2 suv = c.xy / c.w * 0.5 + 0.5;
+    if (any(lessThan(suv, vec2(0.0))) || any(greaterThan(suv, vec2(1.0)))) continue;
+    float scene = textureLod(uGeo, suv, 0.0).w;
+    occ += step(bias, c.w - scene) * smoothstep(0.0, 1.0, radius / max(abs(g.w - scene), 1e-3));
+  }
+  float ao = pow(clamp(1.0 - occ / float(N), 0.0, 1.0), uAO.y);
+  oColor = vec4(mix(ao, 1.0, smoothstep(60.0, 100.0, g.w)), 0.0, 0.0, 1.0); // fades out far away (depth precision)
+}
+)";
+// Depth-aware blur of the occlusion (one direction per pass): neighbours at another depth do not bleed in.
+const char* kAoBlurFS = R"(#version 450 core
+layout(std140, binding = 8) uniform Ssao3D { vec4 uAO; vec4 uAO2; };
+layout(binding = 0) uniform sampler2D uSrc;
+layout(binding = 1) uniform sampler2D uGeo;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  vec2 step = uAO2.xy / vec2(textureSize(uSrc, 0));
+  float d0 = textureLod(uGeo, vUV, 0.0).w, sum = 0.0, wsum = 0.0;
+  for (int i = -4; i <= 4; ++i) {
+    vec2 uv = vUV + step * float(i);
+    float d = textureLod(uGeo, uv, 0.0).w;
+    float w = exp(-float(i * i) / 8.0) * exp(-abs(d - d0) / (0.03 * d0 + 0.01) * 4.0);
+    sum += textureLod(uSrc, uv, 0.0).r * w;
+    wsum += w;
+  }
+  oColor = vec4(sum / max(wsum, 1e-5), 0.0, 0.0, 1.0);
+}
+)";
 const char* kPostVS = R"(#version 450 core
 layout(location = 0) in vec3 aPos;
 out vec2 vUV;
@@ -599,7 +675,9 @@ struct FrameData {
   float camPos[4], toLight[4], light[4], sky[4], ground[4], zenith[4], horizon[4], sun[4], shadow[4], counts[4];
   float camFwd[4];
   float cascadeVP[4][16], cascadeSplit[4], cascadeInfo[4][4], shadow2[4];
+  float screen[4], flags[4];
 };
+struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
 struct PostData { float post[4]; float post2[4]; };
 struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4], volMin[4], volMax[4], volCount[4]; };
@@ -688,6 +766,20 @@ bool Renderer3D::Init(RHI& rhi) {
   pd.debugName = "forward3d.blend";
   blend_ = rhi.CreatePipeline(pd);
   if (!opaque_.Valid() || !twoSided_.Valid() || !blend_.Valid()) return false;
+  {
+    const std::string prepassFS = Src(kPrepassFS);
+    PipelineDesc pre = pd;
+    pre.fragmentSource = prepassFS.c_str();
+    pre.alphaBlend = false;
+    pre.depthWrite = true;
+    pre.cull = CullMode::Back;
+    pre.debugName = "ssao.prepass";
+    prepass_ = rhi.CreatePipeline(pre);
+    pre.cull = CullMode::None;
+    pre.debugName = "ssao.prepass.twosided";
+    prepassTwo_ = rhi.CreatePipeline(pre);
+    if (!prepass_.Valid() || !prepassTwo_.Valid()) return false;
+  }
   pd.fragmentSource = kMaskFS; // same vertex stage and layout as the scene
   pd.alphaBlend = false;
   pd.depthTest = false;
@@ -780,6 +872,15 @@ bool Renderer3D::Init(RHI& rhi) {
   pp.fragmentSource = kBloomDownFS;
   pp.debugName = "post.bloom.down";
   bloomDown_ = rhi.CreatePipeline(pp);
+  const std::string ssaoFS = Src(kSsaoFS);
+  pp.fragmentSource = ssaoFS.c_str();
+  pp.debugName = "ssao";
+  ssao_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kAoBlurFS;
+  pp.debugName = "ssao.blur";
+  aoBlur_ = rhi.CreatePipeline(pp);
+  if (!ssao_.Valid() || !aoBlur_.Valid()) return false;
+  ssaoUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(SsaoData), true);
   pp.fragmentSource = kBloomUpFS;
   pp.additive = true;
   pp.debugName = "post.bloom.up";
@@ -820,6 +921,9 @@ void Renderer3D::Shutdown() {
     for (uint32_t& q : t.q) rhi_->DestroyQuery(q);
   rhi_->DestroyBuffer(postUbo_);
   rhi_->DestroyBuffer(shadowPassUbo_);
+  rhi_->DestroyBuffer(ssaoUbo_);
+  for (PipelineHandle p : {prepass_, prepassTwo_, ssao_, aoBlur_}) rhi_->DestroyPipeline(p);
+  for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
   rhi_->DestroyBuffer(probesUbo_);
   rhi_->DestroyBuffer(prefilterUbo_);
   rhi_->DestroyTexture(envArray_);
@@ -1025,6 +1129,12 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
   Put(f.camFwd, glm::normalize(cam.target - cam.position));
+  f.screen[0] = (float)w;
+  f.screen[1] = (float)h;
+  f.screen[2] = 1.f / w;
+  f.screen[3] = 1.f / h;
+  const bool ssaoOn = q.ssao && q.lighting == LightingMode::Pixel;
+  f.flags[0] = ssaoOn ? 1.f : 0.f;
   const int cascades = std::clamp(q.shadowCascades, 1, 4);
   if (light.shadows && q.shadows && q.lighting == LightingMode::Pixel && light.intensity > 0) {
     // Cascades (3-5b): view depth split between uniform and logarithmic (practical split, lambda 0.8); more cascades
@@ -1237,6 +1347,44 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
+  if (ssaoOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+    const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
+    if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
+      for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
+      geoRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
+      aoRT_[0] = rhi_->CreateRenderTargetEx(aw, ah, 1, false, false);
+      aoRT_[1] = rhi_->CreateRenderTargetEx(aw, ah, 1, false, false);
+      geoW_ = w;
+      geoH_ = h;
+    }
+    rhi_->BeginRenderTarget(geoRT_, {0, 0, 0, 65000.f});
+    for (size_t r = 0; r < opaqueRuns; ++r) {
+      const Material3D& m = items[runs[r].item].material;
+      rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
+      drawRun(m.doubleSided ? prepassTwo_ : prepass_, runs[r]);
+    }
+    rhi_->EndRenderTarget();
+    SsaoData sd{{q.ssaoRadius, q.ssaoIntensity, 0, 0}, {0, 0, 0, 0}};
+    rhi_->UpdateBuffer(ssaoUbo_, &sd, sizeof(sd));
+    rhi_->BindUniformBuffer(8, ssaoUbo_);
+    rhi_->BeginRenderTarget(aoRT_[0], {1, 1, 1, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(geoRT_));
+    rhi_->Draw(ssao_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    for (int pass = 0; pass < 2; ++pass) {
+      SsaoData bd{{q.ssaoRadius, q.ssaoIntensity, 0, 0}, {pass == 0 ? 1.f : 0.f, pass == 0 ? 0.f : 1.f, 0, 0}};
+      rhi_->UpdateBuffer(ssaoUbo_, &bd, sizeof(bd));
+      rhi_->BeginRenderTarget(aoRT_[1 - pass], {1, 1, 1, 1});
+      rhi_->BindTexture(0, rhi_->RenderTargetColor(aoRT_[pass]));
+      rhi_->BindTexture(1, rhi_->RenderTargetColor(geoRT_));
+      rhi_->Draw(aoBlur_, fullscreen_, 3);
+      rhi_->EndRenderTarget();
+    }
+    draws_ += 4;
+    if (timing) Mark(timer, "ssao");
+  }
+  rhi_->BindTexture(8, ssaoOn ? rhi_->RenderTargetColor(aoRT_[0]) : white_);
+  stats_.ssao = ssaoOn;
   Color linearClear = SrgbToLinear((uint8_t)std::lround(std::clamp(clear.r, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.b, 0.f, 1.f) * 255));
@@ -1701,6 +1849,7 @@ const char* DebugViewName(DebugView v) {
     case DebugView::Shadow: return "Shadow";
     case DebugView::Indirect: return "Indirect";
     case DebugView::Cascades: return "Cascades";
+    case DebugView::AO: return "AO";
   }
   return "Lit";
 }
@@ -1717,8 +1866,8 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={}", s.w, s.h,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={}", s.w, s.h,
                      s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
-                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades);
+                     s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0);
 }
 }
