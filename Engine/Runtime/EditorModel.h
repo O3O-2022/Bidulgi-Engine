@@ -67,6 +67,12 @@ public:
   // in the Hierarchy or the Scene view goes back to the objects.
   const std::string& InspectedAsset() const { return inspectAsset_; }
   void InspectAsset(const std::string& path) { inspectAsset_ = path; needRebuild_ = true; }
+  // Hierarchy folding (E-2). A click on a row's arrow folds or opens it (Alt: with everything under it); selecting
+  // a hidden object opens its parents. Remembered per scene in foldsPath ("" = not saved: automated runs).
+  void SetFolded(const std::string& id, bool folded, bool withChildren = false);
+  bool Folded(const std::string& id) const { return folded_.count(id) != 0; }
+  std::string foldsPath;
+  void LoadFolds();
   void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
   AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
@@ -135,6 +141,11 @@ private:
   AssetRuleChecker ruleChecker_;      // Unused view
   Widget* project_ = nullptr;
   std::string inspectAsset_;
+  std::set<std::string> folded_;
+  std::string pendingFold_;
+  bool pendingFoldAll_ = false;
+  void SaveFolds() const;
+  std::string FoldKey() const { return scenePath.empty() ? std::string("(sample)") : scenePath; }
   float lastProjectW_ = 0; // tiles per row follow the panel width
   void BuildAssetInspector();
   std::string projectFolder_, projectSelected_; // current folder; selected item (path, or folder/stem of a C++ pair)

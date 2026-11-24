@@ -416,6 +416,14 @@ jobs:
           if ($log -notmatch 'preview test: tiles=1 thumbs=1 material=1 model=1 inspect=1 orbit=1 back=1 list=1') { $errors += 'asset preview test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # E-2 hierarchy tree: guide lines, fold arrow, reveal on pick, Alt+click branch, saved folds
+          Remove-Item -Recurse -Force "$PWD/ci-tree" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-tree" | Out-Null
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_TREE_TEST = '1'; BDG_FOLDS = "$PWD/ci-tree/folds.jsonl" } 14
+          if ($log -notmatch 'tree test: guides=1 fold=1 lines=1 reveal=1 altfold=1 altopen=1 saved=1') { $errors += 'hierarchy tree test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }

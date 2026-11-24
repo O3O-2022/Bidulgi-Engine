@@ -56,6 +56,11 @@ struct Widget {
 
   std::vector<std::unique_ptr<Widget>> children;
   std::function<void(Widget&)> onClick;
+  // ListRow as a tree row (Hierarchy, E-2). tree: one entry per level, 0 nothing, 1 a guide line passes (an ancestor
+  // has siblings below), 2 this row's branch with more siblings after it, 3 this row's branch as the last one (└).
+  // fold: -1 no children, 0 open (▼), 1 folded (▶). Non-empty tree replaces `indent` for the row's offset.
+  std::vector<uint8_t> tree;
+  int fold = -1;
   bool draggable = false;                     // can be picked up and dropped on a widget with onDrop
   std::function<void(Widget& dropped)> onDrop; // something was dropped on this widget (Hierarchy reparent, ...)
 
@@ -107,6 +112,9 @@ public:
   Window* GetWindow() const { return window_; }
   bool ClickCtrl() const { return clickCtrl_; }        // modifiers of the click being handled (multi-select)
   bool ClickShift() const { return clickShift_; }
+  bool ClickAlt() const { return clickAlt_; }
+  float ClickX() const { return clickX_; }               // UI units, of the click being handled
+  bool OnTreeArrow(const Widget& row, float x) const;    // x is on a tree row's fold arrow (E-2)
   void SetScale(float scale) { scale_ = scale; }       // UI units -> drawable pixels (display scale)
   Widget* Root() { return root_.get(); }
   Widget* Find(const std::string& id);
@@ -170,7 +178,8 @@ private:
   Widget* dragSource_ = nullptr; // pressed draggable widget
   Widget* dropTarget_ = nullptr; // widget under the mouse that accepts the drop
   bool dragging_ = false;
-  bool clickCtrl_ = false, clickShift_ = false;
+  bool clickCtrl_ = false, clickShift_ = false, clickAlt_ = false;
+  float clickX_ = 0;
   Widget* sliderDrag_ = nullptr;
   void SliderSet(Widget& f, float mouseX);
   float pressX_ = 0, pressY_ = 0, dragX_ = 0, dragY_ = 0;

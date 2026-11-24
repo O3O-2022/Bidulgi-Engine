@@ -1,4 +1,5 @@
 #include "Runtime/EditorModel.h"
+#include <fstream>
 #include "Core/Log.h"
 #include "Scene/Components.h"
 #include "Scene/SampleComponents.h"
@@ -139,6 +140,7 @@ bool EditorModel::OpenScene(const std::string& path) {
   selection_ = selected_.empty() ? std::vector<std::string>{} : std::vector<std::string>{selected_};
   needRebuild_ = true;
   LogInfo("scene: opened {} ({} objects)", path, scene.ObjectCount());
+  LoadFolds();
   return true;
 }
 
@@ -200,6 +202,71 @@ void EditorModel::NewScene(SceneTemplate t) {
   selection_ = {"cam"};
   needRebuild_ = true;
   LogInfo("scene: new {} scene ({} objects), saves to {}", SceneTemplateName(t), scene.ObjectCount(), scenePath);
+  LoadFolds();
+}
+
+void EditorModel::SetFolded(const std::string& id, bool folded, bool withChildren) {
+  std::vector<std::string> ids{id};
+  for (size_t i = 0; withChildren && i < ids.size(); ++i)
+    if (const SceneObject* o = scene.Find(ids[i])) ids.insert(ids.end(), o->children.begin(), o->children.end());
+  for (const std::string& k : ids) {
+    const SceneObject* o = scene.Find(k);
+    if (!o || o->children.empty()) continue;
+    if (folded) folded_.insert(k);
+    else folded_.erase(k);
+  }
+  needRebuild_ = true;
+  SaveFolds();
+}
+
+// One line per scene: {"scene":"<path>","folded":["g6","g12"]}
+void EditorModel::LoadFolds() {
+  folded_.clear();
+  if (foldsPath.empty()) return;
+  std::ifstream in(std::filesystem::path(std::u8string((const char8_t*)foldsPath.c_str())), std::ios::binary);
+  const std::string key = FoldKey();
+  for (std::string line; std::getline(in, line);) {
+    yyjson_doc* doc = yyjson_read(line.data(), line.size(), 0);
+    if (!doc) continue;
+    yyjson_val* r = yyjson_doc_get_root(doc);
+    const char* sc = yyjson_get_str(yyjson_obj_get(r, "scene"));
+    if (sc && key == sc) {
+      size_t i, n;
+      yyjson_val* v;
+      yyjson_arr_foreach(yyjson_obj_get(r, "folded"), i, n, v)
+        if (yyjson_is_str(v)) folded_.insert(yyjson_get_str(v));
+    }
+    yyjson_doc_free(doc);
+  }
+}
+
+void EditorModel::SaveFolds() const {
+  if (foldsPath.empty()) return;
+  namespace fs = std::filesystem;
+  const fs::path p(std::u8string((const char8_t*)foldsPath.c_str()));
+  std::vector<std::string> keep; // the other scenes' lines
+  {
+    std::ifstream in(p, std::ios::binary);
+    for (std::string line; std::getline(in, line);) {
+      yyjson_doc* doc = yyjson_read(line.data(), line.size(), 0);
+      if (!doc) continue;
+      const char* sc = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "scene"));
+      if (sc && FoldKey() != sc) keep.push_back(line);
+      yyjson_doc_free(doc);
+    }
+  }
+  std::string mine = "{\"scene\":" + Q(FoldKey()) + ",\"folded\":[";
+  bool first = true;
+  for (const std::string& id : folded_) {
+    mine += (first ? "" : ",") + Q(id);
+    first = false;
+  }
+  mine += "]}";
+  if (!folded_.empty()) keep.push_back(mine);
+  std::error_code ec;
+  fs::create_directories(p.parent_path(), ec);
+  std::ofstream out(p, std::ios::binary);
+  for (const std::string& l : keep) out << l << '\n';
 }
 
 bool EditorModel::Autosave() {
@@ -386,6 +453,10 @@ void EditorModel::Update() {
   if (!pendingSelect_.empty()) {
     if (scene.Find(pendingSelect_)) ApplySelection(pendingSelect_, pendingSelectMode_);
     inspectAsset_.clear(); // back to the objects (E-1)
+    bool opened = false;   // picked in the Scene view under a folded parent: open the way to it (E-2)
+    for (const SceneObject* o = scene.Find(pendingSelect_); o && !o->parent.empty(); o = scene.Find(o->parent))
+      opened = folded_.erase(o->parent) > 0 || opened;
+    if (opened) SaveFolds();
     pendingSelect_.clear();
     pendingSelectMode_ = 0;
     needRebuild_ = true;
@@ -411,6 +482,10 @@ void EditorModel::Update() {
   if (project_ && projectTiles && project_->w > 1 && std::abs(project_->w - lastProjectW_) > 1) { // tiles per row
     lastProjectW_ = project_->w;
     needProject_ = true;
+  }
+  if (!pendingFold_.empty()) {
+    SetFolded(pendingFold_, !folded_.count(pendingFold_), pendingFoldAll_);
+    pendingFold_.clear();
   }
   if (needProject_) RebuildProject();
   bool historyChanged = needRebuild_ || needRefresh_;
@@ -522,7 +597,8 @@ void EditorModel::Rebuild() {
   sceneRow.onDrop = [this](Widget& w) { // drop on the scene row: back to the top level
     if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_.clear(); pendingMove_ = true; }
   };
-  std::function<void(const std::string&, int)> addRow = [&](const std::string& id, int depth) {
+  std::function<void(const std::string&, int, const std::vector<uint8_t>&, bool)> addRow = [&](const std::string& id, int depth,
+                                                                                              const std::vector<uint8_t>& lines, bool last) {
     const SceneObject* o = scene.Find(id);
     std::string kind = o->prefab ? "Prefab" : "";
     if (kind.empty())
@@ -533,7 +609,15 @@ void EditorModel::Rebuild() {
       }
     auto& row = hierarchy_->Add(MakeListRow("h." + id, o->name, kind, depth));
     row.selected = std::find(selection_.begin(), selection_.end(), id) != selection_.end();
-    row.onClick = [this, id](Widget&) { // applied in Update (never rebuild inside a click); Ctrl toggles, Shift extends
+    row.tree = lines;
+    row.tree.push_back(last ? 3 : 2);
+    row.fold = o->children.empty() ? -1 : folded_.count(id) ? 1 : 0;
+    row.onClick = [this, id](Widget& w) { // applied in Update (never rebuild inside a click); Ctrl toggles, Shift extends
+      if (ui_ && ui_->OnTreeArrow(w, ui_->ClickX())) { // the arrow: fold / open (Alt: everything under it)
+        pendingFold_ = id;
+        pendingFoldAll_ = ui_->ClickAlt();
+        return;
+      }
       pendingSelect_ = id;
       pendingSelectMode_ = ui_ && ui_->ClickCtrl() ? 1 : ui_ && ui_->ClickShift() ? 2 : 0;
     };
@@ -541,9 +625,12 @@ void EditorModel::Rebuild() {
     row.onDrop = [this, id](Widget& w) {
       if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_ = id; pendingMove_ = true; }
     };
-    for (auto& k : o->children) addRow(k, depth + 1);
+    if (folded_.count(id)) return;
+    std::vector<uint8_t> next = lines;
+    next.push_back(last ? 0 : 1);
+    for (size_t i = 0; i < o->children.size(); ++i) addRow(o->children[i], depth + 1, next, i + 1 == o->children.size());
   };
-  for (auto& r : scene.Roots()) addRow(r, 1);
+  for (size_t i = 0; i < scene.Roots().size(); ++i) addRow(scene.Roots()[i], 1, {}, i + 1 == scene.Roots().size());
 
   // Inspector: one card per component, one field per editable property. With several objects selected only
   // the components they all have are shown; a field whose values differ shows "—"; an edit sets it on every

@@ -167,7 +167,7 @@ void UIContext::Measure(Widget& w) {
       else w.prefW = Measure(t.FontSize("badge", 10), w.text) + s3 * 2 + 2;          // pill (.bdg-pill)
       w.prefH = 18; break;
     case WidgetKind::ListRow:
-      w.prefW = s5 * 2 + w.indent * 12.f + 18 + Measure(t.FontSize("control", 12.5f), w.text) +
+      w.prefW = s5 * 2 + (w.tree.empty() ? w.indent * 12.f : w.tree.size() * 14.f + 12) + 18 + Measure(t.FontSize("control", 12.5f), w.text) +
                 (w.text2.empty() ? 0 : 16 + Measure(11, w.text2));
       w.prefH = t.N("size-row", 22);
       break;
@@ -461,6 +461,21 @@ void UIContext::DrawWidget(Widget& w) {
       float kx = w.x + s5 + w.indent * 12.f;
       float ky = w.y + (w.h - 11) * 0.5f;
       Color dim = t.C("fg-dim");
+      if (!w.tree.empty()) { // tree row (E-2): guide lines per level, the branch to this row, the fold arrow
+        constexpr float kStep = 14;
+        const Color gl = t.C("line-strong");
+        const float my = w.y + w.h * 0.5f, ax = w.x + s5 + w.tree.size() * kStep;
+        for (size_t k = 0; k < w.tree.size(); ++k) {
+          const float cx = std::floor(w.x + s5 + k * kStep + 6) + 0.5f;
+          const uint8_t g = w.tree[k];
+          if (g == 1 || g == 2) b.Line(cx, w.y, cx, w.y + w.h, 1, gl);
+          if (g == 3) b.Line(cx, w.y, cx, my, 1, gl);
+          if (g >= 2) b.Line(cx, my, w.fold >= 0 ? ax : ax + 10, my, 1, gl);
+        }
+        if (w.fold == 1) { b.Line(ax + 3, my - 4, ax + 7, my, 1.5f, dim); b.Line(ax + 7, my, ax + 3, my + 4, 1.5f, dim); }      // ▶
+        else if (w.fold == 0) { b.Line(ax + 1, my - 2, ax + 5, my + 2, 1.5f, dim); b.Line(ax + 5, my + 2, ax + 9, my - 2, 1.5f, dim); } // ▼
+        kx = ax + 12;
+      }
       const char* rowIcon = w.text2 == "Camera" ? "comp-camera" : w.text2 == "Light" ? "comp-light" : w.text2 == "Prefab" ? "obj-prefab"
                           : w.text2 == "Scene" ? "obj-scene" : w.text2 == "Mesh" ? "comp-mesh" : "obj-object";
       if (Icon(rowIcon, kx - 2, w.y + (w.h - 15) * 0.5f, 15)) {
@@ -730,8 +745,10 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
           pressed_->pressed = false;
           clickCtrl_ = e.ctrl;
           clickShift_ = e.shift;
+          clickAlt_ = e.alt;
+          clickX_ = e.x;
           if (hit == pressed_) Activate(*hit, e.x, e.y);
-          clickCtrl_ = clickShift_ = false;
+          clickCtrl_ = clickShift_ = clickAlt_ = false;
         }
         pressed_ = nullptr;
         dragSource_ = dropTarget_ = nullptr;
@@ -843,6 +860,12 @@ std::string UIContext::AccessibleName(const Widget& w) {
       return name.empty() ? w.id : name;
     }
   }
+}
+
+bool UIContext::OnTreeArrow(const Widget& row, float x) const {
+  if (row.tree.empty() || row.fold < 0) return false;
+  const float ax = row.x + theme_.N("space-5", 10) + row.tree.size() * 14.f;
+  return x >= ax - 3 && x < ax + 13;
 }
 
 void UIContext::SliderSet(Widget& f, float mouseX) {

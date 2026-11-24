@@ -104,7 +104,8 @@ struct bdg_engine {
   bdg::IconAtlas icons; // editor icons (Assets/Icons)
   bdg::PlayMode play;   // queue 3-6
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
-  bool previewTestOn = false;
+  bool previewTestOn = false, treeTest = false;
+  std::string treeTestValues[7];
   std::string newSceneTestValues[6];
   std::string importTestValues[8];
   std::string themeTestValues[8];
@@ -717,6 +718,85 @@ void InjectNewSceneTest(bdg_engine* e, int frame) {
     std::ifstream in(std::filesystem::path(std::u8string((const char8_t*)m->scenePath.c_str())), std::ios::binary);
     text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     v[5] = std::format("{}", text.find("\"World Settings\"") != std::string::npos && text.find("bdg:Grid") != std::string::npos ? 1 : 0);
+  }
+}
+
+// Scripted check of E-2 (BDG_TREE_TEST=1, BDG_FOLDS = a scratch file): guide lines on the sample scene's rows,
+// a click on Player's arrow folds it without changing the selection, the drawn guide line, picking the hidden
+// Weapon opens the way to it, Alt+click folds and opens a branch with everything under it, folds are saved.
+void InjectTreeTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto* v = e->treeTestValues;
+  const float s = e->editor->Scale();
+  auto arrow = [&](const char* id, bool alt) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w) { bdg::LogError("tree test: no row {}", id); return; }
+    const float x = (w->x + e->editor->Tokens().N("space-5", 10) + w->tree.size() * 14.f + 5) * s, y = (w->y + w->h * 0.5f) * s;
+    bdg::InputEvent dn{T::MouseDown, x, y, 1}, up{T::MouseUp, x, y, 1};
+    dn.alt = up.alt = alt;
+    e->window.InjectEvent({T::MouseMove, x, y});
+    e->window.InjectEvent(dn);
+    e->window.InjectEvent(up);
+  };
+  auto tree = [&](const char* id) {
+    bdg::Widget* w = e->editor->Find(id);
+    return w ? std::vector<uint8_t>(w->tree) : std::vector<uint8_t>{9};
+  };
+  auto fileText = [&] {
+    std::ifstream in(std::filesystem::path(m->foldsPath), std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  static std::string selected0;
+  if (frame == 2) {
+    bdg::Widget* g6 = e->editor->Find("h.g6");
+    v[0] = std::format("{}", tree("h.g1") == std::vector<uint8_t>{2} && tree("h.g7") == std::vector<uint8_t>{1, 3} &&
+                                     tree("h.g9") == std::vector<uint8_t>{3} && g6 && g6->fold == 0 ? 1 : 0);
+    selected0 = m->Selected();
+    arrow("h.g6", false);
+  }
+  if (frame == 4) {
+    bdg::Widget* g6 = e->editor->Find("h.g6");
+    v[1] = std::format("{}", !e->editor->Find("h.g7") && g6 && g6->fold == 1 && m->Selected() == selected0 &&
+                                     fileText().find("\"g6\"") != std::string::npos ? 1 : 0);
+    // the guide line beside the Crystal row (a branch with more siblings below), as drawn last frame
+    bool line = false;
+    if (bdg::Widget* row = e->editor->Find("h.g8")) {
+      int32_t w = 0, h = 0;
+      e->window.GetDrawableSize(w, h);
+      std::vector<uint8_t> px;
+      e->rhi.ReadPixels(w, h, px);
+      const bdg::Color c = e->theme.C("line-strong");
+      const int x = (int)std::lround((row->x + e->editor->Tokens().N("space-5", 10) + 6.5f) * s - 0.5f);
+      for (int dx = -1; dx <= 1 && !line; ++dx) {
+        const int px0 = x + dx, py = h - 1 - (int)((row->y + 3) * s);
+        if (px0 < 0 || px0 >= w || py < 0 || py >= h) continue;
+        const uint8_t* p = &px[((size_t)py * w + px0) * 4];
+        line = std::abs(p[0] - c.r * 255) < 30 && std::abs(p[1] - c.g * 255) < 30 && std::abs(p[2] - c.b * 255) < 30;
+      }
+    }
+    v[2] = std::format("{}", line ? 1 : 0);
+    m->Select("g7"); // as a Scene view pick would
+  }
+  if (frame == 6) {
+    v[3] = std::format("{}", e->editor->Find("h.g7") && !m->Folded("g6") ? 1 : 0);
+    bdg::Command add;
+    add.name = "add";
+    add.args = R"({"id":"t1","name":"Tip","parent":"g7"})";
+    std::string err;
+    if (!m->bus.Execute(add, &err)) bdg::LogError("tree test: {}", err);
+  }
+  if (frame == 8) arrow("h.g6", true);
+  if (frame == 10) {
+    v[4] = std::format("{}", m->Folded("g6") && m->Folded("g7") && !e->editor->Find("h.g7") ? 1 : 0);
+    arrow("h.g6", true);
+  }
+  if (frame == 12) {
+    v[5] = std::format("{}", !m->Folded("g6") && !m->Folded("g7") && e->editor->Find("h.t1") ? 1 : 0);
+    m->SetFolded("g7", true);
+    m->LoadFolds(); // what the next start reads
+    v[6] = std::format("{}", m->Folded("g7") && !m->Folded("g6") ? 1 : 0);
   }
 }
 
@@ -2635,6 +2715,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->importTest = std::getenv("BDG_IMPORT_TEST") != nullptr;
   e->newSceneTest = std::getenv("BDG_NEWSCENE_TEST") != nullptr;
   e->previewTestOn = std::getenv("BDG_PREVIEW_TEST") != nullptr;
+  e->treeTest = std::getenv("BDG_TREE_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -2881,7 +2962,13 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     // Scene file: BDG_SCENE_FILE, else Scenes/Main.scene in the working folder; the sample scene when there is none.
     const char* sceneEnv = std::getenv("BDG_SCENE_FILE");
     model->scenePath = sceneEnv ? sceneEnv : (std::filesystem::current_path() / "Scenes" / "Main.scene").string();
+    { // Hierarchy folds (E-2): per user; automated runs neither read nor write them unless BDG_FOLDS says where
+      const char* folds = std::getenv("BDG_FOLDS");
+      const bool automatedRun = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST");
+      model->foldsPath = folds ? folds : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl").string();
+    }
     if (std::filesystem::exists(model->scenePath)) model->OpenScene(model->scenePath);
+    model->LoadFolds();
     if (desc->replay_path) {
       std::string err;
       size_t n = 0;
@@ -3082,6 +3169,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->importTest && !e->showGallery) InjectImportTest(e, frames);
     if (e->newSceneTest && !e->showGallery) InjectNewSceneTest(e, frames);
     if (e->previewTestOn && !e->showGallery) InjectPreviewTest(e, frames);
+    if (e->treeTest && !e->showGallery) InjectTreeTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -3447,6 +3535,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->blockoutTest) {
         auto* v = e->blockoutTestValues;
         bdg::LogInfo("blockout test: create={} push={} top={} cancel={} undo={} shapes={} pick={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->treeTest) {
+        auto* v = e->treeTestValues;
+        bdg::LogInfo("tree test: guides={} fold={} lines={} reveal={} altfold={} altopen={} saved={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->previewTestOn) {
         auto* v = e->previewTestValues;
