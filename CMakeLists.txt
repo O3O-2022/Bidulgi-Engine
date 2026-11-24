@@ -132,6 +132,7 @@ add_library(BidulgiEngine STATIC
   Engine/Render3D/MeshGen.h Engine/Render3D/MeshGen.cpp
   Engine/Render3D/Renderer3D.h Engine/Render3D/Renderer3D.cpp
   Engine/Render3D/Quality.h Engine/Render3D/Quality.cpp
+  Engine/Render3D/Culling.h Engine/Render3D/Culling.cpp
   Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
   Engine/Text/Font.h       Engine/Text/Font.cpp
   Engine/Core/Image.h      Engine/Core/Image.cpp

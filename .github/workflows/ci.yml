@@ -105,8 +105,9 @@ jobs:
           $env:BDG_IDLE_TEST = '3'
           $log = Invoke-Editor 'Release' @{} 0
           Remove-Item Env:BDG_IDLE_TEST
-          if ($log -match 'idle: .*frames=(\d+) .*wake_latency_ms=([\d.]+)') {
-            if ([int]$Matches[1] -gt 6) { $errors += "idle editor kept drawing ($($Matches[1]) frames in 3 s)" }
+          # frames drawn for input from someone at the desk do not count (local runs); CI has no mouse moving
+          if ($log -match 'idle: .*frames=(\d+) .*wake_latency_ms=([\d.]+).* frames_without_input=(\d+)') {
+            if ([int]$Matches[3] -gt 6) { $errors += "idle editor kept drawing ($($Matches[3]) frames without input in 3 s)" }
             if ([double]$Matches[2] -gt 50) { $errors += "idle wake-up too slow ($($Matches[2]) ms)" }
           } else { $errors += 'idle test line missing' }
 
@@ -264,9 +265,11 @@ jobs:
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 25) Stress (queue 3-9): 10,000 instanced cubes + 16 4K BC7 textures; the same picture without instancing
-          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-stress'; BDG_STRESS_TEST = '1' } 14
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-stress'; BDG_STRESS_TEST = '1' } 22
           if ($log -notmatch 'stress test: draws_instanced=\d{1,2} draws_single=100\d\d same_picture=1') { $errors += 'stress / instancing test failed' }
-          if ($log -notmatch 'stress: objects=10017 .*textures=16x4096 vram_mb=') { $errors += 'stress numbers missing' }
+          if ($log -notmatch 'stress: objects=\d+ .*textures=16x4096 vram_mb=') { $errors += 'stress numbers missing' }
+          # culling (queue 3-10): close-up camera, most cubes culled, the same picture as drawing everything
+          if ($log -notmatch 'culling test: drawn=\d{1,4} drawn_without=10017 culled=[1-9]\d{3,} shadow_culled=\d+ same_picture=1') { $errors += 'culling test failed' }
 
           # 26) Image compare per bookmark (queue 3-9): baselines made, the same build matches them, a change is caught
           Remove-Item -Recurse -Force "$PWD/ci-compare" -ErrorAction SilentlyContinue

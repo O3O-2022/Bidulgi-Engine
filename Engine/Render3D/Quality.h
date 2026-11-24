@@ -32,6 +32,7 @@ struct QualitySettings {
   float bloomIntensity = 0.2f;    // share of the blurred image added back (glow around bright light)
   int msaa = 1;
   bool instancing = true;      // objects sharing mesh, pipeline and textures go out in one draw call
+  bool culling = true;         // skip objects outside the camera (and, for shadows, the light's) frustum
   float viewDistance = 0.75f;  // multiplies far plane and shadow distance
 };
 

@@ -13,6 +13,7 @@ namespace bdg {
 struct Mesh3D {
   BufferHandle vertices, indices;
   uint32_t indexCount = 0;
+  glm::vec3 boundsMin{0}, boundsMax{0}; // local box (culling); equal = unknown, never culled
 };
 
 struct Material3D {
@@ -111,6 +112,8 @@ struct RenderStats {
   std::vector<Pass> passes; // GPU time per pass of the newest finished frame (empty until one is ready)
   uint32_t sceneDraws = 0;  // draw calls of the scene pass (with instancing: one per run of alike objects)
   size_t objects = 0;       // objects drawn in the scene pass
+  size_t culled = 0;        // objects outside the camera frustum (not drawn)
+  size_t shadowCulled = 0;  // opaque objects outside the light's frustum (not drawn into the shadow map)
 };
 
 class Renderer3D {
@@ -138,8 +141,8 @@ public:
 private:
   RHI* rhi_ = nullptr;
   PipelineHandle opaque_, twoSided_, blend_;
-  BufferHandle frameUbo_, objectBuffer_, instanceIds_; // object constants (storage buffer), 0..N-1 instance stream
-  size_t objectCapacity_ = 0;
+  BufferHandle frameUbo_, objectBuffer_, instanceIds_; // object constants (storage buffer), per-pass object index lists
+  size_t objectCapacity_ = 0, indexCapacity_ = 0;
   TextureHandle white_;
   uint32_t draws_ = 0;
   uint64_t triangles_ = 0;

@@ -6,6 +6,8 @@
 #include "Runtime/Gizmo.h"
 #include "Render3D/Quality.h"
 #include "Core/ImageCompare.h"
+#include "Render3D/Culling.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
 #include <filesystem>
 #include <cmath>
@@ -224,4 +226,24 @@ TEST_CASE("image compare: FLIP-style error is zero for equal pictures and grows 
   CHECK(CompareImages(black.data(), white.data(), W, H, d));
   CHECK(d.mean > 0.9);
   CHECK(!CompareImages(nullptr, a.data(), W, H, d));
+}
+
+TEST_CASE("culling: frustum planes and transformed boxes (queue 3-10)") {
+  Camera3D cam;
+  cam.position = {0, 0, 10};
+  cam.target = {0, 0, 0};
+  cam.fovY = 60;
+  cam.nearZ = 0.1f;
+  cam.farZ = 100;
+  Frustum f = Frustum::FromMatrix(cam.Projection(1.f) * cam.View());
+  CHECK(f.Intersects({-1, -1, -1}, {1, 1, 1}));         // in front
+  CHECK(!f.Intersects({-1, -1, 11}, {1, 1, 12}));       // behind the camera
+  CHECK(!f.Intersects({50, -1, -1}, {52, 1, 1}));       // far to the right
+  CHECK(!f.Intersects({-1, -1, -200}, {1, 1, -150}));   // beyond the far plane
+  CHECK(f.Intersects({5.5f, -1, -1}, {50, 1, 1}));      // straddles the right plane: kept (conservative)
+  CHECK(f.Intersects({-1000, -1000, -50}, {1000, 1000, -40})); // larger than the view: kept
+  glm::vec3 lo, hi; // a unit box turned 45 degrees about Y and moved: extents grow to sqrt(2) / 2
+  glm::mat4 m = glm::rotate(glm::translate(glm::mat4(1.f), {3, 0, 0}), glm::radians(45.f), glm::vec3(0, 1, 0));
+  TransformBounds(m, {-0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, 0.5f}, lo, hi);
+  CHECK(std::fabs(hi.x - 3 - 0.70710678f) < 1e-5f && std::fabs(lo.x - 3 + 0.70710678f) < 1e-5f && std::fabs(hi.y - 0.5f) < 1e-6f);
 }

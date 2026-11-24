@@ -1,11 +1,13 @@
 #include "Render3D/Renderer3D.h"
 #include "Assets/GltfImport.h"
+#include "Render3D/Culling.h"
 #include "Core/Log.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
 #include <format>
+#include <functional>
 #include <tuple>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
@@ -626,6 +628,11 @@ Mesh3D Renderer3D::CreateMesh(const MeshData& d) {
   m.vertices = rhi_->CreateBuffer(BufferUsage::Vertex, d.vertices.data(), d.vertices.size() * sizeof(Vertex3D));
   m.indices = rhi_->CreateBuffer(BufferUsage::Index, d.indices.data(), d.indices.size() * sizeof(uint32_t));
   m.indexCount = (uint32_t)d.indices.size();
+  for (size_t i = 0; i < d.vertices.size(); ++i) {
+    glm::vec3 p(d.vertices[i].px, d.vertices[i].py, d.vertices[i].pz);
+    m.boundsMin = i ? glm::min(m.boundsMin, p) : p;
+    m.boundsMax = i ? glm::max(m.boundsMax, p) : p;
+  }
   return m;
 }
 
@@ -761,48 +768,95 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
-  // Draw order (queue 3-9): opaque items sorted so alike ones (same pipeline, mesh and textures) sit together, each
-  // such run one instanced draw; blended items after them, back to front, one by one. Object constants go into the
-  // storage buffer in this order, so a run's instances are consecutive elements.
+  // Draw lists (queue 3-9, 3-10). Object constants: one storage buffer element per item, in item order. Each pass
+  // lists the objects it draws (inside its frustum: the camera's, or the light's for the shadow map), sorted so alike
+  // objects (same pipeline, mesh and textures) sit together; each run of alike objects is one instanced draw whose
+  // instances read their object index from a per-frame index stream.
   auto pipeOf = [&](const Material3D& m) { return m.alpha == Material3D::Alpha::Blend ? blend_ : m.doubleSided ? twoSided_ : opaque_; };
   auto runKey = [&](size_t i) {
     const Material3D& m = items[i].material;
     return std::make_tuple(pipeOf(m).id, (uintptr_t)items[i].mesh, m.baseMap.id, m.metalRoughMap.id, m.normalMap.id, m.occlusionMap.id,
                            m.emissiveMap.id);
   };
-  std::vector<size_t> slots, blended;
-  slots.reserve(items.size());
-  for (size_t i = 0; i < items.size(); ++i)
-    if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : slots).push_back(i);
-  std::stable_sort(slots.begin(), slots.end(), [&](size_t x, size_t y) { return runKey(x) < runKey(y); });
-  auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
-  std::sort(blended.begin(), blended.end(), [&](size_t x, size_t y) { return dist(x) > dist(y); });
-  const size_t opaqueSlots = slots.size();
-  slots.insert(slots.end(), blended.begin(), blended.end());
-  std::vector<uint32_t> slotOf(items.size(), UINT32_MAX);
-  for (size_t k = 0; k < slots.size(); ++k) slotOf[slots[k]] = (uint32_t)k;
+  auto shadowKey = [&](size_t i) { // depth only: the base map matters for alpha-masked holes alone
+    const Material3D& m = items[i].material;
+    bool masked = m.alpha == Material3D::Alpha::Mask;
+    return std::make_tuple((uint32_t)0, (uintptr_t)items[i].mesh, masked ? m.baseMap.id : 0u, (uint32_t)0, (uint32_t)0, (uint32_t)0,
+                           (uint32_t)0); // same shape as runKey
+  };
+  std::vector<glm::vec3> worldLo(items.size()), worldHi(items.size());
+  std::vector<bool> drawable(items.size(), false);
+  for (size_t i = 0; i < items.size(); ++i) {
+    const Mesh3D* m = items[i].mesh;
+    if (!m || !m->indexCount) continue;
+    drawable[i] = true;
+    TransformBounds(items[i].model, m->boundsMin, m->boundsMax, worldLo[i], worldHi[i]);
+  }
+  auto inside = [&](const Frustum& fr, size_t i) {
+    const Mesh3D* m = items[i].mesh;
+    return !q.culling || m->boundsMin == m->boundsMax || fr.Intersects(worldLo[i], worldHi[i]);
+  };
+  const Frustum camFrustum = Frustum::FromMatrix(vp);
+  std::vector<float> indexStream;
   struct Run { uint32_t first, count; size_t item; };
-  std::vector<Run> runs;
-  for (size_t k = 0; k < slots.size(); ++k) {
-    bool joins = q.instancing && k < opaqueSlots && !runs.empty() && runs.back().first + runs.back().count == k &&
-                 runKey(runs.back().item) == runKey(slots[k]);
-    if (joins) ++runs.back().count;
-    else runs.push_back({(uint32_t)k, 1, slots[k]});
+  using Key = decltype(runKey(0));
+  auto buildRuns = [&](const std::vector<size_t>& list, const std::function<Key(size_t)>& key, bool group) {
+    std::vector<Run> out;
+    for (size_t i : list) {
+      if (group && q.instancing && !out.empty() && key(out.back().item) == key(i)) ++out.back().count;
+      else out.push_back({(uint32_t)indexStream.size(), 1, i});
+      indexStream.push_back((float)i);
+    }
+    return out;
+  };
+  // camera pass: opaque runs, then blended objects back to front
+  std::vector<size_t> opaqueList, blendList;
+  size_t culled = 0;
+  for (size_t i = 0; i < items.size(); ++i) {
+    if (!drawable[i]) continue;
+    if (!inside(camFrustum, i)) { ++culled; continue; }
+    (items[i].material.alpha == Material3D::Alpha::Blend ? blendList : opaqueList).push_back(i);
   }
-  size_t opaqueRuns = 0;
-  while (opaqueRuns < runs.size() && runs[opaqueRuns].first < opaqueSlots) ++opaqueRuns;
-  if (slots.size() > objectCapacity_) { // grow both buffers (they are sized together)
+  std::stable_sort(opaqueList.begin(), opaqueList.end(), [&](size_t x, size_t y) { return runKey(x) < runKey(y); });
+  auto dist = [&](size_t i) { return glm::distance(glm::vec3(items[i].model[3]), cam.position); };
+  std::sort(blendList.begin(), blendList.end(), [&](size_t x, size_t y) { return dist(x) > dist(y); });
+  std::vector<Run> runs = buildRuns(opaqueList, runKey, true);
+  const size_t opaqueRuns = runs.size();
+  for (const Run& r : buildRuns(blendList, runKey, false)) runs.push_back(r);
+  // shadow pass: opaque and masked objects inside the light's frustum
+  std::vector<Run> shadowRuns;
+  size_t shadowCulled = 0;
+  if (f.shadow[0] > 0.5f) {
+    const Frustum lightFrustum = Frustum::FromMatrix(shadowMatrix_);
+    std::vector<size_t> casters;
+    for (size_t i = 0; i < items.size(); ++i) {
+      if (!drawable[i] || items[i].material.alpha == Material3D::Alpha::Blend) continue;
+      if (inside(lightFrustum, i)) casters.push_back(i);
+      else ++shadowCulled;
+    }
+    std::stable_sort(casters.begin(), casters.end(), [&](size_t x, size_t y) { return shadowKey(x) < shadowKey(y); });
+    shadowRuns = buildRuns(casters, shadowKey, true);
+  }
+  // selection mask: each outlined object on its own
+  std::vector<Run> maskRuns;
+  if (extras)
+    for (size_t i : extras->outlined)
+      if (i < items.size() && drawable[i] && inside(camFrustum, i)) maskRuns.push_back(buildRuns({i}, runKey, false)[0]);
+  if (items.size() > objectCapacity_) {
     rhi_->DestroyBuffer(objectBuffer_);
-    rhi_->DestroyBuffer(instanceIds_);
-    objectCapacity_ = std::max<size_t>(slots.size(), 256) * 2;
+    objectCapacity_ = std::max<size_t>(items.size(), 256) * 2;
     objectBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, objectCapacity_ * sizeof(ObjectData), true);
-    std::vector<float> ids(objectCapacity_);
-    for (size_t k = 0; k < ids.size(); ++k) ids[k] = (float)k;
-    instanceIds_ = rhi_->CreateBuffer(BufferUsage::Vertex, ids.data(), ids.size() * sizeof(float));
   }
-  std::vector<ObjectData> objects(slots.size());
-  for (size_t k = 0; k < slots.size(); ++k) {
-    const DrawItem3D& it = items[slots[k]];
+  if (indexStream.size() > indexCapacity_) {
+    rhi_->DestroyBuffer(instanceIds_);
+    indexCapacity_ = std::max<size_t>(indexStream.size(), 1024) * 2;
+    instanceIds_ = rhi_->CreateBuffer(BufferUsage::Vertex, nullptr, indexCapacity_ * sizeof(float), true);
+  }
+  if (!indexStream.empty()) rhi_->UpdateBuffer(instanceIds_, indexStream.data(), indexStream.size() * sizeof(float));
+  std::vector<ObjectData> objects(items.size());
+  for (size_t k = 0; k < items.size(); ++k) {
+    if (!drawable[k]) continue;
+    const DrawItem3D& it = items[k];
     ObjectData& o = objects[k];
     std::memcpy(o.model, glm::value_ptr(it.model), sizeof(o.model));
     const Material3D& m = it.material;
@@ -834,11 +888,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       shadowSize_ = q.shadowMapSize;
     }
     rhi_->BeginRenderTarget(shadowRT_, {0, 0, 0, 0});
-    for (size_t r = 0; r < opaqueRuns; ++r) { // the same runs: alike objects cast in one draw too
-      const Material3D& m = items[runs[r].item].material;
+    for (const Run& r : shadowRuns) { // alike casters in one draw too
+      const Material3D& m = items[r.item].material;
       rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
-      drawRun(shadowPipe_, runs[r]);
-      stats_.shadowCasters += runs[r].count;
+      drawRun(shadowPipe_, r);
+      stats_.shadowCasters += r.count;
     }
     rhi_->EndRenderTarget();
     if (timing) Mark(timer, "shadow");
@@ -855,8 +909,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       maskH_ = h;
     }
     rhi_->BeginRenderTarget(maskRT_, {0, 0, 0, 0});
-    for (size_t i : extras->outlined)
-      if (i < items.size() && slotOf[i] != UINT32_MAX) drawRun(mask_, Run{slotOf[i], 1, i});
+    for (const Run& r : maskRuns) drawRun(mask_, r);
     rhi_->EndRenderTarget();
   }
   const int samples = std::clamp(q.msaa, 1, 8);
@@ -887,7 +940,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     triangles_ += (uint64_t)(items[runs[r].item].mesh->indexCount / 3) * runs[r].count;
   }
   stats_.sceneDraws = sceneDraws;
-  stats_.objects = slots.size();
+  stats_.objects = opaqueList.size() + blendList.size();
+  stats_.culled = culled;
+  stats_.shadowCulled = shadowCulled;
   rhi_->EndRenderTarget(); // resolves MSAA
   if (timing) Mark(timer, "scene");
 
@@ -1007,8 +1062,8 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
-                     s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={}", s.w, s.h,
+                     s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
                      s.fxaa ? 1 : 0, s.bloom ? 1 : 0);
 }
 }

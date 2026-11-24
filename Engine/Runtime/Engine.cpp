@@ -133,7 +133,7 @@ struct bdg_engine {
   bdg::QualitySettings boardQuality = bdg::ReferenceQuality(); // board screens (stress test switches instancing)
   double boardRenderMs = 0;                                     // CPU time of the last board Render()
   bool stressTest = false;
-  std::string stressTestValues[6];
+  std::string stressTestValues[10];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bool materialTest = false, qualityTest = false, refSceneTest = false;
@@ -1640,6 +1640,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
   int idleFrames = 0;
   bool idleMeasuring = false;
   int idleWakesInput = 0, idleWakesMouse = 0, idleWakesOther = 0; // what woke the idle editor (diagnosis)
+  int idleFramesInput = 0, inputCredit = 0; // frames drawn because of mouse / keyboard input (a person at the desk)
   std::atomic<long long> wakeSentNs{0};
   std::thread waker;
 
@@ -1689,6 +1690,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           return ev.type == bdg::InputEvent::Type::MouseMove || ev.type == bdg::InputEvent::Type::Wheel;
         });
         (evs.empty() ? idleWakesOther : mouse ? idleWakesMouse : idleWakesInput)++;
+        if (!evs.empty()) inputCredit = 2; // an input event redraws up to two frames
       }
       pending = std::max(pending, 2);
       if (idleShown) { idleShown = false; statStart = now; statFrames = 0; statWorkMs = 0; } // waking up
@@ -1762,6 +1764,31 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         v[2] = std::format("{}", differ == 0 && single.size() == instanced.size() ? 1 : 0);
         v[3] = std::format("{:.2f}->{:.2f}", cpuOn, e->boardRenderMs);
         v[4] = std::format("{:.2f}->{:.2f}", gpuOn, gpu());
+        // Culling (queue 3-10): close in, most cubes leave the view; the picture must not change without culling.
+        e->boardQuality.instancing = true;
+        e->board->camera.position = {0, 6.f, 2};   // looking steeply down at the front rows
+        e->board->camera.target = {0, 0.f, -2};
+      }
+      static std::vector<uint8_t> culledPicture;
+      static size_t drawnCulled = 0, culledCount = 0, shadowCulledCount = 0;
+      if (frames == 16) {
+        e->rhi.ReadRenderTarget(e->viewRT, rw, rh, culledPicture);
+        drawnCulled = e->r3d->Stats().objects;
+        culledCount = e->r3d->Stats().culled;
+        shadowCulledCount = e->r3d->Stats().shadowCulled;
+        e->boardQuality.culling = false;
+      }
+      if (frames == 20) {
+        std::vector<uint8_t> all;
+        e->rhi.ReadRenderTarget(e->viewRT, rw, rh, all);
+        size_t differ = 0;
+        for (size_t i = 0; i < all.size() && i < culledPicture.size(); ++i) differ += all[i] != culledPicture[i];
+        auto* v = e->stressTestValues;
+        v[5] = std::format("{}", drawnCulled);
+        v[6] = std::format("{}", e->r3d->Stats().objects);
+        v[7] = std::format("{}", culledCount);
+        v[8] = std::format("{}", shadowCulledCount);
+        v[9] = std::format("{}", differ == 0 && all.size() == culledPicture.size() ? 1 : 0);
       }
     }
     if (frames == 1 && e->sceneView && e->model)                // BDG_BOOKMARK=N: open the Scene view at a camera bookmark
@@ -1839,7 +1866,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     e->rhi.EndFrame();
     if (e->sceneView && e->sceneView->Animating()) pending = std::max(pending, 2); // flying: keep drawing
     ++frames;
-    if (idleMeasuring) ++idleFrames;
+    if (idleMeasuring) {
+      ++idleFrames;
+      if (inputCredit > 0) { ++idleFramesInput; --inputCredit; }
+    }
 
     bool last = e->maxFrames > 0 && frames >= e->maxFrames;
     if (last && e->a11yTest && e->a11yStage < 4 && frames < e->maxFrames + 3000) last = false; // wait for the UIA probe
@@ -1944,6 +1974,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         if (e->stressTest) {
           auto* v = e->stressTestValues;
           bdg::LogInfo("stress test: draws_instanced={} draws_single={} same_picture={} cpu_ms={} gpu_ms={}", v[0], v[1], v[2], v[3], v[4]);
+          bdg::LogInfo("culling test: drawn={} drawn_without={} culled={} shadow_culled={} same_picture={}", v[5], v[6], v[7], v[8], v[9]);
         }
       }
       if (e->refSceneTest) {
@@ -2039,9 +2070,9 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     double idleSec = std::chrono::duration<double>(clock::now() - idleStart).count();
     double cpu = ProcessCpuMs() - idleCpu0;
     bdg::LogInfo("idle: seconds={:.2f} frames={} cpu_ms={:.0f} cpu_pct={:.2f} wake_latency_ms={:.2f} vsync={} limiter={} "
-                 "wakes_mouse={} wakes_input={} wakes_other={}",
+                 "wakes_mouse={} wakes_input={} wakes_other={} frames_without_input={}",
                  idleSec, idleFrames, cpu, cpu / (idleSec * 10.0), wakeLatencyMs, e->window.SwapInterval(), limiter ? 1 : 0,
-                 idleWakesMouse, idleWakesInput, idleWakesOther);
+                 idleWakesMouse, idleWakesInput, idleWakesOther, idleFrames - idleFramesInput);
   }
   return BDG_OK;
 }
