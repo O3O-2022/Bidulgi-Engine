@@ -46,11 +46,36 @@ const char* kObjectsFS = R"(flat in int vObject;
 #define uMaps uObjects[vObject].maps
 #define uExtra uObjects[vObject].extra
 )";
-std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS and #OBJECTS_FS
+// Reflection probes (GI Tier 0): boxes, positions (w = intensity), SH9 irradiance / pi per probe. Probe 0 = sky.
+const char* kProbesFn = R"(layout(std140, binding = 5) uniform Probes3D {
+  vec4 uProbeMin[8]; vec4 uProbeMax[8]; vec4 uProbePos[8]; vec4 uSH[72]; vec4 uProbeInfo; // info.x = last mip level
+};
+vec3 ProbeIrradiance(int p, vec3 n) { // ambient light from all directions around n (already divided by pi)
+  int b = p * 9;
+  vec3 e = uSH[b].rgb * 0.282095
+         + uSH[b + 1].rgb * 0.488603 * n.y + uSH[b + 2].rgb * 0.488603 * n.z + uSH[b + 3].rgb * 0.488603 * n.x
+         + uSH[b + 4].rgb * 1.092548 * n.x * n.y + uSH[b + 5].rgb * 1.092548 * n.y * n.z
+         + uSH[b + 6].rgb * 0.315392 * (3.0 * n.z * n.z - 1.0) + uSH[b + 7].rgb * 1.092548 * n.x * n.z
+         + uSH[b + 8].rgb * 0.546274 * (n.x * n.x - n.y * n.y);
+  return max(e, vec3(0.0)) * uProbePos[p].w;
+}
+)";
+// Direction of a cube face texel: st in 0..1 with t = 0 the first row (OpenGL cube map face layout).
+const char* kFaceDir = R"(vec3 FaceDir(int f, vec2 st) {
+  vec2 c = st * 2.0 - 1.0;
+  if (f == 0) return vec3(1.0, -c.y, -c.x);
+  if (f == 1) return vec3(-1.0, -c.y, c.x);
+  if (f == 2) return vec3(c.x, 1.0, c.y);
+  if (f == 3) return vec3(c.x, -1.0, -c.y);
+  if (f == 4) return vec3(c.x, -c.y, 1.0);
+  return vec3(-c.x, -c.y, -1.0);
+}
+)";
+std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS, #OBJECTS_FS, #PROBES_FN, #FACE_DIR
   std::string s = text;
   const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
   for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
-                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}})
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
@@ -63,6 +88,7 @@ layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec4 aTangent;
 layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
+#PROBES_FN
 out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent; out vec3 vLit;
 void main() {
   vObject = int(aObject + 0.5);
@@ -75,7 +101,7 @@ void main() {
   if (uCounts.y > 0.5 && uCounts.y < 1.5) { // low tier: diffuse light per vertex (sun, sky, local lights)
     vec3 n = normalize(vNormal);
     vLit = uLight.rgb * max(dot(n, normalize(uToLight.xyz)), 0.0) / 3.14159265 +
-           mix(uGround.rgb, mix(uHorizon.rgb, uZenith.rgb, 0.6), n.y * 0.5 + 0.5);
+           ProbeIrradiance(int(uObjects[int(aObject + 0.5)].extra.w + 0.5), n);
     for (int i = 0; i < int(uCounts.x); ++i) {
       vec3 toL = uLPos[i].xyz - vWorld;
       float d2 = max(dot(toL, toL), 1e-4), range = max(uLPos[i].w, 1e-3);
@@ -122,7 +148,18 @@ vec2 EnvBRDFApprox(float NoV, float rough) { // Karis, mobile split-sum approxim
 }
 layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
 layout(binding = 5) uniform sampler2DShadow uShadowMap;
+layout(binding = 6) uniform samplerCubeArray uEnv;
 #SKY_FN
+#PROBES_FN
+vec3 ProbeSpecular(int p, vec3 R, vec3 world, float rough) { // prefiltered environment, box-projected in rooms
+  vec3 dir = R;
+  if (uProbeMin[p].w > 0.5) {
+    vec3 t1 = (uProbeMax[p].xyz - world) / R, t2 = (uProbeMin[p].xyz - world) / R, tf = max(t1, t2);
+    float t = min(min(tf.x, tf.y), tf.z);
+    if (t > 0.0) dir = world + R * t - uProbePos[p].xyz;
+  }
+  return textureLod(uEnv, vec4(dir, float(p)), rough * uProbeInfo.x).rgb * uProbePos[p].w;
+}
 vec3 Brdf(vec3 N, vec3 V, vec3 L, vec3 diffuse, vec3 f0, float a) {
   vec3 H = normalize(V + L);
   float NoL = max(dot(N, L), 0.0), NoV = max(dot(N, V), 1e-4), NoH = max(dot(N, H), 0.0), VoH = max(dot(V, H), 0.0);
@@ -209,8 +246,9 @@ void main() {
   vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
   for (int i = 0; i < int(uCounts.x); ++i) color += LocalLight(i, vWorld, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
-  vec3 ambient = Irradiance(N);
-  vec3 env = SkyColor(R, rough); // the sky seen in reflections, softer the rougher the surface
+  int probe = int(uExtra.w + 0.5);
+  vec3 ambient = ProbeIrradiance(probe, N);             // GI Tier 0: probe (or sky) light from every direction
+  vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
@@ -285,6 +323,59 @@ void main() {
   oColor = vec4(c, 1.0);
 }
 )";
+// Image-based lighting (GI Tier 0): the sky into a cube face, then GGX prefiltering (Karis, filtered importance
+// sampling) of a cube into one roughness level of the probe array.
+const char* kSkyCubeFS = R"(#version 450 core
+#FRAME_UBO
+layout(std140, binding = 6) uniform Prefilter3D { vec4 uP; }; // face, roughness, source size, target size
+out vec4 oColor;
+#SKY_FN
+#FACE_DIR
+void main() { oColor = vec4(SkyColor(normalize(FaceDir(int(uP.x + 0.5), gl_FragCoord.xy / uP.w)), 0.0), 1.0); }
+)";
+const char* kPrefilterFS = R"(#version 450 core
+layout(binding = 0) uniform samplerCube uSrc;
+layout(std140, binding = 6) uniform Prefilter3D { vec4 uP; };
+out vec4 oColor;
+#FACE_DIR
+const float PI = 3.14159265;
+float RadicalInverse(uint b) {
+  b = (b << 16u) | (b >> 16u);
+  b = ((b & 0x55555555u) << 1u) | ((b & 0xAAAAAAAAu) >> 1u);
+  b = ((b & 0x33333333u) << 2u) | ((b & 0xCCCCCCCCu) >> 2u);
+  b = ((b & 0x0F0F0F0Fu) << 4u) | ((b & 0xF0F0F0F0u) >> 4u);
+  b = ((b & 0x00FF00FFu) << 8u) | ((b & 0xFF00FF00u) >> 8u);
+  return float(b) * 2.3283064365386963e-10;
+}
+void main() {
+  vec3 N = normalize(FaceDir(int(uP.x + 0.5), gl_FragCoord.xy / uP.w));
+  float rough = uP.y;
+  if (rough < 0.01) { oColor = vec4(textureLod(uSrc, N, 0.0).rgb, 1.0); return; } // mirror level
+  float a = rough * rough;
+  vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+  vec3 T = normalize(cross(up, N)), B = cross(N, T);
+  const uint COUNT = 128u;
+  float saTexel = 4.0 * PI / (6.0 * uP.z * uP.z);
+  vec3 sum = vec3(0.0);
+  float w = 0.0;
+  for (uint i = 0u; i < COUNT; ++i) {
+    vec2 xi = vec2(float(i) / float(COUNT), RadicalInverse(i));
+    float phi = 2.0 * PI * xi.x;
+    float cosT = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y)), sinT = sqrt(1.0 - cosT * cosT);
+    vec3 H = normalize(T * (sinT * cos(phi)) + B * (sinT * sin(phi)) + N * cosT);
+    vec3 L = normalize(2.0 * dot(N, H) * H - N);
+    float NoL = dot(N, L);
+    if (NoL <= 0.0) continue;
+    float NoH = max(dot(N, H), 0.0), d = NoH * NoH * (a * a - 1.0) + 1.0;
+    float pdf = a * a / (PI * d * d) * 0.25; // V = N
+    float mip = 0.5 * log2((1.0 / (float(COUNT) * pdf + 1e-4)) / saTexel) + 1.0;
+    sum += textureLod(uSrc, L, max(mip, 0.0)).rgb * NoL;
+    w += NoL;
+  }
+  oColor = vec4(sum / max(w, 1e-4), 1.0);
+}
+)";
+
 // Shadow casters: depth only; alpha-masked materials cut their holes.
 const char* kShadowVS = R"(#version 450 core
 #FRAME_UBO
@@ -312,7 +403,7 @@ void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); 
 )";
 // uPost = (exposure, bloom intensity, tone map on, bloom on)
 const char* kToneMapFS = R"(#version 450 core
-layout(std140, binding = 4) uniform Post3D { vec4 uPost; };
+layout(std140, binding = 4) uniform Post3D { vec4 uPost; vec4 uPost2; }; // uPost2.x: linear output (probe capture)
 layout(binding = 0) uniform sampler2D uHdr;
 layout(binding = 1) uniform sampler2D uBloom;
 in vec2 vUV;
@@ -327,7 +418,7 @@ void main() {
   if (uPost.w > 0.5) c += texture(uBloom, vUV).rgb * (uPost.y / 5.0); // the chain sums 5 levels: average them
   c *= uPost.x;
   if (uPost.z > 0.5) c = ACES(c);
-  oColor = vec4(ToSrgb(c), 1.0); // opaque: the UI draws this picture with alpha blending
+  oColor = vec4(uPost2.x > 0.5 ? c : ToSrgb(c), 1.0); // opaque: the UI draws this picture with alpha blending
 }
 )";
 // FXAA (the compact NVIDIA FXAA 2 kernel): blends along the local edge direction where contrast is high.
@@ -415,7 +506,9 @@ struct FrameData {
   float camPos[4], toLight[4], light[4], sky[4], ground[4], zenith[4], horizon[4], sun[4], shadow[4], counts[4];
 };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
-struct PostData { float post[4]; };
+struct PostData { float post[4]; float post2[4]; };
+struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4]; };
+struct PrefilterData { float p[4]; };
 
 void Put(float* dst, const glm::vec3& v, float w = 0) { dst[0] = v.x; dst[1] = v.y; dst[2] = v.z; dst[3] = w; }
 void Put(float* dst, Color c, float scale = 1) { dst[0] = c.r * scale; dst[1] = c.g * scale; dst[2] = c.b * scale; dst[3] = c.a; }
@@ -567,6 +660,12 @@ bool Renderer3D::Init(RHI& rhi) {
     for (uint32_t& q : t.q) q = rhi.CreateQuery();
   lightsUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(LightsData), true);
   postUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PostData), true);
+  probesUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(ProbesData), true);
+  prefilterUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PrefilterData), true);
+  envArray_ = rhi.CreateCubemap(kEnvSize, kEnvLevels, kMaxProbes + 1);
+  int scratchLevels = 1;
+  for (int sz = kEnvSize; sz > 1; sz >>= 1) ++scratchLevels;
+  scratchCube_ = rhi.CreateCubemap(kEnvSize, scratchLevels);
   PipelineDesc pp; // fullscreen post passes
   pp.vertexSource = kPostVS;
   pp.attrs[0] = {0, 3, 0};
@@ -585,7 +684,16 @@ bool Renderer3D::Init(RHI& rhi) {
   pp.additive = true;
   pp.debugName = "post.bloom.up";
   bloomUp_ = rhi.CreatePipeline(pp);
-  if (!toneMap_.Valid() || !fxaa_.Valid() || !bloomDown_.Valid() || !bloomUp_.Valid()) return false;
+  const std::string skyCubeFS = Src(kSkyCubeFS), prefilterFS = Src(kPrefilterFS);
+  pp.additive = false;
+  pp.fragmentSource = skyCubeFS.c_str();
+  pp.debugName = "ibl.skycube";
+  skyCube_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = prefilterFS.c_str();
+  pp.debugName = "ibl.prefilter";
+  prefilter_ = rhi.CreatePipeline(pp);
+  if (!toneMap_.Valid() || !fxaa_.Valid() || !bloomDown_.Valid() || !bloomUp_.Valid() || !skyCube_.Valid() || !prefilter_.Valid())
+    return false;
   noShadowRT_ = rhi.CreateDepthTarget(1);
   rhi.BeginRenderTarget(noShadowRT_, {0, 0, 0, 0});
   rhi.EndRenderTarget();
@@ -611,6 +719,13 @@ void Renderer3D::Shutdown() {
   for (TimerFrame& t : timers_)
     for (uint32_t& q : t.q) rhi_->DestroyQuery(q);
   rhi_->DestroyBuffer(postUbo_);
+  rhi_->DestroyBuffer(probesUbo_);
+  rhi_->DestroyBuffer(prefilterUbo_);
+  rhi_->DestroyTexture(envArray_);
+  rhi_->DestroyTexture(scratchCube_);
+  rhi_->DestroyRenderTarget(captureRT_);
+  rhi_->DestroyPipeline(skyCube_);
+  rhi_->DestroyPipeline(prefilter_);
   for (RenderTargetHandle t : bloom_) rhi_->DestroyRenderTarget(t);
   rhi_->DestroyRenderTarget(hdrRT_);
   rhi_->DestroyRenderTarget(ldrRT_);
@@ -866,6 +981,10 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     auto has = [](TextureHandle t) { return t.Valid() ? 1.f : 0.f; };
     o.maps[0] = has(m.baseMap); o.maps[1] = has(m.metalRoughMap); o.maps[2] = has(m.normalMap); o.maps[3] = has(m.occlusionMap);
     o.extra[0] = has(m.emissiveMap); o.extra[1] = m.occlusionStrength; o.extra[2] = m.alphaCutoff;
+    glm::vec3 c = (worldLo[k] + worldHi[k]) * 0.5f; // GI Tier 0: the baked probe whose box holds the centre, else the sky
+    for (int pi = 0; pi < bakedProbes_ && o.extra[3] == 0; ++pi)
+      if (glm::all(glm::greaterThanEqual(c, probes_[pi].boxMin)) && glm::all(glm::lessThanEqual(c, probes_[pi].boxMax)))
+        o.extra[3] = (float)(pi + 1);
   }
   if (!objects.empty()) rhi_->UpdateBuffer(objectBuffer_, objects.data(), objects.size() * sizeof(ObjectData));
   rhi_->BindStorageBuffer(0, objectBuffer_);
@@ -881,6 +1000,17 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
 
   rhi_->BindUniformBuffer(1, frameUbo_);
   rhi_->BindUniformBuffer(3, lightsUbo_);
+  { // the sky probe follows the sky (GI Tier 0)
+    uint64_t key = 1469598103934665603ull;
+    for (const float* v : {f.zenith, f.horizon, f.ground})
+      for (int k = 0; k < 3; ++k) { uint32_t bits; std::memcpy(&bits, &v[k], 4); key = (key ^ bits) * 1099511628211ull; }
+    if (key != skyKey_) {
+      skyKey_ = key;
+      BakeSky();
+    }
+  }
+  rhi_->BindUniformBuffer(5, probesUbo_);
+  rhi_->BindTexture(6, envArray_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
     if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize) {
       rhi_->DestroyRenderTarget(shadowRT_);
@@ -974,7 +1104,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     }
     if (timing) Mark(timer, "bloom");
   }
-  PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f}};
+  PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f},
+              {extras && extras->linearOutput ? 1.f : 0.f, 0, 0, 0}};
   rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
   rhi_->BindUniformBuffer(4, postUbo_);
   rhi_->BindTexture(0, hdr);
@@ -1013,6 +1144,129 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   stats_.draws = draws_;
   stats_.triangles = triangles_;
+}
+
+// ---- Image-based lighting (GI Tier 0) ----
+void Renderer3D::PrefilterInto(int layer) {
+  rhi_->BindTexture(0, scratchCube_);
+  for (int level = 0; level < kEnvLevels; ++level)
+    for (int face = 0; face < 6; ++face) {
+      PrefilterData pd{{(float)face, (float)level / (kEnvLevels - 1), (float)kEnvSize, (float)std::max(kEnvSize >> level, 1)}};
+      rhi_->UpdateBuffer(prefilterUbo_, &pd, sizeof(pd));
+      rhi_->BindUniformBuffer(6, prefilterUbo_);
+      rhi_->BeginTextureTarget(envArray_, level, layer * 6 + face);
+      rhi_->Draw(prefilter_, fullscreen_, 3);
+      rhi_->EndTextureTarget();
+    }
+}
+
+void Renderer3D::ComputeSH(int probe) {
+  // Project a small mip of the cube onto 9 spherical harmonics, then convolve with the cosine lobe and divide by pi:
+  // the shader's ProbeIrradiance(n) is then the ambient term for a diffuse surface facing n.
+  const int level = 3, size = std::max(kEnvSize >> level, 1);
+  std::vector<float> px;
+  if (!rhi_->ReadTextureLevel(scratchCube_, level, px)) return;
+  double sh[9][3] = {}, total = 0;
+  for (int f = 0; f < 6; ++f)
+    for (int y = 0; y < size; ++y)
+      for (int x = 0; x < size; ++x) {
+        double u = (x + 0.5) / size * 2 - 1, v = (y + 0.5) / size * 2 - 1;
+        glm::dvec3 d = f == 0 ? glm::dvec3(1, -v, -u) : f == 1 ? glm::dvec3(-1, -v, u) : f == 2 ? glm::dvec3(u, 1, v)
+                     : f == 3 ? glm::dvec3(u, -1, -v) : f == 4 ? glm::dvec3(u, -v, 1) : glm::dvec3(-u, -v, -1);
+        d = glm::normalize(d);
+        double w = 4.0 / (size * size * std::pow(1 + u * u + v * v, 1.5)); // texel solid angle
+        const double basis[9] = {0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x, 1.092548 * d.x * d.y,
+                                 1.092548 * d.y * d.z, 0.315392 * (3 * d.z * d.z - 1), 1.092548 * d.x * d.z, 0.546274 * (d.x * d.x - d.y * d.y)};
+        const float* c = &px[(((size_t)f * size + y) * size + x) * 4];
+        for (int k = 0; k < 9; ++k)
+          for (int ch = 0; ch < 3; ++ch) sh[k][ch] += basis[k] * c[ch] * w;
+        total += w;
+      }
+  const double band[9] = {1, 2.0 / 3, 2.0 / 3, 2.0 / 3, 0.25, 0.25, 0.25, 0.25, 0.25}; // cosine lobe / pi
+  for (int k = 0; k < 9; ++k)
+    for (int ch = 0; ch < 3; ++ch) probeSH_[probe][k][ch] = (float)(sh[k][ch] * (4 * 3.14159265358979 / total) * band[k]);
+}
+
+void Renderer3D::UploadProbes() {
+  ProbesData d{};
+  d.pos[0][3] = 1; // the sky: everywhere, no box
+  for (int i = 0; i < bakedProbes_; ++i) {
+    const ReflectionProbe3D& p = probes_[i];
+    Put(d.min[i + 1], p.boxMin, p.boxProjection ? 1.f : 0.f);
+    Put(d.max[i + 1], p.boxMax);
+    Put(d.pos[i + 1], p.position, p.intensity);
+  }
+  for (int i = 0; i <= kMaxProbes; ++i)
+    for (int k = 0; k < 9; ++k)
+      for (int ch = 0; ch < 3; ++ch) d.sh[i * 9 + k][ch] = probeSH_[i][k][ch];
+  d.info[0] = (float)(kEnvLevels - 1);
+  rhi_->UpdateBuffer(probesUbo_, &d, sizeof(d));
+}
+
+void Renderer3D::BakeSky() {
+  for (int face = 0; face < 6; ++face) {
+    PrefilterData pd{{(float)face, 0, (float)kEnvSize, (float)kEnvSize}};
+    rhi_->UpdateBuffer(prefilterUbo_, &pd, sizeof(pd));
+    rhi_->BindUniformBuffer(6, prefilterUbo_);
+    rhi_->BeginTextureTarget(scratchCube_, 0, face);
+    rhi_->Draw(skyCube_, fullscreen_, 3);
+    rhi_->EndTextureTarget();
+  }
+  rhi_->GenerateMips(scratchCube_);
+  PrefilterInto(0);
+  ComputeSH(0);
+  UploadProbes();
+}
+
+void Renderer3D::SetProbes(const std::vector<ReflectionProbe3D>& probes) {
+  probes_.assign(probes.begin(), probes.begin() + std::min<size_t>(probes.size(), kMaxProbes));
+  bakedProbes_ = 0;
+  UploadProbes();
+}
+
+int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light) {
+  if (probes_.empty() || !rhi_) return 0;
+  if (!captureRT_.Valid()) captureRT_ = rhi_->CreateRenderTargetEx(kEnvSize, kEnvSize, 1, true, true);
+  // Faces in OpenGL order; "up" points down for the side faces so the rendered rows land as the cube expects.
+  const glm::vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+  const glm::vec3 ups[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
+  QualitySettings q = ReferenceQuality();
+  q.msaa = 1;
+  RenderExtras extras;
+  extras.linearOutput = true;
+  const RenderStats keep = stats_;
+  // Each probe sees the scene lit by the probes as they are now, so every bake adds one bounce.
+  for (size_t i = 0; i < probes_.size(); ++i) {
+    for (int face = 0; face < 6; ++face) {
+      Camera3D c;
+      c.position = probes_[i].position;
+      c.target = c.position + dirs[face];
+      c.up = ups[face];
+      c.fovY = 90.f;
+      c.nearZ = 0.05f;
+      c.farZ = 500.f;
+      Render(captureRT_, kEnvSize, kEnvSize, c, light, items, {0, 0, 0, 1}, &extras, &q);
+      rhi_->CopyToCubeFace(rhi_->RenderTargetColor(captureRT_), kEnvSize, scratchCube_, face);
+    }
+    rhi_->GenerateMips(scratchCube_);
+    PrefilterInto((int)i + 1);
+    ComputeSH((int)i + 1);
+  }
+  bakedProbes_ = (int)probes_.size();
+  UploadProbes();
+  stats_ = keep;
+  return bakedProbes_;
+}
+
+bool Renderer3D::ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size) {
+  std::vector<float> all;
+  if (probe < 0 || probe > kMaxProbes || !rhi_->ReadTextureLevel(envArray_, 0, all)) return false;
+  size = kEnvSize;
+  const size_t faceFloats = (size_t)kEnvSize * kEnvSize * 4, at = ((size_t)probe * 6 + face) * faceFloats;
+  rgb.resize((size_t)kEnvSize * kEnvSize * 3);
+  for (size_t i = 0; i < (size_t)kEnvSize * kEnvSize; ++i)
+    for (int ch = 0; ch < 3; ++ch) rgb[i * 3 + ch] = all[at + i * 4 + ch];
+  return true;
 }
 
 void Renderer3D::Mark(TimerFrame& t, const char* passEnded) {

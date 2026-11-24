@@ -136,7 +136,8 @@ struct bdg_engine {
   std::string stressTestValues[10];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
-  bool materialTest = false, qualityTest = false, refSceneTest = false;
+  bool materialTest = false, qualityTest = false, refSceneTest = false, giTest = false;
+  std::string giTestValues[4];
   std::string refSceneTestValues[12];
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
@@ -180,6 +181,14 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
     e->viewRT = e->rhi.CreateRenderTarget(pw, ph, 1); // the renderer does MSAA inside
     e->viewW = pw;
     e->viewH = ph;
+  }
+  if (!e->board->probes.empty() && e->r3d->BakedProbes() == 0) { // GI Tier 0: bake the board's probes (two bounces)
+    auto b0 = std::chrono::steady_clock::now();
+    e->r3d->SetProbes(e->board->probes);
+    e->r3d->BakeProbes(e->board->Items(), e->board->light);
+    e->r3d->BakeProbes(e->board->Items(), e->board->light);
+    bdg::LogInfo("gi: baked {} probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(),
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
   }
   auto t0 = std::chrono::steady_clock::now();
   e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, nullptr, &e->boardQuality);
@@ -1395,6 +1404,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
   e->refSceneTest = std::getenv("BDG_REFSCENE_TEST") != nullptr;
+  e->giTest = std::getenv("BDG_GI_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -1439,7 +1449,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     else bdg::LogError("unknown parity component: {}", component);
   }
   const bool boardScreen = screen && (std::string(screen) == "render-ref" || std::string(screen) == "render-assets" ||
-                                      std::string(screen) == "render-stress");
+                                      std::string(screen) == "render-stress" || std::string(screen) == "render-gi");
   if (!boardScreen) { // Scene panel in 3D (queue 3-2); the placeholder stays if GL fails
     e->r3d = std::make_unique<bdg::Renderer3D>();
     e->sceneView = std::make_unique<bdg::SceneView>();
@@ -1495,6 +1505,12 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       e->editor->SetRoot(BuildRenderReferenceScreen(e));
     }
     else { bdg::LogError("render-ref: the 3D renderer did not start"); e->board.reset(); }
+  }
+  if (screen && std::string(screen) == "render-gi") { // GI Tier 0: Cornell box with a reflection probe
+    e->r3d = std::make_unique<bdg::Renderer3D>();
+    e->board = std::make_unique<bdg::ReferenceBoard>();
+    if (e->r3d->Init(e->rhi) && e->board->InitGI(e->rhi, *e->r3d)) e->editor->SetRoot(BuildRenderReferenceScreen(e));
+    else { bdg::LogError("render-gi: the 3D renderer did not start"); e->board.reset(); }
   }
   if (screen && std::string(screen) == "render-stress") { // instancing and video memory stress (queue 3-9)
     int instances = 10000, textures = 16;
@@ -1738,6 +1754,35 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
     if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
     if (e->refSceneTest && !e->showGallery) InjectRefSceneTest(e, frames, scale);
+    if (e->giTest && e->sceneView && e->model) { // BDG_GI_TEST: a probe added by command is baked, re-baked, undone
+      using T = bdg::InputEvent::Type;
+      auto* v = e->giTestValues;
+      if (frames == 2) {
+        bdg::Command c;
+        c.name = "addcomp";
+        c.target = "g4"; // World Settings
+        c.args = R"({"type":"ReflectionProbe","value":{"size":[12,6,12]}})";
+        std::string err;
+        v[0] = e->model->bus.Execute(c, &err) ? "1" : "0(" + err + ")";
+      }
+      if (frames == 4) {
+        v[1] = std::format("{}", e->r3d->BakedProbes());
+        float x, y;
+        if (e->sceneView->ChipCenter("gi", x, y)) {
+          e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+          e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+          e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+        }
+      }
+      if (frames == 6) {
+        v[2] = std::format("{}", e->r3d->BakedProbes());
+        bdg::InputEvent z{T::KeyDown};
+        z.key = bdg::Key::Z;
+        z.ctrl = true;
+        e->window.InjectEvent(z);
+      }
+      if (frames == 8) v[3] = std::format("{}", e->r3d->BakedProbes());
+    }
     if (const char* baseDir = std::getenv("BDG_RENDER_COMPARE"); baseDir && e->sceneView && e->model)
       RenderCompareStep(e, frames, baseDir);
     if (e->stressTest && e->board) { // BDG_STRESS_TEST: the same picture with and without instancing
@@ -1948,7 +1993,9 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           int32_t rw = 0, rh = 0;
           std::vector<uint8_t> px;
           e->rhi.ReadRenderTarget(e->viewRT, rw, rh, px);
-          bdg::LogInfo("render test: {}x{} {}", rw, rh, e->board->Check(px, rw, rh));
+          const char* scr = std::getenv("BDG_SCREEN");
+          if (scr && std::string(scr) == "render-gi") bdg::LogInfo("gi test: {}", e->board->CheckGI(*e->r3d, px, rw, rh));
+          else bdg::LogInfo("render test: {}x{} {}", rw, rh, e->board->Check(px, rw, rh));
         } else bdg::LogError("render test: no reference board (run with BDG_SCREEN=render-ref)");
       }
       if (e->sceneViewTest) {
@@ -1976,6 +2023,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           bdg::LogInfo("stress test: draws_instanced={} draws_single={} same_picture={} cpu_ms={} gpu_ms={}", v[0], v[1], v[2], v[3], v[4]);
           bdg::LogInfo("culling test: drawn={} drawn_without={} culled={} shadow_culled={} same_picture={}", v[5], v[6], v[7], v[8], v[9]);
         }
+      }
+      if (e->giTest) {
+        auto* v = e->giTestValues;
+        bdg::LogInfo("gi editor test: added={} baked={} rebaked={} after_undo={}", v[0], v[1], v[2], v[3]);
       }
       if (e->refSceneTest) {
         auto* v = e->refSceneTestValues;

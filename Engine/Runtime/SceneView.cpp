@@ -11,6 +11,7 @@
 #include "UI/UI.h"
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -163,6 +164,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   extras_ = {};
   extras_.grid = true;
   extras_.view = debugView;
+  probes_.clear();
   extras_.wireframe = wireframe;
   light_ = {};
   light_.toLight = {-0.35f, 0.85f, 0.4f};
@@ -216,6 +218,17 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         icons_.push_back({id, glm::vec3(world[3]), directional ? 0 : 1});
       }
       if (c.type == &Camera::StaticType()) icons_.push_back({id, glm::vec3(world[3]), 2});
+      if (c.type == &ReflectionProbe::StaticType() && probes_.size() < (size_t)kMaxProbes) {
+        const ReflectionProbe& rp = *static_cast<const ReflectionProbe*>(c.data);
+        ReflectionProbe3D p;
+        p.position = glm::vec3(world[3]);
+        glm::vec3 half = glm::abs(space::ToGlm(rp.size)) * 0.5f;
+        p.boxMin = p.position - half;
+        p.boxMax = p.position + half;
+        p.boxProjection = rp.boxProjection;
+        p.intensity = rp.intensity;
+        probes_.push_back(p);
+      }
       if (c.type == &Sky::StaticType() && !skySet) {
         const Sky& sky = *static_cast<const Sky*>(c.data);
         skySet = true;
@@ -265,6 +278,27 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   }
   auto t0 = std::chrono::steady_clock::now();
   BuildItems(model, assets);
+  { // GI Tier 0: probes changed (added, moved, resized) -> bake them again, two bounces; the chip adds one more
+    uint64_t key = 1469598103934665603ull;
+    for (const ReflectionProbe3D& p : probes_)
+      for (float value : {p.position.x, p.position.y, p.position.z, p.boxMin.x, p.boxMin.y, p.boxMin.z, p.boxMax.x, p.boxMax.y, p.boxMax.z,
+                      p.intensity, p.boxProjection ? 1.f : 0.f}) {
+        uint32_t bits;
+        std::memcpy(&bits, &value, 4);
+        key = (key ^ bits) * 1099511628211ull;
+      }
+    if (key != probeKey_) {
+      probeKey_ = key;
+      r_->SetProbes(probes_);
+      firstBake_ = !probes_.empty();
+    }
+    if ((firstBake_ || bakeRequested_) && !probes_.empty()) {
+      r_->BakeProbes(items_, light_);
+      if (firstBake_) r_->BakeProbes(items_, light_);
+      LogInfo("gi: baked {} probe(s){}", probes_.size(), firstBake_ ? ", 2 bounces" : ", one more bounce");
+    }
+    firstBake_ = bakeRequested_ = false;
+  }
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   renderMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
@@ -440,6 +474,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
             else if (hit->name == "wire") wireframe = !wireframe;
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
+            else if (hit->name == "gi") bakeRequested_ = true;
             used = true;
             break;
           }
@@ -736,6 +771,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   struct ChipDef { std::string name, text; bool on; };
   const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
                           {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
+                          {probes_.empty() ? "" : "gi", probes_.empty() ? "" : std::format("Bake GI ({})", probes_.size()), false},
                           {"", toolChip, false}, {"", spaceChip, false}};
   for (const ChipDef& chip : defs) {
     if (chip.text.empty()) continue;

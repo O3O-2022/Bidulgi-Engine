@@ -60,6 +60,7 @@ public:
   QualitySettings quality = QualityPreset(QualityTier::Medium); // tier shown in the editor (queue 3-5)
   DebugView debugView = DebugView::Lit;
   bool wireframe = false, bounds = false, statsPanel = false;
+  void RequestGIBake() { bakeRequested_ = true; } // one more bounce on the next render
   bool JumpToBookmark(const EditorModel& model, int slot);     // false: no bookmark with that number
   bool StoreBookmark(EditorModel& model, int slot);            // through commands (one undo step)
   std::string BookmarkName(const EditorModel& model, int slot) const; // "" when there is none
@@ -106,6 +107,9 @@ private:
   struct Chip { std::string name; float x, y, w, h; };
   std::vector<Chip> chips_; // clickable chips of the last Draw
   std::string bookmarkNote_; // "2 Lights" after a jump, shown for a moment
+  std::vector<ReflectionProbe3D> probes_; // from the scene (GI Tier 0)
+  uint64_t probeKey_ = 0;
+  bool bakeRequested_ = false, firstBake_ = false;
   int noteFrames_ = 0;
   float renderMs_ = 0;
 

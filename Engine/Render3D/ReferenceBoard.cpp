@@ -251,6 +251,99 @@ bool ReferenceBoard::InitAssets(RHI& rhi, Renderer3D& r, const std::filesystem::
   return all;
 }
 
+// Cornell box (GI Tier 0): x -3..3, y 0..4, z -3..3, open toward the camera at +z.
+const glm::vec3 kMirror{-1.1f, 0.85f, -0.6f}, kMatte{1.2f, 0.75f, 0.7f};
+const float kMirrorR = 0.85f, kMatteR = 0.75f;
+
+bool ReferenceBoard::InitGI(RHI& rhi, Renderer3D& r) {
+  rhi_ = &rhi;
+  renderer_ = &r;
+  box_ = r.CreateMesh(MakeBox(1, 1, 1));
+  sphere_ = r.CreateMesh(MakeSphere(1));
+  auto wall = [&](glm::vec3 center, glm::vec3 size, Color c) {
+    Material3D m;
+    m.baseColor = c;
+    m.roughness = 0.9f;
+    items_.push_back({&box_, At(center, size.x, size.y, size.z), m});
+  };
+  const Color white{0.73f, 0.73f, 0.73f, 1}, red{0.63f, 0.05f, 0.05f, 1}, green{0.12f, 0.45f, 0.08f, 1};
+  wall({0, -0.05f, 0}, {6.2f, 0.1f, 6.2f}, white);   // floor
+  wall({0, 4.05f, 0}, {6.2f, 0.1f, 6.2f}, white);    // ceiling
+  wall({0, 2, -3.05f}, {6.2f, 4.2f, 0.1f}, white);   // back
+  wall({-3.05f, 2, 0}, {0.1f, 4.2f, 6.2f}, red);     // left
+  wall({3.05f, 2, 0}, {0.1f, 4.2f, 6.2f}, green);    // right
+  Material3D mirror;
+  mirror.baseColor = {0.95f, 0.95f, 0.95f, 1};
+  mirror.metallic = 1;
+  mirror.roughness = 0.05f;
+  items_.push_back({&sphere_, At(kMirror, kMirrorR, kMirrorR, kMirrorR), mirror});
+  Material3D matte;
+  matte.baseColor = white;
+  matte.roughness = 0.95f;
+  items_.push_back({&sphere_, At(kMatte, kMatteR, kMatteR, kMatteR), matte});
+  camera.position = {0, 2, 10.5f};
+  camera.target = {0, 1.9f, 0};
+  camera.fovY = 38.f;
+  light = {};
+  light.intensity = 0;                 // no sun: the room is lit by its ceiling light and the bounce
+  light.sky = {0.02f, 0.02f, 0.025f, 1};
+  light.ground = {0.01f, 0.01f, 0.01f, 1};
+  LocalLight3D lamp;
+  lamp.position = {0, 3.6f, 0.3f};
+  lamp.intensity = 14;
+  lamp.range = 12;
+  light.locals = {lamp};
+  ReflectionProbe3D probe;
+  probe.position = {0, 2, 0};
+  probe.boxMin = {-3, 0, -3};
+  probe.boxMax = {3, 4, 3};
+  probes = {probe};
+  labels_ = {{kMirror + glm::vec3(-0.5f, -1.15f, 0.9f), "mirror"}, {kMatte + glm::vec3(-0.4f, -1.05f, 0.9f), "rough white"},
+             {{-2.9f, 4.4f, 0}, "GI Tier 0 · reflection probe (box projection) · SH ambient"}};
+  return true;
+}
+
+std::string ReferenceBoard::CheckGI(Renderer3D& r, const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const {
+  std::string failed;
+  auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
+  // 1) the probe's cube faces: +X sees the green wall, -X the red one (orientation of the capture)
+  auto faceCentre = [&](int face) {
+    std::vector<float> px;
+    int size = 0;
+    glm::vec3 c{0};
+    if (!r.ReadProbeFace(1, face, px, size)) return c;
+    for (int y = size / 2 - 4; y < size / 2 + 4; ++y)
+      for (int x = size / 2 - 4; x < size / 2 + 4; ++x) c += glm::vec3(px[(y * size + x) * 3], px[(y * size + x) * 3 + 1], px[(y * size + x) * 3 + 2]);
+    return c / 64.f;
+  };
+  glm::vec3 px = faceCentre(0), nx = faceCentre(1);
+  bool faces = px.g > px.r * 1.5f && nx.r > nx.g * 1.5f;
+  if (!faces) fail("faces");
+  // 2) the mirror sphere: its left side reflects the red wall, its right side the green one
+  auto at = [&](const glm::vec3& p, int c[3]) {
+    float x, y;
+    c[0] = c[1] = c[2] = 0;
+    if (!ProjectToPixel(camera, w, h, p, x, y) || x < 0 || y < 0 || x >= w || y >= h) return;
+    const uint8_t* q = &rgba[((size_t)y * w + (size_t)x) * 4];
+    c[0] = q[0]; c[1] = q[1]; c[2] = q[2];
+  };
+  int ml[3], mr[3];
+  at(kMirror + kMirrorR * glm::normalize(glm::vec3(-0.8f, 0, 0.6f)), ml);
+  at(kMirror + kMirrorR * glm::normalize(glm::vec3(0.8f, 0, 0.6f)), mr);
+  bool mirror = ml[0] > ml[1] + 25 && mr[1] > mr[0] + 15;
+  if (!mirror) fail("mirror");
+  // 3) colour bleeding on the rough white sphere: redder on the red wall's side, greener on the green wall's side
+  int sl[3], sr[3];
+  at(kMatte + kMatteR * glm::normalize(glm::vec3(-0.8f, 0, 0.6f)), sl);
+  at(kMatte + kMatteR * glm::normalize(glm::vec3(0.8f, 0, 0.6f)), sr);
+  bool bleed = (sl[0] - sl[1]) > (sr[0] - sr[1]) + 10;
+  if (!bleed) fail("bleed");
+  return std::format("probe_px=({:.2f},{:.2f},{:.2f}) probe_nx=({:.2f},{:.2f},{:.2f}) faces={} mirror={} ({},{},{} | {},{},{}) bleed={} "
+                     "probes_baked={} result={}",
+                     px.r, px.g, px.b, nx.r, nx.g, nx.b, faces ? "ok" : "bad", mirror ? "ok" : "bad", ml[0], ml[1], ml[2], mr[0], mr[1], mr[2],
+                     bleed ? "ok" : "bad", r.BakedProbes(), failed.empty() ? "pass" : "FAIL(" + failed + ")");
+}
+
 bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {
   rhi_ = &rhi;
   renderer_ = &r;

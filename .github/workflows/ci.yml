@@ -284,6 +284,16 @@ jobs:
           if ($log -notmatch 'compare summary: compared=9 created=0 failed=[1-9]') { $errors += 'compare: a brighter picture was not caught' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # 27) GI Tier 0 (reflection probes, IBL): Cornell box probe faces, mirror reflections of the walls, colour bleeding
+          $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-gi'; BDG_RENDER_TEST = '1' } 5
+          if ($log -notmatch 'gi test: .*faces=ok mirror=ok .* bleed=ok probes_baked=1 result=pass') { $errors += 'GI Tier 0 probe test failed' }
+
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_GI_TEST = '1' } 10
+          if ($log -notmatch 'gi editor test: added=1 baked=1 rebaked=1 after_undo=0') { $errors += 'GI probe editor test failed' }
+          if ($log -notmatch 'gi: baked 1 probe\(s\), one more bounce') { $errors += 'GI re-bake from the chip missing' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

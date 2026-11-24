@@ -91,6 +91,16 @@ struct Model3D {
 };
 
 // Editor additions to a render (queue 3-2).
+// Reflection probe (GI Tier 0): the scene seen from `position`, prefiltered by roughness for reflections and
+// reduced to SH9 for diffuse light. Objects whose centre is inside the box use it; box projection makes a
+// room's reflections line up with its walls. Index 0 is always the sky.
+struct ReflectionProbe3D {
+  glm::vec3 position{0}, boxMin{-5}, boxMax{5};
+  bool boxProjection = true;
+  float intensity = 1;
+};
+constexpr int kMaxProbes = 7; // + the sky
+
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
 enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow };
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
@@ -100,6 +110,7 @@ struct RenderExtras {
   std::vector<size_t> outlined;  // indices into the item list: drawn with a selection outline, visible through walls
   DebugView view = DebugView::Lit;
   bool wireframe = false;        // triangle edges over the picture
+  bool linearOutput = false;     // write linear light into an RGBA16F target (probe captures), no display curve
 };
 
 // What the last Render() did (stats overlay, `bdg render stats`).
@@ -136,6 +147,14 @@ public:
   uint32_t DrawsLastFrame() const { return draws_; }
   uint64_t TrianglesLastFrame() const { return triangles_; }
   const RenderStats& Stats() const { return stats_; }
+  // Reflection probes (GI Tier 0). SetProbes replaces the list (unbaked probes are not used); BakeProbes captures
+  // every probe from the current scene: each call adds one bounce of light. Returns how many were baked.
+  void SetProbes(const std::vector<ReflectionProbe3D>& probes);
+  int BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light);
+  int BakedProbes() const { return bakedProbes_; }
+  // Test hooks: one face of a probe's mirror-sharp level (0 = sky), RGB linear, and its SH9 (ambient / pi).
+  bool ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size);
+  const float (&ProbeSH(int probe) const)[9][3] { return probeSH_[probe]; }
   std::string DescribePasses() const; // "shadow 0.21 ms | scene 0.80 ms | ..." (GPU)
   std::string DescribeStats() const;  // resolution, MSAA, draws, triangles, lights, shadow casters, post
 
@@ -163,6 +182,20 @@ private:
   QualitySettings lastQuality_;
   PipelineHandle wire_;
   RenderStats stats_;
+  // Image-based lighting: probe 0 = the sky, 1..kMaxProbes = captured probes, one cube map array.
+  static constexpr int kEnvSize = 128, kEnvLevels = 5;
+  PipelineHandle skyCube_, prefilter_;
+  BufferHandle probesUbo_, prefilterUbo_;
+  TextureHandle envArray_, scratchCube_;
+  RenderTargetHandle captureRT_;
+  uint64_t skyKey_ = 0;
+  std::vector<ReflectionProbe3D> probes_;
+  int bakedProbes_ = 0;
+  float probeSH_[kMaxProbes + 1][9][3] = {};
+  void BakeSky();
+  void PrefilterInto(int layer);      // scratchCube_ (with mips) -> envArray_ layer, all roughness levels
+  void ComputeSH(int probe);          // scratchCube_ -> probeSH_[probe]
+  void UploadProbes();
   // GPU timings: a few frames of timestamp queries in flight, read back when the GPU has finished them.
   static constexpr int kTimerFrames = 4, kMarks = 8;
   struct TimerFrame { uint32_t q[kMarks] = {}; const char* names[kMarks] = {}; int marks = 0; bool pending = false; };

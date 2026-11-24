@@ -23,6 +23,11 @@ public:
   // and `textures` 4096x4096 BC7 textures with full mips on a wall of quads, for draw call and video memory numbers.
   bool InitStress(RHI& rhi, Renderer3D& renderer, int instances, int textures);
   int StressTextures() const { return (int)stressTextures_.size(); }
+  // GI Tier 0 check: a Cornell box (red left wall, green right wall) lit by one point light, a mirror sphere and a
+  // rough white sphere, one box-projected reflection probe in the room. CheckGI() reads the probe and the picture.
+  bool InitGI(RHI& rhi, Renderer3D& renderer);
+  std::string CheckGI(Renderer3D& renderer, const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const;
+  std::vector<ReflectionProbe3D> probes; // baked by the engine before the first frame
   // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes
   // (x = -2.0, z = 1.6), clear of every probe Check() reads.
   bool AddModel(const std::filesystem::path& gltf);

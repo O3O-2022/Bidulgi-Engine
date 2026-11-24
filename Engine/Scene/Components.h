@@ -56,6 +56,17 @@ public:
   BPROPERTY(Edit, Tooltip = "Quality tier for this view (potato ... ultra); empty keeps the current one") std::string tier;
 };
 
+// Reflection probe (GI Tier 0): captures the scene around the object; objects whose centre is inside its box get
+// their reflections and ambient light from it. Baked in the editor (Scene view "Bake GI"; each bake adds a bounce).
+BCLASS(Component)
+struct ReflectionProbe {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Size of the box it covers, centred on the object (metres)") Vec3 size{10, 4, 10};
+  BPROPERTY(Edit, Tooltip = "Line reflections up with the box's walls (rooms)") bool boxProjection = true;
+  BPROPERTY(Edit, Range = "0,10") float intensity = 1.f;
+};
+
 // Sky and ambient light (queue 3-4): the background of the scene view and the light it gives to every surface.
 // The sun disk follows the first directional light.
 BCLASS(Component)
