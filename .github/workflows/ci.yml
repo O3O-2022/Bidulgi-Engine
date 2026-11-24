@@ -247,6 +247,12 @@ jobs:
             if ($log -notmatch 'render test: .*AlphaBlendModeTest:mats=6,base=6,mr=1,normal=1,tangents=9,opaque=2,mask=3,blend=1 drawn=1 result=pass') { $errors += 'standard test models failed' }
           }
 
+          # 23) Quality tiers (queue 3-5): unlit potato, vertex-lit low, shadows from medium, FXAA, bloom, the tier badge
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_QUALITY_TEST = '1' } 27
+          if ($log -notmatch 'quality test: potato=flat,noshadow low=lit,noshadow medium=lit,shadow high=lit,shadow,msaa4 fxaa=1 bloom=1 badge=1') { $errors += 'quality tier test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
 

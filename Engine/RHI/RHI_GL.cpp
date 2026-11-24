@@ -186,28 +186,42 @@ void RHI::ReadPixels(int32_t w, int32_t h, std::vector<uint8_t>& rgba) {
 }
 
 // ---- Render targets ----
-RenderTargetHandle RHI::CreateRenderTarget(int32_t w, int32_t h, int32_t samples) {
+RenderTargetHandle RHI::CreateRenderTarget(int32_t w, int32_t h, int32_t samples) { return CreateRenderTargetEx(w, h, samples, false, true); }
+
+void RHI::CopyDepth(RenderTargetHandle from, RenderTargetHandle to) {
+  if (!from.Valid() || !to.Valid() || from.id >= targets_.size() || to.id >= targets_.size()) return;
+  const TargetGL& s = targets_[from.id];
+  const TargetGL& d = targets_[to.id];
+  if (!s.depth || !d.depth || s.w != d.w || s.h != d.h) return;
+  glBlitNamedFramebuffer(s.samples > 1 ? s.msFbo : s.fbo, d.samples > 1 ? d.msFbo : d.fbo, 0, 0, s.w, s.h, 0, 0, d.w, d.h,
+                         GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+}
+
+RenderTargetHandle RHI::CreateRenderTargetEx(int32_t w, int32_t h, int32_t samples, bool hdr, bool withDepth) {
+  const GLenum colorFormat = hdr ? GL_RGBA16F : GL_RGBA8;
   TargetGL t;
   t.w = std::max(w, 1);
   t.h = std::max(h, 1);
   t.samples = std::max(samples, 1);
   glCreateTextures(GL_TEXTURE_2D, 1, &t.color);
-  glTextureStorage2D(t.color, 1, GL_RGBA8, t.w, t.h);
+  glTextureStorage2D(t.color, 1, colorFormat, t.w, t.h);
   glTextureParameteri(t.color, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTextureParameteri(t.color, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTextureParameteri(t.color, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTextureParameteri(t.color, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glCreateFramebuffers(1, &t.fbo);
   glNamedFramebufferTexture(t.fbo, GL_COLOR_ATTACHMENT0, t.color, 0);
-  glCreateRenderbuffers(1, &t.depth);
+  if (withDepth) glCreateRenderbuffers(1, &t.depth);
   if (t.samples > 1) { // draw into multisampled buffers, resolve into the texture
     glCreateRenderbuffers(1, &t.msColor);
-    glNamedRenderbufferStorageMultisample(t.msColor, t.samples, GL_RGBA8, t.w, t.h);
-    glNamedRenderbufferStorageMultisample(t.depth, t.samples, GL_DEPTH_COMPONENT24, t.w, t.h);
+    glNamedRenderbufferStorageMultisample(t.msColor, t.samples, colorFormat, t.w, t.h);
     glCreateFramebuffers(1, &t.msFbo);
     glNamedFramebufferRenderbuffer(t.msFbo, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, t.msColor);
-    glNamedFramebufferRenderbuffer(t.msFbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
-  } else {
+    if (withDepth) {
+      glNamedRenderbufferStorageMultisample(t.depth, t.samples, GL_DEPTH_COMPONENT24, t.w, t.h);
+      glNamedFramebufferRenderbuffer(t.msFbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
+    }
+  } else if (withDepth) {
     glNamedRenderbufferStorage(t.depth, GL_DEPTH_COMPONENT24, t.w, t.h);
     glNamedFramebufferRenderbuffer(t.fbo, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t.depth);
   }
@@ -278,6 +292,14 @@ void RHI::BeginRenderTarget(RenderTargetHandle rt, Color c) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
+void RHI::BeginRenderTargetKeep(RenderTargetHandle rt) {
+  if (!rt.Valid() || rt.id >= targets_.size() || !targets_[rt.id].fbo) return;
+  const TargetGL& t = targets_[rt.id];
+  currentTarget_ = rt.id;
+  glBindFramebuffer(GL_FRAMEBUFFER, t.samples > 1 ? t.msFbo : t.fbo);
+  glViewport(0, 0, t.w, t.h);
+}
+
 void RHI::EndRenderTarget() {
   if (currentTarget_ && currentTarget_ < targets_.size()) {
     const TargetGL& t = targets_[currentTarget_];
@@ -330,7 +352,7 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
     glVertexArrayAttribFormat(vao, a.location, (GLint)a.components, GL_FLOAT, GL_FALSE, a.offset);
     glVertexArrayAttribBinding(vao, a.location, 0);
   }
-  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
+  pipelines_.push_back({prog, vao, d.stride, d.alphaBlend, d.additive, d.depthTest, d.depthWrite, d.cull, d.depthBiasConstant, d.depthBiasSlope});
   return {(uint32_t)pipelines_.size() - 1};
 }
 
@@ -348,7 +370,8 @@ const RHI::PipelineGL* RHI::Bind(PipelineHandle p, BufferHandle vertices) {
   glUseProgram(g.program);
   glVertexArrayVertexBuffer(g.vao, 0, vertices.id, 0, (GLsizei)g.stride);
   glBindVertexArray(g.vao);
-  if (g.alphaBlend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
+  if (g.additive) { glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE); }
+  else if (g.alphaBlend) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); }
   else glDisable(GL_BLEND);
   if (g.depthTest) { glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glDepthMask(g.depthWrite ? GL_TRUE : GL_FALSE); }
   else { glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE); }

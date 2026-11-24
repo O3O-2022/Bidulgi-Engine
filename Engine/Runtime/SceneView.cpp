@@ -140,6 +140,7 @@ Material3D SceneView::MaterialFor(const std::string& name) {
   else if (has("gold")) { m.baseColor = {1.f, 0.766f, 0.336f, 1}; m.metallic = 1; m.roughness = 0.3f; }
   else if (has("steel") || has("metal")) { m.baseColor = {0.56f, 0.57f, 0.58f, 1}; m.metallic = 1; m.roughness = 0.35f; }
   else if (has("copper")) { m.baseColor = {0.955f, 0.638f, 0.538f, 1}; m.metallic = 1; m.roughness = 0.3f; }
+  else if (has("glow") || has("emissive")) { m.baseColor = {0.9f, 0.6f, 0.3f, 1}; m.emissive = {6.f, 3.6f, 1.2f, 1}; }
   else if (has("glass")) { m.baseColor = {0.7f, 0.85f, 0.95f, 0.35f}; m.roughness = 0.05f; m.alpha = Material3D::Alpha::Blend; }
   else if (!n.empty()) { // stable pastel from the name (FNV-1a)
     uint32_t h = 2166136261u;
@@ -252,13 +253,13 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   int32_t pw = std::max(1, (int32_t)std::lround(v.w * scale)), ph = std::max(1, (int32_t)std::lround(v.h * scale));
   if (!rt_.Valid() || pw != pw_ || ph != ph_) {
     rhi_->DestroyRenderTarget(rt_);
-    rt_ = rhi_->CreateRenderTarget(pw, ph, 4);
+    rt_ = rhi_->CreateRenderTarget(pw, ph, 1); // MSAA (by tier) happens inside the renderer
     pw_ = pw;
     ph_ = ph;
   }
   auto t0 = std::chrono::steady_clock::now();
   BuildItems(model, assets);
-  r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_);
+  r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   renderMs_ = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -615,7 +616,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
                        : model->tool == "scale" ? "Scale (R)" : "Select";
   std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
-  for (const std::string& chip : {std::string("Perspective"), std::string("Lit"), toolChip, spaceChip}) {
+  std::string tierChip = std::string(TierLabel(quality.tier)) + (quality.lighting == LightingMode::Unlit ? " · Unlit" : "");
+  for (const std::string& chip : {std::string("Perspective"), tierChip, toolChip, spaceChip}) {
     if (chip.empty()) continue;
     float cw = ui.Measure(11, chip) + 18;
     b.Rect(px, w.y + 8, cw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));

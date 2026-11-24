@@ -12,6 +12,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
 #include "Runtime/MaterialLibrary.h"
+#include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
 #include "Scene/Components.h"
 #include "Assets/AssetDatabase.h"
@@ -130,7 +131,9 @@ struct bdg_engine {
   bool renderTest = false;
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
-  bool materialTest = false;
+  bool materialTest = false, qualityTest = false;
+  bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
+  std::string qualityTestValues[8];
   std::string materialTestValues[8];
   bool sceneViewTest = false, gizmoTest = false;
   std::string gizmoTestValues[8];
@@ -168,7 +171,7 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
   int32_t pw = std::max(1, (int32_t)std::lround(v.w * scale)), ph = std::max(1, (int32_t)std::lround(v.h * scale));
   if (!e->viewRT.Valid() || pw != e->viewW || ph != e->viewH) {
     e->rhi.DestroyRenderTarget(e->viewRT);
-    e->viewRT = e->rhi.CreateRenderTarget(pw, ph, 4);
+    e->viewRT = e->rhi.CreateRenderTarget(pw, ph, 1); // the renderer does MSAA inside
     e->viewW = pw;
     e->viewH = ph;
   }
@@ -802,6 +805,85 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 24) v[9] = m->Selected();
 }
 
+// Scripted quality tier check (BDG_QUALITY_TEST=1, queue 3-5): the same scene at potato / low / medium / high.
+// Lighting: the Crystal's top and front faces differ only when lit. Shadows: ground in the Crystal's sun shadow
+// is darker only from medium up. FXAA lowers the sum of squared neighbour differences (edges get softer); bloom brightens the ground beside a
+// glowing Crystal; the top-bar badge steps to the next tier.
+void InjectQualityTest(bdg_engine* e, int frame, float scale) {
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  auto* v = e->qualityTestValues;
+  struct Frame { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+  auto grab = [&] { Frame f; sv->ReadPixels(f.w, f.h, f.px); return f; };
+  auto lum = [&](const Frame& f, glm::vec3 p) {
+    float x, y;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), f.w, f.h, p, x, y) || x < 0 || y < 0 || x >= f.w || y >= f.h) return -1;
+    const uint8_t* q = &f.px[((size_t)y * f.w + (size_t)x) * 4];
+    return q[0] + q[1] + q[2];
+  };
+  auto variation = [](const Frame& f) {
+    long long tv = 0;
+    for (int y = 0; y < f.h; ++y)
+      for (int x = 1; x < f.w; ++x)
+        for (int c = 0; c < 3; ++c) { // squared steps: softening an edge (one jump into two halves) lowers it
+          long long d = f.px[((size_t)y * f.w + x) * 4 + c] - f.px[((size_t)y * f.w + x - 1) * 4 + c];
+          tv += d * d;
+        }
+    return tv;
+  };
+  // Crystal: 1 m placeholder box at (3, 0.5, 2). Its sun shadow falls toward +x / -z.
+  const glm::vec3 top{3, 1.0f, 2}, front{3, 0.5f, 2.5f}, shade{3.7f, 0, 1.0f}, open{4.6f, 0, 1.0f}, beside{3.6f, 0.15f, 2.6f};
+  auto describe = [&](const Frame& f) {
+    int t = lum(f, top), fr = lum(f, front), s = lum(f, shade), o = lum(f, open);
+    bool lit = std::abs(t - fr) > 10, shadow = s >= 0 && o > 0 && s * 10 < o * 8;
+    return std::string(lit ? "lit" : "flat") + (shadow ? ",shadow" : ",noshadow");
+  };
+  const bdg::QualityTier tiers[4] = {bdg::QualityTier::Potato, bdg::QualityTier::Low, bdg::QualityTier::Medium, bdg::QualityTier::High};
+  static long long tvFxaa = 0;
+  static int besideMedium = 0;
+  if (frame >= 2 && frame <= 14 && (frame - 2) % 4 == 0) sv->quality = bdg::QualityPreset(tiers[(frame - 2) / 4]);
+  if (frame >= 4 && frame <= 16 && (frame - 4) % 4 == 0) {
+    int i = (frame - 4) / 4;
+    Frame f = grab();
+    v[i] = describe(f) + (i == 3 ? std::format(",msaa{}", e->r3d->LastQuality().msaa) : "");
+    if (i == 2) tvFxaa = variation(f);
+  }
+  if (frame == 17) { // medium once more, without FXAA
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    sv->quality.fxaa = false;
+  }
+  if (frame == 19) {
+    v[4] = std::format("{}", tvFxaa > 0 && tvFxaa < variation(grab()) ? 1 : 0);
+    bdg::Command c; // a glowing Crystal: bloom shows around it from high up
+    c.name = "set";
+    c.target = "g8";
+    c.args = R"({"path":"MeshRenderer.material","value":"M_Glow"})";
+    std::string err;
+    m->bus.Execute(c, &err);
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+  }
+  if (frame == 21) {
+    besideMedium = lum(grab(), beside);
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+  }
+  if (frame == 23) {
+    int b = lum(grab(), beside);
+    v[5] = b > besideMedium + 6 ? "1" : std::format("0({}->{})", besideMedium, b);
+    if (bdg::Widget* badge = e->editor->Find("tool.quality")) { // click: high -> ultra
+      using T = bdg::InputEvent::Type;
+      float x = (badge->x + badge->w * 0.5f) * scale, y = (badge->y + badge->h * 0.5f) * scale;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  }
+  if (frame == 25) {
+    bdg::Widget* badge = e->editor->Find("tool.quality");
+    v[6] = std::format("{}", badge && badge->text == "초고사양" && sv->quality.tier == bdg::QualityTier::Ultra ? 1 : 0);
+  }
+}
+
 // Scripted material check (BDG_MATERIAL_TEST=1 with BDG_ASSETS = an empty folder, queue 3-1b): writes a small project
 // (two materials, an instance, two textures), assigns them through commands and reads the rendered colours back.
 void InjectMaterialTest(bdg_engine* e, int frame) {
@@ -877,14 +959,29 @@ void InjectMaterialTest(bdg_engine* e, int frame) {
     float r;
     sv->ObjectCenter(*m, "g8", center, r);
     pixel(center, c);
-    v[0] = std::format("{}", close(c, 208, 32, 32, 3) ? 1 : 0);
+    auto shown = [&](int r, int g, int b, int out[3]) { // what the tier's tone map makes of an unlit sRGB colour
+      bdg::Color lin = bdg::SrgbToLinear((uint8_t)r, (uint8_t)g, (uint8_t)b);
+      const bdg::QualitySettings& q = sv->quality;
+      float ch[3] = {lin.r, lin.g, lin.b};
+      for (int k = 0; k < 3; ++k) {
+        float x = ch[k] * q.exposure;
+        x = q.toneMap ? bdg::ToneMapACES(x) : std::clamp(x, 0.f, 1.f);
+        out[k] = (int)std::lround((x <= 0.0031308f ? x * 12.92f : 1.055f * std::pow(x, 1.f / 2.4f) - 0.055f) * 255.f);
+      }
+    };
+    int red[3], blue[3], q0[3], q3[3];
+    shown(208, 32, 32, red);
+    shown(32, 80, 224, blue);
+    shown(quad[0][0], quad[0][1], quad[0][2], q0);
+    shown(quad[3][0], quad[3][1], quad[3][2], q3);
+    v[0] = std::format("{}", close(c, red[0], red[1], red[2], 3) ? 1 : 0);
     sv->ObjectCenter(*m, "g6", center, r);
     pixel(center + glm::vec3(0, -0.25f, 0), c); // below the Weapon child
-    v[1] = std::format("{}", close(c, 32, 80, 224, 3) ? 1 : 0);
+    v[1] = std::format("{}", close(c, blue[0], blue[1], blue[2], 3) ? 1 : 0);
     int tl[3], br[3]; // ground plane: picture top-left at (-x, -z), bottom-right at (+x, +z)
     pixel({-4.5f, 0, -4.5f}, tl); // cell centres: the 1 m grid lines are drawn over the ground
     pixel({1.5f, 0, 3.5f}, br);
-    bool texOk = close(tl, quad[0][0], quad[0][1], quad[0][2], 8) && close(br, quad[3][0], quad[3][1], quad[3][2], 8);
+    bool texOk = close(tl, q0[0], q0[1], q0[2], 8) && close(br, q3[0], q3[1], q3[2], 8);
     v[2] = texOk ? "1" : std::format("0(tl={},{},{} br={},{},{})", tl[0], tl[1], tl[2], br[0], br[1], br[2]);
     auto preset = [&](const char* rel) {
       std::vector<uint8_t> b;
@@ -1111,6 +1208,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->sceneViewTest = std::getenv("BDG_SCENEVIEW_TEST") != nullptr;
   e->gizmoTest = std::getenv("BDG_GIZMO_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
+  e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
   bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
   e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
   const char* screen = std::getenv("BDG_SCREEN");
@@ -1161,6 +1259,29 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (e->r3d->Init(e->rhi) && e->sceneView->Init(e->rhi, *e->r3d)) {
       e->materials.Init(e->rhi);
       e->sceneView->SetMaterials(&e->materials);
+      // Quality tier (queue 3-5): the project's range, BDG_QUALITY for tests, the top-bar badge to switch.
+      {
+        std::vector<uint8_t> text;
+        std::string err;
+        if (bdg::ReadFileBytes(std::filesystem::current_path() / "ProjectSettings" / "Quality.json", text) &&
+            !bdg::ParseProjectQuality(std::string(text.begin(), text.end()), e->projectQuality, &err))
+          bdg::LogWarn("quality: ProjectSettings/Quality.json: {}", err);
+        bdg::QualityTier tier = e->projectQuality.fallback;
+        if (const char* q = std::getenv("BDG_QUALITY"); q && !bdg::TierFromString(q, tier)) bdg::LogWarn("quality: unknown tier {}", q);
+        tier = e->projectQuality.Clamp(tier);
+        e->sceneView->quality = bdg::QualityPreset(tier);
+        if (const char* set = std::getenv("BDG_QUALITY_SET"); set && !bdg::ApplyQualityOverrides(set, e->sceneView->quality, &err))
+          bdg::LogWarn("quality: {}", err);
+        if (bdg::Widget* badge = e->editor->Find("tool.quality")) {
+          badge->text = bdg::TierLabel(tier);
+          badge->onClick = [e](bdg::Widget& w) {
+            bdg::QualityTier next = e->projectQuality.Next(e->sceneView->quality.tier);
+            e->sceneView->quality = bdg::QualityPreset(next);
+            w.text = bdg::TierLabel(next);
+            bdg::LogInfo("quality: {}", bdg::TierKey(next));
+          };
+        }
+      }
       if (const char* camEnv = std::getenv("BDG_SCENE_CAMERA")) { // "yaw,pitch,distance" for screenshots
         float yaw, pitch, dist, px, py, pz; // optional pivot after the distance: "yaw,pitch,distance,x,y,z"
         int n = std::sscanf(camEnv, "%f,%f,%f,%f,%f,%f", &yaw, &pitch, &dist, &px, &py, &pz);
@@ -1411,6 +1532,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->sceneViewTest && !e->showGallery) InjectSceneViewTest(e, frames, scale);
     if (e->gizmoTest && !e->showGallery) InjectGizmoTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
+    if (e->qualityTest && !e->showGallery) InjectQualityTest(e, frames, scale);
     if (e->assetsOpen && e->assetsChanged.exchange(false)) { // files changed on disk
       e->assetWatcherFired = true;
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
@@ -1569,6 +1691,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto* v = e->sceneViewTestValues;
         bdg::LogInfo("sceneview test: drawn={} pick={} outline={} orbit={} zoom={} frame={} pan={} fly={} deselect={} icon={}",
                      v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
+      }
+      if (e->qualityTest) {
+        auto* v = e->qualityTestValues;
+        bdg::LogInfo("quality test: potato={} low={} medium={} high={} fxaa={} bloom={} badge={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
       }
       if (e->materialTest) {
         auto* v = e->materialTestValues;

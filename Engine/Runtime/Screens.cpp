@@ -268,7 +268,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   ws.Add(MakeButton("tool.pause", "||"));
   ws.Add(MakeButton("tool.step", "▶|"));
   ws.Add(Spacer());
-  ws.Add(MakeBadge("중사양"));
+  ws.Add(MakeBadge("중사양")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
   ws.Add(MakeBadge("Windows"));
   ws.Add(MakeButton("tool.build", "Build"));
 

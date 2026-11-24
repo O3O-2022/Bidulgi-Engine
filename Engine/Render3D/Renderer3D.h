@@ -1,9 +1,10 @@
 #pragma once
-// Forward 3D renderer, first stage (queue 3-0): one directional light, a sky/ground hemisphere for ambient
-// light and reflections, metal/roughness GGX shading. Colours are linear inside the shader and written
-// sRGB-encoded into an RGBA8 render target, which the UI then draws as an image. No tone mapping yet
-// (values above 1 clip); that arrives with post-processing.
+// Forward 3D renderer: metal/roughness GGX, sun + point/spot lights, sky, shadow map (3-0 ... 3-4). The scene is
+// drawn in linear light into an HDR target (RGBA16F, MSAA by tier); post-processing (bloom, ACES tone mapping,
+// FXAA, queue 3-5) writes the display-encoded result into the caller's RGBA8 target, which the UI shows as an
+// image. Editor overlays (grid, selection outline) go on top of the final picture with the scene's depth.
 #include "Render3D/MeshGen.h"
+#include "Render3D/Quality.h"
 #include "RHI/RHI.h"
 #include <glm/glm.hpp>
 #include <vector>
@@ -105,7 +106,9 @@ public:
   static void AppendModel(const Model3D& model, const glm::mat4& placement, std::vector<DrawItem3D>& items);
   // Draws the items into rt (cleared to `clear`, given in display/sRGB values like UI colours).
   void Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
-              const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras = nullptr);
+              const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras = nullptr,
+              const QualitySettings* quality = nullptr); // nullptr: ReferenceQuality()
+  // rt must be single-sampled with depth (RHI::CreateRenderTarget(w, h, 1)); MSAA happens inside.
   void NewFrame() { draws_ = 0; triangles_ = 0; } // stats count every Render() since the last call
   uint32_t DrawsLastFrame() const { return draws_; }
   uint64_t TrianglesLastFrame() const { return triangles_; }
@@ -121,7 +124,20 @@ private:
   // Editor passes: grid plane, selection mask (own target) and the outline drawn from it.
   PipelineHandle grid_, mask_, outline_, sky_, shadowPipe_;
   BufferHandle lightsUbo_;
-  RenderTargetHandle shadowRT_, noShadowRT_; // 2048 shadow map; 1x1 stand-in when shadows are off
+  RenderTargetHandle shadowRT_, noShadowRT_; // shadow map (size by tier); 1x1 stand-in when shadows are off
+  int32_t shadowSize_ = 0;
+  // Post-processing: HDR scene, LDR copy for FXAA, bloom chain (half size down to 1/32).
+  PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
+  BufferHandle postUbo_;
+  RenderTargetHandle hdrRT_, ldrRT_;
+  int32_t hdrW_ = 0, hdrH_ = 0, hdrSamples_ = 0;
+  static constexpr int kBloomLevels = 5;
+  RenderTargetHandle bloom_[kBloomLevels];
+  int32_t bloomW_ = 0, bloomH_ = 0;
+  QualitySettings lastQuality_;
+public:
+  const QualitySettings& LastQuality() const { return lastQuality_; }
+private:
 public:
   static constexpr int kShadowMapSize = 2048;
   // Light-space matrix of the last frame's shadow map (tests read it back to check where shadows fall).

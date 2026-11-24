@@ -42,6 +42,7 @@ struct PipelineDesc {
   uint32_t    attrCount = 0;
   uint32_t    stride = 0;               // bytes per vertex
   bool        alphaBlend = false;
+  bool        additive = false;         // ONE + ONE (bloom upsampling); wins over alphaBlend
   bool        depthTest = false;        // less-or-equal test (3D); 2D pipelines leave it off
   bool        depthWrite = true;        // with depthTest: false for blended surfaces
   CullMode    cull = CullMode::None;    // front faces wind counter-clockwise (Core/Space.h)
@@ -74,6 +75,11 @@ public:
   // Offscreen colour (RGBA8, already display-encoded) + depth. samples > 1 renders with MSAA and resolves into
   // the colour texture at EndRenderTarget. The texture is bottom-up (OpenGL): draw it with v flipped.
   RenderTargetHandle CreateRenderTarget(int32_t w, int32_t h, int32_t samples = 1);
+  // hdr: RGBA16F colour (linear light before tone mapping); depth: false for post-processing targets.
+  RenderTargetHandle CreateRenderTargetEx(int32_t w, int32_t h, int32_t samples, bool hdr, bool depth);
+  // Copies the scene depth of `from` (resolving MSAA) into `to`, which must be the bound target; overlays drawn
+  // after post-processing (editor grid) then still hide behind objects.
+  void CopyDepth(RenderTargetHandle from, RenderTargetHandle to);
   void          DestroyRenderTarget(RenderTargetHandle rt);
   // Depth only (shadow maps): a 32-bit float depth texture sampled with comparison (GLSL sampler2DShadow),
   // outside the map reads as lit. BeginRenderTarget clears it to the far plane.
@@ -81,6 +87,7 @@ public:
   TextureHandle RenderTargetDepth(RenderTargetHandle rt) const;
   TextureHandle RenderTargetColor(RenderTargetHandle rt) const;
   void          BeginRenderTarget(RenderTargetHandle rt, Color clear); // viewport = the whole target
+  void          BeginRenderTargetKeep(RenderTargetHandle rt);           // same, keeping what is there
   void          EndRenderTarget();                                     // resolve, back to the window
   void          ReadRenderTarget(RenderTargetHandle rt, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba); // bottom-up rows
 
@@ -97,7 +104,7 @@ public:
   std::string glVersion, gpuName; // filled by Init (bug reports, logs)
 
 private:
-  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
+  struct PipelineGL { uint32_t program = 0, vao = 0, stride = 0; bool alphaBlend = false, additive = false, depthTest = false, depthWrite = true; CullMode cull = CullMode::None; float biasC = 0, biasS = 0; };
   struct TargetGL { uint32_t fbo = 0, color = 0, depth = 0, msFbo = 0, msColor = 0, depthTex = 0; int32_t w = 0, h = 0, samples = 1; };
   std::vector<TargetGL> targets_ = std::vector<TargetGL>(1);
   uint32_t currentTarget_ = 0;

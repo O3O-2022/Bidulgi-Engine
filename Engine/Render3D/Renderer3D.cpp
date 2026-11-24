@@ -39,13 +39,29 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUV;
 layout(location = 3) in vec4 aTangent;
-out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent;
+layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
+out vec3 vWorld; out vec3 vNormal; out vec2 vUV; out vec4 vTangent; out vec3 vLit;
 void main() {
   vec4 w = uModel * vec4(aPos, 1.0);
   vWorld = w.xyz;
   vNormal = transpose(inverse(mat3(uModel))) * aNormal;
   vTangent = vec4(mat3(uModel) * aTangent.xyz, aTangent.w);
   vUV = aUV;
+  vLit = vec3(0.0);
+  if (uCounts.y > 0.5 && uCounts.y < 1.5) { // low tier: diffuse light per vertex (sun, sky, local lights)
+    vec3 n = normalize(vNormal);
+    vLit = uLight.rgb * max(dot(n, normalize(uToLight.xyz)), 0.0) / 3.14159265 +
+           mix(uGround.rgb, mix(uHorizon.rgb, uZenith.rgb, 0.6), n.y * 0.5 + 0.5);
+    for (int i = 0; i < int(uCounts.x); ++i) {
+      vec3 toL = uLPos[i].xyz - vWorld;
+      float d2 = max(dot(toL, toL), 1e-4), range = max(uLPos[i].w, 1e-3);
+      vec3 L = toL * inversesqrt(d2);
+      float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
+      float atten = win * win / (d2 + 1.0);
+      if (uLCone[i].y > 0.5) atten *= smoothstep(uLDir[i].w, uLCone[i].x, dot(-L, uLDir[i].xyz));
+      vLit += uLColor[i].rgb * atten * max(dot(n, L), 0.0) / 3.14159265;
+    }
+  }
   gl_Position = uViewProj * w;
 }
 )";
@@ -60,7 +76,7 @@ layout(binding = 1) uniform sampler2D uMetalRoughMap;
 layout(binding = 2) uniform sampler2D uNormalMap;
 layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
-in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent;
+in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit;
 out vec4 oColor;
 const float PI = 3.14159265;
 vec3 ToSrgb(vec3 c) {
@@ -115,15 +131,19 @@ vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float 
 }
 void main() {
   // Every map is sampled and every derivative taken before any branch (implicit LOD needs uniform control flow).
-  vec4 baseTex = texture(uBaseMap, vUV), mr = texture(uMetalRoughMap, vUV), nTex = texture(uNormalMap, vUV);
-  vec4 occ = texture(uOcclusionMap, vUV), emTex = texture(uEmissiveMap, vUV);
+  float bias = uCounts.z; // lower tiers read smaller mips (texture resolution setting)
+  vec4 baseTex = texture(uBaseMap, vUV, bias), mr = texture(uMetalRoughMap, vUV, bias), nTex = texture(uNormalMap, vUV, bias);
+  vec4 occ = texture(uOcclusionMap, vUV, bias), emTex = texture(uEmissiveMap, vUV, bias);
   vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
   vec2 duvx = dFdx(vUV), duvy = dFdy(vUV);
 
   vec4 base = uBaseColor * (uMaps.x > 0.5 ? baseTex : vec4(1.0));
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
-  if (uParams.z > 0.5) { oColor = vec4(ToSrgb(base.rgb), alpha); return; }
+  vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
+  if (uParams.z > 0.5) { oColor = vec4(base.rgb, alpha); return; }                     // unlit material
+  if (uCounts.y < 0.5) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
+  if (uCounts.y < 1.5) { oColor = vec4(base.rgb * vLit + emissive, alpha); return; }   // low tier: per vertex
 
   vec3 ng = normalize(vNormal);
   // Tangent frame: from the mesh when it has tangents, otherwise from screen-space UV derivatives
@@ -161,8 +181,8 @@ void main() {
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
-  color += uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  oColor = vec4(ToSrgb(color), alpha);
+  color += emissive;
+  oColor = vec4(color, alpha); // linear light; tone mapping and display encoding happen in post
 }
 )";
 
@@ -229,7 +249,7 @@ void main() {
     float k = smoothstep(uSun.x - 0.00008, uSun.x + 0.00008, dot(d, normalize(uToLight.xyz)));
     c += uLight.rgb * 4.0 * k;
   }
-  oColor = vec4(ToSrgb(c), 1.0);
+  oColor = vec4(c, 1.0);
 }
 )";
 // Shadow casters: depth only; alpha-masked materials cut their holes.
@@ -248,6 +268,83 @@ in vec2 vUV;
 void main() {
   float alpha = uBaseColor.a * (uMaps.x > 0.5 ? texture(uBaseMap, vUV).a : 1.0);
   if (uParams.w > 0.5 && uParams.w < 1.5 && alpha < uExtra.z) discard;
+}
+)";
+
+// ---- Post-processing (queue 3-5) ----
+const char* kPostVS = R"(#version 450 core
+layout(location = 0) in vec3 aPos;
+out vec2 vUV;
+void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); }
+)";
+// uPost = (exposure, bloom intensity, tone map on, bloom on)
+const char* kToneMapFS = R"(#version 450 core
+layout(std140, binding = 4) uniform Post3D { vec4 uPost; };
+layout(binding = 0) uniform sampler2D uHdr;
+layout(binding = 1) uniform sampler2D uBloom;
+in vec2 vUV;
+out vec4 oColor;
+vec3 ACES(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); } // Narkowicz fit
+vec3 ToSrgb(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+void main() {
+  vec3 c = texture(uHdr, vUV).rgb;
+  if (uPost.w > 0.5) c += texture(uBloom, vUV).rgb * (uPost.y / 5.0); // the chain sums 5 levels: average them
+  c *= uPost.x;
+  if (uPost.z > 0.5) c = ACES(c);
+  oColor = vec4(ToSrgb(c), 1.0); // opaque: the UI draws this picture with alpha blending
+}
+)";
+// FXAA (the compact NVIDIA FXAA 2 kernel): blends along the local edge direction where contrast is high.
+const char* kFxaaFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uLdr;
+in vec2 vUV;
+out vec4 oColor;
+float Luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main() {
+  vec2 px = 1.0 / vec2(textureSize(uLdr, 0));
+  float lM = Luma(texture(uLdr, vUV).rgb);
+  float lNW = Luma(textureOffset(uLdr, vUV, ivec2(-1, 1)).rgb), lNE = Luma(textureOffset(uLdr, vUV, ivec2(1, 1)).rgb);
+  float lSW = Luma(textureOffset(uLdr, vUV, ivec2(-1, -1)).rgb), lSE = Luma(textureOffset(uLdr, vUV, ivec2(1, -1)).rgb);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE))), lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));
+  float reduce = max((lNW + lNE + lSW + lSE) * 0.25 * 0.125, 1.0 / 128.0);
+  float rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+  dir = clamp(dir * rcp, -8.0, 8.0) * px;
+  vec3 a = 0.5 * (texture(uLdr, vUV + dir * (1.0 / 3.0 - 0.5)).rgb + texture(uLdr, vUV + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture(uLdr, vUV - dir * 0.5).rgb + texture(uLdr, vUV + dir * 0.5).rgb);
+  float lB = dot(b, vec3(0.299, 0.587, 0.114));
+  oColor = vec4((lB < lMin || lB > lMax) ? a : b, 1.0);
+}
+)";
+// Bloom (Jimenez, Call of Duty 2014): 13-tap downsample, 3x3 tent upsample added into the next larger level.
+const char* kBloomDownFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
+  vec3 a = texture(uSrc, vUV + t * vec2(-2, 2)).rgb, b = texture(uSrc, vUV + t * vec2(0, 2)).rgb, c = texture(uSrc, vUV + t * vec2(2, 2)).rgb;
+  vec3 d = texture(uSrc, vUV + t * vec2(-2, 0)).rgb, e = texture(uSrc, vUV).rgb, f = texture(uSrc, vUV + t * vec2(2, 0)).rgb;
+  vec3 g = texture(uSrc, vUV + t * vec2(-2, -2)).rgb, h = texture(uSrc, vUV + t * vec2(0, -2)).rgb, i = texture(uSrc, vUV + t * vec2(2, -2)).rgb;
+  vec3 j = texture(uSrc, vUV + t * vec2(-1, 1)).rgb, k = texture(uSrc, vUV + t * vec2(1, 1)).rgb;
+  vec3 l = texture(uSrc, vUV + t * vec2(-1, -1)).rgb, m = texture(uSrc, vUV + t * vec2(1, -1)).rgb;
+  vec3 o = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 + (j + k + l + m) * 0.125;
+  oColor = vec4(min(o, vec3(64.0)), 1.0); // no fireflies from single very bright pixels
+}
+)";
+const char* kBloomUpFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
+  vec3 s = texture(uSrc, vUV + t * vec2(-1, 1)).rgb + 2.0 * texture(uSrc, vUV + t * vec2(0, 1)).rgb + texture(uSrc, vUV + t * vec2(1, 1)).rgb
+         + 2.0 * texture(uSrc, vUV + t * vec2(-1, 0)).rgb + 4.0 * texture(uSrc, vUV).rgb + 2.0 * texture(uSrc, vUV + t * vec2(1, 0)).rgb
+         + texture(uSrc, vUV + t * vec2(-1, -1)).rgb + 2.0 * texture(uSrc, vUV + t * vec2(0, -1)).rgb + texture(uSrc, vUV + t * vec2(1, -1)).rgb;
+  oColor = vec4(s / 16.0, 1.0);
 }
 )";
 
@@ -280,13 +377,15 @@ struct FrameData {
   float camPos[4], toLight[4], light[4], sky[4], ground[4], zenith[4], horizon[4], sun[4], shadow[4], counts[4];
 };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
+struct PostData { float post[4]; };
 
 void Put(float* dst, const glm::vec3& v, float w = 0) { dst[0] = v.x; dst[1] = v.y; dst[2] = v.z; dst[3] = w; }
 void Put(float* dst, Color c, float scale = 1) { dst[0] = c.r * scale; dst[1] = c.g * scale; dst[2] = c.b * scale; dst[3] = c.a; }
 
 // Orthographic light camera around the bounding sphere of the view slice [near, distance]; the centre snaps to
 // whole shadow texels so the map does not shimmer while the camera moves.
-glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight, float distance, float& texelWorld, float& depthRange) {
+glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight, float distance, int mapSize, float& texelWorld,
+                    float& depthRange) {
   float nearZ = cam.nearZ, farZ = std::min(cam.farZ, distance);
   float ty = std::tan(glm::radians(cam.fovY * 0.5f)), tx = ty * aspect;
   glm::vec3 f = glm::normalize(cam.target - cam.position), r = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
@@ -302,7 +401,7 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
   for (const glm::vec3& c : corners) radius = std::max(radius, glm::distance(c, center));
   radius = std::ceil(radius * 16.f) / 16.f; // steady size: no flicker from tiny changes
   glm::vec3 L = glm::normalize(toLight), up = std::fabs(L.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-  texelWorld = 2.f * radius / (float)Renderer3D::kShadowMapSize;
+  texelWorld = 2.f * radius / (float)mapSize;
   glm::mat4 rot = glm::lookAt(glm::vec3(0), -L, up);
   glm::vec3 ls = glm::vec3(rot * glm::vec4(center, 1));
   ls.x = std::floor(ls.x / texelWorld) * texelWorld;
@@ -374,11 +473,14 @@ bool Renderer3D::Init(RHI& rhi) {
   gp.alphaBlend = true;
   gp.depthTest = true;
   gp.depthWrite = false;
+  gp.depthBiasConstant = -4.f; // pulled toward the camera, more on slopes: an MSAA depth copy keeps one sample
+  gp.depthBiasSlope = -4.f;    // (off the pixel centre), which a fixed lift misses at grazing angles
   gp.debugName = "editor.grid";
   grid_ = rhi.CreatePipeline(gp);
   gp.vertexSource = kFullscreenVS;
   gp.fragmentSource = kOutlineFS;
   gp.depthTest = false;
+  gp.depthBiasConstant = gp.depthBiasSlope = 0;
   gp.debugName = "editor.outline";
   outline_ = rhi.CreatePipeline(gp);
   gp.vertexSource = kSkyVS;
@@ -400,6 +502,26 @@ bool Renderer3D::Init(RHI& rhi) {
   shadowPipe_ = rhi.CreatePipeline(pd);
   if (!mask_.Valid() || !grid_.Valid() || !outline_.Valid() || !sky_.Valid() || !shadowPipe_.Valid()) return false;
   lightsUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(LightsData), true);
+  postUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(PostData), true);
+  PipelineDesc pp; // fullscreen post passes
+  pp.vertexSource = kPostVS;
+  pp.attrs[0] = {0, 3, 0};
+  pp.attrCount = 1;
+  pp.stride = 12;
+  pp.fragmentSource = kToneMapFS;
+  pp.debugName = "post.tonemap";
+  toneMap_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kFxaaFS;
+  pp.debugName = "post.fxaa";
+  fxaa_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kBloomDownFS;
+  pp.debugName = "post.bloom.down";
+  bloomDown_ = rhi.CreatePipeline(pp);
+  pp.fragmentSource = kBloomUpFS;
+  pp.additive = true;
+  pp.debugName = "post.bloom.up";
+  bloomUp_ = rhi.CreatePipeline(pp);
+  if (!toneMap_.Valid() || !fxaa_.Valid() || !bloomDown_.Valid() || !bloomUp_.Valid()) return false;
   noShadowRT_ = rhi.CreateDepthTarget(1);
   rhi.BeginRenderTarget(noShadowRT_, {0, 0, 0, 0});
   rhi.EndRenderTarget();
@@ -420,7 +542,12 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectUbo_);
   rhi_->DestroyTexture(white_);
-  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_}) rhi_->DestroyPipeline(p);
+  for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_})
+    rhi_->DestroyPipeline(p);
+  rhi_->DestroyBuffer(postUbo_);
+  for (RenderTargetHandle t : bloom_) rhi_->DestroyRenderTarget(t);
+  rhi_->DestroyRenderTarget(hdrRT_);
+  rhi_->DestroyRenderTarget(ldrRT_);
   rhi_->DestroyBuffer(lightsUbo_);
   rhi_->DestroyRenderTarget(shadowRT_);
   rhi_->DestroyRenderTarget(noShadowRT_);
@@ -504,9 +631,13 @@ void Renderer3D::AppendModel(const Model3D& m, const glm::mat4& placement, std::
       items.push_back({&m.meshes[in.mesh], placement * in.world, m.materials[in.mesh]});
 }
 
-void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& cam, const Light3D& light,
-                        const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras) {
+void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camera3D& camIn, const Light3D& light,
+                        const std::vector<DrawItem3D>& items, Color clear, const RenderExtras* extras, const QualitySettings* quality) {
   if (!rhi_ || !rt.Valid() || w <= 0 || h <= 0) return;
+  const QualitySettings q = quality ? *quality : ReferenceQuality();
+  lastQuality_ = q;
+  Camera3D cam = camIn;
+  cam.farZ *= q.viewDistance;
   FrameData f{};
   const float aspect = (float)w / (float)h;
   glm::mat4 vp = cam.Projection(aspect) * cam.View(), ivp = glm::inverse(vp);
@@ -528,8 +659,10 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     f.sun[0] = 1.f;
   }
   Put(f.sky, light.sky);
-  int locals = std::min((int)light.locals.size(), kMaxLocalLights);
+  int locals = std::min({(int)light.locals.size(), kMaxLocalLights, q.lighting == LightingMode::Unlit ? 0 : q.maxLights});
   f.counts[0] = (float)locals;
+  f.counts[1] = (float)q.lighting; // 0 unlit, 1 per vertex, 2 per pixel
+  f.counts[2] = q.textureBias;
   LightsData ld{};
   for (int i = 0; i < locals; ++i) {
     const LocalLight3D& l = light.locals[i];
@@ -541,13 +674,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
   float texelWorld = 0, depthRange = 1;
-  if (light.shadows && light.intensity > 0) {
-    shadowMatrix_ = FitShadow(cam, aspect, light.toLight, light.shadowDistance, texelWorld, depthRange);
+  if (light.shadows && q.shadows && q.lighting == LightingMode::Pixel && light.intensity > 0) {
+    shadowMatrix_ = FitShadow(cam, aspect, light.toLight, light.shadowDistance * q.viewDistance, q.shadowMapSize, texelWorld, depthRange);
     std::memcpy(f.lightViewProj, glm::value_ptr(shadowMatrix_), sizeof(f.lightViewProj));
     f.shadow[0] = 1.f;
     f.shadow[1] = 0.02f / depthRange;   // 2 cm in depth
     f.shadow[2] = texelWorld * 1.5f;    // normal offset
-    f.shadow[3] = (float)kShadowMapSize;
+    f.shadow[3] = (float)q.shadowMapSize;
   }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
@@ -576,7 +709,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindUniformBuffer(1, frameUbo_);
   rhi_->BindUniformBuffer(3, lightsUbo_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
-    if (!shadowRT_.Valid()) shadowRT_ = rhi_->CreateDepthTarget(kShadowMapSize);
+    if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize) {
+      rhi_->DestroyRenderTarget(shadowRT_);
+      shadowRT_ = rhi_->CreateDepthTarget(q.shadowMapSize);
+      shadowSize_ = q.shadowMapSize;
+    }
     rhi_->BeginRenderTarget(shadowRT_, {0, 0, 0, 0});
     for (size_t i = 0; i < items.size(); ++i) {
       const DrawItem3D& it = items[i];
@@ -606,7 +743,20 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       }
     rhi_->EndRenderTarget();
   }
-  rhi_->BeginRenderTarget(rt, clear);
+  const int samples = std::clamp(q.msaa, 1, 8);
+  if (!hdrRT_.Valid() || hdrW_ != w || hdrH_ != h || hdrSamples_ != samples) {
+    rhi_->DestroyRenderTarget(hdrRT_);
+    rhi_->DestroyRenderTarget(ldrRT_);
+    hdrRT_ = rhi_->CreateRenderTargetEx(w, h, samples, true, true);
+    ldrRT_ = rhi_->CreateRenderTargetEx(w, h, 1, false, false);
+    hdrW_ = w;
+    hdrH_ = h;
+    hdrSamples_ = samples;
+  }
+  Color linearClear = SrgbToLinear((uint8_t)std::lround(std::clamp(clear.r, 0.f, 1.f) * 255),
+                                   (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
+                                   (uint8_t)std::lround(std::clamp(clear.b, 0.f, 1.f) * 255));
+  rhi_->BeginRenderTarget(hdrRT_, linearClear);
   std::vector<size_t> order, blended;
   for (size_t i = 0; i < items.size(); ++i)
     if (items[i].mesh && items[i].mesh->indexCount) (items[i].material.alpha == Material3D::Alpha::Blend ? blended : order).push_back(i);
@@ -617,10 +767,6 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   for (size_t n = 0; n <= order.size(); ++n) {
     if (n == opaqueCount && bg.draw) { // sky where no surface was drawn
       rhi_->Draw(sky_, fullscreen_, 3);
-      ++draws_;
-    }
-    if (n == opaqueCount && extras && extras->grid) { // after opaque surfaces, before blended ones
-      rhi_->Draw(grid_, gridQuad_, 6);
       ++draws_;
     }
     if (n == order.size()) break;
@@ -634,6 +780,59 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->DrawIndexed(p, it.mesh->vertices, it.mesh->indices, it.mesh->indexCount);
     ++draws_;
     triangles_ += it.mesh->indexCount / 3;
+  }
+  rhi_->EndRenderTarget(); // resolves MSAA
+
+  // Bloom: blur the bright parts over a chain of half-size targets.
+  TextureHandle hdr = rhi_->RenderTargetColor(hdrRT_);
+  if (q.bloom) {
+    int bw = std::max(w / 2, 1), bh = std::max(h / 2, 1);
+    if (!bloom_[0].Valid() || bloomW_ != bw || bloomH_ != bh) {
+      for (int l = 0; l < kBloomLevels; ++l) {
+        rhi_->DestroyRenderTarget(bloom_[l]);
+        bloom_[l] = rhi_->CreateRenderTargetEx(std::max(bw >> l, 1), std::max(bh >> l, 1), 1, true, false);
+      }
+      bloomW_ = bw;
+      bloomH_ = bh;
+    }
+    for (int l = 0; l < kBloomLevels; ++l) {
+      rhi_->BeginRenderTarget(bloom_[l], {0, 0, 0, 1});
+      rhi_->BindTexture(0, l == 0 ? hdr : rhi_->RenderTargetColor(bloom_[l - 1]));
+      rhi_->Draw(bloomDown_, fullscreen_, 3);
+      rhi_->EndRenderTarget();
+      ++draws_;
+    }
+    for (int l = kBloomLevels - 1; l > 0; --l) {
+      rhi_->BeginRenderTargetKeep(bloom_[l - 1]);
+      rhi_->BindTexture(0, rhi_->RenderTargetColor(bloom_[l]));
+      rhi_->Draw(bloomUp_, fullscreen_, 3);
+      rhi_->EndRenderTarget();
+      ++draws_;
+    }
+  }
+  PostData pd{{q.exposure, q.bloomIntensity, q.toneMap ? 1.f : 0.f, q.bloom ? 1.f : 0.f}};
+  rhi_->UpdateBuffer(postUbo_, &pd, sizeof(pd));
+  rhi_->BindUniformBuffer(4, postUbo_);
+  rhi_->BindTexture(0, hdr);
+  rhi_->BindTexture(1, q.bloom ? rhi_->RenderTargetColor(bloom_[0]) : white_);
+  if (q.fxaa) { // tone map into the LDR copy, then FXAA into the final picture
+    rhi_->BeginRenderTarget(ldrRT_, {0, 0, 0, 1});
+    rhi_->Draw(toneMap_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    rhi_->BeginRenderTarget(rt, {0, 0, 0, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(ldrRT_));
+    rhi_->Draw(fxaa_, fullscreen_, 3);
+    draws_ += 2;
+  } else {
+    rhi_->BeginRenderTarget(rt, {0, 0, 0, 1});
+    rhi_->Draw(toneMap_, fullscreen_, 3);
+    ++draws_;
+  }
+  // Editor overlays on the finished picture: the grid hides behind objects (scene depth copied over).
+  rhi_->CopyDepth(hdrRT_, rt);
+  if (extras && extras->grid) {
+    rhi_->Draw(grid_, gridQuad_, 6);
+    ++draws_;
   }
   if (outline) {
     rhi_->BindTexture(0, rhi_->RenderTargetColor(maskRT_));

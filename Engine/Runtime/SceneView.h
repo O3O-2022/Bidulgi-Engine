@@ -54,6 +54,7 @@ public:
   bool ProjectUI(const glm::vec3& world, float& x, float& y) const;   // world -> UI point in the last view
   bool ObjectCenter(const EditorModel& model, const std::string& id, glm::vec3& center, float& radius) const;
   EditorCamera camera;
+  QualitySettings quality = QualityPreset(QualityTier::Medium); // tier shown in the editor (queue 3-5)
   bool localSpace = false; // gizmo axes: the object's own (true) or the world's; scale always uses the object's
   // Gizmo of the current tool and selection in the last view (false: no gizmo).
   bool CurrentGizmo(const EditorModel& model, GizmoMode& mode, GizmoFrame& frame, GizmoView& view) const;

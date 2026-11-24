@@ -4,6 +4,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Assets/GltfImport.h"
 #include "Runtime/Gizmo.h"
+#include "Render3D/Quality.h"
 #include <cstdio>
 #include <filesystem>
 #include <cmath>
@@ -158,4 +159,38 @@ TEST_CASE("gizmo: hit tests and drags follow the handles (queue 3-3)") {
   CHECK(d.Begin(GizmoMode::Scale, GizmoHandle::X, f, v, sx));
   GizmoDelta s = d.Update(sx + glm::vec2(kGizmoPixels, 0), false);
   CHECK(std::fabs(s.scale.x - 2.f) < 1e-3f && s.scale.y == 1.f && s.scale.z == 1.f);
+}
+
+TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-5)") {
+  QualitySettings potato = QualityPreset(QualityTier::Potato), low = QualityPreset(QualityTier::Low);
+  QualitySettings medium = QualityPreset(QualityTier::Medium), high = QualityPreset(QualityTier::High);
+  CHECK(potato.lighting == LightingMode::Unlit && potato.maxLights == 0 && !potato.shadows && !potato.toneMap);
+  CHECK(low.lighting == LightingMode::Vertex && low.maxLights == 4 && !low.shadows && low.textureBias == 2);
+  CHECK(medium.lighting == LightingMode::Pixel && medium.maxLights == 8 && medium.shadows && medium.fxaa && medium.textureBias == 1);
+  CHECK(high.bloom && high.msaa == 4 && !high.fxaa && high.shadowMapSize == 2048 && high.textureBias == 0);
+  QualitySettings ref = ReferenceQuality();
+  CHECK(!ref.toneMap && !ref.bloom && !ref.fxaa && ref.viewDistance == 1.f);
+
+  QualityTier t;
+  CHECK(TierFromString("low", t) && t == QualityTier::Low);
+  CHECK(TierFromString("고사양", t) && t == QualityTier::High);
+  CHECK(!TierFromString("epic", t));
+
+  ProjectQuality pq;
+  std::string err;
+  CHECK(ParseProjectQuality(R"({"min":"low","max":"high","default":"ultra"})", pq, &err));
+  CHECK(pq.min == QualityTier::Low && pq.max == QualityTier::High && pq.fallback == QualityTier::High); // default clamped
+  CHECK(pq.Clamp(QualityTier::Potato) == QualityTier::Low);
+  CHECK(pq.Next(QualityTier::Medium) == QualityTier::High && pq.Next(QualityTier::High) == QualityTier::Low); // wraps
+  CHECK(!ParseProjectQuality(R"({"min":"high","max":"low"})", pq, &err) && pq.min == QualityTier::Potato);
+  CHECK(!ParseProjectQuality(R"({"min":"epic"})", pq, &err) && err.find("epic") != std::string::npos);
+
+  QualitySettings q = medium;
+  CHECK(ApplyQualityOverrides("msaa=8,bloom=1,lights=2,exposure=1.5", q, &err));
+  CHECK(q.msaa == 8 && q.bloom && q.maxLights == 2 && q.exposure == 1.5f && q.fxaa);
+  CHECK(!ApplyQualityOverrides("sparkle=1", q, &err));
+
+  CHECK(ToneMapACES(0.f) == 0.f && ToneMapACES(100.f) == 1.f);
+  float prev = 0;
+  for (float x = 0.01f; x < 8.f; x *= 1.3f) { CHECK(ToneMapACES(x) > prev); prev = ToneMapACES(x); } // keeps order
 }
