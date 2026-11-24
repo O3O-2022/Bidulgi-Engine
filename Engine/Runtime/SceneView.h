@@ -109,6 +109,8 @@ private:
   std::string bookmarkNote_; // "2 Lights" after a jump, shown for a moment
   std::vector<ReflectionProbe3D> probes_; // from the scene (GI Tier 0)
   uint64_t probeKey_ = 0;
+  ProbeVolume3D volume_; // the first LightProbeVolume in the scene (GI Tier 0-B)
+  bool hasVolume_ = false;
   bool bakeRequested_ = false, firstBake_ = false;
   int noteFrames_ = 0;
   float renderMs_ = 0;

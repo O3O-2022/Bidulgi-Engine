@@ -137,7 +137,7 @@ struct bdg_engine {
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bool materialTest = false, qualityTest = false, refSceneTest = false, giTest = false;
-  std::string giTestValues[4];
+  std::string giTestValues[6];
   std::string refSceneTestValues[12];
   bdg::ProjectQuality projectQuality;          // ProjectSettings/Quality.json (min / max / default tier)
   std::string qualityTestValues[8];
@@ -182,16 +182,20 @@ void RenderReferenceView(bdg_engine* e, const bdg::Widget& v, float scale) {
     e->viewW = pw;
     e->viewH = ph;
   }
-  if (!e->board->probes.empty() && e->r3d->BakedProbes() == 0) { // GI Tier 0: bake the board's probes (two bounces)
+  if ((!e->board->probes.empty() || !e->board->volumes.empty()) && e->r3d->BakedProbes() == 0 && e->r3d->VolumeProbes() == 0) {
+    // GI Tier 0: bake the board's probes and probe volume (two bounces)
     auto b0 = std::chrono::steady_clock::now();
     e->r3d->SetProbes(e->board->probes);
+    e->r3d->SetVolume(e->board->volumes.empty() ? nullptr : &e->board->volumes[0]);
     e->r3d->BakeProbes(e->board->Items(), e->board->light);
     e->r3d->BakeProbes(e->board->Items(), e->board->light);
-    bdg::LogInfo("gi: baked {} probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(),
+    bdg::LogInfo("gi: baked {} probe(s) and {} volume probe(s), 2 bounces, in {:.0f} ms", e->board->probes.size(), e->r3d->VolumeProbes(),
                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
   }
   auto t0 = std::chrono::steady_clock::now();
-  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, nullptr, &e->boardQuality);
+  bdg::RenderExtras boardExtras; // BDG_RENDER_VIEW=0..7: debug view of the board screens (7 = indirect light only)
+  if (const char* rv = std::getenv("BDG_RENDER_VIEW")) boardExtras.view = (bdg::DebugView)std::clamp(std::atoi(rv), 0, 7);
+  e->r3d->Render(e->viewRT, pw, ph, e->board->camera, e->board->light, e->board->Items(), e->board->clear, &boardExtras, &e->boardQuality);
   e->boardRenderMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 }
@@ -1765,8 +1769,17 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         std::string err;
         v[0] = e->model->bus.Execute(c, &err) ? "1" : "0(" + err + ")";
       }
+      if (frames == 3) { // a probe volume on the same object (GI Tier 0-B)
+        bdg::Command c;
+        c.name = "addcomp";
+        c.target = "g4";
+        c.args = R"({"type":"LightProbeVolume","value":{"size":[12,6,12],"countX":4,"countY":2,"countZ":4}})";
+        std::string err;
+        if (!e->model->bus.Execute(c, &err)) v[0] += "0(" + err + ")";
+      }
       if (frames == 4) {
         v[1] = std::format("{}", e->r3d->BakedProbes());
+        v[4] = std::format("{}", e->r3d->VolumeProbes());
         float x, y;
         if (e->sceneView->ChipCenter("gi", x, y)) {
           e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
@@ -1774,14 +1787,17 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
         }
       }
-      if (frames == 6) {
-        v[2] = std::format("{}", e->r3d->BakedProbes());
+      if (frames == 6) v[2] = std::format("{}", e->r3d->BakedProbes());
+      if (frames == 6 || frames == 7) { // undo the volume, then the probe
         bdg::InputEvent z{T::KeyDown};
         z.key = bdg::Key::Z;
         z.ctrl = true;
         e->window.InjectEvent(z);
       }
-      if (frames == 8) v[3] = std::format("{}", e->r3d->BakedProbes());
+      if (frames == 9) {
+        v[3] = std::format("{}", e->r3d->BakedProbes());
+        v[5] = std::format("{}", e->r3d->VolumeProbes());
+      }
     }
     if (const char* baseDir = std::getenv("BDG_RENDER_COMPARE"); baseDir && e->sceneView && e->model)
       RenderCompareStep(e, frames, baseDir);
@@ -2026,7 +2042,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       }
       if (e->giTest) {
         auto* v = e->giTestValues;
-        bdg::LogInfo("gi editor test: added={} baked={} rebaked={} after_undo={}", v[0], v[1], v[2], v[3]);
+        bdg::LogInfo("gi editor test: added={} baked={} rebaked={} after_undo={} volume={} volume_after_undo={}", v[0], v[1], v[2], v[3], v[4], v[5]);
       }
       if (e->refSceneTest) {
         auto* v = e->refSceneTestValues;

@@ -67,6 +67,19 @@ public:
   BPROPERTY(Edit, Range = "0,10") float intensity = 1.f;
 };
 
+// Light probe volume (GI Tier 0-B): a grid of light probes filling a box centred on the object. Surfaces inside blend
+// the nearest probes per pixel for their indirect (bounced) light. Baked with the reflection probes ("Bake GI").
+BCLASS(Component)
+struct LightProbeVolume {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Size of the box it fills, centred on the object (metres)") Vec3 size{10, 4, 10};
+  BPROPERTY(Edit, Range = "1,16", Tooltip = "Probes along X") int32_t countX = 4;
+  BPROPERTY(Edit, Range = "1,16", Tooltip = "Probes along Y (up)") int32_t countY = 2;
+  BPROPERTY(Edit, Range = "1,16", Tooltip = "Probes along Z") int32_t countZ = 4;
+  BPROPERTY(Edit, Range = "0,10") float intensity = 1.f;
+};
+
 // Sky and ambient light (queue 3-4): the background of the scene view and the light it gives to every surface.
 // The sun disk follows the first directional light.
 BCLASS(Component)

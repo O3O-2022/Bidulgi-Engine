@@ -298,8 +298,13 @@ bool ReferenceBoard::InitGI(RHI& rhi, Renderer3D& r) {
   probe.boxMin = {-3, 0, -3};
   probe.boxMax = {3, 4, 3};
   probes = {probe};
+  ProbeVolume3D volume;
+  volume.boxMin = {-3, 0, -3};
+  volume.boxMax = {3, 4, 3};
+  volume.count = {4, 3, 4};
+  volumes = {volume};
   labels_ = {{kMirror + glm::vec3(-0.5f, -1.15f, 0.9f), "mirror"}, {kMatte + glm::vec3(-0.4f, -1.05f, 0.9f), "rough white"},
-             {{-2.9f, 4.4f, 0}, "GI Tier 0 · reflection probe (box projection) · SH ambient"}};
+             {{-2.9f, 4.4f, 0}, "GI Tier 0 · reflection probe (box projection) · SH probe volume 4x3x4"}};
   return true;
 }
 
@@ -338,10 +343,19 @@ std::string ReferenceBoard::CheckGI(Renderer3D& r, const std::vector<uint8_t>& r
   at(kMatte + kMatteR * glm::normalize(glm::vec3(0.8f, 0, 0.6f)), sr);
   bool bleed = (sl[0] - sl[1]) > (sr[0] - sr[1]) + 10;
   if (!bleed) fail("bleed");
+  // 4) the probe volume: the floor is redder next to the red wall than next to the green one, in the volume's own
+  //    numbers (diffuse light facing up) and in the picture (one probe per object could not do this)
+  glm::vec3 vl = r.VolumeIrradiance({-2.5f, 0.05f, 0.5f}, {0, 1, 0}), vr = r.VolumeIrradiance({2.5f, 0.05f, 0.5f}, {0, 1, 0});
+  int fl[3], fr[3];
+  at({-2.3f, 0, 1.2f}, fl);
+  at({2.3f, 0, 1.2f}, fr);
+  bool volume = r.VolumeProbes() == 48 && vl.r > vl.g * 1.3f && vr.g > vr.r * 1.3f && (fl[0] - fl[1]) > (fr[0] - fr[1]) + 8;
+  if (!volume) fail("volume");
   return std::format("probe_px=({:.2f},{:.2f},{:.2f}) probe_nx=({:.2f},{:.2f},{:.2f}) faces={} mirror={} ({},{},{} | {},{},{}) bleed={} "
-                     "probes_baked={} result={}",
+                     "volume={} (sh left {:.3f},{:.3f} right {:.3f},{:.3f} | floor {},{},{} | {},{},{}) probes_baked={} volume_probes={} result={}",
                      px.r, px.g, px.b, nx.r, nx.g, nx.b, faces ? "ok" : "bad", mirror ? "ok" : "bad", ml[0], ml[1], ml[2], mr[0], mr[1], mr[2],
-                     bleed ? "ok" : "bad", r.BakedProbes(), failed.empty() ? "pass" : "FAIL(" + failed + ")");
+                     bleed ? "ok" : "bad", volume ? "ok" : "bad", vl.r, vl.g, vr.r, vr.g, fl[0], fl[1], fl[2], fr[0], fr[1], fr[2],
+                     r.BakedProbes(), r.VolumeProbes(), failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
 bool ReferenceBoard::InitStress(RHI& rhi, Renderer3D& r, int instances, int textures) {

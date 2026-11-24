@@ -28,6 +28,7 @@ public:
   bool InitGI(RHI& rhi, Renderer3D& renderer);
   std::string CheckGI(Renderer3D& renderer, const std::vector<uint8_t>& rgba, int32_t w, int32_t h) const;
   std::vector<ReflectionProbe3D> probes; // baked by the engine before the first frame
+  std::vector<ProbeVolume3D> volumes;    // the room's probe grid (GI Tier 0-B), baked with the probes
   // Optional extra model (BDG_MODEL): fitted into 2.2 m, standing on the ground left of the axes
   // (x = -2.0, z = 1.6), clear of every probe Check() reads.
   bool AddModel(const std::filesystem::path& gltf);

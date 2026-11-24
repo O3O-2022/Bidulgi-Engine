@@ -165,6 +165,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   extras_.grid = true;
   extras_.view = debugView;
   probes_.clear();
+  hasVolume_ = false;
   extras_.wireframe = wireframe;
   light_ = {};
   light_.toLight = {-0.35f, 0.85f, 0.4f};
@@ -218,6 +219,15 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         icons_.push_back({id, glm::vec3(world[3]), directional ? 0 : 1});
       }
       if (c.type == &Camera::StaticType()) icons_.push_back({id, glm::vec3(world[3]), 2});
+      if (c.type == &LightProbeVolume::StaticType() && !hasVolume_) {
+        const LightProbeVolume& lv = *static_cast<const LightProbeVolume*>(c.data);
+        glm::vec3 centre = glm::vec3(world[3]), half = glm::abs(space::ToGlm(lv.size)) * 0.5f;
+        volume_.boxMin = centre - half;
+        volume_.boxMax = centre + half;
+        volume_.count = glm::clamp(glm::ivec3(lv.countX, lv.countY, lv.countZ), glm::ivec3(1), glm::ivec3(16));
+        volume_.intensity = lv.intensity;
+        hasVolume_ = true;
+      }
       if (c.type == &ReflectionProbe::StaticType() && probes_.size() < (size_t)kMaxProbes) {
         const ReflectionProbe& rp = *static_cast<const ReflectionProbe*>(c.data);
         ReflectionProbe3D p;
@@ -278,24 +288,33 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   }
   auto t0 = std::chrono::steady_clock::now();
   BuildItems(model, assets);
-  { // GI Tier 0: probes changed (added, moved, resized) -> bake them again, two bounces; the chip adds one more
+  { // GI Tier 0: probes or the volume changed (added, moved, resized) -> bake again, two bounces; the chip adds one more
     uint64_t key = 1469598103934665603ull;
+    auto fold = [&](float value) {
+      uint32_t bits;
+      std::memcpy(&bits, &value, 4);
+      key = (key ^ bits) * 1099511628211ull;
+    };
     for (const ReflectionProbe3D& p : probes_)
       for (float value : {p.position.x, p.position.y, p.position.z, p.boxMin.x, p.boxMin.y, p.boxMin.z, p.boxMax.x, p.boxMax.y, p.boxMax.z,
-                      p.intensity, p.boxProjection ? 1.f : 0.f}) {
-        uint32_t bits;
-        std::memcpy(&bits, &value, 4);
-        key = (key ^ bits) * 1099511628211ull;
-      }
+                          p.intensity, p.boxProjection ? 1.f : 0.f}) fold(value);
+    if (hasVolume_)
+      for (float value : {volume_.boxMin.x, volume_.boxMin.y, volume_.boxMin.z, volume_.boxMax.x, volume_.boxMax.y, volume_.boxMax.z,
+                          (float)volume_.count.x, (float)volume_.count.y, (float)volume_.count.z, volume_.intensity}) fold(value);
+    const bool anyGI = !probes_.empty() || hasVolume_;
     if (key != probeKey_) {
       probeKey_ = key;
       r_->SetProbes(probes_);
-      firstBake_ = !probes_.empty();
+      r_->SetVolume(hasVolume_ ? &volume_ : nullptr);
+      firstBake_ = anyGI;
     }
-    if ((firstBake_ || bakeRequested_) && !probes_.empty()) {
+    if ((firstBake_ || bakeRequested_) && anyGI) {
+      auto b0 = std::chrono::steady_clock::now();
       r_->BakeProbes(items_, light_);
       if (firstBake_) r_->BakeProbes(items_, light_);
-      LogInfo("gi: baked {} probe(s){}", probes_.size(), firstBake_ ? ", 2 bounces" : ", one more bounce");
+      LogInfo("gi: baked {} probe(s){}{} in {:.0f} ms", probes_.size(), firstBake_ ? ", 2 bounces" : ", one more bounce",
+              hasVolume_ ? std::format(", volume {} probes", r_->VolumeProbes()) : std::string(),
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b0).count());
     }
     firstBake_ = bakeRequested_ = false;
   }
@@ -470,7 +489,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
           if (hit) {
-            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 7);
+            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 8);
             else if (hit->name == "wire") wireframe = !wireframe;
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
@@ -595,7 +614,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         if (e.key >= Key::Num1 && e.key <= Key::Num9 && hover_ && !textFocused && drag_ == Drag::None) {
           int n = (int)e.key - (int)Key::Num0;
-          if (e.alt) debugView = (DebugView)std::min(n - 1, 6);              // Alt + 1..7: what the picture shows
+          if (e.alt) debugView = (DebugView)std::min(n - 1, 7);              // Alt + 1..8: what the picture shows
           else if (e.ctrl) StoreBookmark(model, n);                       // Ctrl + 1..9: remember this view
           else if (!JumpToBookmark(model, n)) LogInfo("scene view: no camera bookmark {}", n);
           used = true;
@@ -771,7 +790,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   struct ChipDef { std::string name, text; bool on; };
   const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
                           {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
-                          {probes_.empty() ? "" : "gi", probes_.empty() ? "" : std::format("Bake GI ({})", probes_.size()), false},
+                          {probes_.empty() && !hasVolume_ ? "" : "gi",
+                           probes_.empty() && !hasVolume_ ? "" : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0)), false},
                           {"", toolChip, false}, {"", spaceChip, false}};
   for (const ChipDef& chip : defs) {
     if (chip.text.empty()) continue;

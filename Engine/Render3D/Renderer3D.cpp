@@ -47,17 +47,45 @@ const char* kObjectsFS = R"(flat in int vObject;
 #define uExtra uObjects[vObject].extra
 )";
 // Reflection probes (GI Tier 0): boxes, positions (w = intensity), SH9 irradiance / pi per probe. Probe 0 = sky.
+// Probe volume (GI Tier 0-B): box min (w = 1 when baked), box max, probe counts (w = intensity); SH9 per grid probe.
 const char* kProbesFn = R"(layout(std140, binding = 5) uniform Probes3D {
   vec4 uProbeMin[8]; vec4 uProbeMax[8]; vec4 uProbePos[8]; vec4 uSH[72]; vec4 uProbeInfo; // info.x = last mip level
+  vec4 uVolMin; vec4 uVolMax; vec4 uVolCount;
 };
+layout(std430, binding = 1) readonly buffer Volume3D { vec4 uVolSH[]; };
+void SHBasis(vec3 n, out float b[9]) {
+  b[0] = 0.282095; b[1] = 0.488603 * n.y; b[2] = 0.488603 * n.z; b[3] = 0.488603 * n.x;
+  b[4] = 1.092548 * n.x * n.y; b[5] = 1.092548 * n.y * n.z; b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
+  b[7] = 1.092548 * n.x * n.z; b[8] = 0.546274 * (n.x * n.x - n.y * n.y);
+}
 vec3 ProbeIrradiance(int p, vec3 n) { // ambient light from all directions around n (already divided by pi)
-  int b = p * 9;
-  vec3 e = uSH[b].rgb * 0.282095
-         + uSH[b + 1].rgb * 0.488603 * n.y + uSH[b + 2].rgb * 0.488603 * n.z + uSH[b + 3].rgb * 0.488603 * n.x
-         + uSH[b + 4].rgb * 1.092548 * n.x * n.y + uSH[b + 5].rgb * 1.092548 * n.y * n.z
-         + uSH[b + 6].rgb * 0.315392 * (3.0 * n.z * n.z - 1.0) + uSH[b + 7].rgb * 1.092548 * n.x * n.z
-         + uSH[b + 8].rgb * 0.546274 * (n.x * n.x - n.y * n.y);
+  float b[9];
+  SHBasis(n, b);
+  vec3 e = vec3(0.0);
+  for (int k = 0; k < 9; ++k) e += uSH[p * 9 + k].rgb * b[k];
   return max(e, vec3(0.0)) * uProbePos[p].w;
+}
+bool InVolume(vec3 p) {
+  return uVolMin.w > 0.5 && all(greaterThanEqual(p, uVolMin.xyz - 0.02)) && all(lessThanEqual(p, uVolMax.xyz + 0.02));
+}
+vec3 VolumeIrradiance(vec3 p, vec3 n) { // the 8 nearest grid probes, blended by distance (probes at cell centres)
+  ivec3 cnt = ivec3(uVolCount.xyz + 0.5);
+  vec3 g = clamp((p - uVolMin.xyz) / (uVolMax.xyz - uVolMin.xyz) * vec3(cnt) - 0.5, vec3(0.0), vec3(cnt - 1));
+  ivec3 i0 = min(ivec3(floor(g)), cnt - 1), i1 = min(i0 + 1, cnt - 1);
+  vec3 f = g - vec3(i0);
+  float b[9];
+  SHBasis(n, b);
+  vec3 e = vec3(0.0);
+  for (int c = 0; c < 8; ++c) {
+    bvec3 hi = bvec3((c & 1) != 0, (c & 2) != 0, (c & 4) != 0);
+    ivec3 q = ivec3(hi.x ? i1.x : i0.x, hi.y ? i1.y : i0.y, hi.z ? i1.z : i0.z);
+    vec3 w3 = mix(1.0 - f, f, vec3(hi));
+    int base = ((q.z * cnt.y + q.y) * cnt.x + q.x) * 9;
+    vec3 s = vec3(0.0);
+    for (int k = 0; k < 9; ++k) s += uVolSH[base + k].rgb * b[k];
+    e += s * (w3.x * w3.y * w3.z);
+  }
+  return max(e, vec3(0.0)) * uVolCount.w;
 }
 )";
 // Direction of a cube face texel: st in 0..1 with t = 0 the first row (OpenGL cube map face layout).
@@ -154,7 +182,8 @@ layout(binding = 6) uniform samplerCubeArray uEnv;
 vec3 ProbeSpecular(int p, vec3 R, vec3 world, float rough) { // prefiltered environment, box-projected in rooms
   vec3 dir = R;
   if (uProbeMin[p].w > 0.5) {
-    vec3 t1 = (uProbeMax[p].xyz - world) / R, t2 = (uProbeMin[p].xyz - world) / R, tf = max(t1, t2);
+    vec3 r = mix(R, vec3(1e-6), lessThan(abs(R), vec3(1e-6))); // no 0/0 for a surface on the box with R along it
+    vec3 t1 = (uProbeMax[p].xyz - world) / r, t2 = (uProbeMin[p].xyz - world) / r, tf = max(t1, t2);
     float t = min(min(tf.x, tf.y), tf.z);
     if (t > 0.0) dir = world + R * t - uProbePos[p].xyz;
   }
@@ -202,7 +231,7 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow
+  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
   if (uParams.z > 0.5 && view == 0) { oColor = vec4(base.rgb, alpha); return; }        // unlit material
   if (uCounts.y < 0.5 && view == 0) { oColor = vec4(base.rgb + emissive, alpha); return; }          // potato tier: no lighting
@@ -235,9 +264,16 @@ void main() {
   metallic = clamp(metallic, 0.0, 1.0);
   rough = clamp(rough, 0.045, 1.0);
   float a = rough * rough;
+  int probe = int(uExtra.w + 0.5);
+  vec3 ambient = ProbeIrradiance(probe, N);             // GI Tier 0: probe (or sky) light from every direction
+  if (InVolume(vWorld)) {                               // inside a probe volume: blended per pixel, nudged off the surface
+    vec3 cell = (uVolMax.xyz - uVolMin.xyz) / max(uVolCount.xyz, vec3(1.0));
+    ambient = VolumeIrradiance(vWorld + ng * 0.25 * min(cell.x, min(cell.y, cell.z)), N);
+  }
   if (view >= 2) {
     vec3 d = view == 2 ? N * 0.5 + 0.5 : view == 3 ? vec3(rough) : view == 4 ? vec3(metallic)
            : view == 5 ? vec3(clamp(log2(1.0 + length(vWorld - uCamPos.xyz)) / log2(201.0), 0.0, 1.0)) // 0..200 m, log
+           : view == 7 ? ambient / (1.0 + ambient)                                                   // indirect light, compressed
            : vec3(ShadowFactor(vWorld, ng));
     oColor = vec4(pow(d, vec3(2.2)), 1.0); // data, not colour: undo the display curve applied in post
     return;
@@ -246,14 +282,14 @@ void main() {
   vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
   for (int i = 0; i < int(uCounts.x); ++i) color += LocalLight(i, vWorld, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
-  int probe = int(uExtra.w + 0.5);
-  vec3 ambient = ProbeIrradiance(probe, N);             // GI Tier 0: probe (or sky) light from every direction
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
   color += emissive;
-  oColor = vec4(color, alpha); // linear light; tone mapping and display encoding happen in post
+  // Linear light; tone mapping and display encoding happen in post. Capped below the half-float maximum: a sharp
+  // highlight of a point light (GGX on a mirror) would otherwise turn into inf in the RGBA16F target and its mips.
+  oColor = vec4(min(color, vec3(60000.0)), alpha);
 }
 )";
 
@@ -507,7 +543,7 @@ struct FrameData {
 };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
 struct PostData { float post[4]; float post2[4]; };
-struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4]; };
+struct ProbesData { float min[8][4], max[8][4], pos[8][4], sh[72][4], info[4], volMin[4], volMax[4], volCount[4]; };
 struct PrefilterData { float p[4]; };
 
 void Put(float* dst, const glm::vec3& v, float w = 0) { dst[0] = v.x; dst[1] = v.y; dst[2] = v.z; dst[3] = w; }
@@ -666,6 +702,8 @@ bool Renderer3D::Init(RHI& rhi) {
   int scratchLevels = 1;
   for (int sz = kEnvSize; sz > 1; sz >>= 1) ++scratchLevels;
   scratchCube_ = rhi.CreateCubemap(kEnvSize, scratchLevels);
+  volumeCapacity_ = 9;
+  volumeBuffer_ = rhi.CreateBuffer(BufferUsage::Storage, nullptr, volumeCapacity_ * 16, true); // bound even when empty
   PipelineDesc pp; // fullscreen post passes
   pp.vertexSource = kPostVS;
   pp.attrs[0] = {0, 3, 0};
@@ -724,6 +762,9 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyTexture(envArray_);
   rhi_->DestroyTexture(scratchCube_);
   rhi_->DestroyRenderTarget(captureRT_);
+  rhi_->DestroyBuffer(volumeBuffer_);
+  rhi_->DestroyTexture(smallCube_);
+  rhi_->DestroyRenderTarget(smallCaptureRT_);
   rhi_->DestroyPipeline(skyCube_);
   rhi_->DestroyPipeline(prefilter_);
   for (RenderTargetHandle t : bloom_) rhi_->DestroyRenderTarget(t);
@@ -1011,6 +1052,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   }
   rhi_->BindUniformBuffer(5, probesUbo_);
   rhi_->BindTexture(6, envArray_);
+  rhi_->BindStorageBuffer(1, volumeBuffer_);
   if (f.shadow[0] > 0.5f) { // shadow map: every opaque and masked item, depth only
     if (!shadowRT_.Valid() || shadowSize_ != q.shadowMapSize) {
       rhi_->DestroyRenderTarget(shadowRT_);
@@ -1160,12 +1202,14 @@ void Renderer3D::PrefilterInto(int layer) {
     }
 }
 
-void Renderer3D::ComputeSH(int probe) {
+void Renderer3D::ComputeSH(int probe) { ComputeSHFrom(scratchCube_, 3, probeSH_[probe]); }
+
+bool Renderer3D::ComputeSHFrom(TextureHandle cube, int level, float out[9][3]) {
   // Project a small mip of the cube onto 9 spherical harmonics, then convolve with the cosine lobe and divide by pi:
   // the shader's ProbeIrradiance(n) is then the ambient term for a diffuse surface facing n.
-  const int level = 3, size = std::max(kEnvSize >> level, 1);
   std::vector<float> px;
-  if (!rhi_->ReadTextureLevel(scratchCube_, level, px)) return;
+  if (!rhi_->ReadTextureLevel(cube, level, px)) return false;
+  const int size = (int)std::lround(std::sqrt((double)px.size() / 24.0)); // 6 faces of size^2 RGBA
   double sh[9][3] = {}, total = 0;
   for (int f = 0; f < 6; ++f)
     for (int y = 0; y < size; ++y)
@@ -1178,13 +1222,15 @@ void Renderer3D::ComputeSH(int probe) {
         const double basis[9] = {0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x, 1.092548 * d.x * d.y,
                                  1.092548 * d.y * d.z, 0.315392 * (3 * d.z * d.z - 1), 1.092548 * d.x * d.z, 0.546274 * (d.x * d.x - d.y * d.y)};
         const float* c = &px[(((size_t)f * size + y) * size + x) * 4];
+        if (!std::isfinite(c[0]) || !std::isfinite(c[1]) || !std::isfinite(c[2])) { ++badTexels_; continue; }
         for (int k = 0; k < 9; ++k)
           for (int ch = 0; ch < 3; ++ch) sh[k][ch] += basis[k] * c[ch] * w;
         total += w;
       }
   const double band[9] = {1, 2.0 / 3, 2.0 / 3, 2.0 / 3, 0.25, 0.25, 0.25, 0.25, 0.25}; // cosine lobe / pi
   for (int k = 0; k < 9; ++k)
-    for (int ch = 0; ch < 3; ++ch) probeSH_[probe][k][ch] = (float)(sh[k][ch] * (4 * 3.14159265358979 / total) * band[k]);
+    for (int ch = 0; ch < 3; ++ch) out[k][ch] = (float)(sh[k][ch] * (4 * 3.14159265358979 / total) * band[k]);
+  return true;
 }
 
 void Renderer3D::UploadProbes() {
@@ -1200,6 +1246,11 @@ void Renderer3D::UploadProbes() {
     for (int k = 0; k < 9; ++k)
       for (int ch = 0; ch < 3; ++ch) d.sh[i * 9 + k][ch] = probeSH_[i][k][ch];
   d.info[0] = (float)(kEnvLevels - 1);
+  if (hasVolume_ && volumeBaked_) {
+    Put(d.volMin, volume_.boxMin, 1);
+    Put(d.volMax, volume_.boxMax);
+    Put(d.volCount, glm::vec3(volume_.count), volume_.intensity);
+  }
   rhi_->UpdateBuffer(probesUbo_, &d, sizeof(d));
 }
 
@@ -1224,9 +1275,8 @@ void Renderer3D::SetProbes(const std::vector<ReflectionProbe3D>& probes) {
   UploadProbes();
 }
 
-int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light) {
-  if (probes_.empty() || !rhi_) return 0;
-  if (!captureRT_.Valid()) captureRT_ = rhi_->CreateRenderTargetEx(kEnvSize, kEnvSize, 1, true, true);
+void Renderer3D::CaptureCube(const glm::vec3& at, RenderTargetHandle rt, int size, TextureHandle cube, const std::vector<DrawItem3D>& items,
+                             const Light3D& light) {
   // Faces in OpenGL order; "up" points down for the side faces so the rendered rows land as the cube expects.
   const glm::vec3 dirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
   const glm::vec3 ups[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -1234,28 +1284,98 @@ int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& 
   q.msaa = 1;
   RenderExtras extras;
   extras.linearOutput = true;
+  for (int face = 0; face < 6; ++face) {
+    Camera3D c;
+    c.position = at;
+    c.target = c.position + dirs[face];
+    c.up = ups[face];
+    c.fovY = 90.f;
+    c.nearZ = 0.05f;
+    c.farZ = 500.f;
+    Render(rt, size, size, c, light, items, {0, 0, 0, 1}, &extras, &q);
+    rhi_->CopyToCubeFace(rhi_->RenderTargetColor(rt), size, cube, face);
+  }
+  rhi_->GenerateMips(cube);
+}
+
+void Renderer3D::SetVolume(const ProbeVolume3D* volume) {
+  hasVolume_ = volume != nullptr;
+  volumeBaked_ = false;
+  if (volume) {
+    volume_ = *volume;
+    volume_.count = glm::clamp(volume_.count, glm::ivec3(1), glm::ivec3(16));
+    volume_.boxMax = glm::max(volume_.boxMax, volume_.boxMin + glm::vec3(0.01f));
+  }
+  if (rhi_) UploadProbes();
+}
+
+glm::vec3 Renderer3D::VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const {
+  // Same blend as the shader's VolumeIrradiance (probes at cell centres, clamped at the box edges).
+  if (!volumeBaked_) return glm::vec3(0);
+  const glm::ivec3 cnt = volume_.count;
+  glm::vec3 g = glm::clamp((p - volume_.boxMin) / (volume_.boxMax - volume_.boxMin) * glm::vec3(cnt) - 0.5f, glm::vec3(0),
+                           glm::vec3(cnt - 1));
+  glm::ivec3 i0 = glm::min(glm::ivec3(glm::floor(g)), cnt - 1), i1 = glm::min(i0 + 1, cnt - 1);
+  glm::vec3 f = g - glm::vec3(i0);
+  const float b[9] = {0.282095f, 0.488603f * n.y, 0.488603f * n.z, 0.488603f * n.x, 1.092548f * n.x * n.y, 1.092548f * n.y * n.z,
+                      0.315392f * (3 * n.z * n.z - 1), 1.092548f * n.x * n.z, 0.546274f * (n.x * n.x - n.y * n.y)};
+  glm::vec3 e{0};
+  for (int c = 0; c < 8; ++c) {
+    glm::ivec3 q{(c & 1) ? i1.x : i0.x, (c & 2) ? i1.y : i0.y, (c & 4) ? i1.z : i0.z};
+    float w = ((c & 1) ? f.x : 1 - f.x) * ((c & 2) ? f.y : 1 - f.y) * ((c & 4) ? f.z : 1 - f.z);
+    size_t base = ((size_t)(q.z * cnt.y + q.y) * cnt.x + q.x) * 36;
+    for (int k = 0; k < 9; ++k) e += w * b[k] * glm::vec3(volumeSH_[base + k * 4], volumeSH_[base + k * 4 + 1], volumeSH_[base + k * 4 + 2]);
+  }
+  return glm::max(e, glm::vec3(0)) * volume_.intensity;
+}
+
+int Renderer3D::BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light) {
+  if ((probes_.empty() && !hasVolume_) || !rhi_) return 0;
+  badTexels_ = 0;
   const RenderStats keep = stats_;
   // Each probe sees the scene lit by the probes as they are now, so every bake adds one bounce.
+  if (!probes_.empty() && !captureRT_.Valid()) captureRT_ = rhi_->CreateRenderTargetEx(kEnvSize, kEnvSize, 1, true, true);
   for (size_t i = 0; i < probes_.size(); ++i) {
-    for (int face = 0; face < 6; ++face) {
-      Camera3D c;
-      c.position = probes_[i].position;
-      c.target = c.position + dirs[face];
-      c.up = ups[face];
-      c.fovY = 90.f;
-      c.nearZ = 0.05f;
-      c.farZ = 500.f;
-      Render(captureRT_, kEnvSize, kEnvSize, c, light, items, {0, 0, 0, 1}, &extras, &q);
-      rhi_->CopyToCubeFace(rhi_->RenderTargetColor(captureRT_), kEnvSize, scratchCube_, face);
-    }
-    rhi_->GenerateMips(scratchCube_);
+    CaptureCube(probes_[i].position, captureRT_, kEnvSize, scratchCube_, items, light);
     PrefilterInto((int)i + 1);
     ComputeSH((int)i + 1);
   }
+  if (hasVolume_) { // the grid: small captures, SH from the 16^2 level; all probes see the previous bounce
+    if (!smallCube_.Valid()) {
+      int levels = 1;
+      for (int sz = kVolumeSize; sz > 1; sz >>= 1) ++levels;
+      smallCube_ = rhi_->CreateCubemap(kVolumeSize, levels);
+      smallCaptureRT_ = rhi_->CreateRenderTargetEx(kVolumeSize, kVolumeSize, 1, true, true);
+    }
+    const glm::ivec3 cnt = volume_.count;
+    const size_t n = (size_t)cnt.x * cnt.y * cnt.z;
+    std::vector<float> next(n * 36, 0.f);
+    const glm::vec3 cell = (volume_.boxMax - volume_.boxMin) / glm::vec3(cnt);
+    for (int z = 0; z < cnt.z; ++z)
+      for (int y = 0; y < cnt.y; ++y)
+        for (int x = 0; x < cnt.x; ++x) {
+          glm::vec3 at = volume_.boxMin + (glm::vec3(x, y, z) + 0.5f) * cell;
+          CaptureCube(at, smallCaptureRT_, kVolumeSize, smallCube_, items, light);
+          float sh[9][3];
+          if (!ComputeSHFrom(smallCube_, 1, sh)) continue;
+          size_t base = ((size_t)(z * cnt.y + y) * cnt.x + x) * 36;
+          for (int k = 0; k < 9; ++k)
+            for (int ch = 0; ch < 3; ++ch) next[base + k * 4 + ch] = sh[k][ch];
+        }
+    volumeSH_ = std::move(next);
+    if (n * 9 > volumeCapacity_) {
+      rhi_->DestroyBuffer(volumeBuffer_);
+      volumeCapacity_ = n * 9;
+      volumeBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, volumeCapacity_ * 16, true);
+    }
+    rhi_->UpdateBuffer(volumeBuffer_, volumeSH_.data(), volumeSH_.size() * sizeof(float));
+    volumeBaked_ = true;
+  }
+  if (badTexels_) LogWarn("gi: {} captured texel(s) were not finite (NaN/inf) and were left out", badTexels_);
   bakedProbes_ = (int)probes_.size();
   UploadProbes();
   stats_ = keep;
-  return bakedProbes_;
+  return bakedProbes_ + VolumeProbes();
 }
 
 bool Renderer3D::ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size) {
@@ -1300,6 +1420,7 @@ const char* DebugViewName(DebugView v) {
     case DebugView::Metallic: return "Metallic";
     case DebugView::Depth: return "Depth";
     case DebugView::Shadow: return "Shadow";
+    case DebugView::Indirect: return "Indirect";
   }
   return "Lit";
 }

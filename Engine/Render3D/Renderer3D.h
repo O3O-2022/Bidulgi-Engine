@@ -101,8 +101,17 @@ struct ReflectionProbe3D {
 };
 constexpr int kMaxProbes = 7; // + the sky
 
+// Light probe volume (GI Tier 0-B): a grid of SH9 irradiance probes filling a box, one probe at the centre of each
+// cell. Surfaces inside the box blend the 8 nearest probes per pixel (trilinear) for their diffuse light, so the
+// light changes across a floor or wall instead of being one value per object. Reflections still use the probes above.
+struct ProbeVolume3D {
+  glm::vec3 boxMin{-5}, boxMax{5};
+  glm::ivec3 count{4, 2, 4}; // probes along x, y, z (each 1..16)
+  float intensity = 1;
+};
+
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
-enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow };
+enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect };
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
 
 struct RenderExtras {
@@ -152,6 +161,11 @@ public:
   void SetProbes(const std::vector<ReflectionProbe3D>& probes);
   int BakeProbes(const std::vector<DrawItem3D>& items, const Light3D& light);
   int BakedProbes() const { return bakedProbes_; }
+  // Probe volume (GI Tier 0-B): nullptr removes it. Baked by BakeProbes together with the reflection probes.
+  void SetVolume(const ProbeVolume3D* volume);
+  int VolumeProbes() const { return volumeBaked_ ? volume_.count.x * volume_.count.y * volume_.count.z : 0; }
+  // Test hook: the volume's diffuse light (ambient / pi) at a point for a normal, from the baked coefficients (CPU).
+  glm::vec3 VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const;
   // Test hooks: one face of a probe's mirror-sharp level (0 = sky), RGB linear, and its SH9 (ambient / pi).
   bool ReadProbeFace(int probe, int face, std::vector<float>& rgb, int& size);
   const float (&ProbeSH(int probe) const)[9][3] { return probeSH_[probe]; }
@@ -195,6 +209,20 @@ private:
   void BakeSky();
   void PrefilterInto(int layer);      // scratchCube_ (with mips) -> envArray_ layer, all roughness levels
   void ComputeSH(int probe);          // scratchCube_ -> probeSH_[probe]
+  bool ComputeSHFrom(TextureHandle cube, int level, float out[9][3]); // a cube's mip level -> SH9 (ambient / pi)
+  // The scene seen from `at` into the six faces of `cube` (mip 0) through `rt` (size x size, linear light).
+  void CaptureCube(const glm::vec3& at, RenderTargetHandle rt, int size, TextureHandle cube, const std::vector<DrawItem3D>& items,
+                   const Light3D& light);
+  // Probe volume: small captures (kVolumeSize per face), SH9 per probe in a storage buffer (9 vec4 per probe).
+  static constexpr int kVolumeSize = 32, kMaxVolumeProbes = 16 * 16 * 16;
+  ProbeVolume3D volume_;
+  bool hasVolume_ = false, volumeBaked_ = false;
+  std::vector<float> volumeSH_; // 9 * 4 floats per probe
+  BufferHandle volumeBuffer_;
+  size_t volumeCapacity_ = 0;
+  int badTexels_ = 0; // non-finite texels skipped by ComputeSHFrom
+  TextureHandle smallCube_;
+  RenderTargetHandle smallCaptureRT_;
   void UploadProbes();
   // GPU timings: a few frames of timestamp queries in flight, read back when the GPU has finished them.
   static constexpr int kTimerFrames = 4, kMarks = 8;
