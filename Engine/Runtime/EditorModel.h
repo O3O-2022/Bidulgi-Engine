@@ -5,6 +5,7 @@
 #include "Core/Command.h"
 #include "Scene/Scene.h"
 #include "UI/UI.h"
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -35,6 +36,8 @@ public:
   bool playing = false;                // play mode (queue 3-6, Runtime/PlayMode): the scene is the play world
   void ValuesChanged() { needRefresh_ = true; }       // the running game changed values: refresh the Inspector
   void SceneReplaced() { needRebuild_ = true; }       // the whole scene was swapped (play mode stopped)
+  // Fields the user changed while playing ("id|Component.field"): marked in the Inspector (3-6b).
+  void SetPlayChanged(std::set<std::string> keys) { if (keys != playChanged_) { playChanged_ = std::move(keys); needRefresh_ = true; } }
   std::string tool = "move";          // active scene tool (gizmos: 3-3)
   void Update();                       // once per frame after input: rebuild / refresh panels if needed
   bool Autosave();                     // scene + command log to .cache/autosave/ (after a guarded crash)
@@ -74,6 +77,7 @@ private:
   std::string moveSource_, moveTarget_; bool pendingMove_ = false; // Hierarchy drop, applied in Update
   void RebuildHistory();
   std::vector<Binding> bindings_;
+  std::set<std::string> playChanged_;
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type
   std::string selected_, pendingSelect_;
   std::vector<std::string> selection_;

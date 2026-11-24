@@ -66,6 +66,7 @@ struct Widget {
   std::function<void(Widget&)> onCommit;      // Enter pressed or focus left after edits
   // Field as a slider (BPROPERTY Range): drag inside the box sets the value; typing still works.
   bool slider = false, sliderInteger = false;
+  bool marked = false; // Field: changed while playing (3-6b): accent label and a dot
   double sliderMin = 0, sliderMax = 1;
   std::function<void(Widget&)> onChange;      // value changed while dragging (each step; edits merge into one undo)
   bool edited = false;

@@ -31,7 +31,7 @@ bool PlayMode::Start(EditorModel& m) {
   frames_ = 0;
   playing_ = true;
   m.playing = true;
-  LogInfo("play: started ({} objects)", m.scene.ObjectCount());
+  LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
 }
 
@@ -73,13 +73,22 @@ bool PlayMode::Stop(EditorModel& m) {
     pending_.push_back(std::move(c));
   }
   playing_ = false;
+  paused_ = step_ = false;
   m.playing = false;
   LogInfo("play: stopped after {:.2f} s ({} frames), {} changed value(s) can be kept", time_, frames_, pending_.size());
   return true;
 }
 
-void PlayMode::Tick(EditorModel& m, double dt) {
+void PlayMode::SetTimeScale(float s) { timeScale_ = std::clamp(s, 0.1f, 4.f); }
+
+void PlayMode::Tick(EditorModel& m, double realDt) {
   if (!playing_) return;
+  double dt = realDt * timeScale_;
+  if (paused_) {
+    if (!step_) return;
+    dt = kStepSeconds; // one frame, whatever the time scale
+    step_ = false;
+  }
   time_ += dt;
   ++frames_;
   bool changed = false;

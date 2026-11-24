@@ -386,7 +386,13 @@ void EditorModel::Update() {
   bool historyChanged = needRebuild_ || needRefresh_;
   if (needRebuild_) Rebuild();
   else if (needRefresh_) Refresh();
-  if (historyChanged) RebuildHistory();
+  if (historyChanged) {
+    for (Binding& b : bindings_) { // changed while playing (3-6b)
+      b.field->marked = false;
+      for (const std::string& id : b.targets) b.field->marked = b.field->marked || playChanged_.count(id + "|" + b.path) > 0;
+    }
+    RebuildHistory();
+  }
 }
 
 void EditorModel::RebuildHistory() {

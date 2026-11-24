@@ -20,6 +20,14 @@ public:
   // Runs the built-in behaviours for dt seconds of game time (Rotator for now; scripts come with M4).
   void Tick(EditorModel& model, double dt);
   bool Playing() const { return playing_; }
+  // Play mode tools (queue 3-6b): pause (also before Play: the game starts paused), one frame at a time, and a
+  // time scale for game time (0.1x .. 4x).
+  void SetPaused(bool p) { paused_ = p; if (!p) step_ = false; }
+  bool Paused() const { return paused_; }
+  void Step() { if (playing_) { paused_ = true; step_ = true; } } // advance exactly one frame (1/60 s), then hold
+  void SetTimeScale(float s);
+  float TimeScale() const { return timeScale_; }
+  static constexpr double kStepSeconds = 1.0 / 60.0;
   double Time() const { return time_; }      // game seconds since Start
   uint64_t Frames() const { return frames_; } // ticks since Start
 
@@ -35,5 +43,7 @@ private:
   std::vector<Change> pending_;
   double time_ = 0;
   uint64_t frames_ = 0;
+  bool paused_ = false, step_ = false;
+  float timeScale_ = 1.f;
 };
 }

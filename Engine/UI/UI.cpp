@@ -417,7 +417,8 @@ void UIContext::DrawWidget(Widget& w) {
       float fs = t.FontSize("label", 12), ix, iy, iw, ih;
       FieldInputBox(w, ix, iy, iw, ih);
       bool focus = focused_ == &w;
-      Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg-dim"), w.text);
+      if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
+      Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked ? t.C("accent") : t.C("fg-dim"), w.text);
       b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;

@@ -269,6 +269,11 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   ws.Add(MakeButton("tool.play", "▶  Play", true));
   ws.Add(MakeButton("tool.pause", "||"));
   ws.Add(MakeButton("tool.step", "▶|"));
+  auto& speed = ws.Add(MakeField("tool.timescale", "속도", "1")); // game time scale (3-6b)
+  speed.slider = true;
+  speed.sliderMin = 0.1;
+  speed.sliderMax = 4;
+  speed.width = Length::Px(150);
   ws.Add(Spacer());
   ws.Add(MakeBadge("중사양")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
   ws.Add(MakeBadge("Windows"));
