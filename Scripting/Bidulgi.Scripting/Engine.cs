@@ -80,7 +80,7 @@ public static class Debug {
 }
 
 // An object of the open scene, by its persistent id.
-public sealed class GameObject {
+public sealed partial class GameObject {
   public string Id { get; }
   internal GameObject(string id) => Id = id;
 
@@ -97,7 +97,7 @@ public sealed class GameObject {
   public T? GetComponent<T>() where T : class {
     if (typeof(Behaviour).IsAssignableFrom(typeof(T))) return Behaviours.Find(Id, typeof(T)) as T;
     if (!typeof(Component).IsAssignableFrom(typeof(T))) throw new EngineException(typeof(T).Name + " is not a component");
-    var c = (Component)Activator.CreateInstance(typeof(T), this)!;
+    var c = (Component)Activator.CreateInstance(typeof(T), new object[] { this })!;
     return HasComponent(c.TypeName) ? c as T : null;
   }
   public override string ToString() => Id;
@@ -127,7 +127,8 @@ public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static int Initialize(IntPtr request) {
     Engine.Attach(request);
-    return 3; // scripting API version (2: [Edit] fields, 4-3; 3: hot reload, 4-4)
+    ScriptSyncContext.Install(); // async continuations come back to the game thread (4-4c)
+    return 4; // scripting API version (2: [Edit] fields, 4-3; 3: hot reload, 4-4; 4: easy API, timers, waits, 4-4c)
   }
 
   // Test hook (4-1 exit criterion): reads, calls and writes a Health component of `target` from C#.

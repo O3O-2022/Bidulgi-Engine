@@ -94,13 +94,14 @@ TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps,
 #else
   DotNetHost& host = DotNetHost::Instance();
   std::string err;
+  const int kSampleBehaviours = 5; // the Behaviour classes in Scripting/Bidulgi.Samples
   CHECK(host.Start({}, &err));
-  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == 4);
+  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == kSampleBehaviours);
   const TypeInfo* spinner = Registry::Instance().Find("Spinner");
   CHECK(spinner && host.IsBehaviourType(spinner) && !host.IsBehaviourType(&Health::StaticType()));
   CHECK(spinner && std::find(spinner->tags.begin(), spinner->tags.end(), "CSharp") != spinner->tags.end());
-  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == 4); // again: same types
-  CHECK(host.BehaviourTypeCount() == 4);
+  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == kSampleBehaviours); // again: same types
+  CHECK(host.BehaviourTypeCount() == (size_t)kSampleBehaviours);
 
   std::vector<std::string> lines;
   SetLogHook([&](LogLevel, std::string_view m) { lines.emplace_back(m); });
@@ -160,4 +161,39 @@ TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps,
   SetLogHook({});
   host.Attach(nullptr, nullptr);
 #endif
+}
+
+TEST_CASE("script requests: children, findall, spawn, destroy for the easy API (queue 4-4c)") {
+  Scene s;
+  s.Create("g1", "Hero", "");
+  s.AddComponent("g1", Transform::StaticType());
+  s.Create("g2", "Sword", "g1");
+  s.AddComponent("g2", Health::StaticType());
+  s.Create("g3", "Gem", "g2");
+  CommandBus bus(s);
+  auto req = [&](const char* json) { return HandleScriptRequest(s, bus, json); };
+  CHECK(req(R"({"op":"children","target":"g1"})") == R"({"ok":true,"value":["g2"]})");
+  CHECK(req(R"({"op":"children","target":"g1","deep":true})") == R"({"ok":true,"value":["g2","g3"]})");
+  CHECK(req(R"({"op":"findall","name":"Sword"})").find(R"("id":"g2")") != std::string::npos);
+  CHECK(req(R"({"op":"findall","name":"Nobody"})") == R"({"ok":true,"value":[]})");
+  // a copy of g1 with its children: new ids, at a new place, one undo step
+  const std::string spawned = req(R"({"op":"spawn","source":"g1","name":"Hero 2","position":[4,5,6]})");
+  CHECK(spawned.find(R"("ok":true)") != std::string::npos);
+  const size_t q = spawned.find("\"value\":\"") + 9;
+  const std::string id = spawned.substr(q, spawned.find('"', q) - q);
+  const SceneObject* copy = s.Find(id);
+  CHECK(copy && copy->name == "Hero 2" && copy->parent.empty() && copy->children.size() == 1);
+  CHECK(copy && copy->children[0] != "g2" && s.Find(copy->children[0]) && s.Find(copy->children[0])->Find("Health"));
+  CHECK(s.WorldPosition(id).z == 6.f && bus.UndoDepth() == 1);
+  CHECK(s.Find("g2")->children.size() == 1); // the original is untouched
+  // an empty object
+  CHECK(req(R"({"op":"spawn","name":"Marker","position":[0,1,0]})").find(R"("ok":true)") != std::string::npos);
+  CHECK(req(R"({"op":"findall","name":"Marker"})").find(R"("pos":[0,1,0])") != std::string::npos);
+  // destroy answers the ids that went away, and undo brings them back
+  CHECK(req(R"({"op":"destroy","target":"g2"})") == R"({"ok":true,"value":["g2","g3"]})");
+  CHECK(!s.Find("g2") && !s.Find("g3"));
+  CHECK(bus.Undo() && s.Find("g3"));
+  CHECK(bus.Undo() && bus.Undo() && !s.Find(id));
+  CHECK(req(R"({"op":"spawn","source":"g99"})").find("no object") != std::string::npos);
+  CHECK(req(R"({"op":"destroy","target":"g99"})").find("no object") != std::string::npos);
 }

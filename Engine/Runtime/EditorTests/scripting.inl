@@ -201,3 +201,43 @@ void InjectHotReloadTest(bdg_engine* e, int frame) {
                  bdg::DotNetHost::Instance().LastReloadMs());
   }
 }
+
+// Scripted check of 4-4c (BDG_EASYAPI_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): the C#
+// EasyProbe runs in play mode and uses [Auto], Get / GetInChildren, Find / FindAll / FindNearest, Spawn, Destroy (now
+// and later), After, Every (+ Cancel), await NextFrame / Wait, an awaited Transform tween and seeded Random, then logs
+// one line. Stop must take every spawned object away again and leave no timer behind.
+void InjectEasyApiTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probe;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("easy api test: {}", err);
+  };
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("easy probe: ", 0) == 0) probe = l; });
+    run("add", "", R"({"id":"ez1","name":"Prober"})");
+    run("add", "", R"({"id":"ez2","name":"Kid","parent":"ez1"})");
+    run("addcomp", "ez2", R"({"type":"Health"})");
+    run("add", "", R"({"id":"ez3","name":"Coin"})");
+    run("set", "ez3", R"({"path":"Transform.position","value":[10,0,0]})");
+    run("addcomp", "ez1", R"({"type":"EasyProbe"})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 70 && probe.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(15)); // game time passes
+  if (frame == 72) TogglePlay(e);
+}
+void ReportEasyApiTest(bdg_engine* e) {
+  bdg::SetLogHook({});
+  bdg::EditorModel* m = e->model.get();
+  size_t coins = 0;
+  if (m)
+    for (const std::string& id : m->scene.Roots())
+      if (const bdg::SceneObject* o = m->scene.Find(id); o && (o->name == "Coin" || o->name == "Marker")) ++coins;
+  bdg::LogInfo("easy api test: restored={} instances={}", coins == 1 ? 1 : 0, e->play.Scripts().Instances());
+}
+BDG_EDITOR_TEST("BDG_EASYAPI_TEST", InjectEasyApiTest, ReportEasyApiTest)

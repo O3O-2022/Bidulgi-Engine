@@ -31,7 +31,7 @@ namespace Bidulgi;
   public HeaderAttribute(string text) => Text = text;
 }
 
-public abstract class Behaviour {
+public abstract partial class Behaviour {
   public GameObject gameObject { get; internal set; } = null!;
   public string name { get => gameObject.Name; set => gameObject.Name = value; }
   public Transform transform => gameObject.GetComponent<Transform>() ?? throw new EngineException(gameObject.Name + " has no Transform");
@@ -188,6 +188,7 @@ internal static class Behaviours {
     foreach (int h in s_order.ToArray()) {
       if (!s_instances.TryGetValue(h, out var i) || AssemblyLoadContext.GetLoadContext(i.B.GetType().Assembly) != old) continue;
       saved.Add((h, i.B.gameObject.Id, i.B.GetType().Name, i.Enabled, i.Started, SaveState(i.B)));
+      Stop(i); // its timers and waits hold the old code: they end like on a disable
       if (i.Enabled) Run(i, i.E.OnDisable, "OnDisable");
       s_instances.Remove(h);
     }
@@ -209,6 +210,8 @@ internal static class Behaviours {
       catch (Exception e) { Debug.LogError($"C#: {s.type} constructor: {(e.InnerException ?? e).Message}"); s_order.Remove(s.h); ++lost; continue; }
       b.gameObject = new GameObject(s.obj);
       LoadState(b, s.state);
+      try { b.FillAuto(); } catch (Exception e) { ReportException(b, "[Auto]", e); }
+      b.Running = s.enabled;
       var inst = new Instance { B = b, E = EventsOf(t), Enabled = s.enabled, Started = s.started };
       s_instances[s.h] = inst;
       if (s.enabled) Run(inst, inst.E.OnEnable, "OnEnable");
@@ -249,12 +252,38 @@ internal static class Behaviours {
 
   static void Run(Instance i, Action<Behaviour>? f, string what) {
     if (f == null) return;
-    try { f(i.B); }
-    catch (Exception e) {
-      Exception inner = e is TargetInvocationException { InnerException: { } x } ? x : e;
-      if (++i.Errors <= 10)
-        Debug.LogError($"C#: {i.B.GetType().Name}.{what} on {i.B.gameObject.Id}: {inner.GetType().Name}: {inner.Message}{(i.Errors == 10 ? " (further errors of this behaviour are not shown)" : "")}");
-    }
+    ScriptSyncContext.EnsureInstalled();
+    Scheduler.Call(i.B, () => {
+      try { f(i.B); }
+      catch (Exception e) {
+        Exception inner = e is TargetInvocationException { InnerException: { } x } ? x : e;
+        if (++i.Errors <= 10)
+          Debug.LogError($"C#: {i.B.GetType().Name}.{what} on {i.B.gameObject.Id}: {inner.GetType().Name}: {inner.Message}{(i.Errors == 10 ? " (further errors of this behaviour are not shown)" : "")}");
+      }
+    });
+  }
+
+  // An exception from a timer, tween or async continuation. Cancellation (a disabled / destroyed behaviour) is normal
+  // and not reported.
+  internal static void ReportException(Behaviour? owner, string what, Exception e) {
+    Exception inner = e is TargetInvocationException { InnerException: { } x } ? x : e;
+    if (inner is OperationCanceledException) return;
+    Instance? inst = null;
+    if (owner != null) foreach (var kv in s_instances) if (kv.Value.B == owner) { inst = kv.Value; break; }
+    if (inst != null && ++inst.Errors > 10) return;
+    string who = owner != null ? $"{owner.GetType().Name} ({what}) on {owner.gameObject.Id}" : what;
+    try { Debug.LogError($"C#: {who}: {inner.GetType().Name}: {inner.Message}"); } catch { }
+  }
+
+  // Objects removed by a script (Destroy): their behaviours end now, not at the next frame's sync.
+  public static void ObjectsGone(HashSet<string> ids) {
+    foreach (int h in s_order.ToArray())
+      if (s_instances.TryGetValue(h, out var i) && ids.Contains(i.B.gameObject.Id)) Destroy(h);
+  }
+
+  static void Stop(Instance i) { // no more timers, tweens or waits for this behaviour
+    i.B.Running = false;
+    Scheduler.CancelOwner(i.B);
   }
 
   public static int Create(string objectId, string typeName, bool enabled, string fieldsJson = "") {
@@ -268,7 +297,10 @@ internal static class Behaviours {
     int h = s_next++;
     s_instances[h] = inst;
     s_order.Add(h);
+    b.Running = enabled; // Awake of an enabled behaviour may start timers and waits
+    try { b.FillAuto(); } catch (Exception e) { ReportException(b, "[Auto]", e); }
     Run(inst, inst.E.Awake, "Awake");
+    if (!s_instances.ContainsKey(h)) return h; // destroyed itself in Awake
     if (enabled) { inst.Enabled = true; Run(inst, inst.E.OnEnable, "OnEnable"); }
     return h;
   }
@@ -276,15 +308,19 @@ internal static class Behaviours {
   public static void SetEnabled(int h, bool on) {
     if (!s_instances.TryGetValue(h, out var i) || i.Enabled == on) return;
     i.Enabled = on;
+    if (on) i.B.Running = true;
+    else Stop(i);
     Run(i, on ? i.E.OnEnable : i.E.OnDisable, on ? "OnEnable" : "OnDisable");
   }
 
   public static void Destroy(int h) {
     if (!s_instances.TryGetValue(h, out var i)) return;
+    s_instances.Remove(h); // first: a Destroy from inside OnDisable / OnDestroy does not come back here
+    s_order.Remove(h);
+    Stop(i);
     if (i.Enabled) { i.Enabled = false; Run(i, i.E.OnDisable, "OnDisable"); }
     Run(i, i.E.OnDestroy, "OnDestroy");
-    s_instances.Remove(h);
-    s_order.Remove(h);
+    Stop(i); // anything OnDisable / OnDestroy started
   }
 
   public static Behaviour? Find(string objectId, Type t) {
@@ -293,8 +329,10 @@ internal static class Behaviours {
     return null;
   }
 
-  // phase 0 = Start + Update, 1 = FixedUpdate, 2 = LateUpdate
+  // phase 0 = Start + Update (then timers, tweens, waits), 1 = FixedUpdate, 2 = LateUpdate, 3 = end of play
   public static void Tick(int phase, double dt, double time, int frame) {
+    ScriptSyncContext.EnsureInstalled();
+    if (phase == 3) { Scheduler.Reset(); return; }
     Time.time = (float)time;
     Time.frameCount = frame;
     if (phase == 1) Time.fixedDeltaTime = (float)dt; else Time.deltaTime = (float)dt;
@@ -307,6 +345,7 @@ internal static class Behaviours {
         if (i.Started) Run(i, i.E.FixedUpdate, "FixedUpdate");
       } else if (i.Started) Run(i, i.E.LateUpdate, "LateUpdate");
     }
+    if (phase == 0) Scheduler.Update();
   }
 
   public static int Count => s_instances.Count;

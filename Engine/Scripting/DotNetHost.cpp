@@ -165,7 +165,7 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   if (rl < 0 || !initialize)
     return fail(std::format("Bidulgi.Scripting의 진입점을 찾을 수 없음 (0x{:08x}) {}", (uint32_t)rl, g_hostError));
   const int api = ((int(__stdcall*)(void*))initialize)((void*)&DotNetHost::Request);
-  if (api != 3) return fail(std::format("스크립팅 API 버전이 다름 ({} != 3)", api));
+  if (api != 4) return fail(std::format("스크립팅 API 버전이 다름 ({} != 4)", api));
   loadAssembly_ = (int (*)(const char*))entry[1];
   create_ = (int (*)(const char*, const char*, int, const char*))entry[2];
   setEnabled_ = (void (*)(int, int))entry[3];
