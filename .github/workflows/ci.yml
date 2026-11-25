@@ -602,6 +602,7 @@ jobs:
           if ($buildExit -ne 0) { $errors += 'bdg build failed' }
           $built = "$game/Builds/Windows-Development"
           if (-not (Test-Path "$built/Content/game.bpak") -or -not (Test-Path "$built/build-report.txt") -or -not (Test-Path "$game/Builds/My Game-0.1.0-Development.zip")) { $errors += 'bdg build output incomplete' }
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$built/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-game-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$built/My Game.exe" -ArgumentList '--frames', 90 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET
@@ -626,6 +627,7 @@ jobs:
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
           $fpsBuild = $LASTEXITCODE
           Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$fps/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-fps-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$fps/Builds/Windows-Development/Range Test.exe" -ArgumentList '--frames', 120 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
@@ -647,6 +649,7 @@ jobs:
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
           $platBuild = $LASTEXITCODE
           Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$plat/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-platformer-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$plat/Builds/Windows-Development/Coin Run.exe" -ArgumentList '--frames', 90 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
