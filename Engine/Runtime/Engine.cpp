@@ -1265,7 +1265,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
             !bdg::ParseProjectQuality(std::string(text.begin(), text.end()), e->projectQuality, &err))
           bdg::LogWarn("quality: ProjectSettings/Quality.json: {}", err);
         bdg::QualityTier tier = e->projectQuality.fallback;
-        if (const char* q = std::getenv("BDG_QUALITY"); q && !bdg::TierFromString(q, tier)) bdg::LogWarn("quality: unknown tier {}", q);
+        const char* q = std::getenv("BDG_QUALITY");
+        if (q && std::string_view(q) == "auto") e->projectQuality.autoTier = true; // device benchmark (3-5c)
+        else if (q && !bdg::TierFromString(q, tier)) bdg::LogWarn("quality: unknown tier {}", q);
+        if (e->projectQuality.autoTier) tier = e->sceneView->DetectQuality(e->projectQuality, ".cache/QualityBenchmark.json");
         tier = e->projectQuality.Clamp(tier);
         e->sceneView->quality = bdg::QualityPreset(tier);
         if (const char* set = std::getenv("BDG_QUALITY_SET"); set && !bdg::ApplyQualityOverrides(set, e->sceneView->quality, &err))
@@ -1273,6 +1276,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
         if (bdg::Widget* badge = e->editor->Find("tool.quality")) {
           badge->text = bdg::TierLabel(tier);
           badge->tooltip = "씬 뷰 품질 단계 (프로젝트에서 허용한 범위)";
+          e->sceneView->onAutoTier = [e](bdg::QualityTier t) { // 3-5c frame drop step
+            if (bdg::Widget* w = e->editor->Find("tool.quality")) w->text = bdg::TierLabel(t);
+          };
           badge->onClick = [e](bdg::Widget& w) { // a list of the allowed tiers, the current one marked
             std::vector<bdg::UIContext::MenuItem> items;
             for (int k = (int)e->projectQuality.min; k <= (int)e->projectQuality.max; ++k) {
@@ -1280,6 +1286,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
               bdg::Widget* wp = &w;
               items.push_back({bdg::TierLabel(tier), [e, wp, tier] {
                                  e->sceneView->quality = bdg::QualityPreset(tier);
+                                 e->sceneView->autoQuality.on = false; // picked by hand: no automatic steps
                                  wp->text = bdg::TierLabel(tier);
                                  bdg::LogInfo("quality: {}", bdg::TierKey(tier));
                                }, true, tier == e->sceneView->quality.tier});

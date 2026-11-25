@@ -210,6 +210,44 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(ApplyQualityOverrides("localshadows=40,localshadowmap=8", q, &err));
   CHECK(q.localShadows == 16 && q.localShadowSize == 64); // clamped
 
+  // texture groups (3-5c): limits per tier, the first mip that fits, overrides
+  CHECK(QualityPreset(QualityTier::Potato).TextureMax(TextureGroup::World) == 512 && medium.TextureMax(TextureGroup::Normal) == 1024);
+  CHECK(high.TextureMax(TextureGroup::Masks) == 4096 && QualityPreset(QualityTier::Potato).TextureMax(TextureGroup::UI) == 16384);
+  CHECK(FirstMipWithin(2048, 1024, 12, 512) == 2 && FirstMipWithin(512, 512, 10, 4096) == 0 && FirstMipWithin(4096, 4096, 3, 16) == 2);
+  CHECK(FirstMipWithin(1000, 600, 11, 500) == 1); // 1000 -> 500
+  CHECK(ApplyQualityOverrides("tex.normal=128,tex.world=300", q, &err) && q.TextureMax(TextureGroup::Normal) == 128 && q.textureMax[0] == 300);
+  CHECK(!ApplyQualityOverrides("tex.hair=1", q, &err));
+  // automatic tier: benchmark time at high -> tier; cache per device
+  CHECK(TierFromBenchmark(1.0) == QualityTier::Ultra && TierFromBenchmark(8.0) == QualityTier::High);
+  CHECK(TierFromBenchmark(20.0) == QualityTier::Medium && TierFromBenchmark(35.0) == QualityTier::Low);
+  CHECK(TierFromBenchmark(300.0) == QualityTier::Potato && TierFromBenchmark(0) == QualityTier::Medium);
+  {
+    double ms = 0;
+    QualityTier tier = QualityTier::Potato;
+    const std::string json = BenchmarkCacheJson("GPU \"X\" | 4.5", 3.25, QualityTier::High);
+    CHECK(ParseBenchmarkCache(json, "GPU \"X\" | 4.5", ms, tier) && tier == QualityTier::High && std::abs(ms - 3.25) < 1e-6);
+    CHECK(!ParseBenchmarkCache(json, "other GPU", ms, tier) && !ParseBenchmarkCache("{", "GPU", ms, tier));
+  }
+  { // frame drop guard: needs a full window of slow frames, then waits
+    QualityGovernor g;
+    int steps = 0;
+    double now = 0;
+    for (int i = 0; i < 200; ++i, now += 0.016) steps += g.Feed(now, 15) ? 1 : 0; // within budget
+    CHECK(steps == 0);
+    for (int i = 0; i < 29; ++i, now += 0.03) steps += g.Feed(now, 25) ? 1 : 0;
+    CHECK(steps == 0); // the window still holds the fast frames
+    for (int i = 0; i < 200 && !steps; ++i, now += 0.03) steps += g.Feed(now, 25) ? 1 : 0; // until the window is slow
+    CHECK(steps == 1 && g.lastStepAverageMs > 20);
+    for (int i = 0; i < 100; ++i, now += 0.03) steps += g.Feed(now, 25) ? 1 : 0; // 3 s: inside the 4 s pause
+    CHECK(steps == 1);
+    for (int i = 0; i < 100; ++i, now += 0.03) steps += g.Feed(now, 25) ? 1 : 0;
+    CHECK(steps == 2);
+  }
+  {
+    ProjectQuality autoPq;
+    CHECK(ParseProjectQuality(R"({"min":"low","default":"auto"})", autoPq) && autoPq.autoTier && autoPq.min == QualityTier::Low);
+  }
+
   CHECK(ToneMapACES(0.f) == 0.f && ToneMapACES(100.f) == 1.f);
   float prev = 0;
   for (float x = 0.01f; x < 8.f; x *= 1.3f) { CHECK(ToneMapACES(x) > prev); prev = ToneMapACES(x); } // keeps order

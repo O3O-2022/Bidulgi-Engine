@@ -150,6 +150,7 @@ add_library(BidulgiEngine STATIC
   Engine/Render3D/Renderer3D.h Engine/Render3D/Renderer3D.cpp
   Engine/Render3D/Quality.h Engine/Render3D/Quality.cpp
   Engine/Render3D/Culling.h Engine/Render3D/Culling.cpp
+  Engine/Render3D/Benchmark.h Engine/Render3D/Benchmark.cpp
   Engine/Render3D/ReferenceBoard.h Engine/Render3D/ReferenceBoard.cpp
   Engine/Render3D/RayScene.h Engine/Render3D/RayScene.cpp
   Engine/Render3D/ColorGrading.h Engine/Render3D/ColorGrading.cpp

@@ -569,6 +569,14 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-lights'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'lights test: .*same=ok lights=ok lists=ok result=pass') { $errors += 'Forward+ test failed' }
           if ($log -match '(lights test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 3-5c quality automation: device benchmark -> tier (cached per GPU), frame drop steps down, texture groups per tier
+          Remove-Item -Recurse -Force "$PWD/ci-autoq-assets" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-autoq-assets" | Out-Null
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_AUTOQ_TEST = '1'; BDG_ASSETS = "$PWD/ci-autoq-assets" } 8
+          if ($log -notmatch 'autoq test: bench=1 cached=1 tier=\w+ ms=[\d.]+ governor=1 groups=1') { $errors += 'quality automation test failed' }
+          if ($log -match '(autoq test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'

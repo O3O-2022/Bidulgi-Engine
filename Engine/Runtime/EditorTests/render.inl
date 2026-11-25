@@ -620,3 +620,122 @@ void InjectQualityTest(bdg_engine* e, int frame, float scale) {
     v[6] = std::format("{}", badge && badge->text == "초고사양" && sv->quality.tier == bdg::QualityTier::Ultra ? 1 : 0);
   }
 }
+
+// Scripted check of 3-5c (BDG_AUTOQ_TEST=1, BDG_ASSETS = an empty folder): the device benchmark picks a tier and is
+// cached per GPU; the frame drop guard steps down one tier at a time with a pause in between and stops at the
+// project's minimum; texture groups load smaller cooked mips at potato and the full textures at ultra.
+namespace autoq {
+std::string bench = "bench=-", governor = "governor=-", groups = "groups=-";
+uint64_t potatoBytes = 0;
+bdg::MaterialLibrary::GroupUse potatoWorld, potatoNormal;
+}
+void InjectAutoQualityTest(bdg_engine* e, int frame, float) {
+  namespace fs = std::filesystem;
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  const char* cacheEnv = std::getenv("BDG_AUTOQ_CACHE");
+  const fs::path cache = cacheEnv ? fs::path(cacheEnv) : fs::path("ci-autoq") / "QualityBenchmark.json";
+  if (frame == 1) {
+    std::error_code ec;
+    fs::remove(cache, ec);
+    bdg::ProjectQuality range;
+    range.min = bdg::QualityTier::Low;
+    const std::string path = (const char*)cache.u8string().c_str();
+    const bdg::QualityTier first = sv->DetectQuality(range, path);
+    const bool measured = !sv->autoQuality.cached && sv->autoQuality.highMs > 0 && fs::exists(cache);
+    const double ms = sv->autoQuality.highMs;
+    const bdg::QualityTier second = sv->DetectQuality(range, path);
+    const bool cached = sv->autoQuality.cached && second == first && std::abs(sv->autoQuality.highMs - ms) < 0.01 &&
+                        first == range.Clamp(bdg::TierFromBenchmark(ms));
+    autoq::bench = std::format("bench={} cached={} tier={} ms={:.2f}", measured ? 1 : 0, cached ? 1 : 0, bdg::TierKey(first), ms);
+    // frame drop guard: slow frames at high -> medium; still slow during the pause -> stays; after it -> low; never below low
+    const bdg::QualitySettings keep = sv->quality;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    int steps[4] = {};
+    double t = 1000;
+    auto run = [&](int k, int n, double ms) {
+      for (int i = 0; i < n; ++i, t += 0.02) steps[k] += sv->FeedFrameTime(t, ms) ? 1 : 0;
+    };
+    run(0, 20, 5);   // fast frames: nothing
+    run(0, 60, 30);  // slow: one step (high -> medium)
+    const bdg::QualityTier afterFirst = sv->quality.tier;
+    run(1, 60, 30);  // inside the 4 s pause: no step
+    t += 5;
+    run(2, 60, 30);  // after the pause: medium -> low
+    t += 5;
+    run(3, 200, 30); // low is the project's minimum
+    const bool ok = steps[0] == 1 && afterFirst == bdg::QualityTier::Medium && steps[1] == 0 && steps[2] == 1 && steps[3] == 0 &&
+                    sv->quality.tier == bdg::QualityTier::Low && sv->autoQuality.stepsDown == 2;
+    autoq::governor = ok ? "governor=1"
+                         : std::format("governor=0({},{},{},{} {})", steps[0], steps[1], steps[2], steps[3], bdg::TierKey(sv->quality.tier));
+    sv->autoQuality.on = false;
+    sv->quality = keep;
+    fs::remove(cache, ec);
+    if (cache.has_parent_path() && fs::is_empty(cache.parent_path(), ec)) fs::remove(cache.parent_path(), ec);
+  }
+  if (!e->assetsOpen) return;
+  const fs::path root = fs::path(std::u8string((const char8_t*)e->assets.Root().c_str()));
+  if (frame == 2) { // a 1024 colour texture and a 512 normal map on one material, on the sample scene's g5
+    auto write = [&](const char* rel, const std::vector<uint8_t>& bytes) {
+      fs::create_directories((root / rel).parent_path());
+      if (std::FILE* f = _wfopen((root / rel).c_str(), L"wb")) {
+        std::fwrite(bytes.data(), 1, bytes.size(), f);
+        std::fclose(f);
+      }
+    };
+    auto image = [](int n, bool normal) {
+      std::vector<uint8_t> px((size_t)n * n * 4, 255);
+      for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+          uint8_t* p = &px[((size_t)y * n + x) * 4];
+          if (normal) {
+            p[0] = (uint8_t)(128 + 60 * std::sin(x * 0.1f));
+            p[1] = (uint8_t)(128 + 60 * std::cos(y * 0.1f));
+            p[2] = 220;
+          } else {
+            p[0] = (uint8_t)(x * 255 / n);
+            p[1] = (uint8_t)(y * 255 / n);
+            p[2] = (uint8_t)(((x / 32 + y / 32) & 1) * 200);
+          }
+        }
+      std::vector<uint8_t> png;
+      bdg::EncodePNG(n, n, px.data(), false, png);
+      return png;
+    };
+    write("Textures/T_Group_D.png", image(1024, false));
+    write("Textures/T_Group_N.png", image(512, true));
+    const std::string mat = "{\"material\":\"M_Group\"}\n"
+                            "{\"param\":\"BaseColorMap\",\"type\":\"texture\",\"value\":\"Textures/T_Group_D.png\"}\n"
+                            "{\"param\":\"NormalMap\",\"type\":\"texture\",\"value\":\"Textures/T_Group_N.png\"}\n";
+    write("Materials/M_Group.material", std::vector<uint8_t>(mat.begin(), mat.end()));
+    e->assets.Refresh();
+    e->materials.Invalidate();
+    bdg::Command c;
+    c.name = "set";
+    c.target = "g5";
+    c.args = R"({"path":"MeshRenderer.material","value":"M_Group"})";
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("autoq test: {}", err);
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Potato);
+  }
+  if (frame == 4) {
+    autoq::potatoWorld = e->materials.TextureGroupUse(bdg::TextureGroup::World);
+    autoq::potatoNormal = e->materials.TextureGroupUse(bdg::TextureGroup::Normal);
+    autoq::potatoBytes = autoq::potatoWorld.bytes + autoq::potatoNormal.bytes;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Ultra);
+  }
+  if (frame == 6) {
+    const auto world = e->materials.TextureGroupUse(bdg::TextureGroup::World), normal = e->materials.TextureGroupUse(bdg::TextureGroup::Normal);
+    const auto& pw = autoq::potatoWorld;
+    const auto& pn = autoq::potatoNormal;
+    const uint64_t ultraBytes = world.bytes + normal.bytes;
+    const bool ok = pw.cookedLargest == 1024 && pw.largest == 512 && pn.cookedLargest == 512 && pn.largest == 256 && world.largest == 1024 &&
+                    normal.largest == 512 && ultraBytes > autoq::potatoBytes * 3;
+    autoq::groups = std::format("groups={} (potato world {}/{} normal {}/{} {} KB | ultra world {} normal {} {} KB)", ok ? 1 : 0, pw.largest,
+                                pw.cookedLargest, pn.largest, pn.cookedLargest, autoq::potatoBytes / 1024, world.largest, normal.largest,
+                                ultraBytes / 1024);
+  }
+}
+void ReportAutoQualityTest(bdg_engine*) { bdg::LogInfo("autoq test: {} {} {}", autoq::bench, autoq::governor, autoq::groups); }
+BDG_EDITOR_TEST("BDG_AUTOQ_TEST", InjectAutoQualityTest, ReportAutoQualityTest)

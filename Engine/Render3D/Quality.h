@@ -19,6 +19,15 @@ namespace bdg {
 enum class QualityTier { Potato, Low, Medium, High, Ultra };
 enum class LightingMode { Unlit, Vertex, Pixel };
 
+// Texture groups (3-5c, Unreal's texture LOD groups / Unity's mipmap limits): each tier caps the largest side a
+// texture of a group is uploaded with. The cooked DDS keeps every mip level, so loading simply starts at the first
+// level that fits: switching tiers needs no re-cook. The groups follow the texture presets (Assets/TextureCooker.h).
+enum class TextureGroup { World, Normal, Masks, Grayscale, UI };
+constexpr int kTextureGroups = 5;
+const char* TextureGroupKey(TextureGroup g); // "world", "normal", "masks", "grayscale", "ui"
+// First mip level (of `levels`) whose larger side is <= maxSide; the last level when none is that small.
+int FirstMipWithin(int w, int h, int levels, int maxSide);
+
 struct QualitySettings {
   QualityTier tier = QualityTier::Medium;
   LightingMode lighting = LightingMode::Pixel;
@@ -47,6 +56,9 @@ struct QualitySettings {
   bool instancing = true;      // objects sharing mesh, pipeline and textures go out in one draw call
   bool culling = true;         // skip objects outside the camera (and, for shadows, the light's) frustum
   float viewDistance = 0.75f;  // multiplies far plane and shadow distance
+  // Largest texture side per TextureGroup (3-5c): world colour, normal, masks, grayscale, UI (UI is never reduced).
+  int textureMax[kTextureGroups] = {2048, 1024, 1024, 1024, 16384};
+  int TextureMax(TextureGroup g) const { return textureMax[(int)g]; }
 };
 
 QualitySettings QualityPreset(QualityTier t);
@@ -57,9 +69,10 @@ const char* TierLabel(QualityTier t); // "감자", "저사양", "중사양", "�
 bool TierFromString(std::string_view s, QualityTier& out);
 
 // Project rule: the game supports tiers min..max and starts at `fallback` (medium unless set).
-// ProjectSettings/Quality.json: {"min":"low","max":"high","default":"medium"}
+// ProjectSettings/Quality.json: {"min":"low","max":"high","default":"medium"} ("default":"auto" = benchmark, 3-5c)
 struct ProjectQuality {
   QualityTier min = QualityTier::Potato, max = QualityTier::Ultra, fallback = QualityTier::Medium;
+  bool autoTier = false; // "default":"auto" (3-5c): measure the device, then clamp to min..max
   QualityTier Clamp(QualityTier t) const;
   QualityTier Next(QualityTier t) const; // the next tier up, wrapping from max back to min
 };
@@ -67,6 +80,35 @@ bool ParseProjectQuality(std::string_view json, ProjectQuality& out, std::string
 // "msaa=1,bloom=0,fxaa=1,shadows=0,tonemap=0,lights=4,bias=0,exposure=1.2,shadowmap=2048": changes on top of a
 // tier (BDG_QUALITY_SET, experiments). false names the first unknown key.
 bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::string* error = nullptr);
+
+// Automatic tier (3-5c). The benchmark renders a fixed scene at high quality, 1920x1080, and times the frames.
+// TierFromBenchmark picks the most detailed tier whose expected frame time (relative cost per tier x the measured
+// high time) stays within 60 % of the frame budget, leaving the rest to the game. "auto" in Quality.json or
+// BDG_QUALITY asks for it; the result is cached per GPU in .cache/QualityBenchmark.json.
+float TierCost(QualityTier t); // frame time relative to high: potato 0.15, low 0.25, medium 0.45, high 1, ultra 1.6
+QualityTier TierFromBenchmark(double highMs, double budgetMs = 1000.0 / 60.0);
+std::string BenchmarkCacheJson(const std::string& device, double highMs, QualityTier tier);
+bool ParseBenchmarkCache(std::string_view json, const std::string& device, double& highMs, QualityTier& tier);
+
+// Frame drop guard (3-5c): fed with the time of each rendered frame; when the frames of the last `window` seconds
+// average more than `over` x the budget (and there were at least `minFrames`), it asks for one tier down, then
+// waits `cooldown` seconds of new frames before judging again. It never goes up by itself.
+class QualityGovernor {
+public:
+  double budgetMs = 1000.0 / 60.0, over = 1.2, window = 2.0, cooldown = 4.0;
+  int minFrames = 30;
+  bool Feed(double nowSeconds, double frameMs); // true: step down one tier now
+  void Reset();
+  double AverageMs() const;
+  int Frames() const { return count_; }
+  double lastStepAverageMs = 0; // the average that made the last step down
+
+private:
+  static constexpr int kMax = 1024;
+  double t_[kMax] = {}, ms_[kMax] = {};
+  int head_ = 0, count_ = 0;
+  double quietUntil_ = -1e30;
+};
 
 // Same curve as the tone-map pass (ACES fit by Narkowicz), for tests and colour pickers. Input linear, output 0..1.
 float ToneMapACES(float x);

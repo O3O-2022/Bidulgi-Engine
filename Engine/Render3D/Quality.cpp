@@ -1,12 +1,42 @@
 #include "Render3D/Quality.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
+#include <format>
 #include <yyjson.h>
 
 namespace bdg {
+const char* TextureGroupKey(TextureGroup g) {
+  switch (g) {
+    case TextureGroup::World: return "world";
+    case TextureGroup::Normal: return "normal";
+    case TextureGroup::Masks: return "masks";
+    case TextureGroup::Grayscale: return "grayscale";
+    case TextureGroup::UI: return "ui";
+  }
+  return "world";
+}
+
+int FirstMipWithin(int w, int h, int levels, int maxSide) {
+  int level = 0;
+  while (level + 1 < levels && std::max(w, h) > maxSide) {
+    w = std::max(w / 2, 1);
+    h = std::max(h / 2, 1);
+    ++level;
+  }
+  return level;
+}
+
 QualitySettings QualityPreset(QualityTier t) {
   QualitySettings q;
   q.tier = t;
+  // texture groups (3-5c): world colour, normal, masks, grayscale, UI
+  static const int kTexMax[5][kTextureGroups] = {{512, 256, 256, 256, 16384},     // potato
+                                                 {1024, 512, 512, 512, 16384},    // low
+                                                 {2048, 1024, 1024, 1024, 16384}, // medium
+                                                 {4096, 4096, 4096, 4096, 16384}, // high
+                                                 {8192, 8192, 8192, 8192, 16384}};// ultra
+  std::copy(kTexMax[(int)t], kTexMax[(int)t] + kTextureGroups, q.textureMax);
   switch (t) {
     case QualityTier::Potato:
       q.lighting = LightingMode::Unlit;
@@ -68,6 +98,7 @@ QualitySettings ReferenceQuality() {
   q.clustered = false;
   q.anisotropy = 1;
   q.localShadows = 0; // the board's point / spot checks were made without local shadows
+  std::fill(q.textureMax, q.textureMax + kTextureGroups, 16384); // full textures
   return q;
 }
 
@@ -118,7 +149,8 @@ bool ParseProjectQuality(std::string_view json, ProjectQuality& out, std::string
   if (ok) {
     read("min", out.min);
     read("max", out.max);
-    read("default", out.fallback);
+    if (const char* s = yyjson_get_str(yyjson_obj_get(root, "default")); s && std::string_view(s) == "auto") out.autoTier = true;
+    else read("default", out.fallback);
     if (out.min > out.max) { ok = false; if (error) *error = "min is above max"; }
     else out.fallback = out.Clamp(out.fallback); // only a valid range can clamp
   } else if (error) *error = "not a JSON object";
@@ -158,8 +190,77 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "culling") q.culling = v != 0;
     else if (key == "localshadows") q.localShadows = std::clamp((int)v, 0, 16);
     else if (key == "localshadowmap") q.localShadowSize = std::clamp((int)v, 64, 2048);
+    else if (key.starts_with("tex.")) { // tex.world=1024, tex.normal=512, ... (texture groups, 3-5c)
+      bool known = false;
+      for (int g = 0; g < kTextureGroups; ++g)
+        if (key.substr(4) == TextureGroupKey((TextureGroup)g)) { q.textureMax[g] = std::clamp((int)v, 1, 16384); known = true; }
+      if (!known) { if (error) *error = "unknown texture group " + key.substr(4); return false; }
+    }
     else { if (error) *error = "unknown quality key " + key; return false; }
   }
+  return true;
+}
+
+float TierCost(QualityTier t) {
+  switch (t) {
+    case QualityTier::Potato: return 0.15f;
+    case QualityTier::Low: return 0.25f;
+    case QualityTier::Medium: return 0.45f;
+    case QualityTier::High: return 1.f;
+    case QualityTier::Ultra: return 1.6f;
+  }
+  return 1.f;
+}
+
+QualityTier TierFromBenchmark(double highMs, double budgetMs) {
+  if (!(highMs > 0) || !std::isfinite(highMs)) return QualityTier::Medium; // no measurement: the usual default
+  for (int t = (int)QualityTier::Ultra; t > (int)QualityTier::Potato; --t)
+    if (TierCost((QualityTier)t) * highMs <= 0.6 * budgetMs) return (QualityTier)t;
+  return QualityTier::Potato;
+}
+
+std::string BenchmarkCacheJson(const std::string& device, double highMs, QualityTier tier) {
+  std::string esc;
+  for (char c : device) {
+    if (c == '"' || c == '\\') esc += '\\';
+    if ((unsigned char)c >= 0x20) esc += c;
+  }
+  return std::format("{{\"v\":1,\"device\":\"{}\",\"high_ms\":{:.3f},\"tier\":\"{}\"}}\n", esc, highMs, TierKey(tier));
+}
+
+bool ParseBenchmarkCache(std::string_view json, const std::string& device, double& highMs, QualityTier& tier) {
+  yyjson_doc* d = yyjson_read(json.data(), json.size(), 0);
+  yyjson_val* root = d ? yyjson_doc_get_root(d) : nullptr;
+  const char* dev = yyjson_get_str(yyjson_obj_get(root, "device"));
+  const char* t = yyjson_get_str(yyjson_obj_get(root, "tier"));
+  yyjson_val* ms = yyjson_obj_get(root, "high_ms");
+  bool ok = yyjson_get_int(yyjson_obj_get(root, "v")) == 1 && dev && device == dev && t && TierFromString(t, tier) && yyjson_is_num(ms);
+  if (ok) highMs = yyjson_get_num(ms);
+  yyjson_doc_free(d);
+  return ok;
+}
+
+void QualityGovernor::Reset() {
+  head_ = count_ = 0;
+  quietUntil_ = -1e30;
+}
+
+double QualityGovernor::AverageMs() const {
+  double sum = 0;
+  for (int i = 0; i < count_; ++i) sum += ms_[(head_ - 1 - i + kMax) % kMax];
+  return count_ ? sum / count_ : 0;
+}
+
+bool QualityGovernor::Feed(double now, double frameMs) {
+  t_[head_] = now;
+  ms_[head_] = frameMs;
+  head_ = (head_ + 1) % kMax;
+  count_ = std::min(count_ + 1, kMax);
+  while (count_ > 0 && now - t_[(head_ - count_ + kMax) % kMax] > window) --count_; // drop frames older than the window
+  if (now < quietUntil_ || count_ < minFrames || AverageMs() <= budgetMs * over) return false;
+  quietUntil_ = now + cooldown;
+  lastStepAverageMs = AverageMs();
+  count_ = 0; // judge the new tier on its own frames
   return true;
 }
 
