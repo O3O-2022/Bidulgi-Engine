@@ -233,6 +233,19 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - 이 파일(`QUEUE.md`)은 **자기 항목의 `[ ]`→`[x]`와, 완료 표의 자기 행**만 고칩니다. 완료 표 행은 표 맨 끝이 아니라 **같은 분야 행 바로 아래**에 넣습니다.
 - 커밋은 자기 브랜치에. 푸시·main 합치기는 허브가 합니다.
 
+## ★ 7라운드 — 멀티플레이 (사용자 요청 2026-11-25, 레인 B)
+
+목표: 언리얼만큼 쉬운 멀티플레이 게임 — **서버 권한**(서버가 정답, 클라이언트는 예측·보간). 문서 [multiplayer](features/multiplayer.md). 항목마다 검사를 통과하면 커밋.
+
+- [ ] **M-1. 전송층** — ENet(MIT, FetchContent) 뒤에 엔진 API `Engine/Net/Transport.*`: 서버 열기·접속·끊기·시간 초과, 채널(신뢰·순서 / 비신뢰), 지연·흔들림·손실 흉내, 통계(핑·손실·대역폭). 단위 테스트(같은 프로세스 루프백: 접속, 손실 속 신뢰 채널 순서 보장, 끊김·시간 초과, 통계)
+- [ ] **M-2. 직렬화·스냅샷 수학** — 비트 쓰기/읽기, 위치·회전 양자화, 기준(ack) 대비 델타, 스냅샷 버퍼 보간(지연 렌더 시각), 예측·재조정(입력 순번, 다시 적용). 단위 테스트
+- [ ] **M-3. 복제 핵심 (C++)** — `NetworkObject`(net id·소유자·관련 거리)·`NetworkTransform`(보간, 소유자 예측) 컴포넌트, `NetWorld`: 넷 모드(Standalone·Listen Server·Dedicated Server·Client), 접속 시 장면 보내기, 생성·삭제 복제, 늦게 들어온 클라이언트에 전체 상태, 관련 거리, 끊기면 정리. 플레이 모드에 연결. 단위 테스트: 한 프로세스 안 서버 + 클라이언트 2(손실 흉내)
+- [ ] **M-4. C# 넷 API** — `IsServer`·`IsClient`·`IsOwner`·`HasAuthority`, `[Replicated]` 필드 + `OnRep_X`, RPC `[Server]`·`[Client]`·`[Multicast]`(신뢰/비신뢰, `Rpc(nameof(Fire), …)`), 서버의 `Spawn`이 클라이언트에 보임, 게임 프레임워크(GameMode: 접속하면 `PlayerStart`에 플레이어 프리팹, 플레이어 목록, `OnPlayerJoined`/`OnPlayerLeft`), `Net.Host`/`Net.Join`
+- [ ] **M-5. 실행 모드·에디터 Play 옵션** — 플레이어 exe `--server`(창 없음)·`--connect ip:port`·`--listen`, 상단 바 Play 옆 드롭다운(넷 모드, 플레이어 수 1~4, 흉내 지연·흔들림·손실): 추가 플레이어를 게임 프로세스로 열고 창 제목 "Server" / "Client 1", Stop이 모두 닫음. 통계 표시(핑·손실·대역폭), 간단한 로비 UI, LAN 찾기(싸면)
+- [ ] **M-6. `BDG_NET_TEST`** — 에디터가 서버, 클라이언트 2개(루프백, 손실 흉내): 생성, 위치 동기화, `[Replicated]` + OnRep, RPC 세 종류, 늦은 참가자 상태, 끊김 정리 → CI
+- [ ] **M-7. 아레나 템플릿** — `bdg new --template arena`: 2~4명 이동·밀치기, 복제되는 점수, 전용 서버 빌드로도 동작. CI: 빌드한 전용 서버 + 클라이언트 실행(Mesa 복사)
+- [ ] **M-8. 문서** — `Docs/features/multiplayer.md`(언리얼 이름 대응표 포함), easy-api 표
+
 ## ★ 다음 (6라운드, 사용자 요청 2026-11-25) — 그래픽
 
 5라운드(레인 A: 블렌드 스페이스·IK·3인칭 템플릿, 레인 B: 세이브·로드·파티클)가 끝나면 그래픽을 이 순서로 (눈에 띄는 차이가 큰 것부터):
