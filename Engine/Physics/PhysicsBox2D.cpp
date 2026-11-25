@@ -134,16 +134,22 @@ public:
   const std::vector<Contact>& Contacts() const override { return contacts_; }
   size_t Bodies() const override { return (size_t)std::count_if(bodies_.begin(), bodies_.end(), [](const Body& b) { return b.alive; }); }
   float Volume(BodyId id) const override { return Valid(id) ? b2Body_GetMass(bodies_[id].body) / std::max(bodies_[id].density, 1e-9f) : 0.f; }
-  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit) const override {
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit,
+               const std::vector<uint64_t>& ignore) const override {
     const glm::vec2 d(direction.x, direction.y);
     const float len = glm::length(d);
     if (len < 1e-8f || maxDistance <= 0) return false;
-    struct Ctx { const Box2DBackend* self; bool triggers, found; b2ShapeId shape; b2Vec2 point, normal; float fraction; } c{this, hitTriggers, false, b2_nullShapeId, {}, {}, 1};
+    struct Ctx { const Box2DBackend* self; const std::vector<uint64_t>* ignore; bool triggers, found; b2ShapeId shape; b2Vec2 point, normal; float fraction; } c{
+        this, &ignore, hitTriggers, false, b2_nullShapeId, {}, {}, 1};
     const b2Vec2 dir{d.x / len * maxDistance, d.y / len * maxDistance};
     b2World_CastRay(world_, {origin.x, origin.y}, dir, b2DefaultQueryFilter(), [](b2ShapeId s, b2Vec2 p, b2Vec2 n, float f, void* ctx) -> float {
       Ctx& c = *static_cast<Ctx*>(ctx);
       if (!c.triggers && b2Shape_IsSensor(s)) return -1.f; // skip it, go on
-      c = {c.self, c.triggers, true, s, p, n, f};
+      if (!c.ignore->empty()) {
+        auto it = c.self->shapeUser_.find(ShapeKey(s));
+        if (it != c.self->shapeUser_.end() && std::find(c.ignore->begin(), c.ignore->end(), it->second) != c.ignore->end()) return -1.f;
+      }
+      c = {c.self, c.ignore, c.triggers, true, s, p, n, f};
       return f; // clip the ray here: only nearer hits follow
     }, &c);
     if (!c.found) return false;

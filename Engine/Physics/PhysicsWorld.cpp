@@ -118,37 +118,13 @@ uint64_t Fnv(uint64_t h, const void* p, size_t n) {
 }
 
 namespace {
-const PhysicsWorld* s_current = nullptr;
+const PhysicsWorld* g_activeWorld = nullptr;
 }
-const PhysicsWorld* PhysicsWorld::Current() { return s_current; }
-
-bool PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, QueryHit& hit) const {
-  bool found = false;
-  for (const phys::Backend* be : {jolt_.get(), box2d_.get()}) {
-    phys::RayHit h;
-    if (!be || !be->Raycast(origin, direction, maxDistance, hitTriggers, h) || h.user == 0 || h.user > bodies_.size()) continue;
-    if (found && h.distance >= hit.distance) continue;
-    hit = {bodies_[h.user - 1].object, h.point, h.normal, h.distance};
-    found = true;
-  }
-  return found;
-}
-
-std::vector<std::string> PhysicsWorld::OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const {
-  std::vector<uint64_t> users;
-  for (const phys::Backend* be : {jolt_.get(), box2d_.get()})
-    if (be) be->OverlapSphere(center, radius, hitTriggers, users);
-  std::sort(users.begin(), users.end());
-  users.erase(std::unique(users.begin(), users.end()), users.end());
-  std::vector<std::string> out;
-  for (uint64_t u : users)
-    if (u > 0 && u <= bodies_.size() && (out.empty() || out.back() != bodies_[u - 1].object)) out.push_back(bodies_[u - 1].object);
-  return out;
-}
+const PhysicsWorld* PhysicsWorld::Current() { return g_activeWorld; }
 
 void PhysicsWorld::Begin(Scene& scene, const Settings& settings, const AssetDatabase* assets) {
   End();
-  s_current = this;
+  g_activeWorld = this;
   assets_ = assets;
   jolt_ = phys::CreateJolt();
   box2d_ = phys::CreateBox2D();
@@ -444,8 +420,111 @@ void PhysicsWorld::WriteBack(Scene& scene, Body& b) {
   }
 }
 
+bool PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
+                           const std::vector<std::string>& ignore, bool hitTriggers) const {
+  if (!active_) return false;
+  std::vector<uint64_t> skip; // user values: body index + 1, ragdoll bones kRagdollUser + ragdoll
+  for (size_t i = 0; i < bodies_.size(); ++i)
+    if (std::find(ignore.begin(), ignore.end(), bodies_[i].object) != ignore.end()) skip.push_back(i + 1);
+  for (size_t i = 0; i < ragdolls_.size(); ++i)
+    if (std::find(ignore.begin(), ignore.end(), ragdolls_[i].object) != ignore.end()) skip.push_back(kRagdollUser + i);
+  bool found = false;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()}) {
+    phys::RayHit h;
+    if (!be || !be->Raycast(origin, direction, maxDistance, hitTriggers, h, skip)) continue;
+    if (found && h.distance >= hit.distance) continue;
+    std::string object = ObjectOfUser(h.user);
+    if (object.empty()) continue;
+    hit = {std::move(object), h.point, h.normal, h.distance};
+    found = true;
+  }
+  return found;
+}
+
+std::string PhysicsWorld::ObjectOfUser(uint64_t user) const {
+  if (user >= 1 && user <= bodies_.size()) return bodies_[user - 1].object;
+  if (user >= kRagdollUser && user - kRagdollUser < ragdolls_.size()) return ragdolls_[user - kRagdollUser].object;
+  return {};
+}
+
+std::vector<std::string> PhysicsWorld::OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const {
+  std::vector<uint64_t> users;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()})
+    if (be) be->OverlapSphere(center, radius, hitTriggers, users);
+  std::sort(users.begin(), users.end());
+  users.erase(std::unique(users.begin(), users.end()), users.end());
+  std::vector<std::string> out;
+  for (uint64_t u : users) {
+    std::string object = ObjectOfUser(u);
+    if (!object.empty() && std::find(out.begin(), out.end(), object) == out.end()) out.push_back(std::move(object));
+  }
+  return out;
+}
+
+int PhysicsWorld::AddRagdoll(const std::string& object, const std::vector<RagdollBone>& bones, const glm::vec3& velocity) {
+  if (!active_ || !jolt_ || bones.empty()) return -1;
+  Ragdoll r;
+  r.object = object;
+  const int index = (int)ragdolls_.size();
+  for (const RagdollBone& b : bones) {
+    phys::BodyDesc d;
+    d.user = kRagdollUser + (uint64_t)index;
+    d.motion = phys::Motion::Dynamic;
+    d.shape.kind = phys::ShapeKind::Capsule;
+    d.shape.radius = std::max(b.radius, 0.01f);
+    d.shape.halfHeight = std::max(b.halfHeight, 0.005f);
+    d.position = b.position;
+    d.rotation = b.rotation;
+    d.velocity = velocity;
+    d.mass = std::max(b.mass, 0.05f);
+    d.linearDamping = 0.1f;
+    d.angularDamping = 0.6f;
+    d.friction = 0.8f;
+    d.group = 1000u + (uint32_t)index;
+    std::string err;
+    const phys::BodyId id = jolt_->Add(d, &err);
+    if (id == phys::kNoBody) LogWarn("physics: ragdoll bone of {}: {}", object, err);
+    r.bodies.push_back(id);
+  }
+  for (size_t i = 0; i < bones.size(); ++i) {
+    const RagdollBone& b = bones[i];
+    if (b.parent < 0 || (size_t)b.parent >= bones.size() || r.bodies[i] == phys::kNoBody || r.bodies[b.parent] == phys::kNoBody) continue;
+    phys::JointDesc j;
+    j.a = r.bodies[b.parent];
+    j.b = r.bodies[i];
+    j.anchor = b.anchor;
+    j.twistAxis = b.twistAxis;
+    j.swingDegrees = b.swing;
+    j.twistDegrees = b.twist;
+    r.joints.push_back(jolt_->AddJoint(j));
+  }
+  ragdolls_.push_back(std::move(r));
+  LogInfo("physics: ragdoll for {} ({} bones, {} joints)", object, bones.size(), ragdolls_.back().joints.size());
+  return index;
+}
+
+bool PhysicsWorld::RagdollState(int ragdoll, std::vector<phys::BodyState>& bones) const {
+  bones.clear();
+  if (!jolt_ || ragdoll < 0 || (size_t)ragdoll >= ragdolls_.size() || !ragdolls_[ragdoll].alive) return false;
+  for (phys::BodyId id : ragdolls_[ragdoll].bodies) bones.push_back(jolt_->Get(id));
+  return true;
+}
+
+void PhysicsWorld::RemoveRagdoll(int ragdoll) {
+  if (!jolt_ || ragdoll < 0 || (size_t)ragdoll >= ragdolls_.size() || !ragdolls_[ragdoll].alive) return;
+  Ragdoll& r = ragdolls_[ragdoll];
+  for (phys::JointId j : r.joints) jolt_->RemoveJoint(j); // joints before their bodies
+  for (phys::BodyId b : r.bodies) jolt_->Remove(b);
+  r.alive = false;
+}
+
+size_t PhysicsWorld::Ragdolls() const {
+  return (size_t)std::count_if(ragdolls_.begin(), ragdolls_.end(), [](const Ragdoll& r) { return r.alive; });
+}
+
 void PhysicsWorld::End() {
-  if (s_current == this) s_current = nullptr;
+  if (g_activeWorld == this) g_activeWorld = nullptr;
+  ragdolls_.clear();
   bodies_.clear();
   events_.clear();
   auto_.clear();

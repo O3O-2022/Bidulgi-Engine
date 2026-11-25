@@ -1,0 +1,6 @@
+<Project>
+  <!-- Build leftovers go under .cache (git ignores it). 빌드 중간 파일은 .cache 아래로. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory).cache/obj/</BaseIntermediateOutputPath>
+  </PropertyGroup>
+</Project>

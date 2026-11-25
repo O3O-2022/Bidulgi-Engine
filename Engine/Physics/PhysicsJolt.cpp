@@ -8,10 +8,14 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
@@ -45,6 +49,14 @@ public:
 class ObjectVsBroadPhase final : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
   bool ShouldCollide(JPH::ObjectLayer l, JPH::BroadPhaseLayer b) const override { return l == kMoving || b == kBpMoving; }
+};
+
+// 7-1b: bodies with the same non-zero group id never collide (a ragdoll's bones; joints hold them together)
+class SameGroupFilter final : public JPH::GroupFilter {
+public:
+  bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+    return a.GetGroupID() == JPH::CollisionGroup::cInvalidGroup || a.GetGroupID() != b.GetGroupID();
+  }
 };
 
 void InitJolt() {
@@ -99,8 +111,11 @@ public:
     system_.Init(65536, 0, 65536, 16384, layers_, objVsBp_, pairs_);
     system_.SetContactListener(&listener_);
     system_.SetGravity(JPH::Vec3(0, -9.81f, 0));
+    groups_ = new SameGroupFilter();
   }
   ~JoltBackend() override {
+    for (JPH::Ref<JPH::Constraint>& c : joints_)
+      if (c) system_.RemoveConstraint(c);
     JPH::BodyInterface& bi = system_.GetBodyInterface();
     for (const Body& b : bodies_)
       if (b.alive) { bi.RemoveBody(b.id); bi.DestroyBody(b.id); }
@@ -141,6 +156,7 @@ public:
     s.mIsSensor = d.trigger;
     s.mUserData = d.user;
     s.mLinearVelocity = J(d.velocity);
+    if (d.group) s.mCollisionGroup = JPH::CollisionGroup(groups_, d.group, 0);
     s.mAngularVelocity = J(d.angularVelocity);
     if (d.motion == Motion::Dynamic) {
       s.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
@@ -232,21 +248,35 @@ public:
     return l.Succeeded() ? l.GetBody().GetShape()->GetVolume() : 0.f;
   }
 
-  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit) const override {
+  // Scene queries skip triggers (sensors) unless asked, and bodies whose user value is in `ignore`.
+  class QueryFilter final : public JPH::BodyFilter {
+  public:
+    QueryFilter(bool triggers, const std::vector<uint64_t>& ignore) : triggers_(triggers), ignore_(ignore) {}
+    bool ShouldCollideLocked(const JPH::Body& b) const override {
+      return (triggers_ || !b.IsSensor()) && std::find(ignore_.begin(), ignore_.end(), b.GetUserData()) == ignore_.end();
+    }
+  private:
+    bool triggers_;
+    const std::vector<uint64_t>& ignore_;
+  };
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit,
+               const std::vector<uint64_t>& ignore) const override {
     const float len = glm::length(direction);
-    if (len < 1e-8f || maxDistance <= 0) return false;
+    if (len < 1e-9f || maxDistance <= 0) return false;
     const glm::vec3 dir = direction / len;
     const JPH::RRayCast ray(JPH::RVec3(J(origin)), J(dir * maxDistance));
+    const QueryFilter filter(hitTriggers, ignore);
     JPH::RayCastResult r;
-    const Sensors filter(hitTriggers);
     if (!system_.GetNarrowPhaseQuery().CastRay(ray, r, {}, {}, filter)) return false;
     hit.distance = r.mFraction * maxDistance;
     hit.point = origin + dir * hit.distance;
     hit.normal = -dir;
-    JPH::BodyLockRead l(system_.GetBodyLockInterface(), r.mBodyID);
-    if (l.Succeeded()) hit.normal = G(l.GetBody().GetWorldSpaceSurfaceNormal(r.mSubShapeID2, JPH::RVec3(J(hit.point))));
-    auto u = user_.find(r.mBodyID.GetIndexAndSequenceNumber());
-    hit.user = u == user_.end() ? 0 : u->second;
+    hit.user = 0;
+    JPH::BodyLockRead lock(system_.GetBodyLockInterface(), r.mBodyID);
+    if (lock.Succeeded()) {
+      hit.user = lock.GetBody().GetUserData();
+      hit.normal = G(lock.GetBody().GetWorldSpaceSurfaceNormal(r.mSubShapeID2, ray.GetPointOnRay(r.mFraction)));
+    }
     return true;
   }
   void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const override {
@@ -255,24 +285,43 @@ public:
     sphere.SetEmbedded();
     JPH::CollideShapeSettings settings;
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
-    const Sensors filter(hitTriggers);
+    const std::vector<uint64_t> none;
+    const QueryFilter filter(hitTriggers, none);
     system_.GetNarrowPhaseQuery().CollideShape(&sphere, JPH::Vec3::sReplicate(1), JPH::RMat44::sTranslation(JPH::RVec3(J(center))), settings,
                                                JPH::RVec3::sZero(), hits, {}, {}, filter);
     for (const JPH::CollideShapeResult& h : hits.mHits) {
-      auto u = user_.find(h.mBodyID2.GetIndexAndSequenceNumber());
-      if (u != user_.end()) users.push_back(u->second);
+      JPH::BodyLockRead lock(system_.GetBodyLockInterface(), h.mBodyID2);
+      if (lock.Succeeded()) users.push_back(lock.GetBody().GetUserData());
     }
+  }
+  JointId AddJoint(const JointDesc& d) override {
+    if (!Valid(d.a) || !Valid(d.b)) return 0xFFFFFFFFu;
+    JPH::SwingTwistConstraintSettings s;
+    s.mSpace = JPH::EConstraintSpace::WorldSpace;
+    s.mPosition1 = s.mPosition2 = JPH::RVec3(J(d.anchor));
+    const glm::vec3 twist = glm::length(d.twistAxis) > 1e-6f ? glm::normalize(d.twistAxis) : glm::vec3(0, 1, 0);
+    glm::vec3 plane = glm::cross(twist, std::fabs(twist.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0));
+    plane = glm::normalize(plane);
+    s.mTwistAxis1 = s.mTwistAxis2 = J(twist);
+    s.mPlaneAxis1 = s.mPlaneAxis2 = J(plane);
+    s.mNormalHalfConeAngle = s.mPlaneHalfConeAngle = glm::radians(std::clamp(d.swingDegrees, 0.f, 170.f));
+    s.mTwistMinAngle = -glm::radians(std::clamp(d.twistDegrees, 0.f, 170.f));
+    s.mTwistMaxAngle = glm::radians(std::clamp(d.twistDegrees, 0.f, 170.f));
+    const JPH::BodyID ids[2] = {bodies_[d.a].id, bodies_[d.b].id};
+    JPH::BodyLockMultiWrite lock(system_.GetBodyLockInterface(), ids, 2);
+    if (!lock.GetBody(0) || !lock.GetBody(1)) return 0xFFFFFFFFu;
+    JPH::Ref<JPH::Constraint> c = s.Create(*lock.GetBody(0), *lock.GetBody(1));
+    system_.AddConstraint(c);
+    joints_.push_back(c);
+    return (JointId)(joints_.size() - 1);
+  }
+  void RemoveJoint(JointId id) override {
+    if (id >= joints_.size() || !joints_[id]) return;
+    system_.RemoveConstraint(joints_[id]);
+    joints_[id] = nullptr;
   }
 
 private:
-  // Scene queries skip triggers (sensors) unless asked for them.
-  class Sensors final : public JPH::BodyFilter {
-  public:
-    explicit Sensors(bool include) : include_(include) {}
-    bool ShouldCollideLocked(const JPH::Body& b) const override { return include_ || !b.IsSensor(); }
-  private:
-    bool include_;
-  };
   struct Body { JPH::BodyID id; bool alive; };
   bool Valid(BodyId id) const { return id < bodies_.size() && bodies_[id].alive; }
 
@@ -318,6 +367,8 @@ private:
   std::vector<Body> bodies_;
   std::unordered_map<uint32_t, uint64_t> user_;
   std::vector<Contact> contacts_;
+  std::vector<JPH::Ref<JPH::Constraint>> joints_; // 7-1b ragdoll joints
+  JPH::Ref<JPH::GroupFilter> groups_;
   bool added_ = false;
 };
 }

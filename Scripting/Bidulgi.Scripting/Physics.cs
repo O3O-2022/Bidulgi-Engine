@@ -28,54 +28,58 @@ public sealed class Collision {
   }
 }
 
-// What a ray met (queue 6-5b): Physics.Raycast / Raycast in a Behaviour.
+// What a ray met (7-1b, 6-5b): Physics.Raycast / Raycast in a Behaviour.
 public struct RaycastHit {
-  public GameObject gameObject; // the object with the collider
+  public GameObject gameObject; // the object with the collider (or the ragdoll whose bone was hit)
   public Vector3 point;         // where the ray met it (world)
   public Vector3 normal;        // the surface's direction there (toward the ray's start)
   public float distance;        // from the ray's start
 }
 
-// Scene queries on the running game's physics (queue 6-5b), the easy-API way (Docs/features/easy-api.md):
+// Whether scene queries see triggers (colliders with isTrigger). Unity's QueryTriggerInteraction.
+public enum Triggers { Ignore, Hit }
+
+// Scene queries on the running game's physics (7-1b, 6-5b), the easy-API way (Docs/features/easy-api.md):
 //
 //   if (Physics.Raycast(eye, forward, out RaycastHit hit, 100)) Debug.Log($"looking at {hit.gameObject.Name}");
+//   bool grounded = Physics.Raycast(feet, -Vector3.UnitY, out _, 0.2f, gameObject);   // skip your own collider
+//   Physics.Raycast(eye, forward, out hit, 50, Triggers.Hit);                           // triggers too
 //   foreach (GameObject g in Physics.OverlapSphere(transform.Position, 5, "Enemy")) ...
 //
-// 3D (Jolt) and 2D (Box2D, the XY plane) bodies are both asked; the nearest hit wins. Triggers are skipped unless
-// triggers: true. Bodies are where the last physics step left them. Outside Play: a warning, nothing hit.
+// 3D (Jolt) and 2D (Box2D, the XY plane) bodies are both asked; the nearest hit wins. Bodies are where the last physics
+// step left them. While the game is not running: nothing is hit.
 public static class Physics {
-  static bool s_warned;
-  static JsonNode? Ask(JsonObject r) {
-    try { return Engine.Request(r); }
-    catch (EngineException e) {
-      if (!s_warned) Debug.LogWarning("Physics: " + e.Message);
-      s_warned = true;
-      return null;
-    }
-  }
   static Vector3 Vec(JsonNode? a) => a is JsonArray v && v.Count == 3 ? new Vector3((float)v[0]!, (float)v[1]!, (float)v[2]!) : Vector3.Zero;
 
-  public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance = 1000, bool triggers = false) {
+  // The nearest surface along the ray, up to maxDistance metres, skipping triggers and the given objects (your own
+  // character). false while the game is not running or nothing is there.
+  public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance = 1000f, params GameObject[] ignore) =>
+    Raycast(origin, direction, out hit, maxDistance, Triggers.Ignore, ignore);
+
+  public static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance, Triggers triggers, params GameObject[] ignore) {
     hit = default;
-    JsonNode? n = Ask(new JsonObject { ["op"] = "physics.raycast", ["origin"] = Engine.ToNode(origin), ["direction"] = Engine.ToNode(direction),
-                                       ["maxDistance"] = maxDistance, ["triggers"] = triggers });
+    var skip = new JsonArray();
+    foreach (GameObject g in ignore) skip.Add(g.Id);
+    JsonNode? n = Engine.Request(new JsonObject {
+      ["op"] = "raycast", ["origin"] = Engine.ToNode(origin), ["dir"] = Engine.ToNode(direction), ["max"] = maxDistance, ["ignore"] = skip,
+      ["triggers"] = triggers == Triggers.Hit });
     if (n is not JsonObject o) return false;
-    hit = new RaycastHit { gameObject = new GameObject(o["id"]!.GetValue<string>()), point = Vec(o["point"]), normal = Vec(o["normal"]),
-                           distance = o["distance"]!.GetValue<float>() };
+    hit = new RaycastHit { gameObject = new GameObject(o["id"]?.GetValue<string>() ?? ""), point = Vec(o["point"]), normal = Vec(o["normal"]),
+                           distance = (float)(o["distance"] ?? 0) };
     return true;
   }
-  public static bool Raycast(Vector3 origin, Vector3 direction, float maxDistance = 1000, bool triggers = false) =>
-    Raycast(origin, direction, out _, maxDistance, triggers);
 
   // Objects whose colliders are inside or touch the sphere; name: only objects with that name.
-  public static List<GameObject> OverlapSphere(Vector3 center, float radius, string? name = null, bool triggers = false) {
+  public static List<GameObject> OverlapSphere(Vector3 center, float radius, string? name = null, Triggers triggers = Triggers.Ignore) {
     var list = new List<GameObject>();
-    if (Ask(new JsonObject { ["op"] = "physics.overlap", ["center"] = Engine.ToNode(center), ["radius"] = radius, ["triggers"] = triggers }) is JsonArray a)
+    JsonNode? n;
+    try { n = Engine.Request(new JsonObject { ["op"] = "overlap", ["center"] = Engine.ToNode(center), ["radius"] = radius, ["triggers"] = triggers == Triggers.Hit }); }
+    catch (EngineException) { return list; } // not playing: nothing there
+    if (n is JsonArray a)
       foreach (JsonNode? id in a) {
         var g = new GameObject(id!.GetValue<string>());
         if (name == null || g.Name == name) list.Add(g);
       }
     return list;
   }
-  internal static void Reset() => s_warned = false;
 }

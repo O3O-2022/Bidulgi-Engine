@@ -213,22 +213,13 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     }
     return Fail(std::format("unknown op \"{}\"", op));
   }
-  if (op == "physics.raycast" || op == "physics.overlap") { // scene queries (6-5b) on the playing game's physics
+  if (op == "overlap") { // 6-5b: Physics.OverlapSphere through the running world
     const PhysicsWorld* world = PhysicsWorld::Current();
     if (!world) return Fail("physics is not running (it starts with Play)");
-    const bool triggers = yyjson_get_bool(yyjson_obj_get(r, "triggers"));
-    if (op == "physics.raycast") {
-      glm::vec3 origin, dir;
-      if (!vec3("origin", origin) || !vec3("direction", dir)) return Fail("physics.raycast: origin and direction are [x, y, z]");
-      PhysicsWorld::QueryHit hit;
-      if (!world->Raycast(origin, dir, (float)number("maxDistance", 1000), triggers, hit) || !scene.Find(hit.object)) return Ok("null");
-      return Ok(std::format(R"({{"id":{},"point":[{},{},{}],"normal":[{},{},{}],"distance":{}}})", Q(hit.object), hit.point.x, hit.point.y,
-                            hit.point.z, hit.normal.x, hit.normal.y, hit.normal.z, hit.distance));
-    }
     glm::vec3 center;
-    if (!vec3("center", center)) return Fail("physics.overlap: center is [x, y, z]");
+    if (!vec3("center", center)) return Fail("overlap: center is [x, y, z]");
     std::vector<std::string> ids;
-    for (const std::string& id : world->OverlapSphere(center, (float)number("radius", 1), triggers))
+    for (const std::string& id : world->OverlapSphere(center, (float)number("radius", 1), yyjson_get_bool(yyjson_obj_get(r, "triggers"))))
       if (scene.Find(id)) ids.push_back(id);
     return Ok(IdList(ids));
   }
@@ -256,6 +247,26 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     if (!LoadDataTable(Str(r, "name"), t, &err, &problems)) return Fail(err);
     for (const std::string& p : problems) LogWarn("data table: {}", p);
     return Ok(DataTableJson(t));
+  }
+  if (op == "raycast") { // 7-1b / 6-5b: Physics.Raycast(origin, direction, maxDistance, triggers, ignore) through the running world
+    auto vec = [&](const char* key) {
+      yyjson_val* a = yyjson_obj_get(r, key);
+      glm::vec3 v(0.f);
+      for (size_t i = 0; i < 3 && yyjson_is_arr(a) && i < yyjson_arr_size(a); ++i) v[(int)i] = (float)yyjson_get_num(yyjson_arr_get(a, i));
+      return v;
+    };
+    std::vector<std::string> ignore;
+    size_t i, n;
+    yyjson_val* v;
+    yyjson_arr_foreach(yyjson_obj_get(r, "ignore"), i, n, v)
+      if (const char* s = yyjson_get_str(v)) ignore.push_back(s);
+    const double maxDist = yyjson_is_num(yyjson_obj_get(r, "max")) ? yyjson_get_num(yyjson_obj_get(r, "max")) : 1000.0;
+    const PhysicsWorld* world = PhysicsWorld::Current();
+    PhysicsWorld::RayResult hit;
+    const bool triggers = yyjson_get_bool(yyjson_obj_get(r, "triggers")); // 6-5b
+    if (!world || !world->Raycast(vec("origin"), vec("dir"), (float)maxDist, hit, ignore, triggers) || !scene.Find(hit.object)) return Ok("null");
+    return Ok(std::format(R"({{"id":{},"point":[{},{},{}],"normal":[{},{},{}],"distance":{}}})", Q(hit.object), hit.point.x, hit.point.y, hit.point.z,
+                          hit.normal.x, hit.normal.y, hit.normal.z, hit.distance));
   }
   if (op == "findall") { // by name ("" = all), hierarchy order, with world positions (FindAll / FindNearest)
     const std::string name = Str(r, "name");

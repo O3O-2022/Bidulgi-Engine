@@ -104,18 +104,18 @@ TEST_CASE("animation graph: .animgraph text, conditions, cross-fades, triggers, 
   AnimGraphDef g;
   std::string err;
   CHECK(ParseAnimGraph(TestRigAnimGraph(), g, &err));
-  CHECK_EQ(g.states.size(), (size_t)3);
-  CHECK_EQ(g.transitions.size(), (size_t)4);
+  CHECK_EQ(g.machines[0].states.size(), (size_t)3);
+  CHECK_EQ(g.machines[0].transitions.size(), (size_t)4);
   CHECK_EQ(g.vars.size(), (size_t)2);
-  CHECK(g.states[g.entry].name == "Idle" && g.skeleton == "Models/Rig.gltf" && g.machine == "Locomotion");
-  CHECK(g.transitions[2].from == -1 && g.transitions[3].exitTime == 1.f && !g.states[2].loop);
-  CHECK_EQ(g.states[1].events.size(), (size_t)2);
+  CHECK(g.machines[0].states[g.machines[0].entry].name == "Idle" && g.skeleton == "Models/Rig.gltf" && g.machines[0].name == "Locomotion");
+  CHECK(g.machines[0].transitions[2].from == -1 && g.machines[0].transitions[3].exitTime == 1.f && !g.machines[0].states[2].loop);
+  CHECK_EQ(g.machines[0].states[1].events.size(), (size_t)2);
   // written back: same meaning, and stable
   const std::string text = WriteAnimGraph(g);
   AnimGraphDef g2;
   CHECK(ParseAnimGraph(text, g2, &err));
   CHECK(WriteAnimGraph(g2) == text);
-  CHECK(g2.transitions[0].when == "Speed > 0.1" && g2.transitions[0].blend == 0.25f);
+  CHECK(g2.machines[0].transitions[0].when == "Speed > 0.1" && g2.machines[0].transitions[0].blend == 0.25f);
 
   std::vector<std::vector<AnimGraphDef::Cond>> c;
   CHECK(ParseAnimCondition("A > 1 && !B || C <= -2.5", c, &err));

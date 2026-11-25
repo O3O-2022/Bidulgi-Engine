@@ -45,16 +45,34 @@ public:
   const std::vector<AutoChoice>& AutoChoices() const { return auto_; }
   std::string Describe() const; // "jolt 12 bodies (3 awake), box2d 2 bodies, 120 steps"
 
-  // Scene queries (6-5b, the easy API's Raycast / OverlapSphere), by object id. Both worlds are asked (2D bodies in
-  // the XY plane); the nearest hit wins. Bodies are where the last step left them.
-  struct QueryHit { std::string object; glm::vec3 point{0}, normal{0}; float distance = 0; };
-  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, QueryHit& hit) const;
-  std::vector<std::string> OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const; // each object once
-  static const PhysicsWorld* Current(); // the world of the game that is playing (script queries), or nullptr
-
   // "Add Physics" (physics.md): a Rigidbody (Static for greybox blocks and planes, else Dynamic) and an Auto Collider,
   // whichever the object does not have yet; 2D objects (with a Rigidbody2D or Collider2D) get the 2D pair.
   static std::vector<Command> AddPhysicsCommands(const Scene& scene, const std::string& id);
+
+  // Scene queries by object id (7-1b foot IK and cameras, 6-5b scripts' Raycast / OverlapSphere). Raycast: the first
+  // surface along the ray, skipping the bodies of the objects in `ignore` (an object's own capsule, its ragdoll) and
+  // triggers unless hitTriggers; the 3D world and the 2D one (XY plane) are both asked, the nearest hit wins.
+  // OverlapSphere: objects with a body inside or touching the sphere, each once. Bodies are where the last step left them.
+  struct RayResult { std::string object; glm::vec3 point{0}, normal{0}; float distance = 0; };
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
+               const std::vector<std::string>& ignore = {}, bool hitTriggers = false) const;
+  std::vector<std::string> OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers = false) const;
+  // 7-1b ragdolls: one dynamic capsule per bone (world space at creation), bones of one ragdoll do not collide with
+  // each other, joints (swing cone + twist) between each bone and its parent bone. Returns a handle (-1: failed).
+  struct RagdollBone {
+    glm::vec3 position{0};      // capsule centre
+    glm::quat rotation{1, 0, 0, 0}; // capsule axis = local Y
+    float radius = 0.06f, halfHeight = 0.1f, mass = 3;
+    int parent = -1;            // index in the list
+    glm::vec3 anchor{0}, twistAxis{0, 1, 0}; // joint to the parent bone (world)
+    float swing = 45, twist = 20;
+  };
+  int AddRagdoll(const std::string& object, const std::vector<RagdollBone>& bones, const glm::vec3& velocity);
+  bool RagdollState(int ragdoll, std::vector<phys::BodyState>& bones) const;
+  void RemoveRagdoll(int ragdoll);
+  size_t Ragdolls() const;
+  // The world of the running game (set by Begin, cleared by End): script raycasts go through it. Null when stopped.
+  static const PhysicsWorld* Current();
 
 private:
   struct Body {
@@ -68,9 +86,13 @@ private:
     glm::vec3 scale{1};
   };
   bool MakeBody(Scene& scene, const std::string& id, bool is2D);
+  std::string ObjectOfUser(uint64_t user) const; // a body's object id from its BodyDesc::user ("" = none)
   void WriteBack(Scene& scene, Body& b);
   std::unique_ptr<phys::Backend> jolt_, box2d_;
   std::vector<Body> bodies_;
+  struct Ragdoll { std::string object; std::vector<phys::BodyId> bodies; std::vector<phys::JointId> joints; bool alive = true; };
+  std::vector<Ragdoll> ragdolls_;
+  static constexpr uint64_t kRagdollUser = 1ull << 40; // body user values of ragdoll bones: kRagdollUser + ragdoll index
   std::vector<Event> events_;
   std::vector<AutoChoice> auto_;
   const AssetDatabase* assets_ = nullptr;

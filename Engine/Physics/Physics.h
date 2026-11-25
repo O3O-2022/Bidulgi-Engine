@@ -32,6 +32,7 @@ struct BodyDesc {
   glm::vec3 velocity{0}, angularVelocity{0}; // m/s, rad/s (2D: z)
   float mass = 1, friction = 0.6f, restitution = 0, linearDamping = 0.05f, angularDamping = 0.05f, gravityScale = 1;
   bool trigger = false, freezeRotation = false;
+  uint32_t group = 0; // 7-1b: bodies of one non-zero group never touch each other (the bones of one ragdoll)
 };
 
 using BodyId = uint32_t;
@@ -51,12 +52,21 @@ struct Contact {
   glm::vec3 point{0}, normal{0}; // world; normal from a to b (begin only)
 };
 
-// Scene queries (6-5b, the easy API's Raycast / OverlapSphere): what a ray met first, and bodies inside a sphere.
+// The first surface along a ray (7-1b foot IK, 6-5b scripts' Raycast).
 struct RayHit {
-  uint64_t user = 0;           // the body's BodyDesc::user
-  glm::vec3 point{0}, normal{0}; // world; the normal faces the ray's origin
-  float distance = 0;          // from the origin along the (normalised) direction
+  uint64_t user = 0;       // BodyDesc::user of the body hit
+  glm::vec3 point{0}, normal{0};
+  float distance = 0;
 };
+
+// 7-1b: a ball-and-socket joint with a swing cone and a twist range (ragdoll joints). World space at creation.
+struct JointDesc {
+  uint32_t a = 0xFFFFFFFFu, b = 0xFFFFFFFFu; // BodyId: parent bone, child bone
+  glm::vec3 anchor{0};
+  glm::vec3 twistAxis{0, 1, 0};               // along the child bone
+  float swingDegrees = 45, twistDegrees = 20;
+};
+using JointId = uint32_t;
 
 struct Capabilities {
   const char* name = "";
@@ -80,10 +90,21 @@ public:
   virtual const std::vector<Contact>& Contacts() const = 0; // of the last Step
   virtual size_t Bodies() const = 0;
   virtual float Volume(BodyId id) const = 0; // of the collision shape (m^3; 2D: m^2): Collider Auto error
-  // The nearest body the ray meets within maxDistance (triggers only with hitTriggers). 2D: the XY plane (z ignored).
-  virtual bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit) const = 0;
-  // Bodies whose shape is inside or touches the sphere (2D: circle), in no particular order (may repeat a body).
-  virtual void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const = 0;
+  // The nearest surface along origin + t * direction (t <= maxDistance), skipping bodies whose user value is in
+  // `ignore`; triggers only with hitTriggers (7-1b, 6-5b). 2D: the XY plane (z ignored). false: nothing hit (or the
+  // backend has no ray queries). hit.user is the body's BodyDesc::user.
+  virtual bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit,
+                       const std::vector<uint64_t>& ignore = {}) const {
+    (void)origin, (void)direction, (void)maxDistance, (void)hitTriggers, (void)hit, (void)ignore;
+    return false;
+  }
+  // Bodies whose shape is inside or touches the sphere (2D: circle), as BodyDesc::user values, in no particular order
+  // (may repeat a body) (6-5b).
+  virtual void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const {
+    (void)center, (void)radius, (void)hitTriggers, (void)users;
+  }
+  virtual JointId AddJoint(const JointDesc& desc) { (void)desc; return 0xFFFFFFFFu; }
+  virtual void RemoveJoint(JointId id) { (void)id; }
 };
 
 std::unique_ptr<Backend> CreateJolt();  // 3D

@@ -1,4 +1,5 @@
 #include "Build/Templates.h"
+#include "Anim/TestRig.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include "Core/Utf8Path.h"
@@ -155,6 +156,17 @@ bool CreateFromTemplate(const std::string& name, const std::string& dir, const s
       std::transform(kind.begin(), kind.end(), kind.begin(), [](char c) { return (char)std::tolower((unsigned char)c); });
       std::string err;
       if (!WriteGeneratedSound(kind, U(dst / PathU8(rel)), &err)) { yyjson_doc_free(doc); return Fail(error, err); }
+      out.files.push_back(rel);
+    }
+    // generated characters (CC0, 7-1b): "hero" = the humanoid, "rig" = the 3-joint test rig
+    yyjson_arr_foreach(yyjson_obj_get(yyjson_doc_get_root(doc), "models"), i, n, v) {
+      const char* rel = yyjson_get_str(v);
+      if (!rel) continue;
+      std::string kind = U(PathU8(rel).stem());
+      std::transform(kind.begin(), kind.end(), kind.begin(), [](char c) { return (char)std::tolower((unsigned char)c); });
+      const std::string gltf = kind == "hero" ? MakeHumanoidGltf() : kind == "rig" ? MakeTestRigGltf() : std::string();
+      if (gltf.empty()) { yyjson_doc_free(doc); return Fail(error, "unknown generated model \"" + kind + "\" (hero, rig)"); }
+      if (!WriteBytes(dst / PathU8(rel), gltf.data(), gltf.size())) { yyjson_doc_free(doc); return Fail(error, std::string("cannot write ") + rel); }
       out.files.push_back(rel);
     }
     yyjson_doc_free(doc);

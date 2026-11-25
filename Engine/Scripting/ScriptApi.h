@@ -23,10 +23,10 @@
 // Saves (6-5b; files in the project's save folder, Scripting/SaveGame.h):
 //   {"op":"save.write","slot":"main","data":{...}} -> path   {"op":"save.read","slot":"main"} -> {...} or null
 //   {"op":"save.list"} -> ["main"]   {"op":"save.delete","slot":"main"} -> true   {"op":"save.folder"} -> "C:/Users/.../Saves"
-// Physics queries (6-5b), while playing:
-//   {"op":"physics.raycast","origin":[..],"direction":[..],"maxDistance":100,"triggers":false}
+// Physics queries (7-1b, 6-5b), while playing:
+//   {"op":"raycast","origin":[..],"dir":[..],"max":100,"ignore":["g3"],"triggers":false}
 //        -> {"id":"g6","point":[..],"normal":[..],"distance":3.2} or null
-//   {"op":"physics.overlap","center":[..],"radius":5,"triggers":false} -> ["g6","g9"]
+//   {"op":"overlap","center":[..],"radius":5,"triggers":false} -> ["g6","g9"]
 // Particle effects (6-VFX P-1), while playing:
 //   {"op":"vfx.play","effect":"Spark","at":[x,y,z],"rotation":[deg..],"seed":0} -> 3   {"op":"vfx.stop","id":3,"clear":false}
 //   {"op":"vfx.playing","id":3} -> true   {"op":"vfx.alive"} -> 120 (all; with "id": that effect's)

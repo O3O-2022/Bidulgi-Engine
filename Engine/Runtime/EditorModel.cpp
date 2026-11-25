@@ -690,9 +690,12 @@ std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
 namespace {
 // 7-1: Inspector rows of a playing Animator: row -1 the state ("Run  ← 40%" while cross-fading), else a variable.
 std::string AnimLiveText(const Animator& a, int row) {
-  if (row < 0)
-    return a.liveFade > 0.f ? std::format("상태  {}  (전환 {}%)", a.liveState, (int)std::lround(a.liveFade * 100.f))
-                            : std::format("상태  {}", a.liveState.empty() ? std::string("—") : a.liveState);
+  if (row < 0) { // with the blend space weights when the state mixes clips (7-1, part 2)
+    std::string s = a.liveFade > 0.f ? std::format("상태  {}  (전환 {}%)", a.liveState, (int)std::lround(a.liveFade * 100.f))
+                                     : std::format("상태  {}", a.liveState.empty() ? std::string("—") : a.liveState);
+    if (!a.liveBlend.empty()) s += "  [" + a.liveBlend + "]";
+    return s;
+  }
   if (row >= (int)a.liveParams.size()) return {};
   return std::format("{}  {:.2f}", a.liveParams[row].first, a.liveParams[row].second);
 }

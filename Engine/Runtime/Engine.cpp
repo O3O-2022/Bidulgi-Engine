@@ -1126,6 +1126,7 @@ void TogglePlay(bdg_engine* e) {
 #include "Runtime/EditorTests/assets.inl"
 #include "Runtime/EditorTests/render.inl"
 #include "Runtime/EditorTests/scripting.inl"
+#include "Runtime/EditorTests/animation.inl" // lane A: animation part 2, IK, ragdolls, third-person template
 
 extern "C" {
 

@@ -1,0 +1,12 @@
+{"context":"OnFoot","priority":0}
+{"action":"Move","key":"WASD"}
+{"action":"Move","key":"Arrows"}
+{"action":"Move","key":"Gamepad.LeftStick","mods":[{"deadzone":0.15}]}
+{"action":"Look","key":"Mouse.Delta","mods":[{"scale":0.15}]}
+{"action":"Look","key":"Gamepad.RightStick","mods":[{"deadzone":0.15},{"scale":2.5}]}
+{"action":"Jump","key":"Space"}
+{"action":"Jump","key":"Gamepad.South"}
+{"action":"Sprint","key":"Shift"}
+{"action":"Sprint","key":"Gamepad.LeftShoulder"}
+{"action":"Wave","key":"E"}
+{"action":"Wave","key":"Gamepad.North"}
