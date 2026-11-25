@@ -1627,6 +1627,8 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
   ++gameFrames_;
 }
 
+TextureHandle SceneView::GameColor() const { return gameCamera_ && gameRT_.Valid() ? rhi_->RenderTargetColor(gameRT_) : TextureHandle{}; }
+
 void SceneView::DrawGame(Widget& w, UIContext& ui, double playTime) {
   const Theme& t = ui.Tokens();
   Batch2D& b = ui.Batch();

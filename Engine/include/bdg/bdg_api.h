@@ -41,6 +41,10 @@ const char* bdg_version_string(void);
    0 done, 1 problems found or the command failed, 2 bad usage. */
 int         bdg_cli_main(int argc, const char* const* argv);
 
+/* Game player (queue 7-4): runs a built game (Content/game.bpak next to the exe, or --project <dir>) without the
+   editor UI. Arguments: --frames N, --project <dir>. Returns the process exit code. */
+int         bdg_player_main(int argc, const char* const* argv);
+
 #ifdef __cplusplus
 }
 #endif

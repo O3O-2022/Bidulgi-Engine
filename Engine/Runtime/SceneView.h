@@ -132,6 +132,7 @@ public:
   void DrawGame(Widget& w, UIContext& ui, double playTime);
   uint64_t GameFrames() const { return gameFrames_; } // test hook: game views rendered
   void ReadGamePixels(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
+  TextureHandle GameColor() const; // the last RenderGame image (invalid without a Camera): the game player draws it (7-4)
   // Greybox (3-3c): adds a block where the view looks (on the surface there, on the grid), selected; one undo step.
   std::string CreateBlock(EditorModel& model, int shape); // BlockoutShape as int; returns the new object's id
   // Auto re-import (2-5d): drops the imported models that are or use one of these project paths, so the next

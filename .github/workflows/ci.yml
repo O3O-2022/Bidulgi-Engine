@@ -563,6 +563,27 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_HOTRELOAD_TEST = '1' } 18
           if ($log -notmatch 'hot reload test: reloaded=1 kept=1 newcode=1 state=1 stopped=1') { $errors += 'C# hot reload test failed' }
 
+          # 7-4 build: a new project with C# behaviours -> bdg build (pack, scripts, report, zip) -> the built player
+          # runs the start scene for 90 frames and the behaviours with it (7-4b's broken-project check is a unit test)
+          $game = Join-Path $env:RUNNER_TEMP 'bdg-game'
+          Remove-Item -Recurse -Force $game -ErrorAction SilentlyContinue
+          & "$PWD/build/Release/bdg.exe" new $game | Out-Null
+          Add-Content -Encoding ascii "$game/Scenes/Main.scene" '{"id":"box","name":"Box","pos":[0,0.5,0],"MeshRenderer":{"mesh":"Cube"},"Spinner":{"speed":90},"LifecycleProbe":{}}'
+          Push-Location $game
+          $buildLog = & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build --zip --scripts "$env:GITHUB_WORKSPACE/build/Release/Managed/Bidulgi.Samples.dll" | Out-String
+          $buildExit = $LASTEXITCODE
+          Pop-Location
+          Write-Host $buildLog
+          if ($buildExit -ne 0) { $errors += 'bdg build failed' }
+          $built = "$game/Builds/Windows-Development"
+          if (-not (Test-Path "$built/Content/game.bpak") -or -not (Test-Path "$built/build-report.txt") -or -not (Test-Path "$game/Builds/My Game-0.1.0-Development.zip")) { $errors += 'bdg build output incomplete' }
+          $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-game-cache'; $env:BDG_PLAYER_QUIET = '1'
+          $p = Start-Process "$built/My Game.exe" -ArgumentList '--frames', 90 -PassThru -Wait
+          Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET
+          $plog = Get-Content "$built/Bidulgi.log" -Raw -Encoding utf8
+          Write-Host "----- built player (exit $($p.ExitCode))"; Write-Host $plog
+          if ($p.ExitCode -ne 0 -or $plog -notmatch 'player: 90 frames, 1.50 s of game time, 2 C# behaviours, camera yes' -or $plog -notmatch 'probe: box .*update=90') { $errors += 'built game player failed' }
+
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_SHAKE_TEST = '1' } 80

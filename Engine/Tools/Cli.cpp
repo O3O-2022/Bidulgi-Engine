@@ -13,6 +13,7 @@
 #include "Scene/SceneFile.h"
 #include "Scripting/CSharpBindings.h"
 #include "Scripting/DataTable.h"
+#include "Build/Build.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
@@ -610,6 +611,33 @@ int CmdTable(Ctx& c) {
   return 0;
 }
 
+// bdg build [--check] [--out <dir>] [--config Debug|Development|Shipping] [--zip] [--scripts a.dll;b.dll] (7-4, 7-4b)
+int CmdBuild(Ctx& c) {
+  BuildOptions o;
+  o.project = Utf8(ProjectRoot(c));
+  o.output = c.Opt("out");
+  o.config = c.Opt("config");
+  o.playerExe = c.Opt("player");
+  if (c.Has("zip")) o.zip = 1;
+  for (std::string_view rest = c.Opt("scripts"); !rest.empty();) {
+    const size_t semi = rest.find(';');
+    if (semi != 0) o.scriptDlls.emplace_back(rest.substr(0, semi));
+    rest = semi == std::string_view::npos ? std::string_view() : rest.substr(semi + 1);
+  }
+  const bool check = c.Has("check");
+  const BuildResult r = check ? CheckBuild(o) : BuildGame(o);
+  for (const BuildProblem& p : r.problems) c.out += p.Line() + "\n";
+  if (!r.ok) {
+    c.out += std::format("빌드 {}: 오류 {}개, 경고 {}개 (위의 줄마다 원인과 고치는 법)\n", check ? "검사 실패" : "실패", r.Errors(), r.Warnings());
+    return 1;
+  }
+  if (check) c.out += std::format("검사 통과: 오류 0개, 경고 {}개 → bdg build로 빌드하세요 (출력: {})\n", r.Warnings(), r.outDir);
+  else
+    c.out += std::format("빌드 완료: {} (파일 {}개, game.bpak {:.1f} MB, 경고 {}개)\n보고서: {}\n{}", r.exePath, r.files, r.pakBytes / (1024.0 * 1024.0),
+                         r.Warnings(), r.reportPath, r.zipPath.empty() ? std::string() : "zip: " + r.zipPath + "\n");
+  return 0;
+}
+
 int CmdNew(Ctx& c) {
   if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty]\n"; return 2; }
   SceneTemplate t = SceneTemplate::Basic3D;
@@ -634,6 +662,7 @@ const char* kHelp =
     "  validate [scene] | refs <asset> | unused\n"
     "  csharp-bindings [file]  (C# 클래스 생성)\n"
     "  table import <csv> [out] | export <table.jsonl> [out] | check <file>  (데이터 테이블)\n"
+    "  build [--check] [--out <dir>] [--config Debug|Development|Shipping] [--zip] [--scripts a.dll;b.dll]  (게임 빌드)\n"
     "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
     "공통: --project <dir> --scene <이름 또는 경로>\n";
 
@@ -647,7 +676,7 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   }
   for (size_t i = 1; i < args.size(); ++i) {
     const std::string& a = args[i];
-    if (a == "--dry-run") c.flags.insert("dry-run");
+    if (a == "--dry-run" || a == "--check" || a == "--zip") c.flags.insert(a.substr(2));
     else if ((a.rfind("--", 0) == 0 || a == "-f") && i + 1 < args.size()) c.opt[a.substr(a[1] == '-' ? 2 : 1)].push_back(args[++i]);
     else c.pos.push_back(a);
   }
@@ -667,6 +696,7 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   if (cmd == "call") return CmdCall(c);
   if (cmd == "csharp-bindings") return CmdCSharpBindings(c);
   if (cmd == "table") return CmdTable(c);
+  if (cmd == "build") return CmdBuild(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;

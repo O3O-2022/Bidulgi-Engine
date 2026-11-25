@@ -4,6 +4,29 @@
 #include <cctype>
 
 namespace bdg {
+void Window::SetTitle(const std::string& title) {
+  if (window_) SDL_SetWindowTitle(window_, title.c_str());
+}
+
+void Window::SetGameMode(int mode, bool resizable, bool showCursor) {
+  if (!window_) return;
+  SDL_SetWindowResizable(window_, resizable);
+  if (mode == 2) { // exclusive: the display's mode closest to the window size
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window_, &w, &h);
+    SDL_DisplayMode closest{};
+    if (SDL_GetClosestFullscreenDisplayMode(SDL_GetDisplayForWindow(window_), w, h, 0.f, true, &closest)) SDL_SetWindowFullscreenMode(window_, &closest);
+    SDL_SetWindowFullscreen(window_, true);
+  } else if (mode == 1) { // borderless: fullscreen at the desktop's own size
+    SDL_SetWindowFullscreenMode(window_, nullptr);
+    SDL_SetWindowFullscreen(window_, true);
+  } else {
+    SDL_SetWindowFullscreen(window_, false);
+  }
+  if (showCursor) SDL_ShowCursor();
+  else SDL_HideCursor();
+}
+
 bool Window::Create(const char* title, int32_t w, int32_t h, bool hidden) {
   hidden_ = hidden;
   SDL_SetHint(SDL_HINT_WINDOWS_INTRESOURCE_ICON, "1");       // window/taskbar icon from the exe resource
