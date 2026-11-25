@@ -365,6 +365,8 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   static float cx, cy, yaw0, dist0;
   static glm::vec3 pivot0, pos0;
   if (frame == 2) { // the Crystal (g8) must be on screen and drawn (not the background colour)
+    sv->frameEaseSeconds = 0; // F and fly react at once here: checked frames run back to back (tiny dt)
+    sv->flyEasing = false;
     int32_t w, h;
     std::vector<uint8_t> px;
     sv->ReadPixels(w, h, px);
