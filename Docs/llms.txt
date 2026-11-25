@@ -1,0 +1,45 @@
+# 비둘기 엔진 (Bidulgi Engine)
+
+> C++20 게임 엔진과 에디터. 장면·에셋·설정이 전부 텍스트(JSONL/JSON)이고, 에디터와 같은 명령 버스를 쓰는 `bdg` 명령줄이 있어
+> AI 에이전트가 장면을 읽고·고치고·찍고·검사할 수 있습니다. 게임 코드는 C#(유니티와 비슷한 이름). MIT 라이선스.
+
+## AI가 엔진을 다루는 순서
+
+1. 프로젝트 만들기: `bdg new <dir> [--template fps|platformer2d|thirdperson]` (템플릿마다 `AGENTS.md`가 들어 있음)
+2. 장면 보기: `bdg view` / `bdg outline` / `bdg query <패턴> -f 필드` (모두 `--json` 가능)
+3. 구조 알기: `bdg schema [컴포넌트]` → [api/components.md](api/components.md)
+4. 고치기: `bdg set <id> Comp.field=값`, `bdg add`, `bdg addcomp`, `bdg del` (실행 취소 가능, `--dry-run`)
+5. 확인: `bdg validate`, 사진은 `bdg shot [--bookmarks] [--camera yaw,pitch,dist]`
+6. 게임 코드: C# `Behaviour` → [api/csharp.md](api/csharp.md)
+7. 빌드: `bdg build`
+
+## 레퍼런스
+
+- [api/cli.md](api/cli.md): `bdg` 명령 10개
+- [api/components.md](api/components.md): 장면 컴포넌트 31개와 필드·타입·기본값
+- [api/csharp.md](api/csharp.md): C# 공개 API 286개
+- [QUEUE.md](QUEUE.md): 작업 큐, 빌드 방법, 자동 검사 환경 변수(`BDG_*_TEST`), 코드 지도
+
+## 기능 문서
+
+- [2D / 3D 통합](features/2d-3d.md): 유니티처럼 **하나의 엔진 안에 2D와 3D가 같이** 있습니다. 프로젝트 템플릿과 씬 뷰 모드만 다릅니다.
+- [AI 에이전트 연동](features/agent-integration.md): 이 엔진의 정체성입니다. 목표: **AI가 유니티보다 훨씬 적은 토큰으로 엔진을 다루고, 결과를 스스로 확인할 수 있게.**
+- [애니메이션](features/animation.md): 애니메이션은 두 축으로 나눕니다.
+- [오디오 (6-3)](features/audio.md): 작성 2026-11-25. [miniaudio](https://miniaud.io) 0.11.26(퍼블릭 도메인 / MIT-0, `ThirdParty/miniaudio`)로 소리를 냅니다. 엔진 API에는 miniaudio 형식이 드러나지 않습니다(`Engine/Audio/Audi…
+- [게임 빌드·패키징 (7-4, 7-4b)](features/build-and-packaging.md): 작성 2026-11-25. 에디터에서 만든 게임을 **남에게 줄 수 있는 폴더(와 zip)**로 만듭니다. 설계 배경은 [libraries-and-packaging §4](../architecture/libraries-and-packaging.md#4-게임-빌드-패키징-배포-파일-…
+- [언어별 코드 문법 예제](features/code-syntax.md): 작성 2026-11-21. 문법 시안입니다. API 이름은 확정 전입니다.
+- [C# 스크립트 디버깅 (4-5)](features/csharp-debugging.md): 작성 2026-11-25. 에디터(`BidulgiEditor.exe`)는 .NET 런타임을 자기 프로세스 안에 띄웁니다(hostfxr, [4-1](../QUEUE.md)). 그래서 C# 스크립트를 디버깅하려면 **실행 중인 에디터 프로세스에 .NET 디버거를 붙입니다**(attac…
+- [데이터 형식 (씬, 프리팹, 에셋)](features/data-formats.md): **피하는 형식:** YAML(들여쓰기 실수, `no`→false 같은 함정), CUE·Pkl·KDL·Dhall(AI 학습 데이터 부족)
+- [데이터 테이블 (4-4d)](features/data-tables.md): 작성 2026-11-25. 무기·적·아이템처럼 **행이 많은 게임 데이터**를 텍스트 파일 하나에 두고 스크립트에서 한 줄로 읽습니다. 언리얼 DataTable, 유니티 ScriptableObject 표에 해당합니다.
+- [쉬운 엔진 API — 언어별 문법과 자주 쓰는 함수](features/easy-api.md): 작성 2026-11-23. 목표: **처음 쓰는 사람도 자주 하는 일을 한 줄로**. 다섯 언어가 **같은 이름**을 쓰고, 언어 습관에 맞는 모양만 다릅니다.
+- [에디터 UI](features/editor-ui.md): 배치와 조작은 유니티, 도구의 밀도는 언리얼, 작업 공간 전환은 블렌더 방식입니다.
+- [전역 조명 (GI) — 루멘을 넘어서는 목표](features/global-illumination.md): 가칭: **Halo GI**
+- [그래픽 테스트 씬 (렌더링 기준점)](features/graphics-test-scenes.md): 작성 2026-11-22. 테스트 씬은 화려하게 꾸미는 것이 아니라, **렌더링 파이프라인의 각 기능이 의도대로 동작하는지 한눈에 확인하는 기준점**입니다.
+- [입력](features/input.md): 입력 방식을 둘 중 하나로 고르면서 **입력 액션**(언리얼 Enhanced Input 방식)을 택했습니다. 유니티식 "매 프레임 키 직접 확인" API(`Input.GetKey(KeyCode.Space)` 같은 것)는 게임 코드에 열지 않습니다.
+- [머티리얼과 텍스처 (언리얼식)](features/materials-and-textures.md): 작성 2026-11-22. 사용 방식은 언리얼의 **머티리얼 → 머티리얼 인스턴스** 구조를 따르고, 언리얼의 불편한 점(셰이더 컴파일 대기, 순열 폭발, 바이너리 에셋)은 고칩니다.
+- [파티클(VFX) 구조 설계 (2026-11-25, E-10)](features/particles.md): > 상태: **P-1 구현(2026-11-25, 아래 "구현 현황")**, P-2~P-5는 설계안. 아래 "결정이 필요한 것" 중 1(모듈 스택)·3(불꽃 먼저)은 P-1이 추천안대로 갔습니다.
+- [프로젝트 설정](features/project-settings.md): 화면과 구조는 **언리얼 Project Settings 방식**, 저장은 텍스트입니다.
+- [프로젝트 생성 · 열기 · 엔진 버전 · 템플릿](features/projects-and-templates.md): 작성 2026-11-21.
+- [지형과 풀·나무 (6라운드, 2026-11-25)](features/terrain.md): 넓은 바깥 장면의 바닥과 그 위의 풀·나무. 유니티 Terrain(높이맵·레이어 칠하기·나무/디테일 칠하기)과 언리얼 Landscape(청크 LOD·레이어·스컬프트 도구)를 따라, 처음 쓰는 사람도 **컴포넌트 하나 + 브러시**로 만들 수 있게 했습니다. 코드는 `Engine/T…
+- [UI 위젯 시스템](features/ui-widgets.md): **언리얼 UMG 방식**의 위젯 에셋을 만들고, 어디에 띄울지는 컴포넌트에서 고릅니다.
+- [비주얼 스크립팅 (그래프)](features/visual-scripting.md): 목표: **언리얼 블루프린트의 문제를 고친, 훨씬 빠른 차세대 그래프.**

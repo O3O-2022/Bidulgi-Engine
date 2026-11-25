@@ -1024,7 +1024,7 @@ void SetupShortcuts(bdg_engine* e) {
   s.Register("play.step", "Step One Frame", [e] { StepPlay(e); });
   for (const char* t : {"view", "select", "move", "rotate", "scale", "measure", "blockout", "terrain"})
     s.Register(std::string("tool.") + t, std::string("Tool: ") + t, [m, t] { m->tool = t; bdg::LogInfo("tool: {}", t); });
-  s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->Frame(*m); });
+  s.Register("view.focus", "Focus Selected", [e, m] { if (e->sceneView) e->sceneView->FrameSmooth(*m); });
   s.Register("view.gallery", "Component Gallery", [e] { e->showGallery = !e->showGallery; });
   s.Register("view.nextPanel", "Next Panel", [e] { FocusNextPanel(e); }); // keyboard users jump between docked panels
   s.Register("help.bug", "Report a Bug", [e] { e->bugRequested = true; }); // F12 is Windows' debugger break key

@@ -62,11 +62,17 @@ public:
 
   // Takes the events that belong to the view out of `events` (UI units). dt: seconds since the last frame.
   void HandleEvents(std::vector<InputEvent>& events, const Widget& view, EditorModel& model, double dt, bool textFocused);
-  bool Animating() const { return (drag_ == Drag::Fly && !held_.empty()) || noteFrames_ > 0; } // flying, a note fading
+  // flying (or still gliding to a stop), a note fading, the camera easing onto a framed selection
+  bool Animating() const { return (drag_ == Drag::Fly && !held_.empty()) || glm::length(flyVel_) > 1e-3f || noteFrames_ > 0 || frameT_ < 1.f; }
   void Render(EditorModel& model, const AssetDatabase* assets, const Widget& view, float scale);
   void Draw(Widget& w, UIContext& ui, const EditorModel* model);
 
-  void Frame(const EditorModel& model);                        // camera onto the selection (whole scene if none)
+  void Frame(const EditorModel& model);                        // camera onto the selection (whole scene if none), at once
+  void FrameSmooth(const EditorModel& model);                  // the same, eased over a quarter second (F key, menu)
+  float FlySpeed() const { return flySpeed_; }                 // m/s while flying (right mouse + WASD), wheel changes it
+  void SetFlySpeed(float s);
+  float frameEaseSeconds = 0.25f; // FrameSmooth's ease (0 = jump at once; scripted checks)
+  bool flyEasing = true;           // fly speeds up / glides to a stop (false = instant; scripted checks)
   std::string Pick(const EditorModel& model, float x, float y) const; // UI point -> object id ("" = nothing)
   bool ProjectUI(const glm::vec3& world, float& x, float& y) const;   // world -> UI point in the last view
   bool ObjectCenter(const EditorModel& model, const std::string& id, glm::vec3& center, float& radius) const;
@@ -300,5 +306,10 @@ private:
   bool clickCtrl_ = false, hover_ = false;
   std::set<Key> held_;
   float flySpeed_ = 5.f;
+  glm::vec3 flyVel_{0};        // eased fly velocity (m/s): speeds up and glides to a stop instead of jumping
+  bool flyBoost_ = false;      // Shift held while flying: x3, only while held
+  float panDepth_ = 0;         // distance to the surface under the cursor when a pan starts (0 = the pivot's)
+  glm::vec3 frameFromPivot_{0}, frameToPivot_{0};
+  float frameFromDist_ = 0, frameToDist_ = 0, frameT_ = 1.f;
 };
 }
