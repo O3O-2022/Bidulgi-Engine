@@ -1,6 +1,9 @@
 // Multiplayer (round 7): the transport over loopback in one process (M-1).
 #include "bdg_test.h"
+#include "Net/NetCodec.h"
 #include "Net/Transport.h"
+#include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -124,4 +127,101 @@ TEST_CASE("net transport: connect, reliable order under loss, unreliable, latenc
   }));
   CHECK(timedOut);
   CHECK(!client.Connect("no.such.host.invalid", 1, &err) && !err.empty());
+}
+
+TEST_CASE("net codec: bits, var-ints, strings, quantized positions and rotations, overflow is safe (round 7 M-2)") {
+  BitWriter w;
+  w.Bits(5, 3);
+  w.Bool(true);
+  w.VarUint(300);
+  w.VarInt(-12345);
+  w.Float(3.25f);
+  w.String("비둘기 net");
+  w.Bits(0xABCDE, 20);
+  BitReader r(w.Data());
+  CHECK(r.Bits(3) == 5 && r.Bool() && r.VarUint() == 300 && r.VarInt() == -12345 && r.Float() == 3.25f && r.String() == "비둘기 net" &&
+        r.Bits(20) == 0xABCDE && !r.Overflowed());
+  r.Bits(32);
+  r.Bits(32);
+  CHECK(r.Overflowed()); // past the end: flagged, no crash
+  // positions: 1 mm steps; rotations: smallest three within a few thousandths
+  CHECK(std::fabs(DequantizePosition(QuantizePosition(123.4567f)) - 123.4567f) <= 0.0005f);
+  float worst = 0;
+  for (int i = 0; i < 200; ++i) {
+    const glm::vec3 axis = glm::normalize(glm::vec3(std::sin(i * 1.3f), std::cos(i * 0.7f), std::sin(i * 2.1f) + 0.1f));
+    const glm::quat q = glm::angleAxis(i * 0.37f, axis);
+    const glm::quat u = UnpackQuat(PackQuat(q));
+    worst = std::max(worst, 1.f - std::fabs(glm::dot(q, u)));
+  }
+  CHECK(worst < 2e-5f); // about 0.5 degrees at the worst
+}
+
+TEST_CASE("net codec: transform and blob deltas are small and exact (round 7 M-2)") {
+  NetTransform a;
+  a.position = {10, 2, -5};
+  a.rotation = glm::angleAxis(0.5f, glm::vec3(0, 1, 0));
+  NetTransform b = a;
+  b.position.x += 0.02f; // a small step: only the position, as a small number
+  BitWriter full, delta, none;
+  WriteTransform(full, b);
+  WriteTransformDelta(delta, a, b);
+  WriteTransformDelta(none, a, a);
+  CHECK(delta.Data().size() < full.Data().size() && none.Data().size() == 1);
+  BitReader rd(delta.Data());
+  const NetTransform got = ReadTransformDelta(rd, a);
+  const NetTransform want = Quantized(b);
+  CHECK(glm::length(got.position - want.position) < 1e-6f && std::fabs(glm::dot(got.rotation, want.rotation)) > 0.99999f);
+  BitReader rf(full.Data());
+  CHECK(glm::length(ReadTransform(rf).position - want.position) < 1e-6f);
+  // blobs: a few bytes changed -> a few bytes sent; a new length -> the whole blob
+  std::vector<uint8_t> base(400), now;
+  for (size_t i = 0; i < base.size(); ++i) base[i] = (uint8_t)(i * 7);
+  now = base;
+  now[10] = 1; now[11] = 2; now[300] = 9;
+  std::vector<uint8_t> d = DeltaBytes(base, now), out;
+  CHECK(d.size() < 20 && ApplyDeltaBytes(base, d, out) && out == now);
+  CHECK(DeltaBytes(base, base).size() == 1);
+  now.push_back(5);
+  d = DeltaBytes(base, now);
+  CHECK(ApplyDeltaBytes(base, d, out) && out == now);
+  CHECK(!ApplyDeltaBytes(base, {3, 250, 10}, out)); // damaged
+}
+
+TEST_CASE("net snapshots: interpolation between server states, a short extrapolation, then hold (round 7 M-2)") {
+  SnapshotBuffer buf;
+  auto at = [](float x) { NetTransform t; t.position = {x, 0, 0}; return t; };
+  buf.Push(0.10, at(1));
+  buf.Push(0.20, at(2));
+  buf.Push(0.15, at(1.5f)); // late but in order after sorting
+  buf.Push(0.30, at(4));
+  CHECK(buf.Size() == 4);
+  CHECK(std::fabs(buf.Sample(0.125).position.x - 1.25f) < 1e-4f);
+  CHECK(std::fabs(buf.Sample(0.25).position.x - 3.f) < 1e-4f);
+  CHECK(buf.Sample(0.0).position.x == 1.f);
+  CHECK(std::fabs(buf.Sample(0.35, 0.25).position.x - 5.f) < 1e-3f); // keeps going 20 m/s for a little
+  CHECK(std::fabs(buf.Sample(2.0, 0.25).position.x - 9.f) < 1e-3f);  // then holds (0.25 s at most)
+}
+
+TEST_CASE("net prediction: the owner moves at once, the server's answer corrects it, pending moves are kept (round 7 M-2)") {
+  // The client walks 0.1 m per tick along x; the server applies the moves but a wall stops it at x = 0.95.
+  Prediction p;
+  p.Reset({0, 0, 0});
+  std::vector<glm::vec3> serverAt;
+  glm::vec3 server(0);
+  const int latencyTicks = 4;
+  float lastError = 0;
+  for (int tick = 1; tick <= 30; ++tick) {
+    p.Add({0.1f, 0, 0});
+    server.x = std::min(server.x + 0.1f, 0.95f); // the server applies move `tick` (the message took no time)
+    serverAt.push_back(server);
+    if (tick > latencyTicks) { // its answer arrives `latencyTicks` later
+      const uint32_t ack = (uint32_t)(tick - latencyTicks);
+      lastError = p.Reconcile(ack, serverAt[ack - 1]);
+    }
+    if (tick == 8) CHECK(p.Pending() == (size_t)latencyTicks);
+  }
+  // after reconciling, the predicted position = the server's + the moves it has not seen yet
+  CHECK(std::fabs(p.Position().x - (0.95f + latencyTicks * 0.1f)) < 1e-4f);
+  CHECK(lastError < 0.11f); // each answer moves it back by at most one blocked step
+  CHECK(p.Reconcile(p.LastSeq(), {0.95f, 0, 0}) > 0.3f && p.Pending() == 0 && p.Position().x == 0.95f);
 }

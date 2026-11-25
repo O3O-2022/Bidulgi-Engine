@@ -212,7 +212,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp Engine/Scripting/SaveGame.h Engine/Scripting/SaveGame.cpp
   Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
   Engine/GameUI/GameUI.h Engine/GameUI/GameUI.cpp Engine/GameUI/GameUIComponents.h
-  Engine/Net/Transport.h Engine/Net/Transport.cpp
+  Engine/Net/Transport.h Engine/Net/Transport.cpp Engine/Net/NetCodec.h Engine/Net/NetCodec.cpp
   Engine/Terrain/TerrainData.h Engine/Terrain/TerrainData.cpp Engine/Terrain/TerrainComponents.h Engine/Terrain/TerrainView.h Engine/Terrain/TerrainView.cpp Engine/Terrain/TerrainTool.h Engine/Terrain/TerrainTool.cpp Engine/Terrain/TerrainPhysics.cpp
   Engine/VFX/VfxAsset.h Engine/VFX/VfxAsset.cpp Engine/VFX/VfxWorld.h Engine/VFX/VfxWorld.cpp Engine/VFX/VfxRender.h Engine/VFX/VfxRender.cpp Engine/VFX/VfxComponents.h
   Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Templates.h Engine/Build/Templates.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
