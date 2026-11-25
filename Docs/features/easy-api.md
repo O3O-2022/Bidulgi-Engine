@@ -30,7 +30,7 @@
 | 입력 | `Input.Pressed(Actions.Jump)`, `Input.Value<Vector2>(Actions.Move)` | 같음 | `Input.Pressed(Actions.Jump)` | Input Action |
 | 레이캐스트 | `if (Raycast(origin, dir, out var hit, 100)) …` | `if (auto Hit = Raycast(...))` | `local hit = Raycast(origin, dir, 100)` | Raycast |
 | 범위 안 대상 | `OverlapSphere(pos, 5, Tags.Enemy)` | 같음 | `OverlapSphere(pos, 5, Tags.Enemy)` | Overlap Sphere |
-| 소리 | `Audio.Play(clip, at: pos, volume: 0.8f)` | `Audio::Play(Clip, Pos)` | `Audio.Play(clip, {at=pos})` | Play Sound |
+| 소리 ([6-3](audio.md)) | `Audio.Play(clip, at: pos, volume: 0.8f)` | `Audio::Play(Clip, Pos)` | `Audio.Play(clip, {at=pos})` | Play Sound |
 | 이펙트 | `Vfx.Play(effect, pos)` | 같음 | `Vfx.Play(effect, pos)` | Play Effect |
 | 씬 이동 | `await Scene.Load(Scenes.Forest, fade: 0.5f);` | `Scene::Load(...)` | `Scene.Load(Scenes.Forest)` | Load Scene |
 | 이벤트 보내기·받기 | `Events.Send(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |

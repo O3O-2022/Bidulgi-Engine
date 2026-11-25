@@ -48,6 +48,7 @@ public:
   // Game player (queue 7-4): window title; mode 0 windowed, 1 borderless (desktop size), 2 exclusive fullscreen.
   void SetTitle(const std::string& title);
   void SetGameMode(int mode, bool resizable, bool showCursor);
+  bool HasFocus() const; // keyboard focus (the game mutes in the background unless audio.playInBackground)
   // Swap interval actually in effect: -1 adaptive vsync, 1 vsync, 0 off. Request -1 to try adaptive, then 1.
   int SwapInterval() const { return swapInterval_; }
   void SetSwapInterval(int interval);

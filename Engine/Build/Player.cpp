@@ -8,6 +8,7 @@
 // Log: Bidulgi.log next to the exe. `--frames N` quits after N frames (automated checks, hidden window).
 #include <bdg/bdg_api.h>
 #include "Assets/AssetDatabase.h"
+#include "Audio/Audio.h"
 #include "Build/Pak.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
@@ -234,6 +235,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     double dt = std::chrono::duration<double>(start - last).count();
     last = start;
     if (maxFrames > 0) dt = 1.0 / 60.0; // automated runs: the same game time on every machine
+    if (!hidden && !settings.audio.playInBackground) bdg::AudioSystem::Instance().SetMuted(!window.HasFocus());
     play.Tick(model, std::clamp(dt, 0.0, 0.1));
     int32_t w = 0, h = 0;
     window.GetDrawableSize(w, h);

@@ -136,9 +136,9 @@ TEST_CASE("build --check: a deliberately broken project reports every problem wi
   const fs::path proj = d / "Broken";
   // 1 version, 2 identifier (settings), 3 executable name, 4 icon file, 5 output inside Assets, 6 scene listed but
   // missing, 7 unreadable scene, 8 unknown component, 9 missing mesh, 10 no camera in the start scene,
-  // 11 material naming a missing texture, 12 script assembly missing, 13 data table rows (warning)
+  // 11 material naming a missing texture, 12 script assembly missing, 13 data table rows (warning), 14 sound
   Write(proj / "Scenes" / "Main.scene", R"({"v":1,"defaults":"1.0","scene":"Main","mode":"3d"}
-{"id":"box","name":"Box","MeshRenderer":{"mesh":"Statue.glb"},"Spinnner":{}}
+{"id":"box","name":"Box","MeshRenderer":{"mesh":"Statue.glb"},"Spinnner":{},"AudioSource":{"clip":"Boom.wav"}}
 )");
   Write(proj / "Scenes" / "Bad.scene", "this is not a scene\n{{{\n");
   Write(proj / "Assets" / "M_Wall.material", R"({"baseColorMap":"Textures/Wall_D.png"})");
@@ -170,7 +170,8 @@ TEST_CASE("build --check: a deliberately broken project reports every problem wi
   CHECK(Has(r, "에셋", "Wall_D.png"));
   CHECK(Has(r, "스크립트", "NoSuch.dll"));
   CHECK(Has(r, "데이터", "twice", false));
-  CHECK(r.Errors() >= 12);
+  CHECK(Has(r, "에셋", "Boom.wav")); // 14: a sound file that is not there (6-3)
+  CHECK(r.Errors() >= 13);
   CHECK(!fs::exists(proj / "Assets" / "Builds")); // a check writes nothing
   std::error_code ec;
   fs::remove_all(d, ec);

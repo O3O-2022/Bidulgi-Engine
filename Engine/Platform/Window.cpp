@@ -4,6 +4,8 @@
 #include <cctype>
 
 namespace bdg {
+bool Window::HasFocus() const { return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0; }
+
 void Window::SetTitle(const std::string& title) {
   if (window_) SDL_SetWindowTitle(window_, title.c_str());
 }

@@ -37,6 +37,8 @@ bool PlayMode::Start(EditorModel& m) {
   playing_ = true;
   m.playing = true;
   scripts_.Begin(m.scene, m.bus); // Awake / OnEnable of the C# Behaviours (no-op without C#)
+  audio_.Begin(m.scene);          // AudioSource playOnStart (6-3)
+  audio_.SetPaused(paused_);
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
 }
@@ -44,6 +46,7 @@ bool PlayMode::Start(EditorModel& m) {
 bool PlayMode::Stop(EditorModel& m) {
   if (!playing_) return false;
   scripts_.End(); // OnDisable / OnDestroy while the played world still exists
+  audio_.End();
   shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
@@ -93,7 +96,10 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
   if (!playing_) return;
   double dt = realDt * timeScale_;
   if (paused_) {
-    if (!step_) return;
+    if (!step_) {
+      audio_.Frame(m.scene, realDt); // paused sounds stay paused; the mixer keeps running (silence)
+      return;
+    }
     dt = kStepSeconds; // one frame, whatever the time scale
     step_ = false;
   }
@@ -119,6 +125,7 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     scripts_.Frame(m.scene, m.bus, dt);
     changed = true;
   }
+  audio_.Frame(m.scene, dt); // after the scripts: sounds they started or moved this frame
   if (changed) m.ValuesChanged();
   TickShakes(m, (float)dt);
 }

@@ -9,6 +9,7 @@
 #include "Core/Command.h"
 #include "Scene/CameraShake.h"
 #include "Scripting/BehaviourRunner.h"
+#include "Audio/AudioRunner.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -25,7 +26,7 @@ public:
   bool Playing() const { return playing_; }
   // Play mode tools (queue 3-6b): pause (also before Play: the game starts paused), one frame at a time, and a
   // time scale for game time (0.1x .. 4x).
-  void SetPaused(bool p) { paused_ = p; if (!p) step_ = false; }
+  void SetPaused(bool p) { paused_ = p; if (!p) step_ = false; audio_.SetPaused(p); }
   bool Paused() const { return paused_; }
   void Step() { if (playing_) { paused_ = true; step_ = true; } } // advance exactly one frame (1/60 s), then hold
   void SetTimeScale(float s);
@@ -38,6 +39,7 @@ public:
   size_t ShakesPlaying() const { return shaker_.Active(); }
   const BehaviourRunner& Scripts() const { return scripts_; }
   BehaviourRunner& Scripts() { return scripts_; } // fixed step from the project settings
+  const AudioRunner& Audio() const { return audio_; } // AudioSource components (6-3)
   uint64_t Frames() const { return frames_; } // ticks since Start
 
   struct Change { Command cmd; std::string label; }; // "Crystal: Transform.position"
@@ -56,6 +58,7 @@ private:
   float timeScale_ = 1.f;
   CameraShaker shaker_;
   BehaviourRunner scripts_; // C# Behaviours (4-2)
+  AudioRunner audio_;       // AudioSource / AudioListener (6-3)
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

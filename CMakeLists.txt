@@ -102,6 +102,13 @@ target_include_directories(glad PUBLIC ThirdParty/glad/include)
 set_target_properties(glad PROPERTIES FOLDER ThirdParty)
 
 # ---- External: stb_image_write (MIT / public domain, vendored single header) ??PNG compression ----
+# miniaudio 0.11.26 (public domain / MIT-0): audio output, decoding, 3D sound, mixing (queue 6-3)
+add_library(miniaudio STATIC ThirdParty/miniaudio/miniaudio.c)
+target_include_directories(miniaudio SYSTEM PUBLIC ThirdParty/miniaudio)
+target_compile_definitions(miniaudio PUBLIC MA_NO_ENCODING MA_NO_GENERATION)
+if(MSVC)
+  target_compile_options(miniaudio PRIVATE /W0)
+endif()
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ThirdParty/stb)
 
@@ -148,6 +155,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp
+  Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
   Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
   Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
@@ -184,8 +192,8 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/MaterialLibrary.h Engine/Runtime/MaterialLibrary.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
-bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h)
-target_link_libraries(BidulgiEngine PRIVATE libzstd_static SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h)
+target_link_libraries(BidulgiEngine PRIVATE libzstd_static miniaudio SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
@@ -270,7 +278,7 @@ endif()
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/BuildTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

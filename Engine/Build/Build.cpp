@@ -288,6 +288,16 @@ void CheckScene(Plan& p, const std::string& rel, bool start) {
     for (Component& c : o->components) {
       if (c.type == &Camera::StaticType()) camera = true;
       if (host.IsBehaviourType(c.type)) p.usesCSharp = true;
+      if (c.type->name == "AudioSource") { // (6-3) the clip must be a file of the project
+        std::string clip;
+        Registry::Get(c.data, *c.type, "clip", clip);
+        clip = Unquote(clip);
+        std::error_code cec;
+        if (clip.empty())
+          p.Warn("에셋", std::format("{} {} · AudioSource.clip", rel, here), "소리 파일이 정해지지 않음 (아무 소리도 안 남)", "AudioSource의 clip에 Assets의 .wav·.mp3·.flac을 정하세요");
+        else if (!p.tokens.count(clip) && !fs::exists(p.root / P(clip), cec))
+          p.Error("에셋", std::format("{} {} · AudioSource.clip", rel, here), std::format("소리 파일 '{}'가 프로젝트에 없음", clip), "Assets에 소리 파일을 넣거나 clip의 이름·경로를 고치세요");
+      }
       if (c.type->name == "MeshRenderer") {
         std::string mesh, mat;
         Registry::Get(c.data, *c.type, "mesh", mesh);
