@@ -43,6 +43,7 @@ struct DrawItem3D {
   const Mesh3D* mesh = nullptr;
   glm::mat4 model{1.f};
   Material3D material;
+  uint8_t lod = 0;          // level of detail drawn (LOD coloration view); 0 = the full mesh
   bool lightmapped = false; // static GI (Tier 0-C): baked into a lightmap; used while mesh and placement stay the same
 };
 
@@ -144,8 +145,28 @@ struct ProbeVolume3D {
 };
 
 // What the picture shows (render pass viewer, queue 3-8). Data views skip tone mapping and post effects.
-enum class DebugView { Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades, AO, LightCount };
+// What the picture shows (queue 3-8; UE-like view modes, round 7). The numbers are the shader's; new ones go last.
+enum class DebugView {
+  Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow, Indirect, Cascades, AO, LightCount,
+  Unlit,          // base colour + emissive, no lighting
+  LightingOnly,   // grey 0.5 surfaces, no normal maps, all the lighting
+  DetailLighting, // grey 0.5 surfaces with their normal maps
+  Reflections,    // every surface a smooth mirror: what the probes / sky give it
+  Emissive,       // emissive light only
+  Wireframe,      // triangle edges, also the hidden ones, on black
+  Overdraw,       // how many surfaces each pixel draws (shader complexity / overdraw heat map)
+  TexelDensity,   // base map texels per metre (green ~512), on a UV checker
+  LodColor,       // LOD level of each object (terrain chunks and trees; meshes without LODs are LOD 0)
+  Motion,         // motion vectors (TAA's)
+  Count
+};
 const char* DebugViewName(DebugView v); // "Lit", "Albedo", ...
+// The menu groups (UE-like): 0 modes, 1 buffer visualisation, 2 optimisation, 3 debug.
+int DebugViewGroup(DebugView v);
+const char* DebugViewKey(DebugView v); // its shortcut in the Scene view ("Alt+4"), "" if none
+// Heat maps get a legend: its colour stops (display sRGB, 0..1) and labels; empty for other views.
+struct DebugLegend { std::vector<Color> colors; std::vector<std::string> labels; std::string title; };
+DebugLegend DebugViewLegend(DebugView v);
 
 struct RenderExtras {
   bool grid = false;             // ground grid at y = 0: 1 m and 10 m lines, red X axis and blue Z axis lines, fades out
@@ -350,7 +371,11 @@ private:
   RenderTargetHandle bloom_[kBloomLevels];
   int32_t bloomW_ = 0, bloomH_ = 0;
   QualitySettings lastQuality_;
-  PipelineHandle wire_;
+  PipelineHandle wire_, wireXray_;
+  // View modes (round 7): per-pixel overdraw count, the heat map / motion colouring passes and their targets
+  PipelineHandle overdraw_, overdrawHeat_, motionViz_;
+  RenderTargetHandle overdrawRT_, debugRT_;
+  int debugW_ = 0, debugH_ = 0;
   RenderStats stats_;
   // Image-based lighting: probe 0 = the sky, 1..kMaxProbes = captured probes, one cube map array.
   static constexpr int kEnvSize = 128, kEnvLevels = 5;

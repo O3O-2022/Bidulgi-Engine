@@ -1,4 +1,4 @@
-// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures.
+// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures, view modes.
 // Included by Engine.cpp after the other EditorTests files. New checks: register with BDG_EDITOR_TEST.
 #include "Core/DDS.h"
 #include "Render3D/DynamicGI.h"
@@ -486,3 +486,156 @@ void InjectDDSTest(bdg_engine* e, int frame, float) {
 }
 void ReportDDSTest(bdg_engine*) {}
 BDG_EDITOR_TEST("BDG_DDS_TEST", InjectDDSTest, ReportDDSTest)
+
+// BDG_VIEWMODE_TEST=1 (with the RenderReference scene, like BDG_SSR_TEST): every view mode of the Scene view renders
+// the reference scene's bookmark 1, and each picture is compared with Lit: it must differ and show what the mode is
+// for (grey surfaces for the lighting views, mostly black for emissive and wireframe, heat colours for the
+// complexity views, colours where things move for motion vectors). Alt + 3 / 4 / 8 (Unreal's keys) and the grouped
+// view menu (a real click) switch modes; heat maps show a legend.
+namespace viewmodetest {
+std::vector<std::string> results;
+gfxtest::Shot lit;
+bool keys = false, menu = false, legend = false, groups = false;
+struct Stats { double diff = 0, sat = 0, lum = 0, dark = 0, colourful = 0; };
+Stats Measure(const gfxtest::Shot& s, const gfxtest::Shot& ref) {
+  Stats r;
+  const size_t n = (size_t)s.w * s.h;
+  if (!n || s.px.size() != ref.px.size()) return r;
+  for (size_t i = 0; i < n; ++i) {
+    const uint8_t* p = &s.px[i * 4];
+    const uint8_t* q = &ref.px[i * 4];
+    const int mx = std::max({p[0], p[1], p[2]}), mn = std::min({p[0], p[1], p[2]});
+    const double l = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+    r.diff += (std::abs(p[0] - q[0]) + std::abs(p[1] - q[1]) + std::abs(p[2] - q[2])) / 3.0;
+    r.sat += mx - mn;
+    r.lum += l;
+    r.dark += l < 12 ? 1 : 0;
+    r.colourful += mx - mn > 60 ? 1 : 0;
+  }
+  r.diff /= (double)n;
+  r.sat /= (double)n;
+  r.lum /= (double)n;
+  r.dark /= (double)n;
+  r.colourful /= (double)n;
+  return r;
+}
+}
+void InjectViewModeTest(bdg_engine* e, int frame, float scale) {
+  using namespace viewmodetest;
+  using T = bdg::InputEvent::Type;
+  using DV = bdg::DebugView;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::Widget* sw = e->editor ? e->editor->Find("scene") : nullptr;
+  if (!m || !sv || !sw) return;
+  const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.5f;
+  auto altKey = [&](bdg::Key k) {
+    e->window.InjectEvent({T::MouseMove, cx * scale, cy * scale});
+    bdg::InputEvent i{T::KeyDown};
+    i.key = k;
+    i.alt = true;
+    e->window.InjectEvent(i);
+  };
+  auto click = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+  };
+  // modes after Lit, two frames each; the check for each picture against Lit
+  struct Mode { DV view; const char* name; };
+  static const Mode modes[] = {{DV::Unlit, "unlit"}, {DV::LightingOnly, "lighting"}, {DV::DetailLighting, "detail"}, {DV::Reflections, "reflections"},
+                               {DV::Emissive, "emissive"}, {DV::Wireframe, "wire"}, {DV::Overdraw, "overdraw"}, {DV::LightCount, "lights"},
+                               {DV::TexelDensity, "texel"}, {DV::LodColor, "lod"}, {DV::Motion, "motion"}, {DV::Albedo, "albedo"},
+                               {DV::Normal, "normal"}, {DV::Roughness, "rough"}, {DV::Metallic, "metal"}, {DV::AO, "ao"}, {DV::Depth, "depth"},
+                               {DV::Shadow, "shadow"}, {DV::Cascades, "cascades"}, {DV::Indirect, "indirect"}};
+  constexpr int kFirst = 8, kStep = 3, kModes = (int)(sizeof(modes) / sizeof(modes[0]));
+  if (frame == 2) {
+    sv->JumpToBookmark(*m, 1);
+    // a textured box (texel density colours) and a point light (light complexity) in view
+    gfxtest::Run(m, "add", "", R"({"id":"vmbox","name":"Grid box"})");
+    gfxtest::Run(m, "set", "vmbox", R"({"path":"Transform.position","value":[-2.4,0.8,1.0]})");
+    gfxtest::Run(m, "set", "vmbox", R"({"path":"Transform.scale","value":[1.6,1.6,1.6]})");
+    gfxtest::Run(m, "addcomp", "vmbox", R"({"type":"MeshRenderer","value":{"mesh":"Cube","material":"bdg:Grid"}})");
+    gfxtest::Run(m, "add", "", R"({"id":"vmlamp","name":"Lamp"})");
+    gfxtest::Run(m, "set", "vmlamp", R"({"path":"Transform.position","value":[0,1,1.5]})");
+    gfxtest::Run(m, "addcomp", "vmlamp", R"({"type":"Light","value":{"type":"Point","intensity":4,"range":5,"castShadows":false}})");
+    m->SetSelection({});
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    sv->debugView = DV::Lit;
+  }
+  if (frame == kFirst - 2) lit = gfxtest::Grab(e);
+  for (int i = 0; i < kModes; ++i) {
+    const int set = kFirst + i * kStep;
+    if (frame == set) {
+      sv->debugView = modes[i].view;
+      if (modes[i].view == DV::Motion) sv->camera.yaw += 1.5f; // something to move
+    }
+    if (modes[i].view == DV::Motion && frame == set + 1) sv->camera.yaw += 1.5f;
+    if (frame == set + 2) {
+      const gfxtest::Shot s = gfxtest::Grab(e);
+      if (const char* dump = std::getenv("BDG_VIEWMODE_DUMP")) {
+        if (i == 0) bdg::WritePNG((std::string(dump) + "_lit.png").c_str(), lit.w, lit.h, lit.px.data(), true);
+        bdg::WritePNG((std::string(dump) + "_" + modes[i].name + ".png").c_str(), s.w, s.h, s.px.data(), true);
+      }
+      const Stats a = Measure(s, lit), l = Measure(lit, lit);
+      bool ok = a.diff > 3;
+      switch (modes[i].view) {
+        case DV::LightingOnly: case DV::DetailLighting: ok = ok && l.colourful > 0.005 && a.colourful < l.colourful * 0.3; break; // grey surfaces
+        case DV::Emissive: ok = ok && a.lum < l.lum * 0.5; break;                             // nothing glows much
+        case DV::Wireframe: ok = ok && a.dark > 0.3 && a.dark < 0.98; break;                  // black with edges
+        case DV::Overdraw: ok = ok && a.colourful > 0.05; break;                              // heat colours
+        case DV::LightCount: case DV::TexelDensity: ok = ok && a.colourful > 0.01; break;     // around the lamp, on the box
+        case DV::Motion: ok = ok && a.colourful > 0.05; break;                                // the camera turned
+        default: break;
+      }
+      if (modes[i].view == DV::Overdraw) legend = sv->LegendArea().w > 0;
+      results.push_back(std::format("{}={}", modes[i].name, ok ? "1" : std::format("0(d{:.1f} s{:.1f}/{:.1f} l{:.1f}/{:.1f} k{:.2f} c{:.3f}/{:.3f})", a.diff, a.sat, l.sat, a.lum, l.lum, a.dark, a.colourful, l.colourful)));
+      if (sv->camera.yaw != 0 && modes[i].view == DV::Motion) sv->camera.yaw -= 3.f;
+    }
+  }
+  const int after = kFirst + kModes * kStep + 1;
+  if (frame == after) { // Unreal's keys: Alt + 3 unlit
+    legend = legend && (sv->debugView = DV::Lit, true);
+    altKey(bdg::Key::Num3);
+  }
+  if (frame == after + 1) {
+    keys = sv->debugView == DV::Unlit;
+    altKey(bdg::Key::Num8);
+  }
+  if (frame == after + 2) {
+    keys = keys && sv->debugView == DV::Overdraw;
+    altKey(bdg::Key::Num4);
+  }
+  if (frame == after + 3) {
+    keys = keys && sv->debugView == DV::Lit;
+    legend = legend && sv->LegendArea().w == 0;
+    bdg::SceneView::LegendRect chip{};
+    if (sv->ChipArea("view", chip)) click(chip.x + chip.w * 0.5f, chip.y + chip.h * 0.5f); // the view menu opens
+  }
+  if (frame == after + 5) { // grouped: titles are disabled rows; pick "Reflections"
+    const auto& items = e->editor->Menu();
+    int titles = 0, pick = -1;
+    for (size_t k = 0; k < items.size(); ++k) {
+      if (!items[k].enabled) ++titles;
+      if (items[k].label.find("Reflections") != std::string::npos) pick = (int)k;
+    }
+    groups = titles == 3 && items.size() == (size_t)bdg::DebugView::Count + 3;
+    float x, y, w, h;
+    if (pick >= 0 && e->editor->MenuItemRect((size_t)pick, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == after + 7) menu = sv->debugView == DV::Reflections;
+}
+void ReportViewModeTest(bdg_engine*) {
+  using namespace viewmodetest;
+  std::string all;
+  bool ok = true;
+  for (const std::string& r : results) {
+    all += " " + r;
+    ok = ok && r.ends_with("=1");
+  }
+  bdg::LogInfo("viewmode test:{} keys={} menu={} groups={} legend={} all={}", all, keys ? 1 : 0, menu ? 1 : 0, groups ? 1 : 0, legend ? 1 : 0,
+               ok && keys && menu && groups && legend && results.size() == 20 ? 1 : 0);
+}
+BDG_EDITOR_TEST("BDG_VIEWMODE_TEST", InjectViewModeTest, ReportViewModeTest)

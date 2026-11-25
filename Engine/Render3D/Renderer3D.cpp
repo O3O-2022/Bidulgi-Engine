@@ -164,6 +164,22 @@ const char* kFaceDir = R"(vec3 FaceDir(int f, vec2 st) {
   return vec3(-c.x, -c.y, -1.0);
 }
 )";
+// View modes (round 7, DebugView): texel density on a UV checker, LOD colours. Display colours; the caller undoes the
+// display curve post applies.
+const char* kViewFn = R"(
+vec3 TexelDensityColor(vec2 texSize, bool hasMap, vec3 dpx, vec3 dpy, vec2 duvx, vec2 duvy, vec2 uv) {
+  float lw = max(length(dpx) + length(dpy), 1e-6), lu = length(duvx * texSize) + length(duvy * texSize);
+  float stops = clamp(log2(max(lu / lw, 1e-3) / 512.0) / 2.0, -1.0, 1.0); // 128 .. 512 .. 2048 texels per metre
+  vec3 c = !hasMap ? vec3(0.45) : stops < 0.0 ? mix(vec3(0.1, 0.9, 0.2), vec3(0.15, 0.3, 1.0), -stops)
+                                             : mix(vec3(0.1, 0.9, 0.2), vec3(1.0, 0.15, 0.1), stops);
+  vec2 ck = floor(uv * 8.0);
+  return c * (mod(ck.x + ck.y, 2.0) < 0.5 ? 1.0 : 0.7);
+}
+vec3 LodColor(int lod, float light) { // white 0, green 1, blue 2, yellow 3, red 4+, lightly shaded
+  vec3 c = vec3[](vec3(1.0), vec3(0.2, 1.0, 0.2), vec3(0.25, 0.45, 1.0), vec3(1.0, 0.9, 0.2), vec3(1.0, 0.2, 0.15))[min(lod, 4)];
+  return c * (0.45 + 0.55 * light);
+}
+)";
 const char* kSsrFn = R"(// Screen-space reflection (round 6): march the reflected ray in world space, projecting each step onto this frame's
 // depth (the prepass); a hit is a step just behind the visible surface (within a thickness growing with distance),
 // refined by bisection. Its colour comes from the previous frame's picture, reprojected with that frame's camera.
@@ -219,7 +235,7 @@ std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS,
   std::string s = text;
   const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
   for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
-                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}, std::pair{"#FOG_COMMON", kFogCommon}})
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}, std::pair{"#VIEW_FN", kViewFn}, std::pair{"#FOG_COMMON", kFogCommon}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
@@ -279,6 +295,7 @@ layout(binding = 8) uniform sampler2D uSSAO; // screen-space ambient occlusion, 
 layout(binding = 10) uniform sampler2D uGeoSSR;   // SSR (round 6): this frame's prepass (normal, view depth)
 layout(binding = 11) uniform sampler2D uPrevColor; // SSR: the previous frame's resolved HDR picture
 #SSR_FN
+#VIEW_FN
 layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; }; // per light: pos + range, colour, dir + cos outer, cos inner + spot
 layout(std430, binding = 3) readonly buffer Clusters3D { uint uCl[]; };  // per cluster: first, count; then light indices
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
@@ -438,8 +455,19 @@ void main() {
   if (uParams.w > 0.5 && uParams.w < 1.5 && base.a < uExtra.z) discard; // alpha mask
   float alpha = uParams.w > 1.5 ? base.a : 1.0;
   vec3 emissive = uEmissive.rgb * (uExtra.x > 0.5 ? emTex.rgb : vec3(1.0));
-  int view = int(uCounts.w + 0.5); // debug view (queue 3-8): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect, 8 cascades, 9 ao, 10 lights
+  // debug view (queue 3-8, DebugView): 0 lit, 1 albedo, 2 normal, 3 rough, 4 metal, 5 depth, 6 shadow, 7 indirect,
+  // 8 cascades, 9 ao, 10 lights, 11 unlit, 12 lighting only, 13 detail lighting, 14 reflections, 15 emissive,
+  // 16 wireframe, 17 overdraw, 18 texel density, 19 LOD, 20 motion (16, 17, 20: drawn by their own passes)
+  int view = int(uCounts.w + 0.5);
   if (view == 1) { oColor = vec4(base.rgb, 1.0); return; }
+  if (view == 11) { oColor = vec4(base.rgb + emissive, 1.0); return; }
+  if (view == 15) { oColor = vec4(emissive, 1.0); return; }
+  if (view == 16 || view == 17 || view == 20) { oColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+  if (view == 18) { // base map texels per metre: blue too few, green ~512, red too many
+    vec3 c = TexelDensityColor(vec2(textureSize(uBaseMap, 0)), uMaps.x > 0.5, dpx, dpy, duvx, duvy, vUV);
+    oColor = vec4(pow(c, vec3(2.2)), 1.0);
+    return;
+  }
   if (uParams.z > 0.5 && view == 0) { oColor = vec4(Fog(base.rgb), alpha); return; }        // unlit material
   if (uCounts.y < 0.5 && view == 0) { oColor = vec4(Fog(base.rgb + emissive), alpha); return; }          // potato tier: no lighting
   if (uCounts.y < 1.5 && view == 0) { oColor = vec4(Fog(base.rgb * vLit + emissive), alpha); return; }   // low tier: per vertex
@@ -456,7 +484,7 @@ void main() {
   vec3 b = cross(ng, t) * w;
   if (!gl_FrontFacing) { t = -t; b = -b; ng = -ng; }
   vec3 N = ng;
-  if (uMaps.z > 0.5) {
+  if (uMaps.z > 0.5 && view != 12) { // lighting only: the bare surface
     vec3 tn;
     tn.xy = nTex.xy * 2.0 - 1.0; // X and Y from the map; Z rebuilt so BC5 (two channel) maps work too
     tn.z = sqrt(max(1.0 - dot(tn.xy, tn.xy), 0.0));
@@ -470,6 +498,12 @@ void main() {
   if (uMaps.y > 0.5) { rough *= mr.g; metallic *= mr.b; }
   metallic = clamp(metallic, 0.0, 1.0);
   rough = clamp(rough, 0.045, 1.0);
+  if (view == 12 || view == 13) { base.rgb = vec3(0.5); metallic = 0.0; emissive = vec3(0.0); } // grey: the light alone
+  if (view == 19) {
+    vec3 c = LodColor(int(uObjects[vObject].lightmap.y + 0.5), max(dot(ng, normalize(uToLight.xyz)), 0.0));
+    oColor = vec4(pow(c, vec3(2.2)), 1.0);
+    return;
+  }
   float a = rough * rough;
   int probe = int(uExtra.w + 0.5);
   vec3 ambient = ProbeIrradiance(probe, N);             // GI Tier 0: probe (or sky) light from every direction
@@ -481,7 +515,7 @@ void main() {
   float ssao = uFlags.x > 0.5 ? textureLod(uSSAO, gl_FragCoord.xy * uScreen.zw, 0.0).r : 1.0;
   uint lightFirst = 0u, lightCount = uint(uCluster.w + 0.5);
   if (uCluster2.z > 0.5) ClusterLights(vWorld, lightFirst, lightCount);
-  if (view >= 2) {
+  if (view >= 2 && view <= 10) {
     float heat = clamp(float(lightCount) / 16.0, 0.0, 1.0); // lights this pixel evaluates: blue 0, green 8, red 16+
     vec3 d = view == 10 ? (lightCount == 0u ? vec3(0.05) : mix(mix(vec3(0.1, 0.2, 1.0), vec3(0.1, 1.0, 0.2), min(heat * 2.0, 1.0)),
                                                               vec3(1.0, 0.15, 0.1), max(heat * 2.0 - 1.0, 0.0)))
@@ -503,6 +537,7 @@ void main() {
   else
     for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, ng, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
+  if (view == 14) { oColor = vec4(min(ProbeSpecular(probe, R, vWorld, 0.045), vec3(60000.0)), 1.0); return; } // a mirror
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   if (uSsr.x > 0.5 && view == 0) { // screen-space reflection where the ray finds the picture; the probe elsewhere
     vec4 ssr = TraceSSR(vWorld, ng, R, rough);
@@ -576,7 +611,9 @@ vec3 ToSrgb(vec3 c) {
 void main() {
   vec4 p = uInvViewProj * vec4(vNdc, 1.0, 1.0);
   vec3 d = normalize(p.xyz / p.w - uCamPos.xyz);
-  vec3 c = uCounts.w > 0.5 ? vec3(0.0) : SkyColor(d, 0.0);
+  // the sky in Lit and in the lighting modes (unlit, lighting only, detail lighting, reflections); data views: black
+  bool sky = uCounts.w < 0.5 || (uCounts.w > 10.5 && uCounts.w < 14.5);
+  vec3 c = sky ? SkyColor(d, 0.0) : vec3(0.0);
   if (uSun.x < 1.0 && uCounts.w < 0.5) { // sun disk with a soft rim
     float k = smoothstep(uSun.x - 0.00008, uSun.x + 0.00008, dot(d, normalize(uToLight.xyz)));
     c += uLight.rgb * 4.0 * k;
@@ -1128,6 +1165,43 @@ out vec4 oColor;
 void main() { oColor = vec4(0.25, 0.9, 1.0, 0.55); }
 )";
 
+// View modes (round 7). Overdraw: every surface adds 1 (no depth test); the heat pass colours the count. Motion:
+// TAA's motion vectors coloured by direction (hue) and length (brightness).
+const char* kOverdrawFS = R"(#version 450 core
+out vec4 oColor;
+void main() { oColor = vec4(1.0, 0.0, 0.0, 1.0); }
+)";
+const char* kOverdrawHeatFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uCount;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  float n = texture(uCount, vUV).r; // black 0, blue 1, green 2, yellow 4, red 8, white 16+
+  vec3 c = n < 0.5 ? vec3(0.0) : n < 2.0 ? mix(vec3(0.05, 0.1, 0.6), vec3(0.1, 0.8, 0.2), n - 1.0)
+         : n < 4.0 ? mix(vec3(0.1, 0.8, 0.2), vec3(1.0, 0.9, 0.1), (n - 2.0) / 2.0)
+         : n < 8.0 ? mix(vec3(1.0, 0.9, 0.1), vec3(1.0, 0.15, 0.1), (n - 4.0) / 4.0)
+         : mix(vec3(1.0, 0.15, 0.1), vec3(1.0), clamp((n - 8.0) / 8.0, 0.0, 1.0));
+  oColor = vec4(pow(c, vec3(2.2)), 1.0);
+}
+)";
+const char* kMotionVizFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uVel;
+in vec2 vUV;
+out vec4 oColor;
+void main() {
+  vec4 v = texture(uVel, vUV);
+  vec2 px = v.xy * vec2(textureSize(uVel, 0)); // pixels moved since the last frame
+  float len = length(px);
+  vec3 c = vec3(0.12) * (v.a > 0.5 ? 1.0 : 0.5);
+  if (len > 0.05) {
+    float h = atan(px.y, px.x) / 6.2831853 + 0.5;
+    vec3 hue = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    c = mix(c, hue, clamp(0.25 + len / 16.0, 0.0, 1.0));
+  }
+  oColor = vec4(pow(c, vec3(2.2)), 1.0);
+}
+)";
+
 // Selection: selected items are drawn white into a mask; the outline pass marks pixels within 2 px of the mask.
 const char* kMaskFS = R"(#version 450 core
 out vec4 oColor;
@@ -1341,6 +1415,17 @@ bool Renderer3D::Init(RHI& rhi) {
     wd.debugName = "editor.wireframe";
     wire_ = rhi.CreatePipeline(wd);
     if (!wire_.Valid()) return false;
+    wd.depthTest = false; // the wireframe view: every edge, also the hidden ones
+    wd.debugName = "view.wireframe";
+    wireXray_ = rhi.CreatePipeline(wd);
+    wd.wireframe = false;
+    wd.alphaBlend = false;
+    wd.additive = true;
+    wd.depthBiasConstant = wd.depthBiasSlope = 0;
+    wd.fragmentSource = kOverdrawFS;
+    wd.debugName = "view.overdraw";
+    overdraw_ = rhi.CreatePipeline(wd);
+    if (!wireXray_.Valid() || !overdraw_.Valid()) return false;
   }
   for (TimerFrame& t : timers_)
     for (uint32_t& q : t.q) q = rhi.CreateQuery();
@@ -1413,6 +1498,13 @@ bool Renderer3D::Init(RHI& rhi) {
     pp.fragmentSource = kCopyFS;
     pp.debugName = "post.copy";
     copy_ = rhi.CreatePipeline(pp);
+    pp.fragmentSource = kOverdrawHeatFS;
+    pp.debugName = "view.overdraw_heat";
+    overdrawHeat_ = rhi.CreatePipeline(pp);
+    pp.fragmentSource = kMotionVizFS;
+    pp.debugName = "view.motion";
+    motionViz_ = rhi.CreatePipeline(pp);
+    if (!overdrawHeat_.Valid() || !motionViz_.Valid()) return false;
     const std::string fogLight = Src(kFogLightCS), fogIntegrate = Src(kFogIntegrateCS), fogApply = Src(kFogApplyFS);
     fogLight_ = rhi.CreateComputePipeline(fogLight.c_str(), "fog.light");
     fogIntegrate_ = rhi.CreateComputePipeline(fogIntegrate.c_str(), "fog.integrate");
@@ -1488,6 +1580,10 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(fogMedia_);
   rhi_->DestroyBuffer(fogAccum_);
   rhi_->DestroyRenderTarget(fogRT_);
+  rhi_->DestroyRenderTarget(overdrawRT_);
+  rhi_->DestroyRenderTarget(debugRT_);
+  for (PipelineHandle p : {wireXray_, overdraw_, overdrawHeat_, motionViz_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {fogLight_, fogIntegrate_, fogApply_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {velocity_, taa_, sharpen_, copy_})
@@ -1863,7 +1959,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   glm::mat4 vp = vp0;
   Temporal* temporal = nullptr;
   glm::vec2 jitter(0.f);
-  if (taaOn || ssrOn) {
+  const bool motionOn = view == DebugView::Motion && !(extras && extras->linearOutput); // the motion vector view
+  const bool velocityOn = taaOn || motionOn;
+  if (taaOn || ssrOn || motionOn) {
     Temporal& t = temporal_[rt.id];
     temporal = &t;
     const glm::vec3 fwd = glm::normalize(cam.target - cam.position);
@@ -1879,16 +1977,16 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       proj[2][1] -= jitter.y * 2.f / (float)h;
       vp = proj * cam.View();
     }
-    if (t.w != w || t.h != h || t.taaTargets != taaOn) { // targets for this size and mode
+    if (t.w != w || t.h != h || t.taaTargets != velocityOn) { // targets for this size and mode
       ReleaseTemporal(t);
-      if (taaOn) {
+      if (velocityOn) {
         for (RenderTargetHandle& r : t.hist) r = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
         t.out = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
         t.velocity = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
       } else {
         t.prevColor = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
       }
-      t.taaTargets = taaOn;
+      t.taaTargets = velocityOn;
       t.w = w;
       t.h = h;
     }
@@ -2313,6 +2411,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     o.maps[0] = has(m.baseMap); o.maps[1] = has(m.metalRoughMap); o.maps[2] = has(m.normalMap); o.maps[3] = has(m.occlusionMap);
     o.extra[0] = has(m.emissiveMap); o.extra[1] = m.occlusionStrength; o.extra[2] = m.alphaCutoff;
     o.lightmap[0] = usesLightmap.empty() ? 0.f : (float)usesLightmap[k];
+    o.lightmap[1] = (float)items[k].lod;
     glm::vec3 c = (worldLo[k] + worldHi[k]) * 0.5f; // GI Tier 0: the baked probe whose box holds the centre, else the sky
     for (int pi = 0; pi < bakedProbes_ && o.extra[3] == 0; ++pi)
       if (glm::all(glm::greaterThanEqual(c, probes_[pi].boxMin)) && glm::all(glm::lessThanEqual(c, probes_[pi].boxMax)))
@@ -2329,7 +2428,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   // the list from frame to frame), for the motion vectors; this frame's placements are kept for the next one.
   std::vector<glm::mat4> prevModels;
   std::unordered_map<uint64_t, glm::mat4> nextModels;
-  if (temporal && taaOn) {
+  if (temporal && velocityOn) {
     prevModels.resize(std::max<size_t>(items.size(), 1), glm::mat4(1.f));
     std::unordered_map<const Mesh3D*, uint32_t> seen;
     for (size_t i = 0; i < items.size(); ++i) {
@@ -2534,10 +2633,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   Color linearClear = SrgbToLinear((uint8_t)std::lround(std::clamp(clear.r, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.b, 0.f, 1.f) * 255));
+  if (view == DebugView::Wireframe || view == DebugView::Overdraw || view == DebugView::Motion) linearClear = {0, 0, 0, 1};
   rhi_->BeginRenderTarget(hdrRT_, linearClear);
   uint32_t sceneDraws = 0;
   for (size_t r = 0; r <= runs.size(); ++r) {
-    if (r == opaqueRuns && bg.draw) { // sky where no surface was drawn
+    if (r == opaqueRuns && bg.draw && view != DebugView::Wireframe) { // sky where no surface was drawn
       rhi_->Draw(sky_, fullscreen_, 3);
       ++draws_;
     }
@@ -2567,6 +2667,35 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.ssr = ssrOn && f.ssr[0] > 0.5f;
   stats_.volumetricFog = volFogOn;
   stats_.dynamicGI = dynamicGIFrame_;
+  if (view == DebugView::Overdraw || motionOn) { // view modes drawn by their own passes (round 7)
+    if (!debugRT_.Valid() || debugW_ != w || debugH_ != h) {
+      rhi_->DestroyRenderTarget(debugRT_);
+      rhi_->DestroyRenderTarget(overdrawRT_);
+      debugRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      overdrawRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      debugW_ = w;
+      debugH_ = h;
+    }
+    if (view == DebugView::Overdraw) { // every surface of every object adds 1, behind or not
+      rhi_->BindUniformBuffer(1, frameUbo_);
+      rhi_->BindStorageBuffer(0, objectBuffer_);
+      rhi_->BeginRenderTarget(overdrawRT_, {0, 0, 0, 0});
+      for (const Run& r : runs) drawRun(overdraw_, r);
+      rhi_->EndRenderTarget();
+      rhi_->BeginRenderTarget(debugRT_, {0, 0, 0, 1});
+      rhi_->BindTexture(0, rhi_->RenderTargetColor(overdrawRT_));
+      rhi_->Draw(overdrawHeat_, fullscreen_, 3);
+      rhi_->EndRenderTarget();
+    } else if (temporal) { // motion vectors from the velocity pass above
+      rhi_->BeginRenderTarget(debugRT_, {0, 0, 0, 1});
+      rhi_->BindTexture(0, rhi_->RenderTargetColor(temporal->velocity));
+      rhi_->Draw(motionViz_, fullscreen_, 3);
+      rhi_->EndRenderTarget();
+      temporal->prevModels = std::move(nextModels);
+    }
+    ++draws_;
+    hdr = rhi_->RenderTargetColor(debugRT_);
+  }
   if (volFogOn) { // froxels: light them, integrate front to back, then fog each pixel by its depth
     const PostEffects3D& fx = light.post;
     const int gx = std::clamp(q.fogGridX, 8, 256), gy = std::clamp(q.fogGridY, 8, 256), gz = std::clamp(q.fogSlices, 8, 128);
@@ -2786,7 +2915,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   if (timing) Mark(timer, q.fxaa ? "tonemap+fxaa" : "tonemap");
   // Editor overlays on the finished picture: the grid hides behind objects (scene depth copied over).
   rhi_->CopyDepth(hdrRT_, rt);
-  if (extras && extras->wireframe)
+  if (view == DebugView::Wireframe)
+    for (const Run& r : runs) drawRun(wireXray_, r);
+  else if (extras && extras->wireframe)
     for (const Run& r : runs) drawRun(wire_, r);
   if (extras && extras->grid) {
     rhi_->Draw(grid_, gridQuad_, 6);
@@ -3194,9 +3325,62 @@ const char* DebugViewName(DebugView v) {
     case DebugView::Indirect: return "Indirect";
     case DebugView::Cascades: return "Cascades";
     case DebugView::AO: return "AO";
-    case DebugView::LightCount: return "Lights";
+    case DebugView::LightCount: return "Light Complexity";
+    case DebugView::Unlit: return "Unlit";
+    case DebugView::LightingOnly: return "Lighting Only";
+    case DebugView::DetailLighting: return "Detail Lighting";
+    case DebugView::Reflections: return "Reflections";
+    case DebugView::Emissive: return "Emissive";
+    case DebugView::Wireframe: return "Wireframe";
+    case DebugView::Overdraw: return "Shader Complexity";
+    case DebugView::TexelDensity: return "Texel Density";
+    case DebugView::LodColor: return "LOD Coloration";
+    case DebugView::Motion: return "Motion Vectors";
+    case DebugView::Count: break;
   }
   return "Lit";
+}
+
+const char* DebugViewKey(DebugView v) {
+  switch (v) {
+    case DebugView::Lit: return "Alt+4";
+    case DebugView::Wireframe: return "Alt+2";
+    case DebugView::Unlit: return "Alt+3";
+    case DebugView::DetailLighting: return "Alt+5";
+    case DebugView::LightingOnly: return "Alt+6";
+    case DebugView::LightCount: return "Alt+7";
+    case DebugView::Overdraw: return "Alt+8";
+    case DebugView::Reflections: return "Alt+9";
+    default: return "";
+  }
+}
+
+int DebugViewGroup(DebugView v) {
+  switch (v) {
+    case DebugView::Lit: case DebugView::Unlit: case DebugView::Wireframe: case DebugView::DetailLighting:
+    case DebugView::LightingOnly: case DebugView::Reflections: return 0;
+    case DebugView::Albedo: case DebugView::Normal: case DebugView::Roughness: case DebugView::Metallic: case DebugView::AO:
+    case DebugView::Depth: case DebugView::Emissive: case DebugView::Motion: return 1;
+    case DebugView::Overdraw: case DebugView::LightCount: case DebugView::LodColor: case DebugView::TexelDensity: return 2;
+    case DebugView::Shadow: case DebugView::Cascades: case DebugView::Indirect: case DebugView::Count: return 3;
+  }
+  return 3;
+}
+
+DebugLegend DebugViewLegend(DebugView v) {
+  auto c = [](float r, float g, float b) { return Color{r, g, b, 1}; };
+  switch (v) { // the same colours the shaders use
+    case DebugView::Overdraw:
+      return {{c(0, 0, 0), c(0.05f, 0.1f, 0.6f), c(0.1f, 0.8f, 0.2f), c(1, 0.9f, 0.1f), c(1, 0.15f, 0.1f), c(1, 1, 1)},
+              {"0", "1", "2", "4", "8", "16+"}, "Surfaces per pixel"};
+    case DebugView::LightCount:
+      return {{c(0.1f, 0.2f, 1), c(0.1f, 1, 0.2f), c(1, 0.15f, 0.1f)}, {"1", "8", "16+"}, "Lights per pixel"};
+    case DebugView::TexelDensity:
+      return {{c(0.15f, 0.3f, 1), c(0.1f, 0.9f, 0.2f), c(1, 0.15f, 0.1f)}, {"128", "512", "2048"}, "Texels per metre"};
+    case DebugView::LodColor:
+      return {{c(1, 1, 1), c(0.2f, 1, 0.2f), c(0.25f, 0.45f, 1), c(1, 0.9f, 0.2f), c(1, 0.2f, 0.15f)}, {"0", "1", "2", "3", "4+"}, "LOD"};
+    default: return {};
+  }
 }
 
 std::string Renderer3D::DescribePasses() const {

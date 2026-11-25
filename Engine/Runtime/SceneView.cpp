@@ -1478,7 +1478,12 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         if (e.key >= Key::Num1 && e.key <= Key::Num9 && hover_ && !textFocused && drag_ == Drag::None) {
           int n = (int)e.key - (int)Key::Num0;
-          if (e.alt) debugView = (DebugView)std::min(n - 1, 8);              // Alt + 1..9: what the picture shows
+          if (e.alt) { // Alt + 1..9: view modes with Unreal's keys (1, 2 wireframe, 3 unlit, 4 lit, 5 detail lighting,
+                       // 6 lighting only, 7 light complexity, 8 shader complexity; 9 reflections)
+            static const DebugView keys[] = {DebugView::Wireframe, DebugView::Wireframe, DebugView::Unlit, DebugView::Lit, DebugView::DetailLighting,
+                                             DebugView::LightingOnly, DebugView::LightCount, DebugView::Overdraw, DebugView::Reflections};
+            debugView = keys[n - 1];
+          }
           else if (e.ctrl) StoreBookmark(model, n);                       // Ctrl + 1..9: remember this view
           else if (!JumpToBookmark(model, n)) LogInfo("scene view: no camera bookmark {}", n);
           used = true;
@@ -1677,14 +1682,32 @@ void SceneView::DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorMode
   }
 }
 
+bool SceneView::ChipArea(const std::string& name, LegendRect& out) const {
+  for (const Chip& c : chips_)
+    if (c.name == name) {
+      out = {c.x, c.y, c.w, c.h};
+      return true;
+    }
+  return false;
+}
+
 // Chips with several values open their list under the chip (the current value marked) instead of stepping
 // through the values one click at a time.
 void SceneView::OpenChipMenu(const Chip& chip, EditorModel& model) {
   if (!ui_) return;
   std::vector<UIContext::MenuItem> items;
   if (chip.name == "view") {
-    for (int k = 0; k < 11; ++k)
-      items.push_back({DebugViewName((DebugView)k), [this, k] { debugView = (DebugView)k; }, true, (int)debugView == k});
+    // Unreal's grouping: the modes, then buffer visualisation, optimisation and debug views (titles are disabled rows)
+    static const char* groups[] = {"", "- Buffer Visualization -", "- Optimization -", "- Debug -"};
+    for (int g = 0; g < 4; ++g) {
+      if (g > 0) items.push_back({groups[g], nullptr, false, false});
+      for (int k = 0; k < (int)DebugView::Count; ++k) {
+        if (DebugViewGroup((DebugView)k) != g) continue;
+        const char* key = DebugViewKey((DebugView)k);
+        items.push_back({std::string(g > 0 ? "   " : "") + DebugViewName((DebugView)k) + (*key ? std::string("   ") + key : std::string()),
+                         [this, k] { debugView = (DebugView)k; }, true, (int)debugView == k});
+      }
+    }
   } else if (chip.name == "icons") {
     static const char* names[] = {"Off", "S", "M", "L"};
     for (int k = 0; k < 4; ++k) items.push_back({std::string("Icons: ") + names[k], [this, k] { iconSize = k; }, true, iconSize == k});
@@ -2011,6 +2034,20 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     float ex = ax + s.x * 18, ey = ay - s.y * 18;
     b.Line(ax, ay, ex, ey, 2, t.C(a.token));
     ui.Text(ex + (s.x >= 0 ? 2 : -9), ey - 7, 10, t.C(a.token), a.name);
+  }
+  // Heat map legend (view modes, round 7): the colour stops and what they mean, bottom-left above the axes.
+  if (const DebugLegend lg = DebugViewLegend(debugView); !lg.colors.empty()) {
+    const float stopW = 34, lx = w.x + 12, ly = w.y + w.h - 100, lw = stopW * (float)lg.colors.size() + 16;
+    b.Rect(lx, ly - 22, lw, 54, WithAlpha(t.C("win"), 0.85f), 6);
+    ui.Text(lx + 8, ly - 18, 11, t.C("fg"), lg.title);
+    for (size_t i = 0; i < lg.colors.size(); ++i) {
+      const float x = lx + 8 + stopW * (float)i;
+      b.Rect(x, ly, stopW - 2, 10, lg.colors[i], 2);
+      if (i < lg.labels.size()) ui.Text(x + 1, ly + 13, 10, t.C("fg-dim"), lg.labels[i]);
+    }
+    legendRect_ = {lx, ly - 22, lw, 54};
+  } else {
+    legendRect_ = {0, 0, 0, 0};
   }
   // Controls hint (bottom-right, only while the pointer is over the view).
   if (hover_) {
