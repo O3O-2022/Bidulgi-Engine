@@ -210,6 +210,8 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(QualityPreset(QualityTier::Ultra).taa && !high.taa && !medium.taa && !ref.taa); // round 6: TAA on ultra
   CHECK(ApplyQualityOverrides("taa=1,sharpen=3", q, &err) && q.taa && q.taaSharpen == 1.f);
   CHECK(high.ssr && QualityPreset(QualityTier::Ultra).ssr && !medium.ssr); // round 6: SSR on high and ultra
+  CHECK(high.volumetricFog && !medium.volumetricFog && QualityPreset(QualityTier::Ultra).fogSlices == 64); // volumetric fog
+  CHECK(ApplyQualityOverrides("volfog=0,fogslices=1000", q, &err) && !q.volumetricFog && q.fogSlices == 128);
   CHECK(ApplyQualityOverrides("ssr=1,ssrsteps=500,ssrdistance=0", q, &err) && q.ssr && q.ssrSteps == 128 && q.ssrDistance == 1.f);
   CHECK(ApplyQualityOverrides("localshadows=40,localshadowmap=8", q, &err));
   CHECK(q.localShadows == 16 && q.localShadowSize == 64); // clamped

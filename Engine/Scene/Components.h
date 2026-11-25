@@ -138,6 +138,15 @@ public:
   BPROPERTY(Edit, Header = "Depth of Field", Range = "0,1", Tooltip = "0 = off; how wide out-of-focus parts blur") float dofBlur = 0.f;
   BPROPERTY(Edit, Range = "0.1,1000", ShowIf = "dofBlur", Tooltip = "Metres from the camera that are sharp") float dofFocusDistance = 10.f;
   BPROPERTY(Edit, Range = "0,100", ShowIf = "dofBlur", Tooltip = "Depth around the focus distance that stays sharp (m)") float dofFocusRange = 2.f;
+  // Volumetric fog (round 6; High and up, the quality setting volumetricFog): light scattered in the air, the sun's
+  // shadows cut shafts through it, point and spot lights glow in it. Height fog: thick low down, thinner above.
+  BPROPERTY(Edit, Header = "Volumetric Fog", Range = "0,1", Tooltip = "Fog thickness per metre at the fog height (0 = off)") float fogDensity = 0.f;
+  BPROPERTY(Edit, Range = "-1000,1000", ShowIf = "fogDensity", Tooltip = "World height (m) of the given density") float fogHeight = 0.f;
+  BPROPERTY(Edit, Range = "0,2", ShowIf = "fogDensity", Tooltip = "How fast it thins out going up (0 = even everywhere)") float fogHeightFalloff = 0.2f;
+  BPROPERTY(Edit, ShowIf = "fogDensity", Tooltip = "Colour of the light the fog scatters") Color fogAlbedo{1, 1, 1, 1};
+  BPROPERTY(Edit, Range = "-0.9,0.9", ShowIf = "fogDensity", Tooltip = "0 = even; towards 1 the fog glows around the sun") float fogAnisotropy = 0.6f;
+  BPROPERTY(Edit, Range = "8,500", ShowIf = "fogDensity", Tooltip = "Metres of fog in front of the camera") float fogDistance = 64.f;
+  BPROPERTY(Edit, Range = "0,10", ShowIf = "fogDensity", Tooltip = "How strongly point and spot lights glow in the fog") float fogLightScattering = 1.f;
 };
 
 // Turns its object while the game is playing (queue 3-6): the first built-in behaviour, so play mode has

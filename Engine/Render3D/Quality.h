@@ -62,6 +62,10 @@ struct QualitySettings {
   bool ssr = false;
   float ssrDistance = 20.f;    // metres a reflected ray travels
   int ssrSteps = 48;
+  // Volumetric fog (round 6): a froxel grid (screen tiles x depth slices) lit by the sun with shadows and by point /
+  // spot lights, integrated front to back; where a post volume sets fog density. High and ultra.
+  bool volumetricFog = false;
+  int fogGridX = 64, fogGridY = 36, fogSlices = 48;
   bool bloom = false;
   float bloomIntensity = 0.2f;    // share of the blurred image added back (glow around bright light)
   int msaa = 1;

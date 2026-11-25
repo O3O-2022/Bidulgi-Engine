@@ -183,6 +183,7 @@ struct RenderStats {
   bool taa = false;         // temporal anti-aliasing ran (round 6)
   bool taaHistory = false;  // ... and blended with an earlier frame (false right after a camera cut)
   bool ssr = false;         // screen-space reflections were traced (round 6; not on the first frame after a cut)
+  bool volumetricFog = false; // the froxel fog ran (round 6)
   float jitterX = 0, jitterY = 0; // this frame's sub-pixel offset (pixels)
 };
 
@@ -297,6 +298,12 @@ private:
   };
   std::unordered_map<uint32_t, Temporal> temporal_;
   PipelineHandle velocity_, taa_, sharpen_, copy_;
+  // Volumetric fog (round 6): froxel media and accumulation buffers, the fogged picture
+  PipelineHandle fogLight_, fogIntegrate_, fogApply_;
+  BufferHandle fogUbo_, fogMedia_, fogAccum_;
+  size_t fogCapacity_ = 0;
+  RenderTargetHandle fogRT_;
+  int32_t fogW_ = 0, fogH_ = 0;
   BufferHandle temporalUbo_, prevModelBuffer_;
   size_t prevModelCapacity_ = 0;
   void ReleaseTemporal(Temporal& t);

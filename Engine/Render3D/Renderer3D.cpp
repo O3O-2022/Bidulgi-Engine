@@ -162,11 +162,18 @@ vec4 TraceSSR(vec3 P, vec3 N, vec3 R, float rough) {
   return vec4(textureLod(uPrevColor, puv, 0.0).rgb, clamp(fade, 0.0, 1.0));
 }
 )";
+const char* kFogCommon = R"(
+float SliceDepth(float z) { return uFogA.x * pow(uFogA.y / uFogA.x, z / uGrid.z); }
+vec3 RayAt(vec2 uv) {
+  vec4 p = uFogInvVP * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+  return normalize(p.xyz / p.w - uCamPos.xyz);
+}
+)";
 std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS, #OBJECTS_FS, #PROBES_FN, #FACE_DIR
   std::string s = text;
   const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
   for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
-                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}})
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}, std::pair{"#FOG_COMMON", kFogCommon}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
@@ -848,6 +855,108 @@ void main() {
 }
 )";
 // Bloom (Jimenez, Call of Duty 2014): 13-tap downsample, 3x3 tent upsample added into the next larger level.
+// ---- Volumetric fog (round 6) ----
+// A froxel grid: uGrid.x by uGrid.y screen tiles, uGrid.z depth slices spaced exponentially from uFogA.x to uFogA.y
+// metres of view depth. uFogA = (near, far, density, fog height), uFogB = (height falloff, anisotropy, local light
+// scale, slice jitter 0..1), uFogC = (albedo rgb, -), uGrid.w = local lights; uFogInvVP = unjittered inverse view-proj.
+#define FOG_UBO "layout(std140, binding = 10) uniform Fog3D { vec4 uGrid; vec4 uFogA; vec4 uFogB; vec4 uFogC; mat4 uFogInvVP; };\n"
+// 1. Each froxel: density (height fog) and the light it scatters toward the camera: the sun through its shadow map
+// (Henyey-Greenstein phase), the sky, and point / spot lights (even phase, no shadows).
+const char* kFogLightCS = "#version 450 core\nlayout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(binding = 5) uniform sampler2DShadow uShadowMap;
+layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; };
+layout(std430, binding = 12) writeonly buffer FogMedia { vec4 uMedia[]; };
+const float PI = 3.14159265;
+float SunShadow(vec3 w) {
+  if (uShadow.x < 0.5) return 1.0;
+  float z = dot(w - uCamPos.xyz, uCamFwd.xyz);
+  int count = int(uShadow2.x + 0.5), c = 0;
+  for (int i = 0; i < 3; ++i)
+    if (i < count - 1 && z > (i == 0 ? uCascadeSplit.x : i == 1 ? uCascadeSplit.y : uCascadeSplit.z)) c = i + 1;
+  vec4 p = uCascadeVP[c] * vec4(w, 1.0);
+  vec3 s = p.xyz / p.w * 0.5 + 0.5;
+  if (s.z >= 1.0 || any(lessThan(s.xy, vec2(0.0))) || any(greaterThan(s.xy, vec2(1.0)))) return 1.0;
+  return textureLod(uShadowMap, vec3((float(c) + s.x) / uShadow2.x, s.y, s.z - uCascadeInfo[c].x), 0.0);
+}
+float Phase(float cosT, float g) { float g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * cosT, 1e-4), 1.5)); }
+void main() {
+  uvec3 id = gl_GlobalInvocationID;
+  if (any(greaterThanEqual(id, uvec3(uGrid.xyz)))) return;
+  vec2 uv = (vec2(id.xy) + 0.5) / uGrid.xy;
+  vec3 ray = RayAt(uv);
+  vec3 w = uCamPos.xyz + ray * (SliceDepth(float(id.z) + uFogB.w) / dot(ray, uCamFwd.xyz));
+  float dens = uFogA.z * (uFogB.x > 0.0 ? exp(-uFogB.x * clamp(w.y - uFogA.w, -20.0, 200.0)) : 1.0);
+  vec3 L = normalize(uToLight.xyz);
+  vec3 light = uLight.rgb * SunShadow(w) * Phase(dot(ray, L), uFogB.y);
+  light += mix(uHorizon.rgb, uZenith.rgb, 0.5) * (1.0 / (4.0 * PI)) * 0.5; // the sky, all around
+  for (int i = 0; i < int(uGrid.w); ++i) {
+    vec4 lp = uLL[i * 4], lc = uLL[i * 4 + 1], ld = uLL[i * 4 + 2], lk = uLL[i * 4 + 3];
+    vec3 toL = lp.xyz - w;
+    float d2 = max(dot(toL, toL), 1e-4), range = max(lp.w, 1e-3);
+    if (d2 >= range * range) continue;
+    float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
+    float atten = win * win / (d2 + 1.0);
+    if (lk.y > 0.5) atten *= smoothstep(ld.w, lk.x, dot(-toL * inversesqrt(d2), ld.xyz));
+    light += lc.rgb * lc.w * atten * uFogB.z / (4.0 * PI);
+  }
+  uMedia[(id.z * uint(uGrid.y) + id.y) * uint(uGrid.x) + id.x] = vec4(uFogC.rgb * dens * light, dens);
+}
+)";
+// 2. Front to back along each column: light gathered so far and what still gets through (transmittance), at the far
+// edge of each slice.
+const char* kFogIntegrateCS = "#version 450 core\nlayout(local_size_x = 8, local_size_y = 8) in;\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(std430, binding = 12) readonly buffer FogMedia { vec4 uMedia[]; };
+layout(std430, binding = 13) writeonly buffer FogAccum { vec4 uAccum[]; };
+void main() {
+  uvec2 id = gl_GlobalInvocationID.xy;
+  if (any(greaterThanEqual(id, uvec2(uGrid.xy)))) return;
+  float stretch = 1.0 / max(dot(RayAt((vec2(id) + 0.5) / uGrid.xy), uCamFwd.xyz), 0.05); // view depth -> distance
+  vec3 S = vec3(0.0);
+  float T = 1.0;
+  for (uint z = 0u; z < uint(uGrid.z); ++z) {
+    uint i = (z * uint(uGrid.y) + id.y) * uint(uGrid.x) + id.x;
+    vec4 m = uMedia[i];
+    float ds = (SliceDepth(float(z) + 1.0) - SliceDepth(float(z))) * stretch;
+    float ext = max(m.a, 1e-6), tr = exp(-ext * ds);
+    S += T * m.rgb * (1.0 - tr) / ext;
+    T *= tr;
+    uAccum[i] = vec4(S, T);
+  }
+}
+)";
+// 3. Each pixel: the fog between the camera and its surface (sky: the whole simulated distance), trilinear.
+const char* kFogApplyFS = "#version 450 core\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(binding = 0) uniform sampler2D uHdr;
+layout(binding = 1) uniform sampler2D uGeo;
+layout(std430, binding = 13) readonly buffer FogAccum { vec4 uAccum[]; };
+in vec2 vUV;
+out vec4 oColor;
+vec4 At(int x, int y, int z) {
+  if (z < 0) return vec4(0.0, 0.0, 0.0, 1.0);
+  ivec3 g = ivec3(uGrid.xyz);
+  x = clamp(x, 0, g.x - 1); y = clamp(y, 0, g.y - 1); z = min(z, g.z - 1);
+  return uAccum[(z * g.y + y) * g.x + x];
+}
+void main() {
+  vec3 c = textureLod(uHdr, vUV, 0.0).rgb;
+  float d = min(textureLod(uGeo, vUV, 0.0).w, uFogA.y);
+  float s = log(max(d, uFogA.x) / uFogA.x) / log(uFogA.y / uFogA.x) * uGrid.z - 1.0; // slice coordinate (far edges)
+  vec2 xy = vUV * uGrid.xy - 0.5;
+  ivec2 b = ivec2(floor(xy));
+  vec2 f = xy - vec2(b);
+  int z0 = int(floor(s));
+  float fz = s - float(z0);
+  vec4 r = vec4(0.0);
+  for (int k = 0; k < 2; ++k) {
+    vec4 a = mix(mix(At(b.x, b.y, z0 + k), At(b.x + 1, b.y, z0 + k), f.x), mix(At(b.x, b.y + 1, z0 + k), At(b.x + 1, b.y + 1, z0 + k), f.x), f.y);
+    r += a * (k == 0 ? 1.0 - fz : fz);
+  }
+  oColor = vec4(c * r.a + r.rgb, 1.0);
+}
+)";
 // ---- Temporal anti-aliasing (round 6) ----
 // uCurVP / uInvCurVP: this frame without jitter; uPrevVP: the previous frame's (no jitter); uJitVP: what the scene
 // pass used. uTaa = (-, -, feedback, history valid), uTaa2 = (sharpen, -, -, -)
@@ -1050,6 +1159,7 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
 }
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4], lightmap[4]; };
 struct TemporalData { float curVP[16], prevVP[16], jitVP[16], invCurVP[16], taa[4], taa2[4]; };
+struct FogData { float grid[4], a[4], b[4], c[4], invVP[16]; };
 float Halton(uint32_t i, uint32_t base) {
   float f = 1, r = 0;
   for (; i > 0; i /= base) {
@@ -1257,6 +1367,14 @@ bool Renderer3D::Init(RHI& rhi) {
     pp.fragmentSource = kCopyFS;
     pp.debugName = "post.copy";
     copy_ = rhi.CreatePipeline(pp);
+    const std::string fogLight = Src(kFogLightCS), fogIntegrate = Src(kFogIntegrateCS), fogApply = Src(kFogApplyFS);
+    fogLight_ = rhi.CreateComputePipeline(fogLight.c_str(), "fog.light");
+    fogIntegrate_ = rhi.CreateComputePipeline(fogIntegrate.c_str(), "fog.integrate");
+    pp.fragmentSource = fogApply.c_str();
+    pp.debugName = "fog.apply";
+    fogApply_ = rhi.CreatePipeline(pp);
+    if (!fogLight_.Valid() || !fogIntegrate_.Valid() || !fogApply_.Valid()) return false;
+    fogUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FogData), true);
     if (!velocity_.Valid() || !taa_.Valid() || !sharpen_.Valid() || !copy_.Valid()) return false;
     temporalUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(TemporalData), true);
   }
@@ -1319,6 +1437,12 @@ void Renderer3D::Shutdown() {
   temporal_.clear();
   rhi_->DestroyBuffer(temporalUbo_);
   rhi_->DestroyBuffer(prevModelBuffer_);
+  rhi_->DestroyBuffer(fogUbo_);
+  rhi_->DestroyBuffer(fogMedia_);
+  rhi_->DestroyBuffer(fogAccum_);
+  rhi_->DestroyRenderTarget(fogRT_);
+  for (PipelineHandle p : {fogLight_, fogIntegrate_, fogApply_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
   for (PipelineHandle p : {velocity_, taa_, sharpen_, copy_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
   rhi_->DestroyBuffer(frameUbo_);
@@ -1621,6 +1745,9 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   const bool taaOn = q.taa && view == DebugView::Lit && !(extras && extras->linearOutput);
   // Screen-space reflections (round 6): per-pixel lighting on a camera's lit view; they read the previous frame.
   const bool ssrOn = q.ssr && q.lighting == LightingMode::Pixel && view == DebugView::Lit && !(extras && extras->linearOutput);
+  // Volumetric fog (round 6): where the post volumes ask for it, per-pixel tiers, not on captures or debug views.
+  const bool volFogOn = q.volumetricFog && light.post.fogDensity > 0.f && q.lighting == LightingMode::Pixel && view == DebugView::Lit &&
+                        !(extras && extras->linearOutput);
   if (taaOn) {
     q.msaa = 1;
     q.fxaa = false;
@@ -2200,7 +2327,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
-  if (ssaoOn || dofOn || shaftsOn || ssrOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+  if (ssaoOn || dofOn || shaftsOn || ssrOn || volFogOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
     const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
     if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
       for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -2281,6 +2408,62 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.jitterX = jitter.x;
   stats_.jitterY = jitter.y;
   stats_.ssr = ssrOn && f.ssr[0] > 0.5f;
+  stats_.volumetricFog = volFogOn;
+  if (volFogOn) { // froxels: light them, integrate front to back, then fog each pixel by its depth
+    const PostEffects3D& fx = light.post;
+    const int gx = std::clamp(q.fogGridX, 8, 256), gy = std::clamp(q.fogGridY, 8, 256), gz = std::clamp(q.fogSlices, 8, 128);
+    const size_t bytes = (size_t)gx * gy * gz * 16;
+    if (bytes > fogCapacity_) {
+      rhi_->DestroyBuffer(fogMedia_);
+      rhi_->DestroyBuffer(fogAccum_);
+      fogMedia_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, bytes, false);
+      fogAccum_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, bytes, false);
+      fogCapacity_ = bytes;
+    }
+    FogData fd{};
+    fd.grid[0] = (float)gx;
+    fd.grid[1] = (float)gy;
+    fd.grid[2] = (float)gz;
+    fd.grid[3] = (float)vertexLights;
+    fd.a[0] = std::max(cam.nearZ, 0.1f);
+    fd.a[1] = std::clamp(fx.fogDistance, fd.a[0] * 4.f, std::max(cam.farZ, fd.a[0] * 4.f));
+    fd.a[2] = fx.fogDensity;
+    fd.a[3] = fx.fogHeight;
+    fd.b[0] = fx.fogFalloff;
+    fd.b[1] = std::clamp(fx.fogAnisotropy, -0.95f, 0.95f);
+    fd.b[2] = fx.fogLight;
+    fd.b[3] = temporal && taaOn ? Halton(temporal->jitterIndex % 16 + 1, 5) : 0.5f; // slice jitter, smoothed by TAA
+    fd.c[0] = fx.fogAlbedo.r;
+    fd.c[1] = fx.fogAlbedo.g;
+    fd.c[2] = fx.fogAlbedo.b;
+    const glm::mat4 inv0 = glm::inverse(vp0);
+    std::memcpy(fd.invVP, glm::value_ptr(inv0), sizeof(fd.invVP));
+    rhi_->UpdateBuffer(fogUbo_, &fd, sizeof(fd));
+    rhi_->BindUniformBuffer(10, fogUbo_);
+    rhi_->BindUniformBuffer(1, frameUbo_);
+    rhi_->BindStorageBuffer(2, lightBuffer_);
+    rhi_->BindStorageBuffer(12, fogMedia_);
+    rhi_->BindStorageBuffer(13, fogAccum_);
+    rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
+    rhi_->Dispatch(fogLight_, (uint32_t)(gx + 3) / 4, (uint32_t)(gy + 3) / 4, (uint32_t)(gz + 3) / 4);
+    rhi_->ComputeBarrier();
+    rhi_->Dispatch(fogIntegrate_, (uint32_t)(gx + 7) / 8, (uint32_t)(gy + 7) / 8, 1);
+    rhi_->ComputeBarrier();
+    if (!fogRT_.Valid() || fogW_ != w || fogH_ != h) {
+      rhi_->DestroyRenderTarget(fogRT_);
+      fogRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      fogW_ = w;
+      fogH_ = h;
+    }
+    rhi_->BeginRenderTarget(fogRT_, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(geoRT_));
+    rhi_->Draw(fogApply_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+    hdr = rhi_->RenderTargetColor(fogRT_);
+    if (timing) Mark(timer, "fog");
+  }
   if (taaOn) { // TAA resolve into the next history, then sharpen into the picture the post passes read
     Temporal& t = *temporal;
     const int next = 1 - t.cur;

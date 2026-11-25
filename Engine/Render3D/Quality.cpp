@@ -81,6 +81,10 @@ QualitySettings QualityPreset(QualityTier t) {
       q.taa = t == QualityTier::Ultra; // round 6: temporal AA on ultra (MSAA stays on high)
       q.ssr = true;                    // round 6: screen-space reflections
       q.ssrSteps = t == QualityTier::Ultra ? 64 : 40;
+      q.volumetricFog = true;          // round 6: froxel fog where a post volume asks for it
+      q.fogGridX = t == QualityTier::Ultra ? 96 : 64;
+      q.fogGridY = t == QualityTier::Ultra ? 54 : 36;
+      q.fogSlices = t == QualityTier::Ultra ? 64 : 48;
       break;
   }
   return q;
@@ -176,6 +180,8 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "fxaa") q.fxaa = v != 0;
     else if (key == "taa") q.taa = v != 0;
     else if (key == "ssr") q.ssr = v != 0;
+    else if (key == "volfog") q.volumetricFog = v != 0;
+    else if (key == "fogslices") q.fogSlices = std::clamp((int)v, 8, 128);
     else if (key == "ssrsteps") q.ssrSteps = std::clamp((int)v, 8, 128);
     else if (key == "ssrdistance") q.ssrDistance = std::max(v, 1.f);
     else if (key == "sharpen") q.taaSharpen = std::clamp(v, 0.f, 1.f);

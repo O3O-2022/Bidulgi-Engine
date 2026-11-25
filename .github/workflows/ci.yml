@@ -261,6 +261,10 @@ jobs:
           # still frames, must be under 0.6 x no AA); jitter and history, the sharpen pass, a camera cut resets, a small move keeps
           $log = Invoke-Editor 'Release' @{ BDG_TAA_TEST = '1' } 50
           if ($log -notmatch 'taa test: .* better=1 history=1 sharpen=1 cut=1 move=1') { $errors += 'TAA test failed' }
+          # Round 6 volumetric fog: froxels lit by the sun through its shadow map (a roof shades half the air), a red point
+          # light glowing in the fog, height falloff (thinner high up), off on medium
+          $log = Invoke-Editor 'Release' @{ BDG_FOG_TEST = '1' } 20
+          if ($log -notmatch 'fog test: ran=1 shafts=1 glow=1 height=1 tiers=1') { $errors += 'volumetric fog test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 24) Render reference scene (queue 3-8): bookmarks, Albedo/Normal/Depth/Shadow views, wireframe, stored bookmark, GPU timers

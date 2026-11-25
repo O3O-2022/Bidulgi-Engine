@@ -42,6 +42,15 @@ PostEffects3D BlendPostVolumes(const std::vector<PostVolume3D>& volumes, const g
     mix(out.dofFocus, f.dofFocus);
     mix(out.dofRange, f.dofRange);
     mix(out.lensFlare, f.lensFlare);
+    mix(out.fogDensity, f.fogDensity);
+    mix(out.fogHeight, f.fogHeight);
+    mix(out.fogFalloff, f.fogFalloff);
+    mix(out.fogAlbedo.r, f.fogAlbedo.r);
+    mix(out.fogAlbedo.g, f.fogAlbedo.g);
+    mix(out.fogAlbedo.b, f.fogAlbedo.b);
+    mix(out.fogAnisotropy, f.fogAnisotropy);
+    mix(out.fogDistance, f.fogDistance);
+    mix(out.fogLight, f.fogLight);
     if (a >= 0.5f) out.autoExposure = f.autoExposure; // an on/off switch flips half way into the blend
   }
   return out;

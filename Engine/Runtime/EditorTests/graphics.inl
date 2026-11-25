@@ -244,3 +244,87 @@ void ReportSsrTest(bdg_engine*) {
   bdg::LogInfo("ssr test: ran={} mirror={} fallback={} rough={}", ran, mirror, fallback, rough);
 }
 BDG_EDITOR_TEST("BDG_SSR_TEST", InjectSsrTest, ReportSsrTest)
+
+// BDG_FOG_TEST=1: a dark back wall 25 m away, a roof over the left half (the sun straight above: the left air is in
+// shadow), a red point light in the shaded half, a post volume with volumetric fog; high tier, fog off then on.
+// What the fog adds (on - off) is compared: the lit air glows more than the shaded air (the sun's shadow cuts the
+// fog), the air around the red light glows red, and with a height falloff the fog in front of the wall's top is
+// thinner than at its foot. The stats say the froxel fog ran; medium tier does not run it.
+namespace fogtest {
+std::string ran = "-", shafts = "-", glow = "-", height = "-", tiers = "-";
+gfxtest::Shot off, uniform;
+}
+void InjectFogTest(bdg_engine* e, int frame, float) {
+  using namespace fogtest;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  using gfxtest::Run;
+  auto at = [&](const gfxtest::Shot& s, const glm::vec3& p, int c) { // channel c (3 = luminance) at a world point
+    float px = 0, py = 0;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), s.w, s.h, p, px, py)) return -1.0;
+    const int x = std::clamp((int)px, 0, s.w - 1), y = std::clamp((int)py, 0, s.h - 1);
+    const uint8_t* q = &s.px[((size_t)y * s.w + x) * 4];
+    return c < 3 ? (double)q[c] : 0.299 * q[0] + 0.587 * q[1] + 0.114 * q[2];
+  };
+  const glm::vec3 litP{7, 3, -25}, shadeP{-14, 3, -25}, glowP{-6, 3, -12}, footP{7, 0.6f, -25}, topP{7, 10, -25};
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) Run(m, "del", id, "{}");
+    Run(m, "add", "", R"({"id":"fsun","name":"Sun"})");
+    Run(m, "set", "fsun", R"({"path":"Transform.rotation","value":[-85,0,0]})");
+    Run(m, "addcomp", "fsun", R"({"type":"Light","value":{"type":"Directional","intensity":4}})");
+    auto box = [&](const char* id, const char* pos, const char* scale, const char* mat) {
+      Run(m, "add", "", std::format(R"({{"id":"{}","name":"{}"}})", id, id));
+      Run(m, "set", id, std::format(R"({{"path":"Transform.position","value":[{}]}})", pos));
+      Run(m, "set", id, std::format(R"({{"path":"Transform.scale","value":[{}]}})", scale));
+      Run(m, "addcomp", id, std::format(R"({{"type":"MeshRenderer","value":{{"mesh":"Cube","material":"{}"}}}})", mat));
+    };
+    box("fground", "0,-0.5,-10", "60,1,60", "M_Ground");
+    box("fwall", "0,6,-26", "60,12,1", "M_Ground");
+    box("froof", "-15,8.5,-10", "30,0.5,40", "M_Ground");
+    Run(m, "add", "", R"({"id":"flamp","name":"Lamp"})");
+    Run(m, "set", "flamp", R"({"path":"Transform.position","value":[-6,3,-12]})");
+    Run(m, "addcomp", "flamp", R"({"type":"Light","value":{"type":"Point","color":[1,0.1,0.05,1],"intensity":40,"range":6,"castShadows":false}})");
+    Run(m, "add", "", R"({"id":"fvol","name":"Fog"})");
+    Run(m, "addcomp", "fvol", R"({"type":"PostProcessVolume","value":{"fogDensity":0,"fogHeightFalloff":0,"fogDistance":80,"fogAnisotropy":0.3}})");
+    m->SetSelection({});
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    sv->camera.pivot = {0, 3, -10};
+    sv->camera.yaw = 0;
+    sv->camera.pitch = 0;
+    sv->camera.distance = 14;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    sv->quality.ssr = false;
+  }
+  if (frame == 6) {
+    off = gfxtest::Grab(e);
+    Run(m, "set", "fvol", R"({"path":"PostProcessVolume.fogDensity","value":0.04})");
+  }
+  if (frame == 10) {
+    uniform = gfxtest::Grab(e);
+    ran = sv->LastStats().volumetricFog ? "1" : "0";
+    if (const char* dump = std::getenv("BDG_FOG_DUMP")) {
+      bdg::WritePNG((std::string(dump) + "_off.png").c_str(), off.w, off.h, off.px.data(), true);
+      bdg::WritePNG((std::string(dump) + "_on.png").c_str(), uniform.w, uniform.h, uniform.px.data(), true);
+    }
+    const double lit = at(uniform, litP, 3) - at(off, litP, 3), shade = at(uniform, shadeP, 3) - at(off, shadeP, 3);
+    shafts = lit > 8 && lit > shade * 1.5 ? "1" : std::format("0(lit {:.1f} shade {:.1f})", lit, shade);
+    const double r = at(uniform, glowP, 0) - at(off, glowP, 0), g = at(uniform, glowP, 1) - at(off, glowP, 1);
+    glow = r > 10 && r > g * 2 && r > shade ? "1" : std::format("0(r {:.1f} g {:.1f})", r, g);
+    Run(m, "set", "fvol", R"({"path":"PostProcessVolume.fogHeightFalloff","value":0.5})");
+  }
+  if (frame == 14) {
+    const gfxtest::Shot hf = gfxtest::Grab(e);
+    const double foot = at(hf, footP, 3) - at(off, footP, 3), top = at(hf, topP, 3) - at(off, topP, 3);
+    height = foot > 4 && top < foot * 0.5 ? "1" : std::format("0(foot {:.1f} top {:.1f})", foot, top);
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+  }
+  if (frame == 17) tiers = !sv->LastStats().volumetricFog ? "1" : "0";
+}
+void ReportFogTest(bdg_engine*) {
+  using namespace fogtest;
+  bdg::LogInfo("fog test: ran={} shafts={} glow={} height={} tiers={}", ran, shafts, glow, height, tiers);
+}
+BDG_EDITOR_TEST("BDG_FOG_TEST", InjectFogTest, ReportFogTest)
