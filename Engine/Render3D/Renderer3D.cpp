@@ -188,12 +188,15 @@ const char* kSsrFn = R"(// Screen-space reflection (round 6): march the reflecte
 vec4 TraceSSR(vec3 P, vec3 N, vec3 R, float rough) {
   if (uSsr.x < 0.5 || rough > 0.6) return vec4(0.0);
   int steps = int(uSsr.w);
-  float maxD = uSsr.y, stride = maxD / float(steps);
+  float maxD = uSsr.y;
   float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   vec3 start = P + N * 0.03;
+  // Steps spaced quadratically: short near the surface, where most reflected things are, longer far away. With equal
+  // steps of maxD / steps (0.5 m on high) a ray often landed more than the thickness behind a near object's face and
+  // missed it: striped reflections.
   float prev = 0.0, hitT = -1.0;
   for (int i = 1; i <= steps; ++i) {
-    float t = stride * (float(i) - 0.5 + noise * 0.5);
+    float s = (float(i) - 0.5 + noise * 0.5) / float(steps), t = maxD * s * s;
     vec3 p = start + R * t;
     vec4 c = uViewProj * vec4(p, 1.0);
     if (c.w <= 0.0) break;
@@ -2185,7 +2188,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   std::memcpy(f.prevViewProj, glm::value_ptr(temporal && temporal->valid ? temporal->prevVP : vp0), sizeof(f.prevViewProj));
   f.ssr[0] = ssrOn && temporal && temporal->valid ? 1.f : 0.f;
   f.ssr[1] = std::max(q.ssrDistance, 1.f);
-  f.ssr[2] = 0.35f; // thickness of what the depth buffer shows (m)
+  f.ssr[2] = 0.2f; // thickness of what the depth buffer shows (m); thicker smears reflections of small things
   f.ssr[3] = (float)std::clamp(q.ssrSteps, 8, 128);
   f.screen[0] = (float)w;
   f.screen[1] = (float)h;
