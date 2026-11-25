@@ -1,0 +1,19 @@
+{
+  "description": {
+    "name": "{{GAME_NAME}}",
+    "version": "0.1.0",
+    "description": "Side-scrolling platformer made from the Bidulgi Engine 2D platformer template",
+    "company": "My Studio",
+    "identifier": "com.mystudio.platformer"
+  },
+  "maps": {
+    "gameStartScene": "Scenes/Main.scene"
+  },
+  "display": {
+    "width": 1600,
+    "height": 900
+  },
+  "physics": {
+    "gravity2D": [0, -25]
+  }
+}

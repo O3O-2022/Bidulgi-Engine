@@ -1,0 +1,26 @@
+{"v":1,"defaults":"1.0","scene":"Level 1","mode":"3d"}
+{"id":"sun","name":"Sun","rot":[-40,-25,0],"Light":{"type":"Directional","intensity":3}}
+{"id":"sky","name":"Sky","Sky":{}}
+{"id":"world","name":"World Settings","WorldSettings":{}}
+{"id":"rules","name":"Game Rules","GameRules":{}}
+{"id":"camera","name":"Main Camera","pos":[0,3,14],"rot":[-6,0,0],"Camera":{"fov":45},"AudioListener":{},"CameraFollow":{}}
+{"id":"hero","name":"Hero","pos":[0,1,0],"scale":[0.8,1.6,0.8],"MeshRenderer":{"mesh":"Cube","material":"Hero"},"Rigidbody2D":{"freezeRotation":true},"Collider2D":{},"PhysicsMaterial":{"friction":0},"PlatformerController":{}}
+{"id":"ground1","name":"Ground","pos":[3.5,-3,0],"scale":[17,6,2],"MeshRenderer":{"mesh":"Cube","material":"Grass"},"Collider2D":{}}
+{"id":"ground2","name":"Ground","pos":[22.5,-3,0],"scale":[15,6,2],"MeshRenderer":{"mesh":"Cube","material":"Grass"},"Collider2D":{}}
+{"id":"ground3","name":"Ground","pos":[39,-3,0],"scale":[12,6,2],"MeshRenderer":{"mesh":"Cube","material":"Grass"},"Collider2D":{}}
+{"id":"wall_start","name":"Wall","pos":[-5.5,1,0],"scale":[1,12,2],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider2D":{}}
+{"id":"wall_end","name":"Wall","pos":[45.5,1,0],"scale":[1,12,2],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider2D":{}}
+{"id":"platform1","name":"Platform","pos":[8,2.25,0],"scale":[3,0.5,2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider2D":{}}
+{"id":"platform2","name":"Platform","pos":[22,2.75,0],"scale":[3,0.5,2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider2D":{}}
+{"id":"platform3","name":"Platform","pos":[26,4.75,0],"scale":[2.5,0.5,2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider2D":{}}
+{"id":"platform4","name":"Platform","pos":[37,2.75,0],"scale":[3,0.5,2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider2D":{}}
+{"id":"coin1","name":"Coin","pos":[2,0.8,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin2","name":"Coin","pos":[4,0.8,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin3","name":"Coin","pos":[8,3.4,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin4","name":"Coin","pos":[13.5,2.5,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin5","name":"Coin","pos":[22,3.9,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin6","name":"Coin","pos":[26,5.9,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{"value":5}}
+{"id":"coin7","name":"Coin","pos":[31.5,2.5,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"coin8","name":"Coin","pos":[37,3.9,0],"scale":[0.6,0.6,0.6],"MeshRenderer":{"mesh":"Sphere","material":"Gold"},"Collider2D":{"isTrigger":true},"Coin":{}}
+{"id":"checkpoint","name":"Checkpoint","pos":[19,1,0],"scale":[0.2,2,0.2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider2D":{"isTrigger":true},"Goal":{"isCheckpoint":true}}
+{"id":"goal","name":"Goal Flag","pos":[43,1.5,0],"scale":[0.3,3,0.3],"MeshRenderer":{"mesh":"Cube","material":"Glow"},"Collider2D":{"isTrigger":true},"Goal":{}}

@@ -92,6 +92,28 @@ Assets/
 
 - 무기 수치는 코드가 아니라 데이터 파일에 둡니다. 밸런스 조정은 파일 한 줄 수정이고, AI도 그대로 고칠 수 있습니다.
 
+### 구현 현황 — 1인칭 슈팅 (2026-11-25, 첫 게임)
+
+`bdg new <폴더> --template fps [--name "게임 이름"]` — 템플릿은 저장소의 `Templates/fps/`(빌드 때 `bdg.exe` 옆 `Templates/`로 복사)이고, 만들 때 이름·엔진 C# 경로를 채우고, 소리 3개(`Shoot`·`Hit`·`Jump`, 합성 = CC0)를 만들고, `dotnet build`로 C#을 한 번 빌드합니다(`.cache/Scripts`).
+
+| 파일 | 내용 |
+|---|---|
+| `Scenes/Main.scene` | 연습장: 바닥·벽·경사로·발판·상자(그레이박스, 정적 Collider), 받침대 위 금색 표적 5개(Rigidbody), 플레이어, 총알 12개 풀 |
+| `Assets/Player/FPSController.cs` | 걷기·달리기(Sprint)·점프(땅에 있을 때)·마우스/스틱 시점. Player(Rigidbody Character + 캡슐) → Head(좌우) → Eyes(Camera + AudioListener, 위아래) |
+| `Assets/Weapons/Weapon.cs`, `Projectile.cs` | 연사·탄창·재장전(`await Wait`)·퍼짐·반동, 수치는 `Data/Weapons.table.jsonl`(rifle·pistol·shotgun — "샷건으로" = 한 칸). 총알은 **물리 투사체**: 미리 놓아 둔 `Bullet` 풀(중력 0)을 총구로 옮기고 속도를 줌(플레이 중 새로 만든 오브젝트는 아직 물리 몸체가 없어서) |
+| `Assets/Game/Target.cs`, `ScoreKeeper.cs` | 맞으면 충격으로 밀리고 소리, 점수(+1·+2·+3), 1.5초 뒤 사라짐. 규칙(GameMode)이 점수를 로그·Console에(게임 UI 7-3 전) |
+| `Input/Actions.jsonl`, `Input/Contexts/OnFoot.jsonl` | Move·Look·Jump·Sprint·Fire·Reload — 키보드·마우스·게임패드 |
+| `Assets/Materials/*.material` | Gold·Steel·Concrete·Wood·Glow |
+| `AGENTS.md`, `README.md`, `LICENSE-TEMPLATE.txt` | 구조와 고치는 법(요청 → 고칠 곳 표), 조작, 0BSD(코드)·CC0(에셋) |
+
+함께 바뀐 것: 에디터를 **게임 프로젝트 폴더에서 열면** 그 폴더를 프로젝트로 씀(엔진 폴더로 옮기지 않고, 글꼴·토큰·아이콘은 엔진 폴더에서), 빌드한 게임이 **입력 액션**(창 전체가 Game 뷰)·**물리 설정**(중력)을 쓰고 `display.showCursor`가 꺼져 있으면 마우스를 붙잡음(Esc로 놓고 클릭으로 다시), `bdg build`가 `Input/`을 묶음, 빌드 사전 검사가 머티리얼 파일을 줄 단위로 읽음.
+
+검사: `BDG_FPS_TEST=1`(템플릿 폴더에서 에디터 실행) — 주입한 W·Space·클릭·마우스로 이동·점프·첫 표적 명중(밀림, 점수 1)·시점 → `fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1`, 이어서 `bdg build`와 빌드한 게임 120프레임(CI). **남은 것**: 앉기, 조준(ADS), 체력·피해, HUD(7-3), 피격 이펙트, 팔 메시, 레이캐스트 히트스캔(물리 레이캐스트 다음), 프리팹(6-1 뒤 플레이어·표적·총알을 프리팹으로), 3인칭 등 다른 템플릿.
+
+### 구현 현황 — 2D 플랫포머 (2026-11-25)
+
+`bdg new <폴더> --template platformer2d` — `Templates/platformer2d/`. **Box2D**(XY 평면) 위 옆으로 가는 레벨: 땅 3덩어리와 구덩이, 발판 4개, 동전 8개(트리거), 체크포인트, 골 깃발. C#: `PlatformerController`(걷기·달리기·가속, **코요테 타임·점프 버퍼·짧은 점프**, 떨어지면 체크포인트로; Rigidbody2D + Collider2D + 마찰 0), `CameraFollow`(데드존 + 부드럽게), `Coin`(트리거 → 소리·점수·사라짐), `Goal`(골 또는 `isCheckpoint`), `GameRules`(동전 수·골 → 로그). 입력 Move·Jump·Run(키보드·패드), 소리 Jump·Coin·Goal(합성), 2D 중력 -25. 그림은 지금 원근 카메라로 본 3D 상자(직교 2D 카메라·스프라이트·타일맵은 다음). 검사 `BDG_PLATFORMER_TEST=1`: D로 달려 동전 2개, 점프, 카메라 따라옴 → `platformer test: ran=1 jumped=1 coins=1 camera=1`, 빌드한 게임 90프레임(CI).
+
 ## 5. 기본 3D 씬
 
 | 오브젝트 | 내용 |

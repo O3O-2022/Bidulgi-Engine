@@ -14,6 +14,7 @@
 #include "Scripting/CSharpBindings.h"
 #include "Scripting/DataTable.h"
 #include "Build/Build.h"
+#include "Build/Templates.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
@@ -639,9 +640,24 @@ int CmdBuild(Ctx& c) {
 }
 
 int CmdNew(Ctx& c) {
-  if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty]\n"; return 2; }
+  if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty|fps|platformer2d] [--name 게임 이름]\n"; return 2; }
+  if (const std::string game = c.Opt("template"); IsGameTemplate(game)) { // a playable game (templates, §4)
+    TemplateResult r;
+    std::string error;
+    const fs::path at = U8(c.pos[0]).is_absolute() ? U8(c.pos[0]) : c.cwd / U8(c.pos[0]);
+    if (!CreateFromTemplate(game, Utf8(at), c.Opt("name"), r, &error)) { c.err += "오류: " + error + "\n"; return 1; }
+    c.out += std::format("새 게임 프로젝트 ({}): {} — 파일 {}개\n", game, Utf8(at), r.files.size());
+    if (r.scriptsBuilt) c.out += "C# 스크립트 빌드됨 (.cache/Scripts). 에디터에서 이 폴더를 열고 Play, 또는 bdg build.\n";
+    else c.out += "C# 스크립트를 빌드하지 못함 — 이 폴더에서 dotnet build Game.csproj\n" + r.scriptLog + "\n";
+    return 0;
+  }
   SceneTemplate t = SceneTemplate::Basic3D;
-  if (!ParseSceneTemplate(c.Opt("template", "basic3d"), t)) { c.err += "오류: 템플릿은 basic3d 또는 empty\n"; return 2; }
+  if (!ParseSceneTemplate(c.Opt("template", "basic3d"), t)) {
+    std::string games;
+    for (const GameTemplateInfo& g : GameTemplates()) games += ", " + g.name;
+    c.err += "오류: 템플릿은 basic3d, empty" + games + "\n";
+    return 2;
+  }
   const fs::path dir = U8(c.pos[0]).is_absolute() ? U8(c.pos[0]) : c.cwd / U8(c.pos[0]);
   std::error_code ec;
   if (fs::exists(dir / "Scenes" / "Main.scene", ec)) { c.err += std::format("오류: 이미 프로젝트가 있음: {}\n", Utf8(dir)); return 1; }
@@ -655,7 +671,7 @@ int CmdNew(Ctx& c) {
 
 const char* kHelp =
     "bdg — 비둘기 엔진 명령줄 (에디터와 같은 명령 버스)\n"
-    "  new <dir> [--template basic3d|empty]\n"
+    "  new <dir> [--template basic3d|empty|fps|platformer2d] [--name 게임 이름]   (fps, platformer2d = 바로 할 수 있는 게임 템플릿)\n"
     "  view [scene] | outline [scene] | query <pattern> [-f pos,Health.hp] | schema [Type]\n"
     "  set <target> path=value ... [--dry-run] | add <id> [--name N] [--parent P] [--pos x,y,z] [--comp Type]\n"
     "  del <id>... | addcomp <id> <Type> | rmcomp <id> <Type>\n"

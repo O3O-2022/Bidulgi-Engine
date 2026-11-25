@@ -1,0 +1,6 @@
+{
+  "name": "fps",
+  "title": "1인칭 슈팅 / First-person shooter",
+  "description": "Shooting range: first-person player (walk, sprint, jump, mouse look), physics projectiles, targets, score",
+  "sounds": ["Assets/Audio/Shoot.wav", "Assets/Audio/Hit.wav", "Assets/Audio/Jump.wav"]
+}

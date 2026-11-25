@@ -9,6 +9,8 @@
 #include <bdg/bdg_api.h>
 #include "Assets/AssetDatabase.h"
 #include "Audio/Audio.h"
+#include "Input/GameInput.h"
+#include "Input/InputActions.h"
 #include "Build/Pak.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
@@ -214,6 +216,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   LoadScripts(dlls, managed); // C# Behaviour classes are component types: before the scene
 
   bdg::EditorModel model;
+  model.assets = haveAssets ? &assets : nullptr; // physics reads mesh colliders from the assets
   const fs::path scene = content / bdg::PathU8(settings.maps.gameStartScene);
   if (!fs::exists(scene, ec) || !model.OpenScene(U(scene))) {
     ShowError("시작 장면을 열 수 없습니다: " + settings.maps.gameStartScene);
@@ -223,6 +226,8 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   bdg::PlayMode play;
   play.Scripts().fixedStep = settings.physics.fixedTimestep;
   play.Scripts().maxFixedSteps = settings.physics.maxFixedSteps;
+  play.physicsSettings.gravity = {settings.physics.gravity.x, settings.physics.gravity.y, settings.physics.gravity.z};
+  play.physicsSettings.gravity2D = {settings.physics.gravity2D.x, settings.physics.gravity2D.y};
   play.Start(model);
 
   using clock = std::chrono::steady_clock;
@@ -236,6 +241,18 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     last = start;
     if (maxFrames > 0) dt = 1.0 / 60.0; // automated runs: the same game time on every machine
     if (!hidden && !settings.audio.playInBackground) bdg::AudioSystem::Instance().SetMuted(!window.HasFocus());
+    { // input actions (6-4): the whole window is the game view
+      int32_t iw = 0, ih = 0;
+      window.GetDrawableSize(iw, ih);
+      area.x = area.y = 0;
+      area.w = (float)std::max(iw, 1);
+      area.h = (float)std::max(ih, 1);
+      std::vector<bdg::InputEvent> events = window.Events();
+      bdg::RouteGameInput(events, &area, true, std::clamp(dt, 0.0, 0.1), content);
+      // hidden cursor (display.showCursor off, first-person games): the mouse is held while the game has the input;
+      // Escape lets it go, a click takes it again
+      if (!hidden && !d.showCursor) window.SetRelativeMouse(bdg::InputSystem::Instance().gameFocused);
+    }
     play.Tick(model, std::clamp(dt, 0.0, 0.1));
     int32_t w = 0, h = 0;
     window.GetDrawableSize(w, h);
