@@ -10,9 +10,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <format>
+#include <map>
 
 namespace bdg {
 namespace {
+struct Registered { CommandBus::Handler apply; CommandBus::Labeler label; };
+std::map<std::string, Registered>& Handlers() { // commands added by other modules (CommandBus::RegisterHandler)
+  static std::map<std::string, Registered> handlers;
+  return handlers;
+}
 std::string Q(const std::string& s) { return Registry::ToJson(&s, reflect::ValueTypeOf<std::string>()); }
 bool Fail(std::string* error, std::string msg) {
   if (error) *error = std::move(msg);
@@ -258,8 +264,11 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     scene_.RemoveComponent(o->id, typeName);
     return true;
   }
+  if (auto h = Handlers().find(n); h != Handlers().end()) return h->second.apply(scene_, cmd, inv, error); // registered (terrain, ...)
   return Fail(error, std::format("unknown command \"{}\" (set, rename, add, addprefab, del, mv, addcomp, rmcomp, call, setcomp)", n));
 }
+
+void CommandBus::RegisterHandler(const std::string& name, Handler apply, Labeler label) { Handlers()[name] = {std::move(apply), std::move(label)}; }
 
 // ---- History ---------------------------------------------------------------------------------
 void CommandBus::Push(Entry e) {
@@ -291,6 +300,7 @@ std::string CommandBus::Label(const Command& cmd) const {
   if (n == "rmcomp") return std::format("Remove {} from {}", a.Str("type"), who);
   if (n == "call") return std::format("{}: {}.{}()", who, a.Str("type"), a.Str("function"));
   if (n == "setcomp") return std::format("{}: {} values", who, a.Str("type"));
+  if (auto h = Handlers().find(n); h != Handlers().end() && h->second.label) return h->second.label(scene_, cmd);
   return n;
 }
 

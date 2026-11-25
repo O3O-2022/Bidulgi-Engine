@@ -111,7 +111,7 @@ std::string GenerateCSharpBindings() {
         } else
           members += std::format("  public void {}({}) => CallVoid(\"{}\"{});\n", method, params, fn.name, args);
       }
-    body += std::format("\npublic sealed class {} : Component {{\n  public {}(GameObject owner) : base(owner, \"{}\") {{}}\n{}}}\n",
+    body += std::format("\npublic sealed partial class {} : Component {{\n  public {}(GameObject owner) : base(owner, \"{}\") {{}}\n{}}}\n",
                         name, name, name, members);
   }
   std::map<std::string, const EnumInfo*> sortedEnums;

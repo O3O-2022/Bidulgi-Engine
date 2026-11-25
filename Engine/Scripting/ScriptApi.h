@@ -27,6 +27,7 @@
 //   {"op":"raycast","origin":[..],"dir":[..],"max":100,"ignore":["g3"],"triggers":false}
 //        -> {"id":"g6","point":[..],"normal":[..],"distance":3.2} or null
 //   {"op":"overlap","center":[..],"radius":5,"triggers":false} -> ["g6","g9"]
+// Terrain (round 6): {"op":"terrain.height","x":12,"z":40} -> {"id":"g3","height":4.2,"normal":[..]} or null (no terrain there)
 // Particle effects (6-VFX P-1), while playing:
 //   {"op":"vfx.play","effect":"Spark","at":[x,y,z],"rotation":[deg..],"seed":0} -> 3   {"op":"vfx.stop","id":3,"clear":false}
 //   {"op":"vfx.playing","id":3} -> true   {"op":"vfx.alive"} -> 120 (all; with "id": that effect's)
