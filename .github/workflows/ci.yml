@@ -536,6 +536,9 @@ jobs:
           # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)
           $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1' } 8
           if ($log -notmatch 'csharp test: started=1 self=1 values=1 steps=3 script=1 undo=1') { $errors += 'C# scripting test failed' }
+          # 4-5 debugging: BDG_CSHARP_DEBUG_WAIT holds scripting for a debugger, then goes on when none attaches
+          $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1'; BDG_CSHARP_DEBUG_WAIT = '0.3' } 8
+          if ($log -notmatch 'C#: no debugger attached; going on' -or $log -notmatch 'csharp test: started=1 self=1') { $errors += 'C# debugger wait failed' }
 
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"

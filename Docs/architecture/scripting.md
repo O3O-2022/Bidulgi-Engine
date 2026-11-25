@@ -181,7 +181,7 @@ public class Door : Behaviour {
 
 ## 주의할 점
 
-- **디버깅:** 모든 언어를 **DAP**로 연결해 VS Code 하나에서 함께 디버깅. 에디터 안 그래프 디버거도 같은 프로토콜
+- **디버깅:** 모든 언어를 **DAP**로 연결해 VS Code 하나에서 함께 디버깅. 에디터 안 그래프 디버거도 같은 프로토콜 — C#은 [csharp-debugging](../features/csharp-debugging.md)(4-5, 실행 중인 에디터에 attach)
 - **문서:** 리플렉션 정의에서 언어별 API 문서와 예제를 자동 생성
 - **AI 혼란 방지:** `scripting.primary`(기본 C#)를 두고, 에이전트는 그 언어로 새 스크립트를 만듦. 새 프로젝트는 C#과 그래프만 켜진 상태로 시작
 

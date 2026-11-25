@@ -124,9 +124,22 @@ public abstract class Component {
 
 // Entry points the engine calls (UnmanagedCallersOnly: plain C function pointers).
 public static unsafe partial class Host {
+  // Debugging (queue 4-5, Docs/features/csharp-debugging.md): BDG_CSHARP_DEBUG_WAIT=<seconds> holds the start of
+  // scripting until a .NET debugger attaches (or the time runs out), so breakpoints in Awake / Start are hit.
+  static void WaitForDebugger() {
+    if (!double.TryParse(Environment.GetEnvironmentVariable("BDG_CSHARP_DEBUG_WAIT"), System.Globalization.NumberStyles.Float,
+                         System.Globalization.CultureInfo.InvariantCulture, out double seconds) || seconds <= 0) return;
+    int pid = Environment.ProcessId;
+    Debug.Log($"C#: waiting up to {seconds:0.#} s for a .NET debugger to attach (process id {pid})");
+    var clock = System.Diagnostics.Stopwatch.StartNew();
+    while (!System.Diagnostics.Debugger.IsAttached && clock.Elapsed.TotalSeconds < seconds) System.Threading.Thread.Sleep(50);
+    Debug.Log(System.Diagnostics.Debugger.IsAttached ? $"C#: debugger attached after {clock.Elapsed.TotalSeconds:0.0} s" : "C#: no debugger attached; going on");
+  }
+
   [UnmanagedCallersOnly]
   public static int Initialize(IntPtr request) {
     Engine.Attach(request);
+    WaitForDebugger();
     ScriptSyncContext.Install(); // async continuations come back to the game thread (4-4c)
     return 4; // scripting API version (2: [Edit] fields, 4-3; 3: hot reload, 4-4; 4: easy API, timers, waits, 4-4c)
   }
