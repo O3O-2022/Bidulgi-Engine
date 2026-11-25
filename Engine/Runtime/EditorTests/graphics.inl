@@ -1,5 +1,6 @@
-// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog.
+// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1).
 // Included by Engine.cpp after the other EditorTests files. New checks: register with BDG_EDITOR_TEST.
+#include "Render3D/DynamicGI.h"
 
 namespace gfxtest {
 // Bottom-up RGBA8 rows of the Scene view's last picture.
@@ -328,3 +329,103 @@ void ReportFogTest(bdg_engine*) {
   bdg::LogInfo("fog test: ran={} shafts={} glow={} height={} tiers={}", ran, shafts, glow, height, tiers);
 }
 BDG_EDITOR_TEST("BDG_FOG_TEST", InjectFogTest, ReportFogTest)
+
+// BDG_GI1_TEST=1: realtime GI (Halo Tier 1, round 6). A closed room of 10 cm walls on a sunlit ground, a light probe
+// volume (1 m cells) across inside and outside, the camera inside; high tier traces the volume while running. With
+// visibility (depth maps and masks) the room stays dark; with it off the sunlit probes outside light the inside
+// (leak). A lamp switched on in the room: the traced probes take most of its bounce light within a few sweeps.
+// Medium tier does not trace.
+namespace gi1test {
+std::string ran = "-", leak = "-", react = "-", tiers = "-";
+double dark = 0;
+std::vector<float> trace;
+}
+void InjectGI1Test(bdg_engine* e, int frame, float) {
+  using namespace gi1test;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv || !e->r3d) return;
+  using gfxtest::Run;
+  auto mean = [](const gfxtest::Shot& s) { // mean luminance of the middle half of the picture
+    double sum = 0;
+    size_t n = 0;
+    for (int y = s.h / 4; y < s.h * 3 / 4; ++y)
+      for (int x = s.w / 4; x < s.w * 3 / 4; ++x, ++n) {
+        const uint8_t* q = &s.px[((size_t)y * s.w + x) * 4];
+        sum += 0.299 * q[0] + 0.587 * q[1] + 0.114 * q[2];
+      }
+    return n ? sum / (double)n : 0.0;
+  };
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) Run(m, "del", id, "{}");
+    Run(m, "add", "", R"({"id":"gsun","name":"Sun"})");
+    Run(m, "set", "gsun", R"({"path":"Transform.rotation","value":[-50,30,0]})");
+    Run(m, "addcomp", "gsun", R"({"type":"Light","value":{"type":"Directional","intensity":4}})");
+    auto box = [&](const char* id, const char* pos, const char* scale) {
+      Run(m, "add", "", std::format(R"({{"id":"{}","name":"{}"}})", id, id));
+      Run(m, "set", id, std::format(R"({{"path":"Transform.position","value":[{}]}})", pos));
+      Run(m, "set", id, std::format(R"({{"path":"Transform.scale","value":[{}]}})", scale));
+      Run(m, "addcomp", id, R"({"type":"MeshRenderer","value":{"mesh":"Cube","material":"M_Ground"}})");
+    };
+    box("gground", "0,-0.5,0", "40,1,40");
+    box("gwest", "-2,1.5,0", "0.1,3,4.1");
+    box("geast", "2,1.5,0", "0.1,3,4.1");
+    box("gnorth", "0,1.5,-2", "4.1,3,0.1");
+    box("gsouth", "0,1.5,2", "4.1,3,0.1");
+    box("groof", "0,3,0", "4.2,0.1,4.2");
+    Run(m, "add", "", R"({"id":"gvol","name":"Probes"})");
+    Run(m, "set", "gvol", R"({"path":"Transform.position","value":[0,2,0]})");
+    Run(m, "addcomp", "gvol", R"({"type":"LightProbeVolume","value":{"size":[12,4,12],"countX":12,"countY":4,"countZ":12}})");
+    m->SetSelection({});
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    sv->camera.pivot = {0, 1.0f, 0};
+    sv->camera.yaw = 30;
+    sv->camera.pitch = -20;
+    sv->camera.distance = 1.5f;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    sv->quality.ssr = false;
+    sv->quality.volumetricFog = false;
+    sv->quality.giProbesPerFrame = 600; // every probe each frame: settled quickly
+  }
+  if (frame == 14) {
+    const bdg::DynamicGI* gi = e->r3d->TracedGI();
+    ran = sv->LastStats().dynamicGI && gi && gi->RaysTraced() > 0 && gi->Triangles() == 6 * 12 ? "1" : "0";
+    const gfxtest::Shot closed = gfxtest::Grab(e);
+    if (const char* dump = std::getenv("BDG_GI1_DUMP")) bdg::WritePNG((std::string(dump) + "_dark.png").c_str(), closed.w, closed.h, closed.px.data(), true);
+    dark = mean(closed);
+    sv->quality.giVisibility = false;
+  }
+  if (frame == 17) {
+    const gfxtest::Shot open = gfxtest::Grab(e);
+    if (const char* dump = std::getenv("BDG_GI1_DUMP")) bdg::WritePNG((std::string(dump) + "_leak.png").c_str(), open.w, open.h, open.px.data(), true);
+    const double lit = mean(open);
+    leak = lit > dark * 1.5 + 6 ? "1" : std::format("0(vis {:.1f} novis {:.1f})", dark, lit);
+    sv->quality.giVisibility = true;
+    sv->quality.giProbesPerFrame = 144; // a quarter of the probes per frame: a sweep takes 4 frames
+    Run(m, "add", "", R"({"id":"glamp","name":"Lamp"})");
+    Run(m, "set", "glamp", R"({"path":"Transform.position","value":[0,2.2,0]})");
+    Run(m, "addcomp", "glamp", R"({"type":"Light","value":{"type":"Point","color":[1,0.5,0.25,1],"intensity":20,"range":6,"castShadows":false}})");
+  }
+  if (frame >= 18 && frame <= 60)
+    if (const bdg::DynamicGI* gi = e->r3d->TracedGI()) trace.push_back(gi->Irradiance({1.0f, 0.0f, 0.5f}, {0, 1, 0}).r);
+  if (frame == 60) {
+    if (const char* dump = std::getenv("BDG_GI1_DUMP")) {
+      const gfxtest::Shot s = gfxtest::Grab(e);
+      bdg::WritePNG((std::string(dump) + "_lamp.png").c_str(), s.w, s.h, s.px.data(), true);
+    }
+    const float final = trace.empty() ? 0.f : trace.back();
+    size_t reach = 0;
+    while (reach < trace.size() && trace[reach] < 0.9f * final) ++reach;
+    react = final > 0.05f && reach + 1 <= 24 ? "1" : std::format("0(90% after {} frames, final {:.3f})", reach + 1, final);
+    bdg::LogInfo("gi1: lamp bounce light 90% after {} frames (a sweep every 4), final {:.3f}", reach + 1, final);
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+  }
+  if (frame == 63) tiers = !sv->LastStats().dynamicGI ? "1" : "0";
+}
+void ReportGI1Test(bdg_engine*) {
+  using namespace gi1test;
+  bdg::LogInfo("gi1 test: ran={} leak={} react={} tiers={}", ran, leak, react, tiers);
+}
+BDG_EDITOR_TEST("BDG_GI1_TEST", InjectGI1Test, ReportGI1Test)

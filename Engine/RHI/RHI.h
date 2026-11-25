@@ -84,6 +84,9 @@ public:
   void          GenerateMips(TextureHandle t);
   // A whole mip level as RGBA floats (cubemaps: the 6 faces one after another).
   bool          ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& rgba);
+  // Mean colour of a 2D texture from its smallest stored mip level (at most 256 x 256 texels read), as stored (sRGB
+  // textures: still sRGB-encoded, *srgb set). False when it cannot (no such texture, only big levels).
+  bool          ReadTextureMean(TextureHandle t, float rgba[4], bool* srgb = nullptr);
   // Writes `faces` faces (arrays: face + 6 * cube) of one mip level from RGBA floats (cached bakes).
   void          UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int32_t faces, const float* rgba);
   // Anisotropic filtering (3-5b): up to MaxAnisotropy() (1 when the driver has none). Cached: cheap to repeat.

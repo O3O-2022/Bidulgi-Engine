@@ -265,6 +265,10 @@ jobs:
           # light glowing in the fog, height falloff (thinner high up), off on medium
           $log = Invoke-Editor 'Release' @{ BDG_FOG_TEST = '1' } 20
           if ($log -notmatch 'fog test: ran=1 shafts=1 glow=1 height=1 tiers=1') { $errors += 'volumetric fog test failed' }
+          # Round 6 realtime GI (Halo Tier 1): a closed room of thin walls in a traced probe volume; visibility keeps the
+          # sunlit probes outside from lighting the inside, a lamp's bounce light arrives within a few sweeps, off on medium
+          $log = Invoke-Editor 'Release' @{ BDG_GI1_TEST = '1' } 66
+          if ($log -notmatch 'gi1 test: ran=1 leak=1 react=1 tiers=1') { $errors += 'realtime GI (Tier 1) test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 24) Render reference scene (queue 3-8): bookmarks, Albedo/Normal/Depth/Shadow views, wireframe, stored bookmark, GPU timers

@@ -1,4 +1,5 @@
 #include "Render3D/Renderer3D.h"
+#include "Render3D/DynamicGI.h"
 #include "Assets/GltfImport.h"
 #include "Render3D/Culling.h"
 #include "Render3D/Lightmap.h"
@@ -69,6 +70,25 @@ const char* kProbesFn = R"(layout(std140, binding = 5) uniform Probes3D {
   vec4 uVolMin; vec4 uVolMax; vec4 uVolCount;
 };
 layout(std430, binding = 1) readonly buffer Volume3D { vec4 uVolSH[]; };
+// GI Tier 1 (round 6): per probe (36 vec4, see Render3D/DynamicGI.h) an 8 x 8 octahedral map of the mean and mean
+// square of its ray distances (2 texels per vec4), then a 512-bit mask of the small boxes around it it sees (4 vec4,
+// bits in the floats); uVolMax.w = 1 when present. A point further than the probe sees that way gets little light.
+layout(std430, binding = 7) readonly buffer VolumeVis3D { vec4 uVolVis[]; };
+vec2 VisTexel(int probe, int tx, int ty) {
+  int t = ty * 8 + tx;
+  vec4 pair = uVolVis[probe * 36 + (t >> 1)];
+  return (t & 1) == 0 ? pair.xy : pair.zw;
+}
+bool VisMask(int probe, int bit) {
+  uint word = floatBitsToUint(uVolVis[probe * 36 + 32 + (bit >> 7)][(bit >> 5) & 3]);
+  return ((word >> uint(bit & 31)) & 1u) != 0u;
+}
+vec2 OctUV(vec3 d) {
+  vec3 p = d / max(abs(d.x) + abs(d.y) + abs(d.z), 1e-8);
+  vec2 s = vec2(p.x >= 0.0 ? 1.0 : -1.0, p.z >= 0.0 ? 1.0 : -1.0);
+  vec2 e = p.y >= 0.0 ? p.xz : vec2((1.0 - abs(p.z)) * s.x, (1.0 - abs(p.x)) * s.y);
+  return e * 0.5 + 0.5;
+}
 void SHBasis(vec3 n, out float b[9]) {
   b[0] = 0.282095; b[1] = 0.488603 * n.y; b[2] = 0.488603 * n.z; b[3] = 0.488603 * n.x;
   b[4] = 1.092548 * n.x * n.y; b[5] = 1.092548 * n.y * n.z; b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
@@ -101,6 +121,31 @@ vec3 VolumeIrradiance(vec3 p, vec3 n) { // the 8 nearest grid probes, blended by
     vec3 s = vec3(0.0);
     for (int k = 0; k < 9; ++k) s += uVolSH[base + k].rgb * b[k];
     float w = w3.x * w3.y * w3.z * max(uVolSH[base].w, 1e-4); // probes inside objects are switched off (w = 0)
+    if (uVolMax.w > 0.5) { // visibility (GI Tier 1): no light through walls; probes behind the surface count less
+      vec3 cellSize = (uVolMax.xyz - uVolMin.xyz) / vec3(cnt);
+      vec3 to = p - (uVolMin.xyz + (vec3(q) + 0.5) * cellSize);
+      float dist = length(to);
+      vec3 dir = dist > 1e-5 ? to / dist : vec3(0.0, 1.0, 0.0);
+      float facing = dot(-dir, n) * 0.5 + 0.5;
+      w *= facing * facing + 0.05;
+      int probeIndex = (q.z * cnt.y + q.y) * cnt.x + q.x;
+      // p was pushed a quarter cell off the surface by the caller (normal bias, like DDGI): a probe just behind a thin
+      // wall then sees the wall clearly in front of it (Render3D/DynamicGI.cpp Irradiance does the same)
+      vec2 st = OctUV(dir) * 8.0 - 0.5;
+      ivec2 t0 = clamp(ivec2(floor(st)), ivec2(0), ivec2(7)), t1 = min(t0 + 1, ivec2(7));
+      vec2 fr = clamp(st - vec2(t0), vec2(0.0), vec2(1.0));
+      vec2 mm = mix(mix(VisTexel(probeIndex, t0.x, t0.y), VisTexel(probeIndex, t1.x, t0.y), fr.x),
+                    mix(VisTexel(probeIndex, t0.x, t1.y), VisTexel(probeIndex, t1.x, t1.y), fr.x), fr.y);
+      float mean = mm.x, mom2 = mm.y;
+      // the mask first: the small box around the pushed-off point hidden from the probe gets (almost) nothing
+      ivec3 sub = clamp(ivec3(floor((to / cellSize + 1.0) * 4.0)), ivec3(0), ivec3(7));
+      if (!VisMask(probeIndex, (sub.z * 8 + sub.y) * 8 + sub.x)) w *= 1e-3;
+      else if (dist > mean) {
+        float var = max(mom2 - mean * mean, 1e-4), dd = dist - mean, pr = var / (var + dd * dd);
+        pr = max((pr - 0.2) / 0.8, 0.0); // light-bleed reduction: the soft tail of the test counts as hidden
+        w *= max(pr * pr * pr, 1e-3);
+      }
+    }
     e += s * w;
     wsum += w;
   }
@@ -1437,6 +1482,7 @@ void Renderer3D::Shutdown() {
   temporal_.clear();
   rhi_->DestroyBuffer(temporalUbo_);
   rhi_->DestroyBuffer(prevModelBuffer_);
+  rhi_->DestroyBuffer(visBuffer_);
   rhi_->DestroyBuffer(fogUbo_);
   rhi_->DestroyBuffer(fogMedia_);
   rhi_->DestroyBuffer(fogAccum_);
@@ -2045,6 +2091,65 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     f.shadow2[1] = q.shadowSoftness;
     f.shadow2[2] = band;
   }
+  { // GI Tier 1 (round 6): the probe volume traced again, a share of probes per frame, with visibility
+    const bool want = q.dynamicGI && hasVolume_ && q.lighting == LightingMode::Pixel && !(extras && extras->linearOutput);
+    if (want) {
+      if (!dynGI_) dynGI_ = std::make_shared<DynamicGI>();
+      dynGI_->Configure(volume_);
+      // the traced scene follows changes at once, moving objects at most every 30 frames (a rebuild also retraces the
+      // visibility masks)
+      auto textureMean = [this](TextureHandle t) { // a texture's mean linear colour, read once from its smallest mip
+        auto it = textureMean_.find(t.id);
+        if (it != textureMean_.end()) return it->second;
+        float m[4] = {};
+        bool srgb = false;
+        glm::vec3 c(0.5f);
+        if (rhi_->ReadTextureMean(t, m, &srgb)) {
+          c = glm::clamp(glm::vec3(m[0], m[1], m[2]), glm::vec3(0.f), glm::vec3(1.f));
+          if (srgb) c = glm::pow(c, glm::vec3(2.2f));
+        }
+        return textureMean_[t.id] = c;
+      };
+      if (++giSceneAge_ >= 30 && dynGI_->SetScene(itemsIn, textureMean)) {
+        ++giRebuilds_;
+        giSceneAge_ = 0;
+      }
+      DynamicGI::Settings gs;
+      gs.raysPerProbe = q.giRays;
+      gs.probesPerUpdate = q.giProbesPerFrame;
+      gs.hysteresis = q.giHysteresis;
+      if (!dynGI_->Seeded()) { // a new grid starts settled: every probe traced a few times now (light bouncing in), as
+        DynamicGI::Settings all = gs; // a bake would, instead of fading in over many frames
+        all.probesPerUpdate = (int)dynGI_->Probes();
+        for (int i = 0; i < 4; ++i) dynGI_->Update(light, all);
+      } else {
+        dynGI_->Update(light, gs);
+      }
+      const std::vector<float>& sh = dynGI_->SH();
+      const size_t n = dynGI_->Probes();
+      if (n * 9 > volumeCapacity_) {
+        rhi_->DestroyBuffer(volumeBuffer_);
+        volumeCapacity_ = n * 9;
+        volumeBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, volumeCapacity_ * 16, true);
+      }
+      rhi_->UpdateBuffer(volumeBuffer_, sh.data(), sh.size() * sizeof(float));
+      volumeSH_ = sh; // the CPU lookups (AmbientAt, tests) see the same values
+      const std::vector<float>& vis = dynGI_->Visibility();
+      if (vis.size() * sizeof(float) > visCapacity_) {
+        rhi_->DestroyBuffer(visBuffer_);
+        visCapacity_ = vis.size() * sizeof(float);
+        visBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, visCapacity_, true);
+      }
+      rhi_->UpdateBuffer(visBuffer_, vis.data(), vis.size() * sizeof(float));
+      volumeBaked_ = true;
+      dynamicGIOn_ = q.giVisibility; // the shader's visibility test (off: a comparison for tests)
+      UploadProbes();
+    } else if (dynamicGIOn_) {
+      dynamicGIOn_ = false;
+      UploadProbes();
+    }
+    dynamicGIFrame_ = want;
+  }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
   // Draw lists (queue 3-9, 3-10). Object constants: one storage buffer element per item, in item order. Each pass
@@ -2228,6 +2333,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindUniformBuffer(5, probesUbo_);
   rhi_->BindTexture(6, envArray_);
   rhi_->BindStorageBuffer(1, volumeBuffer_);
+  rhi_->BindStorageBuffer(7, visBuffer_.Valid() ? visBuffer_ : volumeBuffer_);
   rhi_->BindStorageBuffer(2, lightBuffer_);
   rhi_->BindStorageBuffer(3, clusterBuffer_);
   rhi_->BindTexture(7, lightmapTex_.Valid() ? lightmapTex_ : white_);
@@ -2410,6 +2516,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.jitterY = jitter.y;
   stats_.ssr = ssrOn && f.ssr[0] > 0.5f;
   stats_.volumetricFog = volFogOn;
+  stats_.dynamicGI = dynamicGIFrame_;
   if (volFogOn) { // froxels: light them, integrate front to back, then fog each pixel by its depth
     const PostEffects3D& fx = light.post;
     const int gx = std::clamp(q.fogGridX, 8, 256), gy = std::clamp(q.fogGridY, 8, 256), gz = std::clamp(q.fogSlices, 8, 128);
@@ -2709,7 +2816,7 @@ void Renderer3D::UploadProbes() {
   d.info[0] = (float)(kEnvLevels - 1);
   if (hasVolume_ && volumeBaked_) {
     Put(d.volMin, volume_.boxMin, 1);
-    Put(d.volMax, volume_.boxMax);
+    Put(d.volMax, volume_.boxMax, dynamicGIOn_ ? 1.f : 0.f); // w: Tier 1 visibility data bound
     Put(d.volCount, glm::vec3(volume_.count), volume_.intensity);
   }
   rhi_->UpdateBuffer(probesUbo_, &d, sizeof(d));

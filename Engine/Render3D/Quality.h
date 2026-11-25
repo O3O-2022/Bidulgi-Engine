@@ -66,6 +66,12 @@ struct QualitySettings {
   // spot lights, integrated front to back; where a post volume sets fog density. High and ultra.
   bool volumetricFog = false;
   int fogGridX = 64, fogGridY = 36, fogSlices = 48;
+  // GI Tier 1 (round 6, Render3D/DynamicGI.h): a light probe volume is traced again while running, a share of probes
+  // per frame (rays against the scene's triangles), with per-probe visibility against light leaks. High and ultra.
+  bool dynamicGI = false;
+  bool giVisibility = true;
+  int giRays = 64, giProbesPerFrame = 24;
+  float giHysteresis = 0.5f;
   bool bloom = false;
   float bloomIntensity = 0.2f;    // share of the blurred image added back (glow around bright light)
   int msaa = 1;

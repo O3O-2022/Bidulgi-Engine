@@ -82,6 +82,8 @@ QualitySettings QualityPreset(QualityTier t) {
       q.ssr = true;                    // round 6: screen-space reflections
       q.ssrSteps = t == QualityTier::Ultra ? 64 : 40;
       q.volumetricFog = true;          // round 6: froxel fog where a post volume asks for it
+      q.dynamicGI = true;              // round 6: GI Tier 1 (traced probe volume) where there is a probe volume
+      q.giProbesPerFrame = t == QualityTier::Ultra ? 48 : 24;
       q.fogGridX = t == QualityTier::Ultra ? 96 : 64;
       q.fogGridY = t == QualityTier::Ultra ? 54 : 36;
       q.fogSlices = t == QualityTier::Ultra ? 64 : 48;
@@ -105,6 +107,7 @@ QualitySettings ReferenceQuality() {
   q.clustered = false;
   q.anisotropy = 1;
   q.localShadows = 0; // the board's point / spot checks were made without local shadows
+  q.dynamicGI = false; // the GI board checks the baked volume (Tier 0)
   std::fill(q.textureMax, q.textureMax + kTextureGroups, 16384); // full textures
   return q;
 }
@@ -181,6 +184,10 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "taa") q.taa = v != 0;
     else if (key == "ssr") q.ssr = v != 0;
     else if (key == "volfog") q.volumetricFog = v != 0;
+    else if (key == "dyngi") q.dynamicGI = v != 0;
+    else if (key == "givis") q.giVisibility = v != 0;
+    else if (key == "girays") q.giRays = std::clamp((int)v, 8, 512);
+    else if (key == "giprobes") q.giProbesPerFrame = std::clamp((int)v, 1, 4096);
     else if (key == "fogslices") q.fogSlices = std::clamp((int)v, 8, 128);
     else if (key == "ssrsteps") q.ssrSteps = std::clamp((int)v, 8, 128);
     else if (key == "ssrdistance") q.ssrDistance = std::max(v, 1.f);
