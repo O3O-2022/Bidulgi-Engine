@@ -576,9 +576,8 @@ jobs:
           Remove-Item -Recurse -Force "$PWD/ci-prefab" -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force "$PWD/ci-prefab/Assets" | Out-Null
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
-          $log = Invoke-Editor 'Release' @{ BDG_PREFAB_TEST = '1'; BDG_ASSETS = "$PWD/ci-prefab/Assets"; BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll" } 20
+          $log = Invoke-Editor 'Release' @{ BDG_PREFAB_TEST = '1'; BDG_ASSETS = "$PWD/ci-prefab/Assets" } 20 # BDG_SCRIPT_ASSEMBLIES: set above
           if ($log -notmatch 'prefab test: create=1 place=1 inspector=1 propagate=1 revert=1 apply=1 reopen=1 build=1 drop=1 csharp=1') { $errors += 'prefab test failed' }
-          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           # 6-3 audio (no device: mixed and measured): a 3D AudioSource plays, fades with distance, pauses; C# Audio API
           $log = Invoke-Editor 'Release' @{ BDG_AUDIO_TEST = '1' } 30
