@@ -8,6 +8,7 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <chrono>
 #include <fstream>
 #include <utility>
 #include <vector>
@@ -153,18 +154,18 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   if (rd < 0 || !fn) return fail(std::format("런타임 함수를 얻을 수 없음 (0x{:08x}) {}", (uint32_t)rd, g_hostError));
   auto load = (load_assembly_and_get_function_pointer_fn)fn;
   void* initialize = nullptr;
-  void* entry[8] = {};
-  const wchar_t* names[8] = {L"SelfTest", L"LoadAssembly", L"CreateBehaviour", L"SetBehaviourEnabled", L"DestroyBehaviour", L"TickBehaviours",
-                             L"SetBehaviourFields", L"GetBehaviourFields"};
+  void* entry[9] = {};
+  const wchar_t* names[9] = {L"SelfTest", L"LoadAssembly", L"CreateBehaviour", L"SetBehaviourEnabled", L"DestroyBehaviour", L"TickBehaviours",
+                             L"SetBehaviourFields", L"GetBehaviourFields", L"ReloadAssembly"};
   int rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", L"Initialize", kUnmanagedCallersOnly, nullptr, &initialize);
-  for (int i = 0; i < 8 && rl >= 0; ++i) {
+  for (int i = 0; i < 9 && rl >= 0; ++i) {
     rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", names[i], kUnmanagedCallersOnly, nullptr, &entry[i]);
     if (rl >= 0 && !entry[i]) rl = -1;
   }
   if (rl < 0 || !initialize)
     return fail(std::format("Bidulgi.Scripting의 진입점을 찾을 수 없음 (0x{:08x}) {}", (uint32_t)rl, g_hostError));
   const int api = ((int(__stdcall*)(void*))initialize)((void*)&DotNetHost::Request);
-  if (api != 2) return fail(std::format("스크립팅 API 버전이 다름 ({} != 2)", api));
+  if (api != 3) return fail(std::format("스크립팅 API 버전이 다름 ({} != 3)", api));
   loadAssembly_ = (int (*)(const char*))entry[1];
   create_ = (int (*)(const char*, const char*, int, const char*))entry[2];
   setEnabled_ = (void (*)(int, int))entry[3];
@@ -172,6 +173,7 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   tick_ = (void (*)(int, double, double, int))entry[5];
   setFields_ = (void (*)(int, const char*))entry[6];
   getFields_ = (int (*)(int, char*, int))entry[7];
+  reload_ = (int (*)(const char*))entry[8];
   selfTest_ = (int (*)(const char*))entry[0];
   // the runtime version the host resolved (written next to the dll by the build: *.runtimeconfig.json names the
   // framework; the actual one may be newer with RollForward)
@@ -234,28 +236,11 @@ template <size_t... I> constexpr auto MakeCreators(std::index_sequence<I...>) {
 constexpr auto kCreators = MakeCreators(std::make_index_sequence<kMaxScriptTypes>{});
 } // namespace
 
-std::string DotNetHost::RegisterBehaviourType(const std::string& name, yyjson_val* fields) {
-  if (name.empty()) return "no name";
-  if (const TypeInfo* t = Registry::Instance().Find(name)) {
-    if (behaviourTypes_.count(t)) return {}; // loaded again (same class name): keep the type, the new class runs (fields: 4-4)
-    return std::format("\"{}\" is already an engine type; rename the C# class", name);
-  }
-  if (Defaults().size() >= kMaxScriptTypes) return std::format("more than {} C# Behaviour classes", kMaxScriptTypes);
-  const size_t slot = Defaults().size();
-  ScriptDefaults& defs = Defaults().emplace_back();
-  TypeInfo& t = types_.emplace_back();
-  t.name = name;
-  t.size = sizeof(ScriptComponentData);
-  t.tags = {"Component", "Script", "CSharp"};
-  FieldInfo f;
-  f.name = "enabled";
-  f.value = reflect::ValueTypeOf<bool>();
-  f.offset = offsetof(ScriptComponentData, enabled);
-  f.flags = kEdit | kSave;
-  f.meta.tooltip = "Runs the behaviour's Update, FixedUpdate and LateUpdate (OnEnable / OnDisable when it changes)";
-  t.fields.push_back(f);
-  // [Edit] fields: {"name","type":"bool|int|float|double|string|vec2|vec3|vec4|enum","default":..,"min","max",
-  // "tooltip","header","values":[["Name",int],..]}. Unsupported types were skipped (with a warning) on the C# side.
+// [Edit] fields: {"name","type":"bool|int|float|double|string|vec2|vec3|vec4|enum","default":..,"min","max",
+// "tooltip","header","values":[["Name",int],..]}. Unsupported types were skipped (with a warning) on the C# side.
+void DotNetHost::BuildScriptFields(TypeInfo& t, void* defsRef, yyjson_val* fields) {
+  ScriptDefaults& defs = *static_cast<ScriptDefaults*>(defsRef);
+  const std::string& name = t.name;
   size_t at = 0, strings = 0;
   size_t i, n;
   yyjson_val* fv;
@@ -312,6 +297,71 @@ std::string DotNetHost::RegisterBehaviourType(const std::string& name, yyjson_va
     at += bytes;
     t.fields.push_back(x);
   }
+}
+
+std::string DotNetHost::RegisterBehaviourType(const std::string& name, yyjson_val* fields) {
+  if (name.empty()) return "no name";
+  if (const TypeInfo* found = Registry::Instance().Find(name)) {
+    if (!behaviourTypes_.count(found)) return std::format("\"{}\" is already an engine type; rename the C# class", name);
+    // Loaded again (hot reload, 4-4): the fields may have changed. Rebuild them in place (same TypeInfo, same storage
+    // shape) and carry every existing component's values over by field name; removed fields drop, new ones get the
+    // C# default.
+    TypeInfo& t = const_cast<TypeInfo&>(*found);
+    const size_t slot = slots_.at(found);
+    std::vector<std::pair<Component*, std::string>> kept;
+    if (scene_) {
+      std::vector<std::string> stack(scene_->Roots().begin(), scene_->Roots().end());
+      while (!stack.empty()) {
+        SceneObject* o = scene_->Find(stack.back());
+        stack.pop_back();
+        if (!o) continue;
+        stack.insert(stack.end(), o->children.begin(), o->children.end());
+        for (Component& c : o->components)
+          if (c.type == found) kept.push_back({&c, FieldsJson(c.data, t)});
+      }
+    }
+    Defaults()[slot] = ScriptDefaults{};
+    t.fields.resize(1); // "enabled" stays
+    BuildScriptFields(t, &Defaults()[slot], fields);
+    for (auto& [c, before] : kept) {
+      auto* d = static_cast<ScriptComponentData*>(c->data);
+      const bool enabled = d->enabled;
+      std::memcpy(d->raw, Defaults()[slot].raw, kScriptRawBytes);
+      for (size_t i = 0; i < kScriptStrings; ++i) d->str[i] = Defaults()[slot].str[i];
+      d->enabled = enabled;
+      if (yyjson_doc* doc = yyjson_read(before.data(), before.size(), 0)) {
+        yyjson_val* root = yyjson_doc_get_root(doc);
+        size_t i, n;
+        yyjson_val *k, *v;
+        yyjson_obj_foreach(root, i, n, k, v) {
+          const char* key = yyjson_get_str(k);
+          if (!key || std::strcmp(key, "enabled") == 0) continue;
+          char* text = yyjson_val_write(v, 0, nullptr);
+          if (text && t.FindField(key)) Registry::Set(c->data, t, key, text); // a changed type keeps the default
+          std::free(text);
+        }
+        yyjson_doc_free(doc);
+      }
+    }
+    if (!kept.empty()) LogInfo("C# hot reload: {} ({} component(s) kept their values)", name, kept.size());
+    return {};
+  }
+  if (Defaults().size() >= kMaxScriptTypes) return std::format("more than {} C# Behaviour classes", kMaxScriptTypes);
+  const size_t slot = Defaults().size();
+  ScriptDefaults& defs = Defaults().emplace_back();
+  TypeInfo& t = types_.emplace_back();
+  t.name = name;
+  t.size = sizeof(ScriptComponentData);
+  t.tags = {"Component", "Script", "CSharp"};
+  FieldInfo f;
+  f.name = "enabled";
+  f.value = reflect::ValueTypeOf<bool>();
+  f.offset = offsetof(ScriptComponentData, enabled);
+  f.flags = kEdit | kSave;
+  f.meta.tooltip = "Runs the behaviour's Update, FixedUpdate and LateUpdate (OnEnable / OnDisable when it changes)";
+  t.fields.push_back(f);
+  BuildScriptFields(t, &defs, fields);
+  slots_[&t] = slot;
   t.create = kCreators[slot];
   t.destroy = [](void* p) { delete static_cast<ScriptComponentData*>(p); };
   Registry::Instance().Add(t);
@@ -343,6 +393,28 @@ std::string DotNetHost::GetBehaviourFields(int handle) {
   if (len <= 0 || len > (int)buf.size()) return {};
   buf.resize((size_t)len);
   return buf;
+}
+
+int DotNetHost::ReloadScripts(const std::string& dllPath, Scene* scene, CommandBus* bus, std::string* error) {
+  if (!reload_) {
+    if (error) *error = "C# scripting is not running";
+    return -1;
+  }
+  Scene* oldScene = scene_;
+  CommandBus* oldBus = bus_;
+  if (scene) Attach(scene, bus); // registration carries the scene's component values over to changed fields
+  const auto t0 = std::chrono::steady_clock::now();
+  const int n = reload_(dllPath.c_str());
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  if (scene) Attach(oldScene, oldBus);
+  if (n < 0) {
+    if (error) *error = "cannot reload " + dllPath + " (see the log)";
+    return -1;
+  }
+  ++reloads_;
+  lastReloadMs_ = ms;
+  LogInfo("C# hot reload: {} class(es) from {} in {:.0f} ms", n, dllPath, ms);
+  return n;
 }
 
 int DotNetHost::LoadScripts(const std::string& dllPath, std::string* error) {

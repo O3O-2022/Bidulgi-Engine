@@ -538,6 +538,10 @@ jobs:
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
           Remove-Item Env:BDG_SCRIPT_ASSEMBLIES -ErrorAction SilentlyContinue
 
+          # 4-4 hot reload: v2 of the samples written over the loaded copy while playing; values, state and new code kept
+          $log = Invoke-Editor 'Release' @{ BDG_HOTRELOAD_TEST = '1' } 18
+          if ($log -notmatch 'hot reload test: reloaded=1 kept=1 newcode=1 state=1 stopped=1') { $errors += 'C# hot reload test failed' }
+
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_SHAKE_TEST = '1' } 80

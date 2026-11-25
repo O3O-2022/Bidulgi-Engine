@@ -226,7 +226,16 @@ if(BDG_DOTNET)
     COMMAND ${CMAKE_COMMAND} -E touch ${BDG_SAMPLES_DLL}
     DEPENDS ${BDG_MANAGED_DLL} ${BDG_SAMPLES_SOURCES}
     COMMENT "Bidulgi.Samples.dll (dotnet build)")
-  add_custom_target(BidulgiScripting ALL DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_MANAGED_DLL} ${BDG_SAMPLES_DLL})
+  # The same samples built with HOTRELOAD_V2 (a changed Spinner): the hot reload test swaps it in while playing (4-4)
+  set(BDG_SAMPLES_V2_DLL ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed/HotReloadV2/Bidulgi.Samples.dll)
+  add_custom_command(OUTPUT ${BDG_SAMPLES_V2_DLL}
+    COMMAND ${BDG_DOTNET} build ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Samples/Bidulgi.Samples.csproj -c $<CONFIG> --nologo -v:q
+            -o ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed/HotReloadV2 -p:BdgManaged=${CMAKE_BINARY_DIR}/$<CONFIG>/Managed
+            -p:DefineConstants=HOTRELOAD_V2 -p:IntermediateOutputPath=obj/v2/$<CONFIG>/
+    COMMAND ${CMAKE_COMMAND} -E touch ${BDG_SAMPLES_V2_DLL}
+    DEPENDS ${BDG_SAMPLES_DLL} ${BDG_SAMPLES_SOURCES}
+    COMMENT "Bidulgi.Samples.dll, hot reload variant (dotnet build)")
+  add_custom_target(BidulgiScripting ALL DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_MANAGED_DLL} ${BDG_SAMPLES_DLL} ${BDG_SAMPLES_V2_DLL})
   add_dependencies(BidulgiEditor BidulgiScripting)
   add_custom_command(TARGET BidulgiEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed ${CMAKE_SOURCE_DIR}/Bin/Managed)

@@ -155,10 +155,20 @@ internal static class Behaviours {
     return e;
   }
 
+  static readonly Dictionary<string, ScriptContext> s_contexts = new(StringComparer.OrdinalIgnoreCase); // full path -> context
+
   // Loads a script assembly and registers each Behaviour class with the engine (a component type of that name).
+  // The file is read into memory (with its .pdb when there is one), so a build can overwrite it while it is loaded.
   public static int Load(string path) {
-    var ctx = new ScriptContext(Path.GetFullPath(path));
-    Assembly asm = ctx.LoadFromAssemblyPath(Path.GetFullPath(path));
+    string full = Path.GetFullPath(path);
+    var ctx = new ScriptContext(full);
+    Assembly asm;
+    using (var dll = new MemoryStream(File.ReadAllBytes(full))) {
+      string pdb = Path.ChangeExtension(full, ".pdb");
+      if (File.Exists(pdb)) { using var sym = new MemoryStream(File.ReadAllBytes(pdb)); asm = ctx.LoadFromStream(dll, sym); }
+      else asm = ctx.LoadFromStream(dll);
+    }
+    s_contexts[full] = ctx;
     int n = 0;
     foreach (Type t in asm.GetTypes().Where(t => t.IsClass && !t.IsAbstract && t.IsSubclassOf(typeof(Behaviour))).OrderBy(t => t.Name, StringComparer.Ordinal)) {
       if (t.GetConstructor(Type.EmptyTypes) == null) { Debug.LogWarning($"C#: {t.FullName} has no parameterless constructor (skipped)"); continue; }
@@ -168,6 +178,73 @@ internal static class Behaviours {
       ++n;
     }
     return n;
+  }
+
+  // Hot reload (4-4). Unity-like: state out, OnDisable, unload, load, state in, OnEnable; Awake / Start do not run again.
+  public static int Reload(string path) {
+    string full = Path.GetFullPath(path);
+    if (!s_contexts.TryGetValue(full, out ScriptContext? old)) return Load(full); // not loaded yet: a first load
+    var saved = new List<(int h, string obj, string type, bool enabled, bool started, JsonObject state)>();
+    foreach (int h in s_order.ToArray()) {
+      if (!s_instances.TryGetValue(h, out var i) || AssemblyLoadContext.GetLoadContext(i.B.GetType().Assembly) != old) continue;
+      saved.Add((h, i.B.gameObject.Id, i.B.GetType().Name, i.Enabled, i.Started, SaveState(i.B)));
+      if (i.Enabled) Run(i, i.E.OnDisable, "OnDisable");
+      s_instances.Remove(h);
+    }
+    foreach (var kv in s_types.Where(kv => AssemblyLoadContext.GetLoadContext(kv.Value.Assembly) == old).ToList()) {
+      s_types.Remove(kv.Key);
+      s_events.Remove(kv.Value);
+      s_fields.Remove(kv.Value);
+    }
+    s_contexts.Remove(full);
+    var weak = new WeakReference(old);
+    old.Unload();
+    old = null;
+    int n = Load(full);
+    int lost = 0;
+    foreach (var s in saved) {
+      if (!s_types.TryGetValue(s.type, out Type? t)) { s_order.Remove(s.h); ++lost; continue; }
+      Behaviour b;
+      try { b = (Behaviour)Activator.CreateInstance(t)!; }
+      catch (Exception e) { Debug.LogError($"C#: {s.type} constructor: {(e.InnerException ?? e).Message}"); s_order.Remove(s.h); ++lost; continue; }
+      b.gameObject = new GameObject(s.obj);
+      LoadState(b, s.state);
+      var inst = new Instance { B = b, E = EventsOf(t), Enabled = s.enabled, Started = s.started };
+      s_instances[s.h] = inst;
+      if (s.enabled) Run(inst, inst.E.OnEnable, "OnEnable");
+    }
+    if (lost > 0) Debug.LogWarning($"C# hot reload: {lost} behaviour(s) whose class is gone were removed");
+    for (int k = 0; k < 3 && weak.IsAlive; ++k) { GC.Collect(); GC.WaitForPendingFinalizers(); }
+    s_lastReloadUnloaded = !weak.IsAlive;
+    return n;
+  }
+  static bool s_lastReloadUnloaded;
+  public static bool LastReloadUnloaded => s_lastReloadUnloaded; // the old assembly really left memory (test hook)
+
+  // Every instance field of a simple type (private too), by name: what survives a reload.
+  static IEnumerable<System.Reflection.FieldInfo> StateFields(Type t) {
+    for (Type? x = t; x != null && x != typeof(Behaviour); x = x.BaseType)
+      foreach (var f in x.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        if (!f.IsInitOnly && !f.Name.Contains('<') && Simple(f.FieldType)) yield return f;
+  }
+  static bool Simple(Type t) =>
+    t.IsPrimitive || t == typeof(string) || t.IsEnum || t == typeof(decimal) || t == typeof(System.Numerics.Vector2) ||
+    t == typeof(System.Numerics.Vector3) || t == typeof(System.Numerics.Vector4) || t == typeof(System.Numerics.Quaternion) ||
+    (t.IsArray && Simple(t.GetElementType()!)) || (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>) && Simple(t.GetGenericArguments()[0]));
+
+  static JsonObject SaveState(Behaviour b) {
+    var o = new JsonObject();
+    foreach (var f in StateFields(b.GetType())) {
+      try { o[f.Name] = Engine.ToNode(f.GetValue(b)); } catch { }
+    }
+    return o;
+  }
+
+  static void LoadState(Behaviour b, JsonObject state) {
+    foreach (var f in StateFields(b.GetType())) {
+      if (!state.TryGetPropertyValue(f.Name, out JsonNode? n) || n == null) continue;
+      try { f.SetValue(b, Engine.FromNode(f.FieldType, n)); } catch { } // the field changed type: keep the new default
+    }
   }
 
   static void Run(Instance i, Action<Behaviour>? f, string what) {
@@ -251,6 +328,15 @@ public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static int CreateBehaviour(byte* objectId, byte* typeName, int enabled, byte* fieldsJson) {
     try { return Behaviours.Create(Str(objectId), Str(typeName), enabled != 0, Str(fieldsJson)); } catch { return 0; }
+  }
+
+  [UnmanagedCallersOnly]
+  public static int ReloadAssembly(byte* pathUtf8) {
+    try { return Behaviours.Reload(Str(pathUtf8)); }
+    catch (Exception e) {
+      try { Debug.LogError($"C#: cannot reload {Str(pathUtf8)}: {e.Message}"); } catch { }
+      return -1;
+    }
   }
 
   [UnmanagedCallersOnly]

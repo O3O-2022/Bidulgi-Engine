@@ -14,6 +14,10 @@ public class Spinner : Behaviour {
   [Edit] public SpinAxis axis = SpinAxis.Y;
   [Edit, Header("Info")] public string label = "spinner";
   [Edit, Tooltip("Frames this spinner has turned (set by the script)")] int frames;
+#if HOTRELOAD_V2
+  // The second build of this file (hot reload test, 4-4): a new field, and Update counts it up.
+  [Edit] public int bonus = 7;
+#endif
 
   void Update() {
     Transform t = transform;
@@ -21,6 +25,9 @@ public class Spinner : Behaviour {
     float step = speed * Time.deltaTime;
     t.Rotation = axis == SpinAxis.X ? new Vector3(r.X + step, r.Y, r.Z) : axis == SpinAxis.Y ? new Vector3(r.X, r.Y + step, r.Z) : new Vector3(r.X, r.Y, r.Z + step);
     ++frames;
+#if HOTRELOAD_V2
+    ++bonus;
+#endif
   }
 }
 

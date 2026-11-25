@@ -18,6 +18,7 @@
 #include "Runtime/MaterialLibrary.h"
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
+#include "Core/Utf8Path.h"
 #include "Scene/Components.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
@@ -109,7 +110,7 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false, behaviourTest = false, editFieldTest = false;
+  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false, behaviourTest = false, editFieldTest = false, hotReloadTest = false;
   std::string shakeTestValues[5];
   std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
@@ -1338,6 +1339,11 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
 }
 
 void TogglePlay(bdg_engine* e);
+struct ScriptFile {
+  std::string path;
+  std::filesystem::file_time_type loaded, pending; // time when last loaded / a new time seen once (waiting to settle)
+};
+std::vector<ScriptFile> g_scriptFiles;
 // C# script assemblies (4-2): BDG_SCRIPT_ASSEMBLIES (paths separated by ';'), then .cache/Scripts/*.dll of the
 // project (the compiled game scripts: 4-4 builds them). .NET starts only when there is something to load, so
 // projects without C# do not pay for the runtime.
@@ -1360,8 +1366,31 @@ void LoadScriptAssemblies() {
   bdg::DotNetHost& host = bdg::DotNetHost::Instance();
   std::string err;
   if (!host.Start({}, &err)) return; // logged
-  for (const std::string& d : dlls)
+  for (const std::string& d : dlls) {
     if (host.LoadScripts(d, &err) < 0) bdg::LogError("C# scripting: {}", err);
+    std::error_code ec2;
+    g_scriptFiles.push_back({d, std::filesystem::last_write_time(bdg::PathU8(d), ec2), {}});
+  }
+}
+
+// Hot reload (4-4): every half second (with the theme poll) the loaded script .dll files are checked; one whose
+// time changed and then stayed the same for one more check (the build finished writing it) is reloaded.
+bool PollScriptReload(bdg_engine* e) {
+  bool reloaded = false;
+  for (ScriptFile& f : g_scriptFiles) {
+    std::error_code ec;
+    const auto now = std::filesystem::last_write_time(bdg::PathU8(f.path), ec);
+    if (ec || now == f.loaded) { f.pending = {}; continue; }
+    if (now != f.pending) { f.pending = now; continue; } // still being written: look again next time
+    f.loaded = now;
+    f.pending = {};
+    std::string err;
+    if (bdg::DotNetHost::Instance().ReloadScripts(f.path, e->model ? &e->model->scene : nullptr, e->model ? &e->model->bus : nullptr, &err) < 0)
+      bdg::LogError("C# hot reload: {}", err);
+    else reloaded = true;
+  }
+  if (reloaded && e->model) e->model->SceneReplaced(); // fields may have changed: the Inspector builds again
+  return reloaded;
 }
 
 // Scripted check of 4-1 (BDG_CSHARP_TEST=1): the editor starts .NET, C# finds an object of the open scene, calls
@@ -1504,6 +1533,63 @@ void InjectEditFieldTest(bdg_engine* e, int frame) {
   if (frame == 15) {
     v[5] = get("speed") == "0" && get("frames") == "0" ? "1" : "0";
     bdg::LogInfo("edit field test: defaults={} inspector={} saved={} push={} pull={} restored={}", v[0], v[1], v[2], v[3], v[4], v[5]);
+  }
+}
+
+// Scripted check of 4-4 (BDG_HOTRELOAD_TEST=1): a Spinner (speed 45, label "kept") runs in play mode from a copy
+// of the samples; the v2 build (Spinner gains `bonus = 7`, counted up in Update) is written over the copy and the
+// watcher reloads it: the component keeps its values and gains bonus, the instance keeps its private frame count
+// and runs the new code (bonus grows), Awake / Start do not run again, and the reload is well under 2 seconds.
+void InjectHotReloadTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("hot reload test: {}", err);
+  };
+  auto get = [&](const char* path) {
+    std::string json;
+    bdg::SceneObject* o = m->scene.Find("hr1");
+    bdg::Component* c = o ? o->Find("Spinner") : nullptr;
+    if (c) bdg::Registry::Get(c->data, *c->type, path, json);
+    return json;
+  };
+  static int framesBefore = 0;
+  static std::string v[5];
+  if (frame == 2) {
+    run("add", "", R"({"id":"hr1","name":"Hot"})");
+    run("addcomp", "hr1", R"({"type":"Spinner","value":{"speed":45,"label":"kept"}})");
+    m->Select("hr1");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 16) std::this_thread::sleep_for(std::chrono::milliseconds(15));
+  if (frame == 7) {
+    framesBefore = std::atoi(get("frames").c_str());
+    const std::filesystem::path managed = bdg::PathU8(bdg::DotNetHost::DefaultManagedDir());
+    const std::filesystem::path dst = std::filesystem::current_path() / ".cache" / "hotreload-test" / "Bidulgi.Samples.dll";
+    std::error_code ec;
+    std::filesystem::copy_file(managed / "HotReloadV2" / "Bidulgi.Samples.dll", dst, std::filesystem::copy_options::overwrite_existing, ec);
+    std::filesystem::last_write_time(dst, std::filesystem::file_time_type::clock::now(), ec); // a new time for sure
+    if (ec) bdg::LogError("hot reload test: {}", ec.message());
+    PollScriptReload(e); // sees the new time
+  }
+  if (frame == 8) PollScriptReload(e); // the time stayed: reload
+  if (frame == 12) {
+    const auto& host = bdg::DotNetHost::Instance();
+    v[0] = host.Reloads() == 1 && host.LastReloadMs() < 2000 ? "1" : std::format("0({},{:.0f}ms)", host.Reloads(), host.LastReloadMs());
+    v[1] = get("speed") == "45" && get("label") == "\"kept\"" ? "1" : "0(" + get("speed") + get("label") + ")";
+    v[2] = std::atoi(get("bonus").c_str()) > 7 ? "1" : "0(" + get("bonus") + ")";
+    v[3] = std::atoi(get("frames").c_str()) > framesBefore && framesBefore > 0 && e->play.Scripts().Instances() == 1 ? "1" : std::format("0({}->{})", framesBefore, get("frames"));
+  }
+  if (frame == 14) TogglePlay(e);
+  if (frame == 16) {
+    v[4] = get("bonus") == "7" && get("speed") == "45" ? "1" : "0(" + get("bonus") + ")"; // the edited world, with the new field
+    bdg::LogInfo("hot reload test: reloaded={} kept={} newcode={} state={} stopped={} ms={:.0f}", v[0], v[1], v[2], v[3], v[4],
+                 bdg::DotNetHost::Instance().LastReloadMs());
   }
 }
 
@@ -3729,6 +3815,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->csharpTest = std::getenv("BDG_CSHARP_TEST") != nullptr;
   e->behaviourTest = std::getenv("BDG_BEHAVIOUR_TEST") != nullptr;
   e->editFieldTest = std::getenv("BDG_EDITFIELD_TEST") != nullptr;
+  e->hotReloadTest = std::getenv("BDG_HOTRELOAD_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3990,6 +4077,16 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       const bool automatedRun = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST");
       model->foldsPath = folds ? folds : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl").string();
     }
+    if (e->hotReloadTest) { // play a copy of the v1 samples, so the test can write v2 over it (4-4)
+      const std::filesystem::path managed = bdg::PathU8(bdg::DotNetHost::DefaultManagedDir());
+      const std::filesystem::path dir = std::filesystem::current_path() / ".cache" / "hotreload-test";
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      std::filesystem::copy_file(managed / "Bidulgi.Samples.dll", dir / "Bidulgi.Samples.dll", std::filesystem::copy_options::overwrite_existing, ec);
+      if (ec) bdg::LogError("hot reload test: {}", ec.message());
+      const std::u8string u = (dir / "Bidulgi.Samples.dll").u8string();
+      _putenv_s("BDG_SCRIPT_ASSEMBLIES", std::string(u.begin(), u.end()).c_str());
+    }
     LoadScriptAssemblies(); // C# Behaviour classes are component types: before the scene that uses them (4-2)
     if (std::filesystem::exists(model->scenePath)) model->OpenScene(model->scenePath);
     model->LoadFolds();
@@ -4152,6 +4249,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (now >= nextThemePoll) {
       nextThemePoll = now + std::chrono::milliseconds(500);
       if (e->theme.ReloadIfChanged()) pending = std::max(pending, 2); // live token edits
+      if (PollScriptReload(e)) pending = std::max(pending, 2);         // a rebuilt script .dll (4-4)
     }
     if (caretDue != clock::time_point{} && now >= caretDue) pending = std::max(pending, 1);
     if (onDemand && pending == 0) continue; // timer wake-up with nothing to redraw
@@ -4211,6 +4309,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->csharpTest && !e->showGallery) InjectCSharpTest(e, frames);
     if (e->behaviourTest && !e->showGallery) InjectBehaviourTest(e, frames);
     if (e->editFieldTest && !e->showGallery) InjectEditFieldTest(e, frames);
+    if (e->hotReloadTest && !e->showGallery) InjectHotReloadTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);

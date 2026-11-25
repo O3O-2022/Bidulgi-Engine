@@ -127,7 +127,7 @@ public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static int Initialize(IntPtr request) {
     Engine.Attach(request);
-    return 2; // scripting API version (2: [Edit] fields, 4-3)
+    return 3; // scripting API version (2: [Edit] fields, 4-3; 3: hot reload, 4-4)
   }
 
   // Test hook (4-1 exit criterion): reads, calls and writes a Health component of `target` from C#.

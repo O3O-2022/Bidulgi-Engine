@@ -10,6 +10,7 @@
 #include "Core/Reflection.h"
 #include <deque>
 #include <array>
+#include <map>
 #include <set>
 #include <string>
 
@@ -44,6 +45,13 @@ public:
   // name (tags Component, Script, CSharp; one field "enabled"), so scenes attach it by class name. Returns the
   // number of classes, or -1. Load before opening scenes that use them.
   int LoadScripts(const std::string& dllPath, std::string* error = nullptr);
+  // Hot reload (4-4): the script assembly at dllPath changed. Instances of its classes save their state (every field
+  // of a simple type, private too), get OnDisable, the old assembly context is unloaded, the new one loads (classes
+  // registered again: changed [Edit] fields are rebuilt and the scene's values carried over by name), instances come
+  // back with their state and get OnEnable (no Awake / Start again). Returns the class count, or -1.
+  int ReloadScripts(const std::string& dllPath, Scene* scene = nullptr, CommandBus* bus = nullptr, std::string* error = nullptr);
+  int Reloads() const { return reloads_; }
+  double LastReloadMs() const { return lastReloadMs_; }
   bool IsBehaviourType(const TypeInfo* type) const { return type && behaviourTypes_.count(type) != 0; }
   size_t BehaviourTypeCount() const { return behaviourTypes_.size(); }
 
@@ -71,10 +79,15 @@ private:
   int (*create_)(const char*, const char*, int, const char*) = nullptr;
   void (*setFields_)(int, const char*) = nullptr;
   int (*getFields_)(int, char*, int) = nullptr;
+  int (*reload_)(const char*) = nullptr;
+  int reloads_ = 0;
+  double lastReloadMs_ = 0;
   void (*setEnabled_)(int, int) = nullptr;
   void (*destroy_)(int) = nullptr;
   void (*tick_)(int, double, double, int) = nullptr;
   std::string RegisterBehaviourType(const std::string& name, yyjson_val* fields); // "" = ok, else why not
+  void BuildScriptFields(TypeInfo& t, void* defaults, yyjson_val* fields);
+  std::map<const TypeInfo*, size_t> slots_; // default-value slot of each C# class
   std::deque<EnumInfo> enums_;                                // C# enum fields (stable addresses)
   std::deque<TypeInfo> types_;                                // stable addresses for the Registry
   std::set<const TypeInfo*> behaviourTypes_;
