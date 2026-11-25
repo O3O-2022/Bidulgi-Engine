@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The game's C# scripts (every .cs under Assets/). Build: dotnet build Game.csproj
+       The editor and `bdg build` load the result from .cache/Scripts/. 게임 C# 스크립트 (Assets/ 아래 .cs 전부). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <AssemblyName>{{GAME_ASSEMBLY}}</AssemblyName>
+    <RootNamespace>ThirdPersonGame</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <OutputPath>.cache/Scripts/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The engine's scripting API (Bidulgi.Scripting.dll); set BdgManaged to use another engine install. -->
+    <BdgManaged Condition="'$(BdgManaged)' == ''">{{BDG_MANAGED}}</BdgManaged>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Assets/**/*.cs" />
+    <Reference Include="Bidulgi.Scripting">
+      <HintPath>$(BdgManaged)/Bidulgi.Scripting.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

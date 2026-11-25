@@ -599,6 +599,14 @@ jobs:
           $alog = Get-Content "$anim/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- built animation game (exit $($p.ExitCode))"; Write-Host $alog
           if ($animBuild -ne 0 -or $p.ExitCode -ne 0 -or $alog -notmatch 'anim probe: run=1 events=[2-9]' -or $alog -notmatch 'animation: stopped \(1 animators') { $errors += 'built animation game failed' }
+          # 7-1 part 2 / 7-1b: the generated humanoid three times on physics ground: blend weights follow Speed (set from C#),
+          # foot IK lifts the left foot onto a 20 cm step, the head turns to a target (aim offset), C# Ragdoll.Activate()
+          # on "death": the skeleton falls
+          $ik = Join-Path $env:RUNNER_TEMP 'bdg-ik'
+          Remove-Item -Recurse -Force $ik -ErrorAction SilentlyContinue
+          & "$PWD/build/Release/bdg.exe" new $ik | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_IK_TEST = '1'; BDG_ASSETS = "$ik/Assets" } 100 # BDG_SCRIPT_ASSEMBLIES: set above
+          if ($log -notmatch 'ik test: render=1 blend=1 footik=1 lookat=1 ragdoll=1 csharp=1') { $errors += 'IK / blend space / ragdoll test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           # 6-3 audio (no device: mixed and measured): a 3D AudioSource plays, fades with distance, pauses; C# Audio API
           $log = Invoke-Editor 'Release' @{ BDG_AUDIO_TEST = '1' } 30
@@ -677,6 +685,29 @@ jobs:
           $pplog = Get-Content "$plat/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- built platformer (exit $($p.ExitCode))"; Write-Host $pplog
           if ($platBuild -ne 0 -or $p.ExitCode -ne 0 -or $pplog -notmatch 'player: 90 frames, 1.50 s of game time, 13 C# behaviours, camera yes, ui elements 3' -or $pplog -notmatch 'box2d 20 bodies') { $errors += 'platformer template build / player failed' }
+          # Third-person template (7-1b): generated humanoid with blend spaces and foot IK, follow camera; the editor plays it
+          # with injected keys (walk, jump, run up the stairs, the camera stops at a wall, mouse look), then the built game
+          $tp = Join-Path $env:RUNNER_TEMP 'bdg-thirdperson'
+          Remove-Item -Recurse -Force $tp -ErrorAction SilentlyContinue
+          & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $tp --template thirdperson --name 'Hero Test' | Out-String | Write-Host
+          if (-not (Test-Path "$tp/.cache/Scripts/HeroTest.dll") -or -not (Test-Path "$tp/Assets/Models/Hero.gltf")) { $errors += 'thirdperson template: scripts or model missing' }
+          $env:BDG_THIRDPERSON_TEST = '1'; $env:BDG_AUDIO_NULL = '1'; $env:BDG_ASSETS = "$tp/Assets"
+          $p = Start-Process "$env:GITHUB_WORKSPACE/build/Release/BidulgiEditor.exe" -ArgumentList '--frames', 180 -WorkingDirectory $tp -PassThru -Wait
+          Remove-Item Env:BDG_THIRDPERSON_TEST, Env:BDG_ASSETS
+          $tlog = Get-Content "$tp/Bidulgi.log" -Raw -Encoding utf8
+          Write-Host "----- thirdperson template in the editor (exit $($p.ExitCode))"; Write-Host $tlog
+          if ($p.ExitCode -ne 0 -or $tlog -notmatch 'third person test: moved=1 walk=1 run=1 jump=1 footik=1 hud=1 collide=1 look=1') { $errors += 'thirdperson template play test failed' }
+          Push-Location $tp
+          & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
+          $tpBuild = $LASTEXITCODE
+          Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$tp/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
+          $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-thirdperson-cache'; $env:BDG_PLAYER_QUIET = '1'
+          $p = Start-Process "$tp/Builds/Windows-Development/Hero Test.exe" -ArgumentList '--frames', 120 -PassThru -Wait
+          Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
+          $tplog = Get-Content "$tp/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
+          Write-Host "----- built thirdperson game (exit $($p.ExitCode))"; Write-Host $tplog
+          if ($tpBuild -ne 0 -or $p.ExitCode -ne 0 -or $tplog -notmatch 'player: 120 frames, 2.00 s of game time, 2 C# behaviours, camera yes, ui elements 3' -or $tplog -notmatch 'animation: stopped \(1 animators') { $errors += 'thirdperson template build / player failed' }
 
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"

@@ -110,6 +110,10 @@ Assets/
 
 검사: `BDG_FPS_TEST=1`(템플릿 폴더에서 에디터 실행) — 주입한 W·Space·클릭·마우스로 이동·점프·첫 표적 명중(밀림, 점수 1)·시점 → `fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1`, 이어서 `bdg build`와 빌드한 게임 120프레임(CI). **남은 것**: 앉기, 조준(ADS), 체력·피해, HUD(7-3), 피격 이펙트, 팔 메시, 레이캐스트 히트스캔(물리 레이캐스트 다음), 프리팹(6-1 뒤 플레이어·표적·총알을 프리팹으로), 3인칭 등 다른 템플릿.
 
+### 구현 현황 — 3인칭 (2026-11-25, 7-1b)
+
+`bdg new <폴더> --template thirdperson` — `Templates/thirdperson/`. 캐릭터는 `bdg new`가 만드는 **생성 휴머노이드**(`Assets/Models/Hero.gltf`, CC0; `template.json`의 `"models"`)와 그래프 `Assets/Anim/Hero.animgraph`(Move = Speed 1D 블렌드 스페이스 Idle·Walk·Run, Strafe = 2D, Jump, UpperBody Wave 레이어, Lean 가산 레이어). 놀이터: 땅·벽, 계단 4단 + 단상, 경사로 + 데크, 상자, 금색 표지. C#(0BSD): `ThirdPersonController`(카메라 기준 걷기·달리기, 가는 쪽으로 돌기, 낮은 턱 오르기, 점프, E로 손 흔들기, Animator `Speed`·`Jump`·`Wave`, 가까우면 머리가 표지를 봄, HUD 속도·상태), `FollowCamera`(시점 입력으로 공전, 벽이 사이에 있으면 앞으로 당김 — `Physics.Raycast`). 캐릭터의 `AnimatorIK`가 계단·경사로에서 발을 땅에 맞춥니다. 입력 Move·Look·Jump·Sprint·Wave(키보드·패드), 소리 Jump(합성), HUD는 레인 B의 UICanvas. 검사 `BDG_THIRDPERSON_TEST=1`: W로 걷기(블렌드 대부분 Walk), 점프, Shift로 달리기(Run 가중치), 계단 발 IK, HUD, 남쪽 벽 앞에서 카메라가 벽 안쪽으로, 마우스 시점 → `third person test: moved=1 walk=1 run=1 jump=1 footik=1 hud=1 collide=1 look=1`, 빌드한 게임 120프레임(CI).
+
 ### 구현 현황 — 2D 플랫포머 (2026-11-25)
 
 `bdg new <폴더> --template platformer2d` — `Templates/platformer2d/`. **Box2D**(XY 평면) 위 옆으로 가는 레벨: 땅 3덩어리와 구덩이, 발판 4개, 동전 8개(트리거), 체크포인트, 골 깃발. C#: `PlatformerController`(걷기·달리기·가속, **코요테 타임·점프 버퍼·짧은 점프**, 떨어지면 체크포인트로; Rigidbody2D + Collider2D + 마찰 0), `CameraFollow`(데드존 + 부드럽게), `Coin`(트리거 → 소리·점수·사라짐), `Goal`(골 또는 `isCheckpoint`), `GameRules`(동전 수·골 → 로그). 입력 Move·Jump·Run(키보드·패드), 소리 Jump·Coin·Goal(합성), 2D 중력 -25. 그림은 지금 원근 카메라로 본 3D 상자(직교 2D 카메라·스프라이트·타일맵은 다음). 검사 `BDG_PLATFORMER_TEST=1`: D로 달려 동전 2개, 점프, 카메라 따라옴 → `platformer test: ran=1 jumped=1 coins=1 camera=1`, 빌드한 게임 90프레임(CI).

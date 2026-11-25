@@ -146,7 +146,7 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
   }
   { // animation (7-1): after the scripts, so their calls apply this frame; events go straight back to them
     std::vector<AnimationSystem::Event> events;
-    anim_.Tick(m.scene, (float)dt, events);
+    anim_.Tick(m.scene, (float)dt, events, &physics_); // physics: foot IK raycasts, ragdolls (7-1b)
     changed = changed || anim_.Count() > 0;
     for (const AnimationSystem::Event& e : events) {
       std::string name;
