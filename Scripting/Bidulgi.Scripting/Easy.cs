@@ -273,6 +273,15 @@ public abstract partial class Behaviour {
   protected Waiting Wait(float seconds) => Game.Wait(seconds);
   protected Waiting NextFrame() => Game.NextFrame();
   protected Waiting WaitUntil(Func<bool> condition) => Game.WaitUntil(condition);
+  // physics queries (6-5b; Physics.Raycast / OverlapSphere)
+  protected static bool Raycast(Vector3 origin, Vector3 direction, out RaycastHit hit, float maxDistance = 1000, bool triggers = false) =>
+    Physics.Raycast(origin, direction, out hit, maxDistance, triggers);
+  protected static List<GameObject> OverlapSphere(Vector3 center, float radius, string? name = null, bool triggers = false) =>
+    Physics.OverlapSphere(center, radius, name, triggers);
+  // sound and effect shortcuts at this object (6-5b): Audio.Play(clip, at: position) / Vfx.Play(effect, position)
+  protected Sound PlaySound(string clip, float volume = 1f, string group = "Effects") =>
+    Audio.Play(clip, at: gameObject.position, volume: volume, group: group);
+  protected Effect PlayEffect(string effect, Vector3? offset = null) => Vfx.Play(effect, gameObject.position + (offset ?? Vector3.Zero));
 
   // [Auto] fields (before Awake, and again after a hot reload).
   internal void FillAuto() {

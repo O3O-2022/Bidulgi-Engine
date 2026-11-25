@@ -33,8 +33,8 @@
 | 소리 ([6-3](audio.md)) | `Audio.Play(clip, at: pos, volume: 0.8f)` | `Audio::Play(Clip, Pos)` | `Audio.Play(clip, {at=pos})` | Play Sound |
 | 이펙트 | `Vfx.Play(effect, pos)` | 같음 | `Vfx.Play(effect, pos)` | Play Effect |
 | 씬 이동 | `await Scene.Load(Scenes.Forest, fade: 0.5f);` | `Scene::Load(...)` | `Scene.Load(Scenes.Forest)` | Load Scene |
-| 이벤트 보내기·받기 | `Events.Send(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |
-| 저장·불러오기 | `SaveGame.Save("slot1")`, `SaveGame.Load("slot1")` | 같음 | 같음 | Save / Load Game |
+| 이벤트 보내기·받기 ([6-5b](#c-구현-현황--세이브이벤트레이캐스트이펙트-6-5b-2026-11-25)) | `Events.Emit(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` (`Send` = `Emit`) | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |
+| 저장·불러오기 ([6-5b](#c-구현-현황--세이브이벤트레이캐스트이펙트-6-5b-2026-11-25)) | `Save.Set("best", 12)`, `Save.Get("best", 0)`, `Save.Load("slot2")` (`SaveGame.Save/Load`도) | 같음 | 같음 | Save / Load Game |
 | 화면 UI ([7-3](ui-widgets.md#구현-현황--런타임-게임-ui-7-3-런타임-2026-11-25)) | `UI.Text("score").text = "점수 1"`, `UI.Button("restart").clicked` | — | — | Set Text / On Click |
 | 데이터 테이블 ([4-4d](data-tables.md)) | `Data.Get<Weapon>("rifle").damage` | `Data::Get<FWeapon>("rifle")` | `Data.get("Weapons", "rifle").damage` | Get Data Row |
 | 무작위 | `Random.Range(1, 6)`, `Random.Chance(0.2f)`, `list.PickRandom()` | 같음 | `random.range(1,6)`, `random.chance(0.2)` | Random |
@@ -63,6 +63,36 @@
 엔진 쪽 새 요청(`ScriptApi`): `children`, `findall`, `spawn`, `destroy`. 자동 검사: `BDG_EASYAPI_TEST=1` + `BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll`(샘플 `EasyProbe`) → `easy probe: get=1 find=1 spawn=1 nearest=1 destroy=1 after=1 every=1 wait=1 tween=1 random=1`, `easy api test: restored=1 instances=0`.
 
 **아직 남은 것**: 태그·레이어·입력 액션·씬 상수 자동 생성(`Tags.Enemy` …) — 엔진에 태그·입력 액션 목록이 아직 없음(태그가 생기면 `FindAll(Tags.Enemy)`도), `Time.scale` 쓰기(지금은 Play 도구 막대의 배율), `Debug.Draw*`는 4-4b.
+
+## C# 구현 현황 — 세이브·이벤트·레이캐스트·이펙트 (6-5b, 2026-11-25)
+
+코드: `Scripting/Bidulgi.Scripting/Save.cs`, `Events.cs`, `Physics.cs`(Raycast·OverlapSphere), `Vfx.cs`, 엔진 쪽 `Engine/Scripting/SaveGame.*`, `ScriptApi`의 `save.*`·`physics.*`·`vfx.*` 요청.
+
+```csharp
+int best = Save.Get("best", 0);                  // 지난 실행이 저장한 값 (처음엔 0)
+Save.Set("best", score);                          // 1초 안에, 그리고 게임이 멈출 때 파일로
+Events.On<int>("ScoreChanged", s => UI.Text("score").text = $"점수 {s}");
+Events.Emit("ScoreChanged", score);
+if (Raycast(eye, forward, out RaycastHit hit, 100)) Vfx.Play("Spark", hit.point);
+foreach (GameObject e in OverlapSphere(transform.Position, 5, "Enemy")) ...
+PlaySound("Audio/Hit.wav");  PlayEffect("Spark");  // 이 오브젝트 위치에서 (Audio.Play·Vfx.Play 줄임)
+```
+
+| 기능 | 동작 |
+|---|---|
+| **세이브** `Save.Get/Set/Has/Remove/Clear`, `Write()`, `WriteAs(slot)`, `Load(slot)`, `Delete`, `Exists`, `Slots`, `Folder` | 값은 JSON으로 되는 것 무엇이든(숫자·글자·bool·`Vector3`·목록·public 필드 클래스). 처음 쓸 때 현재 슬롯(기본 `main`)을 읽고, 바뀐 값은 **1초에 한 번까지 + 플레이가 끝날 때** 파일에 씀. 플레이가 끝나면 메모리를 비워서 다음 실행은 파일에서 다시 읽음(= 재시작 후 불러오기). `SaveGame.Save/Load`는 다른 엔진 이름 |
+| 저장 폴더 | 프로젝트 설정 `saves.saveFolder`(기본 `%APPDATA%/{company}/{name}/Saves`)에 `{company}`·`{name}`(폴더에 못 쓰는 글자는 뺌)·`%환경변수%`(한글 사용자 폴더도 그대로)를 채움. `BDG_SAVE_DIR`이 있으면 그 폴더(테스트·포터블). **에디터 플레이와 빌드한 게임이 같은 폴더** — FPS 템플릿 CI가 에디터에서 저장한 최고 점수를 빌드한 게임이 읽는지 확인 |
+| 파일 형식 | 슬롯 하나 = `<슬롯>.save.json`: `{"format":"bidulgi-save","version":1,"game","gameVersion","slot","saved"(UTC),"data":{...}}`. 임시 파일에 쓰고 바꿔 끼움, 직전 저장은 `.bak`으로 남기고 새 파일이 깨졌으면 `.bak`을 읽음(경고). 더 새 형식 버전은 읽지 않고 이유를 알려 줌 |
+| **이벤트** `Events.On/Off/Emit/Send/Count` | 이름으로(`On("Ping", f)`), 값과 함께(`On<int>("Score", f)`), **타입으로**(`On<CoinTaken>(f)` + `Emit(new CoinTaken(...))`). 바로, 더한 순서대로 실행; 한 핸들러의 예외는 로그만 남기고 나머지는 계속. Behaviour 안에서 더한 핸들러는 그 Behaviour가 꺼지거나 지워지면 같이 빠짐(타이머와 같은 규칙), 플레이가 끝나면 모두 지움. 32단계 넘게 중첩되면 멈추고 오류 |
+| **레이캐스트** `Raycast(origin, dir, out hit, maxDistance, triggers)`, `OverlapSphere(center, r, name, triggers)` | 실행 중인 물리(PHI)에 묻기: Jolt 3D와 Box2D 2D(XY 평면) 모두, 가장 가까운 것. `RaycastHit`: `gameObject`·`point`·`normal`(광선 쪽)·`distance`. 트리거는 `triggers: true`일 때만. 물체는 마지막 물리 스텝 위치. 플레이 밖에서는 경고 한 번 + 안 맞음 |
+| **이펙트** `Vfx.Play(effect, position, rotation, seed)` → `Effect`(`.Stop(clear)`, `.Playing`, `.Particles`), `Vfx.Particles` | [6-VFX P-1](particles.md#구현-현황--p-1-2026-11-25) `.vfx`를 이름(`"Spark"`)이나 Assets 기준 경로로. 한 번 터지는 효과는 파티클이 다 사라지면 스스로 없어짐. 없는 이펙트는 경고 + `Effect.None` |
+| 소리·이펙트 줄임 | Behaviour의 `PlaySound(clip, volume, group)`, `PlayEffect(effect, offset)` = 이 오브젝트 위치에서 `Audio.Play`·`Vfx.Play` |
+
+엔진 요청(`ScriptApi.h`): `save.write/read/list/delete/folder`, `physics.raycast/overlap`, `vfx.play/stop/playing/alive`. PHI(`Physics/Physics.h`)에 `Raycast`·`OverlapSphere` 두 함수 추가(Jolt: NarrowPhaseQuery, Box2D: `b2World_CastRay`·`OverlapShape`), `PhysicsWorld::Raycast/OverlapSphere/Current()`가 몸체 번호를 오브젝트 id로 바꿈.
+
+검사: 단위 테스트(폴더 패턴·한글 경로, 왕복, 덮어쓰기 `.bak`, 깨진 파일 → `.bak`, 새 버전 거부, 목록·삭제; Jolt·Box2D 레이캐스트 거리·법선·트리거·짧은 광선, 겹침), `BDG_GAMEAPI_TEST`(C# `GameApiProbe`: 저장 → 정지 → 다시 플레이에서 읽힘, 이벤트 5가지, 레이캐스트·겹침, 이펙트 12개 생성 후 사라짐, 슬롯 파일 형식) → `game api test: save=1 events=1 raycast=1 overlap=1 vfx=1 restored=1 file=1`, FPS 템플릿 `sparks=1 best=1` + 빌드한 게임 `best score: 1`(CI).
+
+**아직 남은 것**: 클라우드 세이브(`saves.cloudSaves`), 암호화·변조 검사, 게임 데이터 버전 올리기(마이그레이션 함수), 다른 스레드에서 쓰기, `BoxCast`·`SphereCast`·레이어 마스크(레이어가 생기면), 이벤트의 Graph 노드·Lua 이름, `Tags`·`Effects` 상수 자동 생성.
 
 ## 컴포넌트를 짧게 쓰는 장치
 
@@ -200,5 +230,5 @@ bdg.table("Weapons").update(lambda row: row.damage * 1.1)            # 데이터
 |---|---|
 | M4 (C#) | `Get`·`Find`·`Spawn`·`Destroy`·`After/Every`·`await Wait`·`Tween`·`Random`·`Debug.Draw*`, `[Auto]`, 상수 자동 생성 |
 | M5 (Lua·Graph·Python) | 같은 함수 세트를 Lua·Graph 노드·Python에 노출 (생성 코드, 이름 일치 테스트) |
-| M6 | `Raycast`·`Overlap`·`Audio`·`Vfx`·`Events`·`SaveGame`·`Data` |
+| M6 | `Raycast`·`Overlap`·`Audio`·`Vfx`·`Events`·`SaveGame`·`Data` — C# 완료(6-3, 4-4d, 6-5b) |
 | 지속 | 언어 간 이름 일치 검사 CI: 한 언어에만 있는 함수가 생기면 실패 |

@@ -117,8 +117,38 @@ uint64_t Fnv(uint64_t h, const void* p, size_t n) {
 }
 }
 
+namespace {
+const PhysicsWorld* s_current = nullptr;
+}
+const PhysicsWorld* PhysicsWorld::Current() { return s_current; }
+
+bool PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, QueryHit& hit) const {
+  bool found = false;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()}) {
+    phys::RayHit h;
+    if (!be || !be->Raycast(origin, direction, maxDistance, hitTriggers, h) || h.user == 0 || h.user > bodies_.size()) continue;
+    if (found && h.distance >= hit.distance) continue;
+    hit = {bodies_[h.user - 1].object, h.point, h.normal, h.distance};
+    found = true;
+  }
+  return found;
+}
+
+std::vector<std::string> PhysicsWorld::OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const {
+  std::vector<uint64_t> users;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()})
+    if (be) be->OverlapSphere(center, radius, hitTriggers, users);
+  std::sort(users.begin(), users.end());
+  users.erase(std::unique(users.begin(), users.end()), users.end());
+  std::vector<std::string> out;
+  for (uint64_t u : users)
+    if (u > 0 && u <= bodies_.size() && (out.empty() || out.back() != bodies_[u - 1].object)) out.push_back(bodies_[u - 1].object);
+  return out;
+}
+
 void PhysicsWorld::Begin(Scene& scene, const Settings& settings, const AssetDatabase* assets) {
   End();
+  s_current = this;
   assets_ = assets;
   jolt_ = phys::CreateJolt();
   box2d_ = phys::CreateBox2D();
@@ -415,6 +445,7 @@ void PhysicsWorld::WriteBack(Scene& scene, Body& b) {
 }
 
 void PhysicsWorld::End() {
+  if (s_current == this) s_current = nullptr;
   bodies_.clear();
   events_.clear();
   auto_.clear();

@@ -1,6 +1,6 @@
 # 파티클(VFX) 구조 설계 (2026-11-25, E-10)
 
-> 상태: **설계안 — 사용자 검토 대기.** 아래 "결정이 필요한 것"에 답을 받은 뒤 P-1부터 구현합니다.
+> 상태: **P-1 구현(2026-11-25, 아래 "구현 현황")**, P-2~P-5는 설계안. 아래 "결정이 필요한 것" 중 1(모듈 스택)·3(불꽃 먼저)은 P-1이 추천안대로 갔습니다.
 > 참고한 공식 문서: Unreal Niagara(시스템·에미터·모듈 스택, Spawn/Update 단계, 파라미터), Unity(Shuriken 모듈, VFX Graph), Godot(GPUParticles3D·ParticleProcessMaterial).
 
 ## 목표
@@ -98,6 +98,23 @@ VfxSystem (.vfx 에셋)          ← 장면에 놓는 단위 (ParticleSystem 컴
 | **P-3** | GPU 경로(같은 모듈의 컴퓨트 버전), 깊이 충돌, 소프트 파티클, 반 해상도 | 10만 파티클 고사양 60 fps(기준 GPU), CPU와 GPU 결과 모양이 같음 |
 | **P-4** | Mesh·Ribbon·Light 렌더러, 물리 충돌, 이벤트·서브 에미터, 커얼 노이즈 | 총알 궤적(리본)·파편(메시)·폭발 섬광(라이트) 예제 |
 | **P-5** | Graph로 커스텀 모듈(Niagara Scratch Pad처럼), 시스템 파라미터 Graph 연결 | 사용자 모듈 하나가 CPU·GPU 양쪽에서 동작 |
+
+## 구현 현황 — P-1 (2026-11-25)
+
+코드: `Engine/VFX/` — `VfxAsset.*`(`.vfx` 읽기), `VfxWorld.*`(CPU 시뮬), `VfxRender.*`(빌보드 그리기), `VfxComponents.h`(`ParticleSystem`). 렌더러에는 훅 하나(`RenderExtras::transparent`: 장면 패스의 HDR 타깃 안, 깊이 검사·쓰기 없음, 블룸·톤 매핑 전). 플레이 모드가 시뮬을 돌리므로 에디터 Scene·Game 뷰와 빌드한 게임에서 똑같이 보입니다.
+
+- **`.vfx`** = 위 형식 그대로(한 줄 = 모듈, 순서 = 스택, `"enabled":false`로 끄기). 에미터 줄: `max`, `duration`, `delay`, `loop`, `space`(`world`/`local`). 숫자는 `[min, max]` 범위 가능(시드 생성기). 모르는 모듈·틀린 단계·`@파라미터`·`material`·`flipbook`·`"sim":"gpu"`는 경고로 알려 주고 나머지는 읽음.
+- **모듈 16개**: emitter-update `SpawnRate`(`rate`/초)·`SpawnBurst`(`count`, `time`; 루프마다 다시); particle-spawn `Lifetime`·`PositionPoint`·`PositionSphere`(`radius`, `surface`)·`PositionCone`(`angle`, `length`, `axis`)·`Velocity`(`value`, `random` ±)·`VelocityCone`(`angle`, `speed`, `axis`)·`Size`·`Color`; particle-update `Gravity`·`Drag`·`ColorOverLife`(`gradient`, 곱)·`SizeOverLife`(`curve`, 곱)·`Collision`(땅 평면 `plane` 높이, `bounce`, `friction`, `kill`); render `Sprite`(`blend` alpha/additive, `intensity` — 1보다 크면 블룸으로 빛남).
+- **시뮬**: 고정 60 Hz 스텝(한 프레임 최대 4스텝, 더 느리면 시간을 버림), 시드가 같으면 같은 결과(단위 테스트가 상태 해시 비교). 효과마다 생성기 하나, `ParticleSystem.seed` 0이면 오브젝트 id에서.
+- **품질 단계 예산**: 장면 전체 살아 있는 파티클 상한 감자 500 · 저사양 2,000 · 중사양 10,000 · 고사양 100,000 · 초고사양 500,000(렌더러가 보는 단계). 넘는 생성은 버리고 센다(`dropped`). 에미터 `max`도 따로 지킴.
+- **그리기**: 카메라를 보는 부드러운 원형 스프라이트(CPU에서 사각형을 만들어 한 번에), 알파는 뒤→앞 정렬, 가산은 정렬 없음.
+- **`ParticleSystem` 컴포넌트**: `effect`(이름 또는 경로), `playOnStart`, `loop`(Effect/Loop/Once), `seed`, `particles`(읽기 전용, 지금 살아 있는 수), 함수 `Play()`·`Stop()`(C#에서 `Get<ParticleSystem>().Play()`). 오브젝트를 따라 움직이고, 오브젝트가 지워지면 새로 안 뿜고 남은 것이 끝나면 사라짐.
+- **C#**: `Vfx.Play("Spark", 위치)` → `Effect`(`Stop`, `Playing`, `Particles`), Behaviour의 `PlayEffect("Spark")`([easy-api 6-5b](easy-api.md#c-구현-현황--세이브이벤트레이캐스트이펙트-6-5b-2026-11-25)).
+- **FPS 템플릿**: 표적에 맞으면 `Assets/Effects/Spark.vfx`(불꽃 18개, 중력·땅 튕김·색 변화·가산 6배).
+
+검사: 단위 테스트(읽기·문제 목록, 버스트·비율로 개수, 수명·죽음, 중력·땅 튕김, 같은 시드 = 같은 상태, 단계별 상한·에미터 `max`, 컴포넌트 재생·따라가기·Play/Stop·지운 오브젝트), `BDG_VFX_TEST`(에디터: 카메라 앞 불길 — 살아 있는 수 = 비율×시뮬 시간, 정상 상태 = 비율×수명, 죽는 파티클, 컴포넌트 표시, Game 뷰 밝기가 파티클을 지웠을 때보다 높음, 3000개 버스트가 감자에서 500으로 잘리고 초고사양에서는 그대로, 정지하면 비움) → `vfx test: count=1 render=1 tiers=1 cleared=1`, `BDG_GAMEAPI_TEST`의 `vfx=1`, FPS 템플릿 `sparks=1`(CI).
+
+**P-1에서 남은 것(다음 단계로)**: 플레이하지 않을 때 씬 뷰 미리보기와 bounds 상자, 시스템 파라미터(`@Color`)·식, 재질·플립북 아틀라스, 소프트 파티클·조명 받는 파티클·반 해상도, 물리(Jolt) 충돌(지금은 땅 평면), 워밍업, 화면 밖 LOD·컬링, 예산 칩의 파티클 막대, 속성별 배열(SoA)·SIMD, 렌더 보간. **P-2**(편집기: 모듈 스택 UI·미리보기·커브/그라디언트 편집기, `bdg vfx view`)와 **P-3**(GPU 경로) 이후는 위 표대로.
 
 ## 결정이 필요한 것 (사용자)
 

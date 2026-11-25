@@ -1,0 +1,13 @@
+{"vfx":"Spark"}
+{"emitter":"Sparks","max":48,"duration":0.1,"loop":false}
+{"stage":"emitter-update","module":"SpawnBurst","count":18}
+{"stage":"particle-spawn","module":"Lifetime","value":[0.2,0.45]}
+{"stage":"particle-spawn","module":"PositionSphere","radius":0.05}
+{"stage":"particle-spawn","module":"VelocityCone","angle":75,"speed":[2,6]}
+{"stage":"particle-spawn","module":"Size","value":[0.03,0.07]}
+{"stage":"particle-update","module":"Gravity","value":[0,-9.8,0]}
+{"stage":"particle-update","module":"Drag","value":1.5}
+{"stage":"particle-update","module":"Collision","plane":0,"bounce":0.3}
+{"stage":"particle-update","module":"ColorOverLife","gradient":[[0,[1,0.95,0.6,1]],[0.4,[1,0.6,0.15,1]],[1,[1,0.25,0.05,0]]]}
+{"stage":"particle-update","module":"SizeOverLife","curve":[[0,1],[1,0.4]]}
+{"stage":"render","module":"Sprite","blend":"additive","intensity":6}

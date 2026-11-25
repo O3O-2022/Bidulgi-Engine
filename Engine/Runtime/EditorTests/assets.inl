@@ -1,6 +1,9 @@
 // Scripted editor checks: assets (moved out of Engine.cpp). Included by Engine.cpp just before the
 // C API, in the same translation unit: bdg_engine and every editor helper are visible here.
 // New checks: register with BDG_EDITOR_TEST (EditorTests/Registry.h) instead of editing Engine.cpp.
+#include "Scripting/SaveGame.h"
+#include "VFX/VfxComponents.h"
+#include "VFX/VfxWorld.h"
 
 // Scripted check of 2-5d (BDG_IMPORT_TEST=1, BDG_IMPORT_SRC = a folder outside the project with rock.png 8x8,
 // Box.gltf + Box.bin; BDG_ASSETS = an empty project whose AssetRules.json wants T_ textures up to 4 px): drop two
@@ -573,6 +576,8 @@ uint64_t UiPixels(bdg_engine* e, const char* id, float scale) {
 // view — W walks the player toward the first target, Space jumps, once landed a left click fires a physics bullet
 // that hits the target (it is knocked away and the score in the log goes up), a mouse move turns the head; Stop.
 // The HUD (7-3): the score element's text goes from "점수 0" to "점수 1" and its pixels on screen change.
+// 6-5b / 6-VFX: the hit throws sparks (particles spawned), the best score goes to "최고 1" and is in the save file after
+// Stop (the slot is deleted first; the built game then starts with best 1, checked in CI).
 // Run with --frames 150 (the shot waits for the landing).
 void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   bdg::EditorModel* m = e->model.get();
@@ -582,8 +587,8 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   static float z0 = 0, z1 = 0, y0 = 0, yMax = -1e9f, yaw0 = 0, yaw1 = 0;
   static bdg::Vec3 target0{};
   static bool targetMoved = false, playing = false;
-  static std::string hudBefore, hudAfter;
-  static uint64_t pixBefore = 0, pixAfter = 0;
+  static std::string hudBefore, hudAfter, bestAfter;
+  static uint64_t pixBefore = 0, pixAfter = 0, sparks = 0;
   auto key = [&](bdg::Key k, bool down) {
     bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
     ev.key = k;
@@ -598,6 +603,7 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   const float gx = game ? game->x + game->w * 0.5f : 0, gy = game ? game->y + game->h * 0.5f : 0;
   if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // game time passes (fixed steps)
   if (frame == 2) {
+    bdg::DeleteSaveSlot(bdg::GameSaveFolder(), "main"); // a first run: no best score yet
     bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("score: ", 0) == 0) score = l; });
     TogglePlay(e);
     playing = e->play.Playing();
@@ -632,6 +638,8 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
     e->window.InjectEvent({T::MouseMove, (gx + 40) * scale, gy * scale, 0});
     hudAfter = UiField(e, "ui_score", "text");
     pixAfter = UiPixels(e, "ui_score", scale);
+    bestAfter = UiField(e, "ui_best", "text");
+    sparks = bdg::VfxWorld::Instance().Totals().spawned;
   }
   if (fired && frame == fired + 24)
     if (const auto* h = transform("head")) yaw1 = h->rotation.y;
@@ -641,9 +649,11 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
     const bool moved = z0 - z1 > 1.0f, jumped = yMax - y0 > 0.4f, hit = score.find("score: 1 (+1 Target)") != std::string::npos ||
                                                                          score.find("score: 1 ") != std::string::npos;
     const bool hud = hudBefore == "\"점수 0\"" && hudAfter == "\"점수 1\"" && pixBefore != 0 && pixAfter != 0 && pixBefore != pixAfter;
-    bdg::LogInfo("fps test: play={} moved={} jumped={} hit={} pushed={} look={} hud={} (z {:.2f} -> {:.2f}, jump {:.2f} m, shot at frame {}, yaw {:.1f} -> {:.1f}, hud {} -> {}, last \"{}\")",
-                 playing ? 1 : 0, moved ? 1 : 0, jumped ? 1 : 0, hit ? 1 : 0, targetMoved ? 1 : 0, std::fabs(yaw1 - yaw0) > 1 ? 1 : 0, hud ? 1 : 0, z0, z1,
-                 yMax - y0, fired, yaw0, yaw1, hudBefore, hudAfter, score);
+    std::string saved, err;
+    const bool best = bestAfter == "\"최고 1\"" && bdg::ReadSaveSlot(bdg::GameSaveFolder(), "main", saved, &err) && saved.find("\"best\":1") != std::string::npos;
+    bdg::LogInfo("fps test: play={} moved={} jumped={} hit={} pushed={} look={} hud={} sparks={} best={} (z {:.2f} -> {:.2f}, jump {:.2f} m, shot at frame {}, yaw {:.1f} -> {:.1f}, hud {} -> {}, {} particles, best {} saved {}, last \"{}\")",
+                 playing ? 1 : 0, moved ? 1 : 0, jumped ? 1 : 0, hit ? 1 : 0, targetMoved ? 1 : 0, std::fabs(yaw1 - yaw0) > 1 ? 1 : 0, hud ? 1 : 0,
+                 sparks >= 10 ? 1 : 0, best ? 1 : 0, z0, z1, yMax - y0, fired, yaw0, yaw1, hudBefore, hudAfter, sparks, bestAfter, saved, score);
   }
 }
 BDG_EDITOR_TEST("BDG_FPS_TEST", InjectFpsTest, nullptr)
@@ -718,3 +728,227 @@ void InjectPlatformerTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_PLATFORMER_TEST", InjectPlatformerTest, nullptr)
+
+
+// ---- Game API (6-5b) and particles (6-VFX P-1) ----
+
+namespace edtest_gameapi {
+std::string report, run1, run2; // probe lines (BDG_GAMEAPI_TEST)
+void Run(bdg::EditorModel* m, const char* name, const char* target, const char* args, const char* who) {
+  bdg::Command c;
+  c.name = name;
+  c.target = target;
+  c.args = args;
+  std::string err;
+  if (!m->bus.Execute(c, &err)) bdg::LogError("{}: {} {}: {}", who, name, target, err);
+}
+// Writes an effect into <BDG_ASSETS>/Effects (the test project's assets).
+bool WriteEffect(const char* file, const char* text) {
+  const char* assets = std::getenv("BDG_ASSETS");
+  if (!assets) return false;
+  const std::filesystem::path dir = bdg::PathU8(assets) / "Effects";
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  std::ofstream(dir / file, std::ios::binary | std::ios::trunc) << text;
+  return true;
+}
+// Average brightness (0..255) of the middle of the Game view on screen.
+double GameViewLuma(bdg_engine* e, float scale) {
+  bdg::Widget* g = e->editor->Find("game");
+  if (!g || g->w <= 0) return -1;
+  int32_t w = 0, h = 0;
+  e->window.GetDrawableSize(w, h);
+  std::vector<uint8_t> px;
+  e->rhi.ReadPixels(w, h, px);
+  if (px.size() < (size_t)w * h * 4) return -1;
+  const int x0 = std::clamp((int)((g->x + g->w * 0.3f) * scale), 0, w), x1 = std::clamp((int)((g->x + g->w * 0.7f) * scale), 0, w);
+  const int y0 = std::clamp((int)((g->y + g->h * 0.3f) * scale), 0, h), y1 = std::clamp((int)((g->y + g->h * 0.7f) * scale), 0, h);
+  double sum = 0;
+  size_t n = 0;
+  for (int y = y0; y < y1; ++y)
+    for (int x = x0; x < x1; ++x, ++n) {
+      const uint8_t* p = &px[((size_t)(h - 1 - y) * w + x) * 4];
+      sum += 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+    }
+  return n ? sum / (double)n : -1;
+}
+} // namespace edtest_gameapi
+
+// Scripted check of 6-5b (BDG_GAMEAPI_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll, BDG_ASSETS = an
+// empty assets folder, BDG_SAVE_DIR = an empty folder): the C# GameApiProbe saves values (Vector3, list, Korean
+// text) and writes the slot, uses the event bus (by name, with a value, by type, Off, a destroyed listener's handler
+// goes), raycasts against static boxes (the crate ahead with its normal, the ground below, a miss), overlaps a sphere
+// and plays a particle effect (12 sparks, then gone; a missing effect is a warning). Stop, Play again: the second run
+// reads what the first saved. The save file is versioned JSON. Run with --frames 200.
+void InjectGameApiTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  using edtest_gameapi::Run;
+  using edtest_gameapi::report, edtest_gameapi::run1, edtest_gameapi::run2;
+  static int stopAt = 0, play2At = 0;
+  if (frame == 2) {
+    bdg::DeleteSaveSlot(bdg::GameSaveFolder(), "main");
+    edtest_gameapi::WriteEffect("TestSpark.vfx", R"({"vfx":"TestSpark"}
+{"emitter":"Sparks","max":32,"duration":0.1,"loop":false}
+{"stage":"emitter-update","module":"SpawnBurst","count":12}
+{"stage":"particle-spawn","module":"Lifetime","value":0.3}
+{"stage":"particle-spawn","module":"VelocityCone","angle":45,"speed":[1,3]}
+{"stage":"render","module":"Sprite","blend":"additive","intensity":3}
+)");
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) {
+      if (l.rfind("game api probe: save=", 0) == 0) report = l;
+      else if (l.rfind("game api probe: run=1", 0) == 0) run1 = l;
+      else if (l.rfind("game api probe: run=2", 0) == 0) run2 = l;
+    });
+    const char* who = "game api test";
+    Run(m, "add", "", R"({"id":"ga_ground","name":"Ground"})", who);
+    Run(m, "set", "ga_ground", R"({"path":"Transform.position","value":[0,-0.5,0]})", who);
+    Run(m, "addcomp", "ga_ground", R"({"type":"Collider","value":{"shape":"Box","size":[20,1,20]}})", who);
+    Run(m, "add", "", R"({"id":"ga_crate","name":"Crate"})", who);
+    Run(m, "set", "ga_crate", R"({"path":"Transform.position","value":[0,1,-5]})", who);
+    Run(m, "addcomp", "ga_crate", R"({"type":"Collider","value":{"shape":"Box"}})", who);
+    Run(m, "add", "", R"({"id":"ga_listen","name":"Listener"})", who); // before the probe: its Start runs first
+    Run(m, "addcomp", "ga_listen", R"({"type":"GameApiProbe","value":{"listener":true}})", who);
+    Run(m, "add", "", R"({"id":"ga_probe","name":"Prober"})", who);
+    Run(m, "addcomp", "ga_probe", R"({"type":"GameApiProbe"})", who);
+  }
+  if (frame == 3) TogglePlay(e);
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // game time passes
+  if (!stopAt && frame > 3 && (!report.empty() || frame >= 150)) {
+    stopAt = frame;
+    TogglePlay(e);
+  }
+  if (stopAt && frame == stopAt + 2) {
+    play2At = frame;
+    TogglePlay(e); // the second run: reads the first run's save
+  }
+  if (play2At && frame == play2At + 6) TogglePlay(e);
+}
+void ReportGameApiTest(bdg_engine*) {
+  bdg::SetLogHook({});
+  using edtest_gameapi::report, edtest_gameapi::run1, edtest_gameapi::run2;
+  auto flag = [&](const char* key) { return report.find(std::string(key) + "=1") != std::string::npos ? 1 : 0; };
+  std::string text;
+  const std::string path = bdg::SaveSlotPath(bdg::GameSaveFolder(), "main");
+  const bool file = bdg::ReadTextU8(path, text) && text.find(R"("format":"bidulgi-save","version":1)") != std::string::npos &&
+                    text.find(R"("runs":2)") != std::string::npos && text.find("비둘기") != std::string::npos;
+  const bool restored = run1.find("restored=1") != std::string::npos && run2.find("restored=1") != std::string::npos;
+  bdg::LogInfo("game api test: save={} events={} raycast={} overlap={} vfx={} restored={} file={} ({}; {})", flag("save"), flag("events"),
+               flag("raycast"), flag("overlap"), flag("vfx"), restored ? 1 : 0, file ? 1 : 0, report, run2);
+}
+BDG_EDITOR_TEST("BDG_GAMEAPI_TEST", InjectGameApiTest, ReportGameApiTest)
+
+// Scripted check of 6-VFX P-1 (BDG_VFX_TEST=1, BDG_ASSETS = an empty assets folder): a ParticleSystem with a looping
+// flame (200 particles/s, 1 s each, bright additive sprites) 4 m in front of the game camera. While playing the live
+// count climbs to the steady state (rate x lifetime), particles die, the component shows the count; the middle of the
+// Game view is brighter than the same view once the flame's particles are cleared (pixels). Then a 3000-particle burst
+// at the potato tier is cut to its budget (500 for the whole scene, the rest dropped), at ultra it is not. Stop
+// clears all. Run with --frames 150.
+void InjectVfxTest(bdg_engine* e, int frame, float scale) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  using edtest_gameapi::Run;
+  static double lumaDuring = -1, lumaAfter = -1;
+  static size_t aliveEarly = 0, aliveSteady = 0, componentCount = 0, potatoAlive = 0, ultraAlive = 0;
+  static uint64_t died = 0, dropped = 0;
+  static double tEarly = 0, tSteady = 0;
+  static int playAt = 0, burstAt = 0;
+  static bool cleared = false;
+  bdg::VfxWorld& vfx = bdg::VfxWorld::Instance();
+  const char* who = "vfx test";
+  if (frame == 2) {
+    edtest_gameapi::WriteEffect("TestFlame.vfx", R"({"vfx":"TestFlame"}
+{"emitter":"Flame","max":1000,"duration":1,"loop":true}
+{"stage":"emitter-update","module":"SpawnRate","rate":200}
+{"stage":"particle-spawn","module":"Lifetime","value":1}
+{"stage":"particle-spawn","module":"PositionSphere","radius":0.4}
+{"stage":"particle-spawn","module":"Velocity","value":[0,0.3,0],"random":[0.1,0.1,0.1]}
+{"stage":"particle-spawn","module":"Size","value":[0.6,0.9]}
+{"stage":"particle-spawn","module":"Color","value":[1,0.55,0.15,1]}
+{"stage":"particle-update","module":"ColorOverLife","gradient":[[0,[1,1,1,1]],[0.8,[1,0.6,0.3,0.8]],[1,[1,0.3,0.1,0]]]}
+{"stage":"render","module":"Sprite","blend":"additive","intensity":2}
+)");
+    edtest_gameapi::WriteEffect("TestBurst.vfx", R"({"vfx":"TestBurst"}
+{"emitter":"Many","max":5000,"duration":0.1,"loop":false}
+{"stage":"emitter-update","module":"SpawnBurst","count":3000}
+{"stage":"particle-spawn","module":"Lifetime","value":3}
+{"stage":"particle-spawn","module":"Size","value":0.01}
+)");
+    // 4 m in front of the first camera (the one the Game view shows); add one if the scene has none
+    std::string camId;
+    std::vector<std::string> stack(m->scene.Roots().rbegin(), m->scene.Roots().rend());
+    while (!stack.empty() && camId.empty()) {
+      const bdg::SceneObject* o = m->scene.Find(stack.back());
+      stack.pop_back();
+      if (!o) continue;
+      stack.insert(stack.end(), o->children.rbegin(), o->children.rend());
+      if (const_cast<bdg::SceneObject*>(o)->Find("Camera")) camId = o->id;
+    }
+    if (camId.empty()) {
+      Run(m, "add", "", R"({"id":"vx_cam","name":"Camera"})", who);
+      Run(m, "addcomp", "vx_cam", R"({"type":"Camera"})", who);
+      camId = "vx_cam";
+    }
+    const glm::mat4 w = m->scene.WorldMatrix(camId);
+    const glm::vec3 at = glm::vec3(w[3]) - glm::normalize(glm::vec3(w[2])) * 4.f;
+    Run(m, "add", "", R"({"id":"vx_flame","name":"Flame"})", who);
+    Run(m, "set", "vx_flame", std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", at.x, at.y, at.z).c_str(), who);
+    Run(m, "addcomp", "vx_flame", R"({"type":"ParticleSystem","value":{"effect":"TestFlame"}})", who);
+    Run(m, "add", "", R"({"id":"vx_burst","name":"Burst"})", who);
+    Run(m, "addcomp", "vx_burst", R"({"type":"ParticleSystem","value":{"effect":"Effects/TestBurst.vfx","playOnStart":false}})", who);
+  }
+  if (frame == 7) {
+    TogglePlay(e);
+    playAt = frame;
+  }
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  if (playAt && e->play.Playing() && !aliveEarly && e->play.Time() >= 0.3) {
+    aliveEarly = vfx.Alive();
+    tEarly = vfx.SimTime(); // simulated time: a slow frame drops time (at most 4 steps per frame)
+  }
+  if (playAt && e->play.Playing() && !aliveSteady && e->play.Time() >= 1.6) {
+    aliveSteady = vfx.Alive();
+    tSteady = vfx.SimTime();
+    died = vfx.Totals().died;
+    if (bdg::SceneObject* o = m->scene.Find("vx_flame"))
+      if (bdg::Component* c = o->Find("ParticleSystem")) componentCount = (size_t)static_cast<const bdg::ParticleSystem*>(c->data)->particles;
+    lumaDuring = edtest_gameapi::GameViewLuma(e, scale);
+    burstAt = frame;
+  }
+  auto playBurst = [&] {
+    if (bdg::SceneObject* o = m->scene.Find("vx_burst"))
+      if (bdg::Component* c = o->Find("ParticleSystem")) static_cast<bdg::ParticleSystem*>(c->data)->Play();
+  };
+  if (burstAt && frame == burstAt + 1) // the flame's particles go at once: the same view without them
+    for (const bdg::VfxWorld::Effect& fx : vfx.All())
+      if (fx.object == "vx_flame") vfx.Stop(fx.id, true);
+  if (burstAt && frame == burstAt + 3) {
+    lumaAfter = edtest_gameapi::GameViewLuma(e, scale);
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Potato); // the renderer passes the tier on
+  }
+  if (burstAt && frame == burstAt + 5) playBurst();
+  if (burstAt && frame == burstAt + 7) {
+    potatoAlive = vfx.Alive();
+    dropped = vfx.Totals().dropped;
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Ultra);
+  }
+  if (burstAt && frame == burstAt + 9) playBurst(); // again (the first is cleared): all 3000 fit now
+  if (burstAt && frame == burstAt + 11) {
+    ultraAlive = vfx.Alive();
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    TogglePlay(e);
+  }
+  if (burstAt && frame == burstAt + 13) cleared = !vfx.Active() && vfx.Alive() == 0 && vfx.Instances() == 0;
+  if (burstAt && frame == burstAt + 14) {
+    // rate x time early (+-25%), rate x lifetime at the steady state (+-15%)
+    const double early = 200.0 * tEarly;
+    const bool count = aliveEarly > early * 0.75 && aliveEarly < early * 1.25 && aliveSteady > 170 && aliveSteady < 230 && died > 50 &&
+                       componentCount + 10 >= aliveSteady && componentCount <= aliveSteady + 10;
+    const bool render = lumaDuring >= 0 && lumaAfter >= 0 && lumaDuring > lumaAfter + 3;
+    const bool tiers = potatoAlive == 500 && dropped >= 2500 && ultraAlive == 3000;
+    bdg::LogInfo("vfx test: count={} render={} tiers={} cleared={} (alive {} at {:.2f} s, {} at {:.2f} s, died {}, component {}, luma {:.1f} -> {:.1f} without, potato {} dropped {}, ultra {})",
+                 count ? 1 : 0, render ? 1 : 0, tiers ? 1 : 0, cleared ? 1 : 0, aliveEarly, tEarly, aliveSteady, tSteady, died, componentCount,
+                 lumaDuring, lumaAfter, potatoAlive, dropped, ultraAlive);
+  }
+}
+BDG_EDITOR_TEST("BDG_VFX_TEST", InjectVfxTest, nullptr)

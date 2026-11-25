@@ -8,6 +8,10 @@
 #include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
@@ -228,7 +232,47 @@ public:
     return l.Succeeded() ? l.GetBody().GetShape()->GetVolume() : 0.f;
   }
 
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit) const override {
+    const float len = glm::length(direction);
+    if (len < 1e-8f || maxDistance <= 0) return false;
+    const glm::vec3 dir = direction / len;
+    const JPH::RRayCast ray(JPH::RVec3(J(origin)), J(dir * maxDistance));
+    JPH::RayCastResult r;
+    const Sensors filter(hitTriggers);
+    if (!system_.GetNarrowPhaseQuery().CastRay(ray, r, {}, {}, filter)) return false;
+    hit.distance = r.mFraction * maxDistance;
+    hit.point = origin + dir * hit.distance;
+    hit.normal = -dir;
+    JPH::BodyLockRead l(system_.GetBodyLockInterface(), r.mBodyID);
+    if (l.Succeeded()) hit.normal = G(l.GetBody().GetWorldSpaceSurfaceNormal(r.mSubShapeID2, JPH::RVec3(J(hit.point))));
+    auto u = user_.find(r.mBodyID.GetIndexAndSequenceNumber());
+    hit.user = u == user_.end() ? 0 : u->second;
+    return true;
+  }
+  void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const override {
+    if (radius <= 0) return;
+    JPH::SphereShape sphere(radius);
+    sphere.SetEmbedded();
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    const Sensors filter(hitTriggers);
+    system_.GetNarrowPhaseQuery().CollideShape(&sphere, JPH::Vec3::sReplicate(1), JPH::RMat44::sTranslation(JPH::RVec3(J(center))), settings,
+                                               JPH::RVec3::sZero(), hits, {}, {}, filter);
+    for (const JPH::CollideShapeResult& h : hits.mHits) {
+      auto u = user_.find(h.mBodyID2.GetIndexAndSequenceNumber());
+      if (u != user_.end()) users.push_back(u->second);
+    }
+  }
+
 private:
+  // Scene queries skip triggers (sensors) unless asked for them.
+  class Sensors final : public JPH::BodyFilter {
+  public:
+    explicit Sensors(bool include) : include_(include) {}
+    bool ShouldCollideLocked(const JPH::Body& b) const override { return include_ || !b.IsSensor(); }
+  private:
+    bool include_;
+  };
   struct Body { JPH::BodyID id; bool alive; };
   bool Valid(BodyId id) const { return id < bodies_.size() && bodies_[id].alive; }
 

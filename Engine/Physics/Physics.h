@@ -51,6 +51,13 @@ struct Contact {
   glm::vec3 point{0}, normal{0}; // world; normal from a to b (begin only)
 };
 
+// Scene queries (6-5b, the easy API's Raycast / OverlapSphere): what a ray met first, and bodies inside a sphere.
+struct RayHit {
+  uint64_t user = 0;           // the body's BodyDesc::user
+  glm::vec3 point{0}, normal{0}; // world; the normal faces the ray's origin
+  float distance = 0;          // from the origin along the (normalised) direction
+};
+
 struct Capabilities {
   const char* name = "";
   bool is3D = true, deterministic = false, triggers = false, meshShapes = false, character = false;
@@ -73,6 +80,10 @@ public:
   virtual const std::vector<Contact>& Contacts() const = 0; // of the last Step
   virtual size_t Bodies() const = 0;
   virtual float Volume(BodyId id) const = 0; // of the collision shape (m^3; 2D: m^2): Collider Auto error
+  // The nearest body the ray meets within maxDistance (triggers only with hitTriggers). 2D: the XY plane (z ignored).
+  virtual bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit) const = 0;
+  // Bodies whose shape is inside or touches the sphere (2D: circle), in no particular order (may repeat a body).
+  virtual void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const = 0;
 };
 
 std::unique_ptr<Backend> CreateJolt();  // 3D

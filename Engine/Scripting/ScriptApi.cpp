@@ -4,6 +4,12 @@
 #include "Core/Reflection.h"
 #include "Scripting/DataTable.h"
 #include "Audio/Audio.h"
+#include "Physics/PhysicsWorld.h"
+#include "Project/ProjectSettings.h"
+#include "Scripting/SaveGame.h"
+#include "VFX/VfxWorld.h"
+#include <glm/gtc/quaternion.hpp>
+#include <filesystem>
 #include <yyjson.h>
 #include <cstdlib>
 #include <format>
@@ -169,6 +175,78 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
       const float v = audio.GroupVolume(group);
       return v < 0 ? Fail(std::format("no mixer group \"{}\"", group)) : Ok(std::format("{}", v));
     }
+    return Fail(std::format("unknown op \"{}\"", op));
+  }
+  auto vec3 = [&](const char* key, glm::vec3& out) {
+    yyjson_val* v = yyjson_obj_get(r, key);
+    if (!yyjson_is_arr(v) || yyjson_arr_size(v) != 3) return false;
+    out = {(float)yyjson_get_num(yyjson_arr_get(v, 0)), (float)yyjson_get_num(yyjson_arr_get(v, 1)), (float)yyjson_get_num(yyjson_arr_get(v, 2))};
+    return true;
+  };
+  auto number = [&](const char* key, double def) {
+    yyjson_val* v = yyjson_obj_get(r, key);
+    return yyjson_is_num(v) ? yyjson_get_num(v) : def;
+  };
+  if (op.rfind("save.", 0) == 0) { // player saves (6-5b): the script holds the values, the engine the files
+    ProjectSettings game;
+    std::error_code ec;
+    const std::filesystem::path settings = std::filesystem::current_path(ec) / "ProjectSettings" / "Project.json";
+    if (std::filesystem::exists(settings, ec)) {
+      const std::u8string u = settings.generic_u8string();
+      LoadProjectSettings(std::string(u.begin(), u.end()), game);
+    }
+    const std::string folder = GameSaveFolder(game), slot = Str(r, "slot");
+    if (op == "save.folder") return Ok(Q(folder));
+    if (op == "save.list") return Ok(IdList(ListSaveSlots(folder)));
+    if (op == "save.delete") return Ok(DeleteSaveSlot(folder, slot) ? "true" : "false");
+    if (op == "save.read") {
+      std::string data, err;
+      if (ReadSaveSlot(folder, slot, data, &err)) return Ok(data);
+      return err.empty() ? Ok("null") : Fail(err);
+    }
+    if (op == "save.write") {
+      yyjson_val* data = yyjson_obj_get(r, "data");
+      if (!yyjson_is_obj(data)) return Fail("save.write: data must be an object");
+      std::string err;
+      if (!WriteSaveSlot(folder, slot, Json(data), game, &err)) return Fail(err);
+      return Ok(Q(SaveSlotPath(folder, slot)));
+    }
+    return Fail(std::format("unknown op \"{}\"", op));
+  }
+  if (op == "physics.raycast" || op == "physics.overlap") { // scene queries (6-5b) on the playing game's physics
+    const PhysicsWorld* world = PhysicsWorld::Current();
+    if (!world) return Fail("physics is not running (it starts with Play)");
+    const bool triggers = yyjson_get_bool(yyjson_obj_get(r, "triggers"));
+    if (op == "physics.raycast") {
+      glm::vec3 origin, dir;
+      if (!vec3("origin", origin) || !vec3("direction", dir)) return Fail("physics.raycast: origin and direction are [x, y, z]");
+      PhysicsWorld::QueryHit hit;
+      if (!world->Raycast(origin, dir, (float)number("maxDistance", 1000), triggers, hit) || !scene.Find(hit.object)) return Ok("null");
+      return Ok(std::format(R"({{"id":{},"point":[{},{},{}],"normal":[{},{},{}],"distance":{}}})", Q(hit.object), hit.point.x, hit.point.y,
+                            hit.point.z, hit.normal.x, hit.normal.y, hit.normal.z, hit.distance));
+    }
+    glm::vec3 center;
+    if (!vec3("center", center)) return Fail("physics.overlap: center is [x, y, z]");
+    std::vector<std::string> ids;
+    for (const std::string& id : world->OverlapSphere(center, (float)number("radius", 1), triggers))
+      if (scene.Find(id)) ids.push_back(id);
+    return Ok(IdList(ids));
+  }
+  if (op.rfind("vfx.", 0) == 0) { // particle effects (6-VFX P-1), while playing
+    VfxWorld& vfx = VfxWorld::Instance();
+    if (!vfx.Active()) return Fail("effects play while the game runs (Play)");
+    if (op == "vfx.play") {
+      glm::vec3 at(0), euler(0);
+      vec3("at", at);
+      vec3("rotation", euler);
+      std::string err;
+      const uint32_t id = vfx.Play(Str(r, "effect"), at, glm::quat(glm::radians(euler)), (uint32_t)number("seed", 0), &err);
+      return id ? Ok(std::to_string(id)) : Fail(err);
+    }
+    const uint32_t id = (uint32_t)number("id", 0);
+    if (op == "vfx.stop") { vfx.Stop(id, yyjson_get_bool(yyjson_obj_get(r, "clear"))); return Ok(); }
+    if (op == "vfx.playing") return Ok(vfx.Playing(id) ? "true" : "false");
+    if (op == "vfx.alive") return Ok(std::to_string(yyjson_obj_get(r, "id") ? vfx.Alive(id) : vfx.Alive()));
     return Fail(std::format("unknown op \"{}\"", op));
   }
   if (op == "table") { // a data table, whole (the script caches it until play stops)

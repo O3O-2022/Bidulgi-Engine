@@ -45,6 +45,13 @@ public:
   const std::vector<AutoChoice>& AutoChoices() const { return auto_; }
   std::string Describe() const; // "jolt 12 bodies (3 awake), box2d 2 bodies, 120 steps"
 
+  // Scene queries (6-5b, the easy API's Raycast / OverlapSphere), by object id. Both worlds are asked (2D bodies in
+  // the XY plane); the nearest hit wins. Bodies are where the last step left them.
+  struct QueryHit { std::string object; glm::vec3 point{0}, normal{0}; float distance = 0; };
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, QueryHit& hit) const;
+  std::vector<std::string> OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const; // each object once
+  static const PhysicsWorld* Current(); // the world of the game that is playing (script queries), or nullptr
+
   // "Add Physics" (physics.md): a Rigidbody (Static for greybox blocks and planes, else Dynamic) and an Auto Collider,
   // whichever the object does not have yet; 2D objects (with a Rigidbody2D or Collider2D) get the 2D pair.
   static std::vector<Command> AddPhysicsCommands(const Scene& scene, const std::string& id);
