@@ -36,6 +36,10 @@ bool PlayMode::Start(EditorModel& m) {
   frames_ = 0;
   playing_ = true;
   m.playing = true;
+  physics_.Begin(m.scene, physicsSettings, m.assets); // bodies for Rigidbody / Collider objects (6-2)
+  physicsCounts_ = {};
+  physicsAcc_ = 0;
+  scripts_.beforeFixedStep = [this, &m](double step) { StepPhysics(m, step); };
   scripts_.Begin(m.scene, m.bus); // Awake / OnEnable of the C# Behaviours (no-op without C#)
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
@@ -44,6 +48,9 @@ bool PlayMode::Start(EditorModel& m) {
 bool PlayMode::Stop(EditorModel& m) {
   if (!playing_) return false;
   scripts_.End(); // OnDisable / OnDestroy while the played world still exists
+  scripts_.beforeFixedStep = nullptr;
+  if (physics_.Active()) LogInfo("physics: stopped: {}", physics_.Describe());
+  physics_.End();
   shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
@@ -115,12 +122,37 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     t.rotation = {wrap(t.rotation.x + r.speed.x * (float)dt), wrap(t.rotation.y + r.speed.y * (float)dt), wrap(t.rotation.z + r.speed.z * (float)dt)};
     changed = true;
   }
-  if (scripts_.Active()) {
+  if (scripts_.Active()) { // physics runs inside its fixed steps (beforeFixedStep)
     scripts_.Frame(m.scene, m.bus, dt);
     changed = true;
+  } else if (physics_.Active()) { // no C#: the same fixed-step clock here
+    physicsAcc_ += dt;
+    int steps = 0;
+    while (physicsAcc_ >= scripts_.fixedStep && steps < scripts_.maxFixedSteps) {
+      physicsAcc_ -= scripts_.fixedStep;
+      ++steps;
+      StepPhysics(m, scripts_.fixedStep);
+    }
+    if (physicsAcc_ >= scripts_.fixedStep) physicsAcc_ = 0; // too slow: drop the rest instead of spiralling
+    changed = changed || steps > 0;
   }
   if (changed) m.ValuesChanged();
   TickShakes(m, (float)dt);
+}
+
+void PlayMode::StepPhysics(EditorModel& m, double step) {
+  if (!physics_.Active()) return;
+  physics_.Step(m.scene, (float)step);
+  for (const PhysicsWorld::Event& e : physics_.Events()) {
+    using K = PhysicsWorld::EventKind;
+    const char* method = e.kind == K::CollisionEnter ? "OnCollisionEnter" : e.kind == K::CollisionExit ? "OnCollisionExit"
+                         : e.kind == K::TriggerEnter ? "OnTriggerEnter" : "OnTriggerExit";
+    (e.kind == K::CollisionEnter ? physicsCounts_.collisionEnter : e.kind == K::CollisionExit ? physicsCounts_.collisionExit
+     : e.kind == K::TriggerEnter ? physicsCounts_.triggerEnter : physicsCounts_.triggerExit)++;
+    if (scripts_.Active())
+      scripts_.SendEvent(e.self, method, std::format(R"({{"other":"{}","point":[{},{},{}],"normal":[{},{},{}]}})", e.other, e.point.x,
+                                                     e.point.y, e.point.z, e.normal.x, e.normal.y, e.normal.z));
+  }
 }
 
 // A shake by name: built-in ("bdg:Heavy") or a .camshake asset by path, file name or name without extension.

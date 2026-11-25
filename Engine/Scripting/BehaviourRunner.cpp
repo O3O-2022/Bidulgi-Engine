@@ -68,11 +68,17 @@ void BehaviourRunner::Frame(Scene& scene, CommandBus& bus, double dt) {
   while (acc_ >= fixedStep && lastFixed_ < maxFixedSteps) {
     acc_ -= fixedStep;
     ++lastFixed_;
+    if (beforeFixedStep) beforeFixedStep(fixedStep);
     host.TickBehaviours(DotNetHost::Phase::FixedUpdate, fixedStep, time_, frame_);
   }
   if (acc_ >= fixedStep) acc_ = 0; // too slow: drop the rest instead of spiralling
   host.TickBehaviours(DotNetHost::Phase::LateUpdate, dt, time_, frame_);
   Pull(scene, bus);
+}
+
+void BehaviourRunner::SendEvent(const std::string& object, const char* method, const std::string& json) {
+  for (const Inst& i : insts_)
+    if (i.object == object && i.enabled) DotNetHost::Instance().SendBehaviourEvent(i.handle, method, json);
 }
 
 void BehaviourRunner::Pull(Scene& scene, CommandBus& bus) {

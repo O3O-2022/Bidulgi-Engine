@@ -154,11 +154,11 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   if (rd < 0 || !fn) return fail(std::format("런타임 함수를 얻을 수 없음 (0x{:08x}) {}", (uint32_t)rd, g_hostError));
   auto load = (load_assembly_and_get_function_pointer_fn)fn;
   void* initialize = nullptr;
-  void* entry[9] = {};
-  const wchar_t* names[9] = {L"SelfTest", L"LoadAssembly", L"CreateBehaviour", L"SetBehaviourEnabled", L"DestroyBehaviour", L"TickBehaviours",
-                             L"SetBehaviourFields", L"GetBehaviourFields", L"ReloadAssembly"};
+  void* entry[10] = {};
+  const wchar_t* names[10] = {L"SelfTest", L"LoadAssembly", L"CreateBehaviour", L"SetBehaviourEnabled", L"DestroyBehaviour", L"TickBehaviours",
+                              L"SetBehaviourFields", L"GetBehaviourFields", L"ReloadAssembly", L"SendBehaviourEvent"};
   int rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", L"Initialize", kUnmanagedCallersOnly, nullptr, &initialize);
-  for (int i = 0; i < 9 && rl >= 0; ++i) {
+  for (int i = 0; i < 10 && rl >= 0; ++i) {
     rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", names[i], kUnmanagedCallersOnly, nullptr, &entry[i]);
     if (rl >= 0 && !entry[i]) rl = -1;
   }
@@ -174,6 +174,7 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   setFields_ = (void (*)(int, const char*))entry[6];
   getFields_ = (int (*)(int, char*, int))entry[7];
   reload_ = (int (*)(const char*))entry[8];
+  event_ = (void (*)(int, const char*, const char*))entry[9];
   selfTest_ = (int (*)(const char*))entry[0];
   // the runtime version the host resolved (written next to the dll by the build: *.runtimeconfig.json names the
   // framework; the actual one may be newer with RollForward)
@@ -439,6 +440,10 @@ void DotNetHost::DestroyBehaviour(int handle) {
 }
 void DotNetHost::TickBehaviours(Phase phase, double dt, double time, int frame) {
   if (tick_) tick_((int)phase, dt, time, frame);
+}
+
+void DotNetHost::SendBehaviourEvent(int handle, const char* method, const std::string& json) {
+  if (event_ && handle) event_(handle, method, json.c_str());
 }
 
 int DotNetHost::Request(const char* json, char* out, int capacity) {

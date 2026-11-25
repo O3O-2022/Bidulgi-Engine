@@ -1001,3 +1001,162 @@ void InjectGizmoTest(bdg_engine* e, int frame, float scale) {
                                  glm::length(f.axes[0] - glm::normalize(worldX)) < 1e-4f ? 1 : 0);
   }
 }
+
+// Scripted check of 6-2 physics (BDG_PHYSICS_TEST=1; with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll the C#
+// parts run too). Objects made by commands on the open scene: a ground block, a box dropped from 3 m, a ramp with a
+// sphere at its top, a trigger volume with a sphere falling through it, a box that a C# PhysicsProbe pushes up with
+// AddImpulse, and a 2D box on a 2D floor. Play starts paused and advances exactly one fixed step per frame, twice:
+// both runs must end bit-identical (determinism).
+namespace physicstest {
+struct Run {
+  float boxY = -1, boxSpeed = -1, sphereZ = -1, sphereY = -1, sphereSpin = 0, box2dY = -1, jumperMaxY = 0, fallerY = 1e9f;
+  uint64_t hash = 0, collisions = 0, triggers = 0;
+  int probeCollisions = -1, probeTriggers = -1, auto3d = 0;
+  float probeSpeed = -1;
+  std::string lastOther;
+};
+Run runs[2];
+constexpr int kSteps = 150; // 2.5 s of game time at 1/60
+std::string button = "-";   // the Inspector's one-click "물리 추가"
+}
+void InjectPhysicsTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  using physicstest::runs;
+  using physicstest::kSteps;
+  const bool csharp = bdg::DotNetHost::Instance().Running() && bdg::Registry::Instance().Find("PhysicsProbe");
+  auto run = [&](const char* name, const char* target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("physics test: {} {}: {}", name, target, err);
+  };
+  auto object = [&](const char* id, const char* name, const char* pos) { run("add", "", std::format(R"({{"id":"{}","name":"{}"}})", id, name)); run("set", id, std::format(R"({{"path":"Transform.position","value":{}}})", pos)); };
+  if (frame == 2) {
+    object("phg", "Ground", "[0,-1,0]");
+    run("addcomp", "phg", R"({"type":"Blockout","value":{"size":[40,1,40]}})");
+    run("addcomp", "phg", R"({"type":"Collider"})");
+    object("phb", "Dropped box", "[0,3,0]");
+    run("addcomp", "phb", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    run("addcomp", "phb", R"({"type":"Rigidbody"})");
+    run("addcomp", "phb", R"({"type":"Collider"})");
+    if (csharp) run("addcomp", "phb", R"({"type":"PhysicsProbe"})");
+    object("phr", "Ramp", "[6,0,0]");
+    run("addcomp", "phr", R"({"type":"Blockout","value":{"shape":"Ramp","size":[2,2,6]}})");
+    run("addcomp", "phr", R"({"type":"Collider"})");
+    object("phs", "Rolling sphere", "[6,2.6,-2.4]");
+    run("addcomp", "phs", R"({"type":"MeshRenderer","value":{"mesh":"Sphere"}})");
+    run("addcomp", "phs", R"({"type":"Rigidbody"})");
+    run("addcomp", "phs", R"({"type":"Collider"})");
+    object("pht", "Trigger", "[-6,1.5,0]");
+    run("addcomp", "pht", R"({"type":"Collider","value":{"shape":"Box","size":[2,1,2],"isTrigger":true}})");
+    object("phf", "Faller", "[-6,4,0]");
+    run("addcomp", "phf", R"({"type":"MeshRenderer","value":{"mesh":"Sphere"}})");
+    run("addcomp", "phf", R"({"type":"Rigidbody"})");
+    run("addcomp", "phf", R"({"type":"Collider"})");
+    if (csharp) run("addcomp", "phf", R"({"type":"PhysicsProbe"})");
+    object("phj", "Jumper", "[-2,0.5,4]");
+    run("addcomp", "phj", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    run("addcomp", "phj", R"({"type":"Rigidbody"})");
+    run("addcomp", "phj", R"({"type":"Collider"})");
+    if (csharp) run("addcomp", "phj", R"({"type":"PhysicsProbe","value":{"pushUp":5}})");
+    object("ph2g", "Floor 2D", "[14,-0.5,0]");
+    run("set", "ph2g", R"({"path":"Transform.scale","value":[10,1,1]})");
+    run("addcomp", "ph2g", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    run("addcomp", "ph2g", R"({"type":"Collider2D"})");
+    object("ph2b", "Box 2D", "[14,3,0]");
+    run("addcomp", "ph2b", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    run("addcomp", "ph2b", R"({"type":"Rigidbody2D"})");
+    run("addcomp", "ph2b", R"({"type":"Collider2D"})");
+    object("pha", "Crate (Add Physics)", "[-15,0.5,-15]");
+    run("addcomp", "pha", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    m->Select("pha");
+  }
+  if (frame == 3) { // Inspector button: Rigidbody + Auto Collider in one undo step
+    const size_t depth = m->bus.UndoDepth();
+    bdg::Widget* w = e->editor->Find("insp.physics");
+    if (w && w->onClick) w->onClick(*w);
+    bdg::SceneObject* o = m->scene.Find("pha");
+    const bool added = o && o->Find("Rigidbody") && o->Find("Collider") && m->bus.UndoDepth() == depth + 1;
+    physicstest::button = w ? (added ? "1" : "0") : "missing";
+  }
+  // two runs: frames 4.. and 4 + kSteps + 8 ..; each starts paused and steps one fixed step per frame
+  const int start[2] = {4, 4 + kSteps + 8};
+  for (int r = 0; r < 2; ++r) {
+    const int f = frame - start[r];
+    if (f == 0) {
+      e->play.SetPaused(true);
+      TogglePlay(e);
+    } else if (f >= 1 && f <= kSteps) {
+      e->play.Step();
+    }
+    auto tf = [&](const char* id) -> const bdg::Transform* {
+      bdg::SceneObject* o = m->scene.Find(id);
+      bdg::Component* c = o ? o->Find("Transform") : nullptr;
+      return c ? static_cast<const bdg::Transform*>(c->data) : nullptr;
+    };
+    if (f >= 2 && f <= kSteps + 1 && e->play.Playing()) { // during the run (the previous frame's step is done)
+      if (const bdg::Transform* t = tf("phj")) runs[r].jumperMaxY = std::max(runs[r].jumperMaxY, t->position.y);
+      if (const bdg::Transform* t = tf("phf")) runs[r].fallerY = std::min(runs[r].fallerY, t->position.y);
+    }
+    if (f == kSteps + 2 && e->play.Playing()) {
+      physicstest::Run& out = runs[r];
+      if (const bdg::Transform* t = tf("phb")) out.boxY = t->position.y;
+      if (bdg::SceneObject* o = m->scene.Find("phb"))
+        if (bdg::Component* c = o->Find("Rigidbody")) {
+          const bdg::Vec3 v = static_cast<const bdg::Rigidbody*>(c->data)->velocity;
+          out.boxSpeed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        }
+      if (const bdg::Transform* t = tf("phs")) { out.sphereZ = t->position.z; out.sphereY = t->position.y; }
+      if (bdg::SceneObject* o = m->scene.Find("phs"))
+        if (bdg::Component* c = o->Find("Rigidbody")) {
+          const bdg::Vec3 w = static_cast<const bdg::Rigidbody*>(c->data)->angularVelocity;
+          out.sphereSpin = std::abs(w.x) + std::abs(w.y) + std::abs(w.z);
+        }
+      if (const bdg::Transform* t = tf("ph2b")) out.box2dY = t->position.y;
+      out.hash = e->play.Physics().StateHash();
+      out.collisions = e->play.PhysicsEvents().collisionEnter;
+      out.triggers = e->play.PhysicsEvents().triggerEnter;
+      out.auto3d = (int)e->play.Physics().AutoChoices().size();
+      if (csharp) {
+        auto field = [&](const char* id, const char* name) {
+          bdg::SceneObject* o = m->scene.Find(id);
+          bdg::Component* c = o ? o->Find("PhysicsProbe") : nullptr;
+          if (!c) return std::string();
+          for (const bdg::FieldInfo& fi : c->type->fields)
+            if (fi.name == name) return bdg::Registry::ToJson(static_cast<unsigned char*>(c->data) + fi.offset, fi.value);
+          return std::string();
+        };
+        out.probeCollisions = std::atoi(field("phb", "collisions").c_str());
+        out.probeTriggers = std::atoi(field("phf", "triggers").c_str());
+        out.probeSpeed = (float)std::atof(field("phj", "speed").c_str());
+        out.lastOther = field("phb", "lastOther");
+      }
+      bdg::LogInfo("physics: run {} {}", r + 1, e->play.Physics().Describe());
+      TogglePlay(e);
+      e->play.SetPaused(false);
+    }
+  }
+}
+void ReportPhysicsTest(bdg_engine* e) {
+  using physicstest::runs;
+  const physicstest::Run& a = runs[0];
+  const bool csharp = a.probeCollisions >= 0;
+  const bool fall = std::abs(a.boxY - 0.5f) < 0.05f && a.boxSpeed >= 0 && a.boxSpeed < 0.05f && a.collisions >= 1;
+  const bool roll = a.sphereZ > -2.4f + 2.f && a.sphereY < 1.f && a.sphereSpin > 30.f; // rolled down the slope, turning
+  const bool trigger = a.triggers >= 1 && a.fallerY < 0.6f;                          // went through the trigger to the ground
+  const bool twoD = std::abs(a.box2dY - 0.5f) < 0.05f;
+  const bool same = a.hash != 0 && a.hash == runs[1].hash;
+  const bool script = !csharp || (a.probeCollisions >= 1 && a.probeTriggers >= 1 && a.jumperMaxY > 1.2f && a.lastOther == "\"Ground\"");
+  bdg::LogInfo("physics test: fall={} roll={} trigger={} 2d={} deterministic={} csharp={} button={} | box y={:.3f} v={:.3f} sphere z={:.2f} y={:.2f} "
+               "spin={:.0f} faller y={:.2f} 2d y={:.3f} jumper max y={:.2f} events c={} t={} probe c={} t={} speed={:.2f} other={} auto={} "
+               "hash {:016x} {:016x}",
+               fall ? 1 : 0, roll ? 1 : 0, trigger ? 1 : 0, twoD ? 1 : 0, same ? 1 : 0, csharp ? (script ? "1" : "0") : "-", physicstest::button,
+               a.boxY, a.boxSpeed,
+               a.sphereZ, a.sphereY, a.sphereSpin, a.fallerY, a.box2dY, a.jumperMaxY, a.collisions, a.triggers, a.probeCollisions,
+               a.probeTriggers, a.probeSpeed, a.lastOther, a.auto3d, a.hash, runs[1].hash);
+  (void)e;
+}
+BDG_EDITOR_TEST("BDG_PHYSICS_TEST", InjectPhysicsTest, ReportPhysicsTest)

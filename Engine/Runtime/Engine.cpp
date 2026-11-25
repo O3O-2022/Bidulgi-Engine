@@ -570,6 +570,9 @@ void ProjectChanged(bdg_engine* e) {
   bdg::ProjectSettingsPanel::Refresh(*e->editor, e->project, ProjectSettingsDirty(e));
   e->play.Scripts().fixedStep = std::clamp((double)e->project.physics.fixedTimestep, 0.001, 0.1);
   e->play.Scripts().maxFixedSteps = std::clamp(e->project.physics.maxFixedSteps, 1, 16);
+  const bdg::Vec3 g = e->project.physics.gravity; // 6-2 physics world
+  e->play.physicsSettings.gravity = {g.x, g.y, g.z};
+  e->play.physicsSettings.gravity2D = {e->project.physics.gravity2D.x, e->project.physics.gravity2D.y};
 }
 bool SaveProjectSettings(bdg_engine* e) {
   std::string err;

@@ -208,4 +208,95 @@ public:
   BFUNCTION(Button) void Play() { ++pendingPlays; } // while playing: shakes the game camera now
   int32_t pendingPlays = 0; // not saved: taken by play mode
 };
+
+// ---- Physics (queue 6-2, Docs/architecture/physics.md). Backend-independent values only; the physics engine is
+// picked per body (Simulation) and runs behind the PHI layer (Engine/Physics). Names follow Unity.
+BENUM()
+enum class RigidbodyType { Static, Dynamic, Kinematic, Character };
+BENUM()
+enum class PhysicsSimulation { Auto, Jolt, GPU }; // GPU: the L track; until then it falls back to Auto
+
+BCLASS(Component)
+struct Rigidbody {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Static: never moves. Dynamic: simulated. Kinematic: moved by its Transform, pushes others. Character: dynamic, upright")
+  RigidbodyType type = RigidbodyType::Dynamic;
+  BPROPERTY(Edit, Tooltip = "Physics engine for this body. Auto = the project's default (3D: Jolt)") PhysicsSimulation simulation = PhysicsSimulation::Auto;
+  BPROPERTY(Edit, Range = "0.001,100000", Tooltip = "Kilograms") float mass = 1.f;
+  BPROPERTY(Edit, Range = "0,10", Tooltip = "Slows moving down (air drag)") float linearDamping = 0.05f;
+  BPROPERTY(Edit, Range = "0,10", Tooltip = "Slows turning down") float angularDamping = 0.05f;
+  BPROPERTY(Edit, Range = "-10,10", Tooltip = "Times the project's gravity (0 = floats)") float gravityScale = 1.f;
+  BPROPERTY(Edit, Tooltip = "Never turns (characters, crates that must stay upright)") bool freezeRotation = false;
+  BPROPERTY(Edit, Tooltip = "Metres per second: the start velocity, and the current one while playing") Vec3 velocity;
+  BPROPERTY(Edit, Tooltip = "Degrees per second around X, Y, Z while playing") Vec3 angularVelocity;
+  // Pushes, applied on the next physics step (scripts: rb.AddForce(...)). Force in newtons (over the step), impulse in
+  // newton-seconds (at once), torque in newton-metres.
+  BFUNCTION(Callable) void AddForce(Vec3 force) { pendingForce = {pendingForce.x + force.x, pendingForce.y + force.y, pendingForce.z + force.z}; }
+  BFUNCTION(Callable) void AddImpulse(Vec3 impulse) {
+    pendingImpulse = {pendingImpulse.x + impulse.x, pendingImpulse.y + impulse.y, pendingImpulse.z + impulse.z};
+  }
+  BFUNCTION(Callable) void AddTorque(Vec3 torque) { pendingTorque = {pendingTorque.x + torque.x, pendingTorque.y + torque.y, pendingTorque.z + torque.z}; }
+  Vec3 pendingForce, pendingImpulse, pendingTorque; // not saved: taken by the physics step
+};
+
+BENUM()
+enum class ColliderShape { Auto, Box, Sphere, Capsule, Mesh };
+
+// Collision shape. Without a Rigidbody the object is static level geometry. Auto: the engine picks from what is drawn
+// (an exact box / sphere / cylinder for the built-in shapes and greybox blocks, the triangle mesh for static objects,
+// the convex hull for moving ones, an upright capsule for characters); the choice is logged with its error.
+BCLASS(Component)
+struct Collider {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit) ColliderShape shape = ColliderShape::Auto;
+  BPROPERTY(Edit, Tooltip = "Offset from the object's origin (local, metres)") Vec3 center;
+  BPROPERTY(Edit, ShowIf = "shape == Box", Tooltip = "Box size (local, metres; times the object's scale)") Vec3 size{1, 1, 1};
+  BPROPERTY(Edit, Range = "0.001,1000", Tooltip = "Sphere and capsule radius (metres)") float radius = 0.5f;
+  BPROPERTY(Edit, Range = "0.001,1000", ShowIf = "shape == Capsule", Tooltip = "Capsule height, end to end (metres)") float height = 2.f;
+  BPROPERTY(Edit, Tooltip = "Reports what enters it (OnTriggerEnter) instead of blocking") bool isTrigger = false;
+};
+
+// Surface of the object's colliders (2D and 3D). Without one: friction 0.6, no bounce.
+BCLASS(Component)
+struct PhysicsMaterial {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Range = "0,2", Tooltip = "0 = ice, 1 = rubber") float friction = 0.6f;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "Bounciness: 0 = stops, 1 = bounces back fully") float bounciness = 0.f;
+};
+
+// 2D physics in the XY plane (Box2D): position x, y and rotation around Z.
+BCLASS(Component)
+struct Rigidbody2D {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit) RigidbodyType type = RigidbodyType::Dynamic;
+  BPROPERTY(Edit, Range = "0.001,100000", Tooltip = "Kilograms") float mass = 1.f;
+  BPROPERTY(Edit, Range = "0,10") float linearDamping = 0.f;
+  BPROPERTY(Edit, Range = "0,10") float angularDamping = 0.05f;
+  BPROPERTY(Edit, Range = "-10,10", Tooltip = "Times the project's 2D gravity") float gravityScale = 1.f;
+  BPROPERTY(Edit) bool freezeRotation = false;
+  BPROPERTY(Edit, Tooltip = "Metres per second") Vec2 velocity;
+  BPROPERTY(Edit, Tooltip = "Degrees per second") float angularVelocity = 0.f;
+  BFUNCTION(Callable) void AddForce(Vec2 force) { pendingForce = {pendingForce.x + force.x, pendingForce.y + force.y}; }
+  BFUNCTION(Callable) void AddImpulse(Vec2 impulse) { pendingImpulse = {pendingImpulse.x + impulse.x, pendingImpulse.y + impulse.y}; }
+  Vec2 pendingForce, pendingImpulse; // not saved
+};
+
+BENUM()
+enum class Collider2DShape { Auto, Box, Circle, Capsule };
+
+BCLASS(Component)
+struct Collider2D {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Auto: a circle for spheres / round meshes, else the box around the drawn shape") Collider2DShape shape = Collider2DShape::Auto;
+  BPROPERTY(Edit) Vec2 center;
+  BPROPERTY(Edit, ShowIf = "shape == Box") Vec2 size{1, 1};
+  BPROPERTY(Edit, Range = "0.001,1000") float radius = 0.5f;
+  BPROPERTY(Edit, ShowIf = "shape == Capsule", Range = "0.001,1000") float height = 2.f;
+  BPROPERTY(Edit) bool isTrigger = false;
+};
 }

@@ -7,6 +7,7 @@
 #include "Scene/Components.h"
 #include "Scene/SampleComponents.h"
 #include "Scene/SceneFile.h"
+#include "Physics/PhysicsWorld.h"
 #include <yyjson.h>
 #include <cctype>
 #include <format>
@@ -946,6 +947,18 @@ void EditorModel::Rebuild() {
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
     addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    bool needPhysics = false; // 6-2: Rigidbody + Auto Collider in one click (one undo step)
+    for (auto& id : targets) needPhysics = needPhysics || !PhysicsWorld::AddPhysicsCommands(scene, id).empty();
+    if (needPhysics)
+      addRow2.Add(MakeButton("insp.physics", "+  물리 추가")).onClick = [this, targets](Widget&) {
+        bus.BeginGroup("Add Physics", "ui");
+        for (const std::string& id : targets)
+          for (const Command& c : PhysicsWorld::AddPhysicsCommands(scene, id)) {
+            std::string err;
+            if (!bus.Execute(c, &err)) LogWarn("add physics: {}", err);
+          }
+        bus.EndGroup();
+      };
     bool missing = false; // "paste as new component" when some selected object does not have the copied type yet
     for (auto& id : targets) missing = missing || (!clipType_.empty() && !scene.Find(id)->Find(clipType_));
     if (missing) {
