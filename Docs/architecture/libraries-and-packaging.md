@@ -26,8 +26,8 @@
 | 텍스처 압축 | bc7enc·rgbcx (bc7enc_rdo) | MIT / 퍼블릭 도메인 | BC7·BC5·BC4 쿠킹 (3-1b 도입) |
 | 라이트맵 UV | xatlas | MIT | 차트 나누기·묶기, `ThirdParty/xatlas` (GI Tier 0-C 도입) |
 | 모델 임포트 | cgltf(glTF), ufbx(FBX) | MIT | Assimp 대신 (cgltf 1.15 도입, 3-1) |
-| 3D 물리 | **Jolt Physics** | MIT | 멀티스레드, 대형 월드에 강함 |
-| 2D 물리 | **Box2D v3** | MIT | |
+| 3D 물리 | **Jolt Physics** | MIT | 멀티스레드, 대형 월드에 강함 (5.2.0 도입, 6-2: CMake FetchContent, 크로스 플랫폼 결정론) |
+| 2D 물리 | **Box2D v3** | MIT | 3.1.0 도입 (6-2: CMake FetchContent) |
 | 오디오 | **miniaudio** | MIT / 퍼블릭 도메인 | 공간 음향은 이후 Steam Audio(Apache-2.0) 선택 |
 | 애니메이션 기반 | ozz-animation | MIT | 샘플링과 블렌딩. 그래프와 노티파이는 자체 구현 |
 | 길찾기 | Recast & Detour | zlib | |

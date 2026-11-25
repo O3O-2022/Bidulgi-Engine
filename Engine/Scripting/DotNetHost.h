@@ -67,6 +67,9 @@ public:
   enum class Phase { Update = 0, FixedUpdate = 1, LateUpdate = 2, End = 3 }; // Update runs pending Starts first, then
   // timers / tweens / waits (4-4c); End = play stopped: what is left of them is cancelled
   void TickBehaviours(Phase phase, double dt, double time, int frame);
+  // An event method by name with its argument as JSON (6-2: OnCollisionEnter / Exit, OnTriggerEnter / Exit with
+  // {"other":id,"point":[x,y,z],"normal":[x,y,z]}); behaviours without that method ignore it.
+  void SendBehaviourEvent(int handle, const char* method, const std::string& json);
 
   // Engine side of the request channel (C# calls it through a function pointer).
   static int Request(const char* json, char* out, int capacity);
@@ -86,6 +89,7 @@ private:
   void (*setEnabled_)(int, int) = nullptr;
   void (*destroy_)(int) = nullptr;
   void (*tick_)(int, double, double, int) = nullptr;
+  void (*event_)(int, const char*, const char*) = nullptr;
   std::string RegisterBehaviourType(const std::string& name, yyjson_val* fields); // "" = ok, else why not
   void BuildScriptFields(TypeInfo& t, void* defaults, yyjson_val* fields);
   std::map<const TypeInfo*, size_t> slots_; // default-value slot of each C# class

@@ -1,4 +1,5 @@
 #include "Scripting/ScriptApi.h"
+#include "Input/InputActions.h"
 #include "Core/Log.h"
 #include "Core/Reflection.h"
 #include "Scripting/DataTable.h"
@@ -126,6 +127,11 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     if (const SceneObject* o = scene.Find(name)) return Ok(Q(o->id));
     const SceneObject* o = FindByName(scene, name);
     return Ok(o ? Q(o->id) : "null");
+  }
+  if (op == "input") return Ok(InputSystem::Instance().StateJson(Str(r, "action"))); // 6-4: an action's state (null = unknown)
+  if (op == "inputcontext") {
+    const bool on = yyjson_get_bool(yyjson_obj_get(r, "on"));
+    return InputSystem::Instance().EnableContext(Str(r, "name"), on) ? Ok() : Fail("no input context \"" + Str(r, "name") + "\"");
   }
   if (op == "table") { // a data table, whole (the script caches it until play stops)
     DataTable t;

@@ -543,7 +543,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=7 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=9 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
@@ -557,6 +557,20 @@ jobs:
           # 4-4d data tables: a .table.jsonl with a header and a .csv read from C# with Data.Get / All / TryGet / Row
           $log = Invoke-Editor 'Release' @{ BDG_DATATABLE_TEST = '1' } 12
           if ($log -notmatch 'data probe: get=1 defaults=1 all=1 csv=1 missing=1 untyped=1') { $errors += 'C# data table test failed' }
+          # 6-2 physics (Jolt 3D, Box2D 2D): a box falls and rests, a sphere rolls down a ramp, a trigger fires, a 2D box
+          # rests, two paused step-by-step runs end bit-identical; C# PhysicsProbe gets OnCollisionEnter / OnTriggerEnter and AddImpulse
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_PHYSICS_TEST = '1' } 330
+          if ($log -notmatch 'physics test: fall=1 roll=1 trigger=1 2d=1 deterministic=1 csharp=1 button=1') { $errors += 'physics test failed' }
+          if ($log -match '(physics test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 6-4 input actions: Input/Actions.jsonl + contexts; injected D / Space / mouse reach a C# InputProbe through the
+          # focused Game view (Update and FixedUpdate), Escape returns the input to the editor, a click takes it back, a
+          # higher-priority context takes Space
+          Remove-Item -Recurse -Force "$PWD/ci-input" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-input/Assets" | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_INPUT_TEST = '1'; BDG_ASSETS = "$PWD/ci-input/Assets" } 26
+          if ($log -notmatch 'input test: focus=1 move=1 jump=1 fixed=1 look=1 escape=1 click=1 context=1') { $errors += 'input actions test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           Remove-Item Env:BDG_SCRIPT_ASSEMBLIES -ErrorAction SilentlyContinue
 
           # 4-4 hot reload: v2 of the samples written over the loaded copy while playing; values, state and new code kept

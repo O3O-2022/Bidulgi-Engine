@@ -7,6 +7,7 @@
 // world through commands, as one undo step; DiscardPending() forgets them. What the game itself changes
 // (behaviours such as Rotator) is never kept.
 #include "Core/Command.h"
+#include "Physics/PhysicsWorld.h"
 #include "Scene/CameraShake.h"
 #include "Scripting/BehaviourRunner.h"
 #include <map>
@@ -39,6 +40,12 @@ public:
   const BehaviourRunner& Scripts() const { return scripts_; }
   BehaviourRunner& Scripts() { return scripts_; } // fixed step from the project settings
   uint64_t Frames() const { return frames_; } // ticks since Start
+  // Physics (6-2): stepped on the fixed step (Scripts().fixedStep / maxFixedSteps), before C# FixedUpdate; collision
+  // and trigger events go to the object's Behaviours right after each step. Gravity from the project settings.
+  PhysicsWorld::Settings physicsSettings;
+  const PhysicsWorld& Physics() const { return physics_; }
+  struct PhysicsCounts { uint64_t collisionEnter = 0, collisionExit = 0, triggerEnter = 0, triggerExit = 0; };
+  const PhysicsCounts& PhysicsEvents() const { return physicsCounts_; } // since Start
 
   struct Change { Command cmd; std::string label; }; // "Crystal: Transform.position"
   const std::vector<Change>& Pending() const { return pending_; }
@@ -56,6 +63,10 @@ private:
   float timeScale_ = 1.f;
   CameraShaker shaker_;
   BehaviourRunner scripts_; // C# Behaviours (4-2)
+  PhysicsWorld physics_;    // 6-2
+  PhysicsCounts physicsCounts_;
+  double physicsAcc_ = 0;   // fixed-step clock when no C# runs
+  void StepPhysics(EditorModel& m, double step);
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

@@ -343,10 +343,11 @@ internal static class Behaviours {
   // phase 0 = Start + Update (then timers, tweens, waits), 1 = FixedUpdate, 2 = LateUpdate, 3 = end of play
   public static void Tick(int phase, double dt, double time, int frame) {
     ScriptSyncContext.EnsureInstalled();
-    if (phase == 3) { Scheduler.Reset(); Data.Reload(); return; }
+    if (phase == 3) { Scheduler.Reset(); Data.Reload(); Input.Reset(); return; }
     Time.time = (float)time;
     Time.frameCount = frame;
     if (phase == 1) Time.fixedDeltaTime = (float)dt; else Time.deltaTime = (float)dt;
+    if (phase == 1) Input.BeginFixed(); // input presses count per fixed step there (6-4)
     foreach (int h in s_order.ToArray()) { // a snapshot: behaviours may disable each other while running
       if (!s_instances.TryGetValue(h, out var i) || !i.Enabled) continue;
       if (phase == 0) {
@@ -357,9 +358,28 @@ internal static class Behaviours {
       } else if (i.Started) Run(i, i.E.LateUpdate, "LateUpdate");
     }
     if (phase == 0) Scheduler.Update();
+    if (phase == 1) Input.EndFixed();
   }
 
   public static int Count => s_instances.Count;
+
+  // Physics events (6-2) and other named events: void OnCollisionEnter(Collision c) or a method without parameters,
+  // found by name like the lifecycle methods (may be private). Run in the fixed step, right after physics.
+  static readonly Dictionary<(Type, string), MethodInfo?> s_named = new();
+  public static void SendEvent(int h, string method, string json) {
+    if (!s_instances.TryGetValue(h, out var i) || !i.Enabled || !i.Started) return;
+    Type t = i.B.GetType();
+    if (!s_named.TryGetValue((t, method), out MethodInfo? m)) {
+      m = null;
+      for (Type? x = t; x != null && x != typeof(Behaviour) && m == null; x = x.BaseType)
+        m = x.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, new[] { typeof(Collision) })
+            ?? x.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, Type.EmptyTypes);
+      s_named[(t, method)] = m;
+    }
+    if (m == null) return;
+    object?[]? args = m.GetParameters().Length == 1 ? new object?[] { Collision.FromJson(json) } : null;
+    Run(i, b => m.Invoke(b, args), method);
+  }
 }
 
 public static unsafe partial class Host {
@@ -417,5 +437,10 @@ public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static void TickBehaviours(int phase, double dt, double time, int frame) {
     try { Behaviours.Tick(phase, dt, time, frame); } catch { }
+  }
+
+  [UnmanagedCallersOnly]
+  public static void SendBehaviourEvent(int handle, byte* method, byte* json) {
+    try { Behaviours.SendEvent(handle, Str(method), Str(json)); } catch { }
   }
 }

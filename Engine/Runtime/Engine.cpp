@@ -33,6 +33,8 @@
 #include "UI/UI.h"
 #include "UI/IconAtlas.h"
 #include "Runtime/PlayMode.h"
+#include "Input/GameInput.h"
+#include "Input/InputActions.h"
 #include "Scene/SampleComponents.h"
 #include <algorithm>
 #include <set>
@@ -570,6 +572,9 @@ void ProjectChanged(bdg_engine* e) {
   bdg::ProjectSettingsPanel::Refresh(*e->editor, e->project, ProjectSettingsDirty(e));
   e->play.Scripts().fixedStep = std::clamp((double)e->project.physics.fixedTimestep, 0.001, 0.1);
   e->play.Scripts().maxFixedSteps = std::clamp(e->project.physics.maxFixedSteps, 1, 16);
+  const bdg::Vec3 g = e->project.physics.gravity; // 6-2 physics world
+  e->play.physicsSettings.gravity = {g.x, g.y, g.z};
+  e->play.physicsSettings.gravity2D = {e->project.physics.gravity2D.x, e->project.physics.gravity2D.y};
 }
 bool SaveProjectSettings(bdg_engine* e) {
   std::string err;
@@ -1877,6 +1882,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         auto nowFrame = std::chrono::steady_clock::now();
         double dt = std::chrono::duration<double>(nowFrame - lastFrame).count();
         lastFrame = nowFrame;
+        { // input actions (6-4): the focused Game view's keys, mouse and gamepad become actions before the game ticks
+          const std::filesystem::path root = e->assetsOpen ? bdg::PathU8(e->assets.Root()).parent_path() : std::filesystem::current_path();
+          bdg::RouteGameInput(events, &ui == e->editor.get() ? ui.Find("game") : nullptr, e->play.Playing(), std::clamp(dt, 0.0, 0.1), root);
+        }
         if (e->play.Playing() && e->model) e->play.Tick(*e->model, std::clamp(dt, 0.0, 0.1)); // game time (3-6)
         if (e->model) { // fields changed while playing: marked in the Inspector (3-6b)
           std::set<std::string> keys;

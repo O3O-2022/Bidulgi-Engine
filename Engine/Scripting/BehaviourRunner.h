@@ -10,6 +10,7 @@
 // Play mode owns one runner: Begin on Play, Frame every game frame (time scale and pause applied by the caller),
 // End on Stop (OnDisable + OnDestroy for everything, before the edited world comes back).
 #include "Core/Command.h"
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@ class BehaviourRunner {
 public:
   double fixedStep = 1.0 / 60.0;
   int maxFixedSteps = 4; // a slow frame runs at most this many fixed steps (the rest of the time is dropped)
+  std::function<void(double step)> beforeFixedStep; // physics (6-2): runs in each fixed step, before FixedUpdate
 
   void Begin(Scene& scene, CommandBus& bus);
   void Frame(Scene& scene, CommandBus& bus, double dt);
@@ -26,6 +28,8 @@ public:
   bool Active() const { return active_; }
   size_t Instances() const { return insts_.size(); }
   int FixedStepsLastFrame() const { return lastFixed_; }
+  // Calls `method` (OnCollisionEnter, OnTriggerEnter, ...) on the enabled behaviours of `object` (6-2).
+  void SendEvent(const std::string& object, const char* method, const std::string& json);
 
 private:
   struct Inst {
