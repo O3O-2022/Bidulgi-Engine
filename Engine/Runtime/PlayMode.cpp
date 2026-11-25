@@ -42,6 +42,7 @@ bool PlayMode::Start(EditorModel& m) {
   scripts_.beforeFixedStep = [this, &m](double step) { StepPhysics(m, step); };
   scripts_.Begin(m.scene, m.bus); // Awake / OnEnable of the C# Behaviours (no-op without C#)
   audio_.Begin(m.scene);          // AudioSource playOnStart (6-3)
+  anim_.Begin(m.assets);          // Animators (7-1)
   audio_.SetPaused(paused_);
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
@@ -54,6 +55,7 @@ bool PlayMode::Stop(EditorModel& m) {
   if (physics_.Active()) LogInfo("physics: stopped: {}", physics_.Describe());
   physics_.End();
   audio_.End();
+  anim_.End();
   shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
@@ -141,6 +143,19 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     }
     if (physicsAcc_ >= scripts_.fixedStep) physicsAcc_ = 0; // too slow: drop the rest instead of spiralling
     changed = changed || steps > 0;
+  }
+  { // animation (7-1): after the scripts, so their calls apply this frame; events go straight back to them
+    std::vector<AnimationSystem::Event> events;
+    anim_.Tick(m.scene, (float)dt, events);
+    changed = changed || anim_.Count() > 0;
+    for (const AnimationSystem::Event& e : events) {
+      std::string name;
+      for (char ch : e.name) {
+        if (ch == '"' || ch == '\\') name += '\\';
+        name += ch;
+      }
+      if (scripts_.Active()) scripts_.SendEvent(e.object, "OnAnimationEvent", std::format(R"({{"name":"{}"}})", name));
+    }
   }
   audio_.Frame(m.scene, dt); // after the scripts: sounds they started or moved this frame
   if (changed) m.ValuesChanged();

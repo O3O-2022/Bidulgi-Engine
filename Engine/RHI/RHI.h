@@ -119,6 +119,11 @@ public:
 
   PipelineHandle CreatePipeline(const PipelineDesc& desc);
   void           DestroyPipeline(PipelineHandle pipeline);
+  // Compute (7-1, GPU skinning): a GLSL 450 compute shader; its buffers are bound with BindStorageBuffer (any buffer,
+  // vertex buffers included). ComputeBarrier makes the writes visible to later vertex fetches and storage reads.
+  PipelineHandle CreateComputePipeline(const char* source, const char* debugName);
+  void           Dispatch(PipelineHandle pipeline, uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1);
+  void           ComputeBarrier();
 
   void Draw(PipelineHandle pipeline, BufferHandle vertices, uint32_t vertexCount, uint32_t firstVertex = 0);
   void DrawIndexed(PipelineHandle pipeline, BufferHandle vertices, BufferHandle indices, uint32_t indexCount);

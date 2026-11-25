@@ -3,9 +3,11 @@
 // glTF is right-handed, Y up, metres, like the engine (Core/Space.h): no axis conversion. Triangle primitives
 // only; every primitive goes through meshoptimizer (vertex dedup, vertex cache, overdraw, vertex fetch order).
 // cgltf types stay inside GltfImport.cpp.
+#include "Anim/Skeleton.h"
 #include "Render3D/MeshGen.h"
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -35,7 +37,8 @@ struct ImportedMaterial {
 
 struct ImportedPrimitive {
   MeshData mesh;
-  int material = -1; // -1 = default material
+  int material = -1;             // -1 = default material
+  std::vector<SkinVertex> skin;  // 7-1: per vertex (indices into ImportedModel::skinned->skeleton) when skinned
 };
 
 struct ImportedModel {
@@ -43,14 +46,21 @@ struct ImportedModel {
   std::vector<ImportedMaterial> materials;
   std::vector<ImportedTexture> textures;
   struct Instance { int primitive; glm::mat4 world; std::string node; };
-  std::vector<Instance> instances; // node hierarchy flattened (world matrices of the default scene)
+  std::vector<Instance> instances; // node hierarchy flattened (world matrices of the default scene); skinned: identity
+  // 7-1: skeleton and clips (null without a skin). Skinned primitives are in model space at bind time; the joints move them.
+  std::shared_ptr<SkinnedModelData> skinned;
   glm::vec3 boundsMin{0}, boundsMax{0}; // of all instances, world space
   struct Stats { size_t sourceVertices = 0, vertices = 0, triangles = 0, skippedPrimitives = 0; float acmrBefore = 0, acmrAfter = 0; } stats;
 };
 
-bool ImportGltf(const std::filesystem::path& path, ImportedModel& out, std::string* error = nullptr);
+// images = false skips decoding textures (the animation system only wants skeletons and clips).
+bool ImportGltf(const std::filesystem::path& path, ImportedModel& out, std::string* error = nullptr, bool images = true);
 // meshoptimizer pass every importer uses: dedup, vertex cache, overdraw, fetch order. Returns ACMR {before, after}.
 std::pair<float, float> OptimizeMesh(MeshData& m);
+std::pair<float, float> OptimizeMesh(MeshData& m, std::vector<SkinVertex>& skin); // keeps the skin stream in step
+// The model's box over all instances (skinned primitives in their rest pose); both importers call it last.
+void ComputeModelBounds(ImportedModel& out);
 // Same from bytes already in memory (.gltf text or .glb); relative URIs resolve against baseDir.
-bool ImportGltfMemory(const void* data, size_t size, const std::filesystem::path& baseDir, ImportedModel& out, std::string* error = nullptr);
+bool ImportGltfMemory(const void* data, size_t size, const std::filesystem::path& baseDir, ImportedModel& out, std::string* error = nullptr,
+                      bool images = true);
 }

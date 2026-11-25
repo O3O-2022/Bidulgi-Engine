@@ -373,11 +373,17 @@ internal static class Behaviours {
       m = null;
       for (Type? x = t; x != null && x != typeof(Behaviour) && m == null; x = x.BaseType)
         m = x.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, new[] { typeof(Collision) })
+            ?? x.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, new[] { typeof(string) })
             ?? x.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, Type.EmptyTypes);
       s_named[(t, method)] = m;
     }
     if (m == null) return;
-    object?[]? args = m.GetParameters().Length == 1 ? new object?[] { Collision.FromJson(json) } : null;
+    // OnCollision* / OnTrigger*(Collision), OnAnimationEvent(string name) (7-1), or no argument
+    object?[]? args = null;
+    if (m.GetParameters().Length == 1)
+      args = m.GetParameters()[0].ParameterType == typeof(string)
+          ? new object?[] { (System.Text.Json.Nodes.JsonNode.Parse(json)?["name"]?.GetValue<string>()) ?? "" }
+          : new object?[] { Collision.FromJson(json) };
     Run(i, b => m.Invoke(b, args), method);
   }
 }

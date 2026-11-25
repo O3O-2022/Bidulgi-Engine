@@ -523,6 +523,37 @@ PipelineHandle RHI::CreatePipeline(const PipelineDesc& d) {
   return {(uint32_t)pipelines_.size() - 1};
 }
 
+PipelineHandle RHI::CreateComputePipeline(const char* source, const char* debugName) {
+  GLuint cs = CompileStage(GL_COMPUTE_SHADER, source, debugName);
+  if (!cs) return {};
+  GLuint prog = glCreateProgram();
+  glAttachShader(prog, cs);
+  glLinkProgram(prog);
+  glDeleteShader(cs);
+  GLint ok = 0;
+  glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    char log[2048];
+    glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
+    LogError("compute pipeline '{}' link failed: {}", debugName, log);
+    glDeleteProgram(prog);
+    return {};
+  }
+  glObjectLabel(GL_PROGRAM, prog, -1, debugName);
+  PipelineGL g;
+  g.program = prog;
+  pipelines_.push_back(g);
+  return {(uint32_t)pipelines_.size() - 1};
+}
+
+void RHI::Dispatch(PipelineHandle p, uint32_t x, uint32_t y, uint32_t z) {
+  if (!p.Valid() || p.id >= pipelines_.size() || !pipelines_[p.id].program || !x || !y || !z) return;
+  glUseProgram(pipelines_[p.id].program);
+  glDispatchCompute(x, y, z);
+}
+
+void RHI::ComputeBarrier() { glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT); }
+
 void RHI::DestroyPipeline(PipelineHandle p) {
   if (!p.Valid() || p.id >= pipelines_.size()) return;
   PipelineGL& g = pipelines_[p.id];

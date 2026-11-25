@@ -4,7 +4,8 @@
 //   - models (glTF) and materials: rendered off screen (a model framed from above-front, a material on a sphere),
 //     read back, shrunk to 64x64 and kept as PNG in <project>/.cache/thumbnails/<guid>-<hash>-r<version>.png,
 //     so later starts only read the small file. A few per frame (Update), so a big folder never stalls the editor.
-//   - Live(): the Inspector's preview of the selected asset, at panel size, turned by dragging.
+//   - Live(): the Inspector's preview of the selected asset, at panel size, turned by dragging. A skinned model (7-1)
+//     plays its first clip in a loop there (GPU skinning, like the views); thumbnails show the rest pose.
 // Prefabs and scenes keep their type icon for now (prefabs get a render with 6-1).
 #include "Assets/Thumbnails.h"
 #include "Render3D/Renderer3D.h"
@@ -39,6 +40,10 @@ public:
   // degrees, zoom 1 = framed); images return their texture (up to 512 px). flipY: the texture's rows are bottom-up.
   TextureHandle Live(const std::string& path, int32_t w, int32_t h, float yaw, float pitch, float zoom, bool& flipY);
   float LiveAspect() const { return liveAspect_; } // width / height of what Live() returned last
+  // 7-1: the last Live() played a clip (the editor keeps drawing while it is shown); its name and time.
+  bool LiveAnimating() const { return liveClip_ != nullptr; }
+  std::string LiveClip() const { return liveClip_ ? liveClip_->name : std::string(); }
+  float LiveClipTime() const { return liveClipTime_; }
   // Test hook: the pixels of the last Live() render target (bottom-up rows).
   void ReadLive(int32_t& w, int32_t& h, std::vector<uint8_t>& rgba);
 
@@ -50,7 +55,7 @@ private:
   };
   bool Make(const AssetRecord& r, std::vector<uint8_t>& rgba64); // the 64x64 picture (from cache or rendered)
   bool RenderToPixels(const AssetRecord& r, int32_t size, float yaw, float pitch, float zoom, RenderTargetHandle rt,
-                      std::vector<uint8_t>* rgba);
+                      std::vector<uint8_t>* rgba, bool animate = false);
   bool Prepare(const AssetRecord& r); // loads the model / material for rendering into model_ / material_
   void ReleaseModel();
   std::filesystem::path Full(const std::string& rel) const;
@@ -70,6 +75,14 @@ private:
   uint64_t preparedHash_ = 0;
   bool hasModel_ = false;
   Model3D model_;
+  // 7-1 skinned model: GPU sources and posed copies per primitive (empty = rigid), joint matrices, the clip clock
+  std::shared_ptr<const SkinnedModelData> skinned_;
+  std::vector<Renderer3D::SkinSource> skinSrc_;
+  std::vector<Mesh3D> skinTargets_;
+  BufferHandle joints_;
+  double clipStart_ = -1;
+  const AnimClip* liveClip_ = nullptr;
+  float liveClipTime_ = 0;
   Material3D material_;
   Mesh3D sphere_;
   RenderTargetHandle thumbRT_, liveRT_;

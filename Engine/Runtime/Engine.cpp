@@ -1971,6 +1971,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           }
           e->previewTex = e->previews.Live(path, (int32_t)((pv->w - 16) * scale), (int32_t)(pv->h * scale), e->previewYaw, e->previewPitch,
                                            e->previewZoom, e->previewFlip);
+          if (e->previews.LiveAnimating()) pending = std::max(pending, 2); // 7-1: a skinned model plays its clip
         }
       }
       ui.Draw();

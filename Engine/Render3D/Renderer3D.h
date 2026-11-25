@@ -3,6 +3,7 @@
 // drawn in linear light into an HDR target (RGBA16F, MSAA by tier); post-processing (bloom, ACES tone mapping,
 // FXAA, queue 3-5) writes the display-encoded result into the caller's RGBA8 target, which the UI shows as an
 // image. Editor overlays (grid, selection outline) go on top of the final picture with the scene's depth.
+#include "Anim/Skeleton.h"
 #include "Render3D/MeshGen.h"
 #include "Render3D/ColorGrading.h"
 #include "Render3D/PostVolume.h"
@@ -189,6 +190,17 @@ public:
   void DestroyMesh(Mesh3D& mesh);
   Model3D UploadModel(const ImportedModel& model);
   void DestroyModel(Model3D& model);
+  // GPU skinning (7-1): a skinned primitive keeps its bind-pose vertices and skin weights on the GPU (SkinSource);
+  // each instance owns a Mesh3D (CreateSkinTarget) whose vertices a compute pass rewrites from that instance's joint
+  // matrices (a storage buffer of mat4, skin[j] = jointModel * inverseBind). Every pass and quality tier then draws it
+  // like any other mesh. Call SkinBarrier once after the Skin calls of a frame, before rendering.
+  struct SkinSource { BufferHandle vertices, skin; uint32_t vertexCount = 0; };
+  SkinSource CreateSkinSource(const MeshData& bind, const std::vector<SkinVertex>& skin);
+  void DestroySkinSource(SkinSource& source);
+  Mesh3D CreateSkinTarget(const MeshData& bind);
+  bool Skin(const SkinSource& source, BufferHandle joints, Mesh3D& target);
+  void SkinBarrier();
+  uint64_t SkinnedVertices() const { return skinnedVertices_; } // since Init (test hook)
   // Adds every instance of the model, placed by `placement` (model space -> world).
   static void AppendModel(const Model3D& model, const glm::mat4& placement, std::vector<DrawItem3D>& items);
   // Draws the items into rt (cleared to `clear`, given in display/sRGB values like UI colours).
@@ -270,6 +282,8 @@ private:
   uint32_t postFrame_ = 0; // grain seed
   // SSAO (3-5b): normals + view depth of opaque objects (full size), occlusion and its blur (half size).
   PipelineHandle prepass_, prepassTwo_, ssao_, aoBlur_;
+  PipelineHandle skin_;          // 7-1 compute skinning
+  uint64_t skinnedVertices_ = 0;
   RenderTargetHandle geoRT_, aoRT_[2];
   int32_t geoW_ = 0, geoH_ = 0;
   BufferHandle ssaoUbo_;

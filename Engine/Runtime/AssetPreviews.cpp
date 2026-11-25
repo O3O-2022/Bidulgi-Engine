@@ -8,6 +8,7 @@
 #include "Render3D/Quality.h"
 #include "Runtime/MaterialLibrary.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <format>
 
@@ -149,6 +150,15 @@ bool AssetPreviews::Make(const AssetRecord& r, std::vector<uint8_t>& rgba) {
 void AssetPreviews::ReleaseModel() {
   if (hasModel_) r3d_->DestroyModel(model_);
   hasModel_ = false;
+  for (Renderer3D::SkinSource& s : skinSrc_) r3d_->DestroySkinSource(s);
+  for (Mesh3D& m : skinTargets_) r3d_->DestroyMesh(m);
+  if (joints_.Valid()) rhi_->DestroyBuffer(joints_);
+  skinSrc_.clear();
+  skinTargets_.clear();
+  joints_ = {};
+  skinned_.reset();
+  liveClip_ = nullptr;
+  clipStart_ = -1;
   preparedGuid_.clear();
 }
 
@@ -165,6 +175,14 @@ bool AssetPreviews::Prepare(const AssetRecord& r) {
     }
     model_ = r3d_->UploadModel(im);
     hasModel_ = true;
+    if (im.skinned && !im.skinned->clips.empty()) { // 7-1: the Inspector preview plays its first clip
+      skinned_ = im.skinned;
+      for (const ImportedPrimitive& p : im.primitives) {
+        skinSrc_.push_back(p.skin.empty() ? Renderer3D::SkinSource{} : r3d_->CreateSkinSource(p.mesh, p.skin));
+        skinTargets_.push_back(p.skin.empty() ? Mesh3D{} : r3d_->CreateSkinTarget(p.mesh));
+      }
+      joints_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, skinned_->skeleton.joints.size() * sizeof(glm::mat4), true);
+    }
   } else if (k == Kind::Material) {
     std::string err;
     if (!materials_ || !materials_->Find(r.path, material_, &err)) {
@@ -180,14 +198,40 @@ bool AssetPreviews::Prepare(const AssetRecord& r) {
 }
 
 bool AssetPreviews::RenderToPixels(const AssetRecord& r, int32_t size, float yaw, float pitch, float zoom, RenderTargetHandle rt,
-                                   std::vector<uint8_t>* rgba) {
+                                   std::vector<uint8_t>* rgba, bool animate) {
   if (!Prepare(r)) return false;
   std::vector<DrawItem3D> items;
   glm::vec3 lo(-0.5f), hi(0.5f);
+  liveClip_ = nullptr;
   if (hasModel_) {
     Renderer3D::AppendModel(model_, glm::mat4(1.f), items);
-    lo = model_.boundsMin;
+    lo = model_.boundsMin; // framed on the rest pose: the camera stays put while the clip plays
     hi = model_.boundsMax;
+    if (animate && skinned_ && joints_.Valid()) { // 7-1: the first clip, looping on the wall clock
+      const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (clipStart_ < 0) clipStart_ = now;
+      const AnimClip& clip = skinned_->clips[0];
+      liveClipTime_ = clip.duration > 0 ? (float)std::fmod(now - clipStart_, (double)clip.duration) : 0.f;
+      LocalPose pose;
+      RestPose(skinned_->skeleton, pose);
+      SampleClip(clip, liveClipTime_, pose);
+      std::vector<glm::mat4> model, skin;
+      PoseToModel(skinned_->skeleton, pose, model);
+      ModelToSkin(skinned_->skeleton, model, skin);
+      rhi_->UpdateBuffer(joints_, skin.data(), skin.size() * sizeof(glm::mat4));
+      bool any = false;
+      for (size_t p = 0; p < skinSrc_.size(); ++p) any = r3d_->Skin(skinSrc_[p], joints_, skinTargets_[p]) || any;
+      if (any) {
+        r3d_->SkinBarrier();
+        size_t k = 0; // AppendModel added the instances in order: swap the skinned ones for their posed copies
+        for (const Model3D::Instance& in : model_.instances) {
+          if (in.mesh < 0 || in.mesh >= (int)model_.meshes.size() || !model_.meshes[in.mesh].indexCount) continue;
+          if (in.mesh < (int)skinTargets_.size() && skinTargets_[in.mesh].indexCount) items[k].mesh = &skinTargets_[in.mesh];
+          ++k;
+        }
+        liveClip_ = &clip;
+      }
+    }
   } else {
     DrawItem3D it;
     it.mesh = &sphere_;
@@ -225,6 +269,7 @@ bool AssetPreviews::RenderToPixels(const AssetRecord& r, int32_t size, float yaw
 
 TextureHandle AssetPreviews::Live(const std::string& path, int32_t w, int32_t h, float yaw, float pitch, float zoom, bool& flipY) {
   flipY = false;
+  liveClip_ = nullptr; // set again below when a skinned model plays (7-1)
   if (!rhi_ || !db_) return {};
   const AssetRecord* r = db_->ByPath(path);
   if (!r) return {};
@@ -269,7 +314,7 @@ TextureHandle AssetPreviews::Live(const std::string& path, int32_t w, int32_t h,
     liveRT_ = rhi_->CreateRenderTarget(size, size, 1);
     liveW_ = liveH_ = size;
   }
-  if (!RenderToPixels(*r, size, yaw, pitch, zoom, liveRT_, nullptr)) return {};
+  if (!RenderToPixels(*r, size, yaw, pitch, zoom, liveRT_, nullptr, true)) return {};
   flipY = true;
   liveAspect_ = 1;
   return rhi_->RenderTargetColor(liveRT_);

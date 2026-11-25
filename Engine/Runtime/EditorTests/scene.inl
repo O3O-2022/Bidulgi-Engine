@@ -1410,3 +1410,130 @@ void ReportPrefabTest(bdg_engine*) {
                inspector, propagate, revert, apply, reopen, build, drop, csharp);
 }
 BDG_EDITOR_TEST("BDG_PREFAB_TEST", InjectPrefabTest, ReportPrefabTest)
+
+// Scripted check of 7-1 skeletal animation (BDG_ANIM_TEST=1, BDG_ASSETS = a project's Assets folder; the C# part with
+// BDG_SCRIPT_ASSEMBLIES). Writes the generated test rig (Models/Rig.gltf, Anim/TestRig.h) and its state machine
+// (Anim/Rig.animgraph), places it with an Animator (root motion on) and the C# AnimProbe, a camera and a sun, and saves
+// Scenes/Main.scene (CI builds that project and runs it in the player). Checks: the Scene view skins it on the GPU and
+// draws it, its bounds are the rest pose's; in play (stepped 1/60 s per frame) the probe's SetFloat("Speed", 3) moves
+// Idle -> Run, cross-fading over the graph's 0.25 s with the Inspector showing the state and Speed; the bounds move
+// (root motion carries it forward, the spine leans) and Footstep events reach C# (OnAnimationEvent).
+#include "Anim/TestRig.h"
+namespace animtest {
+std::string render = "-", inspector = "-", fade = "-", bounds = "-", rootmotion = "-", events = "-", csharp = "-", preview = "-";
+int stopFrame = -1;
+float previewTime = -1;
+double fadeStart = -1, fadeEnd = -1;
+int blendFrames = 0;
+glm::vec3 restLo{0}, restHi{0};
+int playFrame = -1;
+}
+void InjectAnimTest(bdg_engine* e, int frame, float) {
+  namespace fs = std::filesystem;
+  using namespace animtest;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen || !e->sceneView) return;
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("anim test: {} {}: {}", name, target, err);
+  };
+  const fs::path root = bdg::PathU8(e->assets.Root());
+  if (frame == 2) {
+    std::error_code ec;
+    fs::create_directories(root / "Models", ec);
+    fs::create_directories(root / "Anim", ec);
+    std::ofstream(root / "Models" / "Rig.gltf", std::ios::binary) << bdg::MakeTestRigGltf();
+    std::ofstream(root / "Anim" / "Rig.animgraph", std::ios::binary) << bdg::TestRigAnimGraph();
+    e->assets.Refresh();
+    m->NewScene(bdg::SceneTemplate::Empty); // only what the check places (the project builds this scene)
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) run("del", id, "{}"); // its camera: ours looks from +Z
+    run("add", "", R"({"id":"ground","name":"Ground"})");
+    run("set", "ground", R"({"path":"Transform.scale","value":[30,1,30]})");
+    run("addcomp", "ground", R"({"type":"MeshRenderer","value":{"mesh":"Plane","material":"M_Ground"}})");
+    run("add", "", R"({"id":"hero","name":"Hero"})");
+    run("addcomp", "hero", R"({"type":"MeshRenderer","value":{"mesh":"Models/Rig.gltf"}})");
+    run("addcomp", "hero", R"({"type":"Animator","value":{"graph":"Anim/Rig.animgraph","rootMotion":true}})");
+    if (bdg::Registry::Instance().Find("AnimProbe")) run("addcomp", "hero", R"({"type":"AnimProbe","value":{"runAfter":0.5,"speed":3}})");
+    run("add", "", R"({"id":"animcam","name":"Camera"})");
+    run("set", "animcam", R"({"path":"Transform.position","value":[1.5,1.6,5]})");
+    run("set", "animcam", R"({"path":"Transform.rotation","value":[-8,10,0]})");
+    run("addcomp", "animcam", R"({"type":"Camera","value":{}})");
+    run("add", "", R"({"id":"animsun","name":"Sun"})");
+    run("set", "animsun", R"({"path":"Transform.rotation","value":[-50,30,0]})");
+    run("addcomp", "animsun", R"({"type":"Light","value":{"type":"Directional","intensity":3}})");
+    m->Select("hero");
+  }
+  if (frame == 3) e->sceneView->Frame(*m); // drawn once: its bounds are known
+  if (frame == 5) { // rendered (rest pose, skinned on the GPU)
+    glm::vec3 lo, hi;
+    const bool b = e->sceneView->ObjectBounds(*m, "hero", lo, hi);
+    restLo = lo;
+    restHi = hi;
+    int32_t w = 0, h = 0;
+    std::vector<uint8_t> px;
+    e->sceneView->ReadPixels(w, h, px);
+    int orange = 0;
+    for (size_t i = 0; i + 3 < px.size(); i += 4)
+      if (px[i] > 60 && px[i] > px[i + 1] * 1.3f && px[i + 1] > px[i + 2] * 1.1f) ++orange;
+    const bool restOk = b && std::fabs(lo.y) < 0.02f && std::fabs(hi.y - 2.f) < 0.02f && std::fabs(hi.x - 0.2f) < 0.02f;
+    render = e->sceneView->SkinnedObjects() == 1 && e->sceneView->SkinPasses() > 0 && restOk && orange > 200
+                 ? "1" : std::format("0(skinned {} passes {} bounds {} orange {})", e->sceneView->SkinnedObjects(), e->sceneView->SkinPasses(), restOk, orange);
+    const std::u8string su = (root.parent_path() / "Scenes" / "Main.scene").u8string(); // the start scene of the project
+    m->scenePath.assign(su.begin(), su.end());
+    m->SaveScene();
+    TogglePlay(e);
+    e->play.SetPaused(true); // stepped: exactly 1/60 s of game time per frame below
+    playFrame = frame;
+  }
+  if (playFrame > 0 && frame > playFrame && e->play.Playing()) {
+    bdg::SceneObject* o = m->scene.Find("hero");
+    bdg::Component* ac = o ? o->Find("Animator") : nullptr;
+    if (!ac) return;
+    const bdg::Animator& a = *static_cast<const bdg::Animator*>(ac->data);
+    const double t = e->play.Time();
+    if (a.liveState == "Run" && fadeStart < 0) fadeStart = t;
+    if (fadeStart >= 0 && a.liveFade > 0.f && a.liveFade < 1.f) ++blendFrames;
+    if (fadeStart >= 0 && fadeEnd < 0 && t > fadeStart && a.liveFade == 0.f && a.liveState == "Run") fadeEnd = t;
+    if (inspector == "-" && fadeStart >= 0 && fadeEnd < 0 && a.liveFade > 0.f) { // the Inspector follows the cross-fade
+      const bdg::Widget* st = e->editor->Find("anim.live.state");
+      const bdg::Widget* sp = e->editor->Find("anim.live.Speed");
+      if (st && sp) inspector = st->text.find("Run") != std::string::npos && sp->text.find("3.00") != std::string::npos ? "1" : "0(" + st->text + " / " + sp->text + ")";
+    }
+    if (frame - playFrame >= 100) { // 1.65 s of game time
+      const double d = fadeEnd - fadeStart;
+      fade = fadeStart > 0.45 && fadeStart < 0.6 && d > 0.22 && d < 0.3 && blendFrames >= 10 ? "1" : std::format("0(start {:.3f} len {:.3f} blended {})", fadeStart, d, blendFrames);
+      glm::vec3 lo, hi;
+      const bool b = e->sceneView->ObjectBounds(*m, "hero", lo, hi);
+      bounds = b && lo.z < restLo.z - 1.f && hi.z < restHi.z - 1.f ? "1" : std::format("0({:.2f},{:.2f})", lo.z, hi.z);
+      bdg::Component* tc = o->Find("Transform");
+      const float z = tc ? static_cast<const bdg::Transform*>(tc->data)->position.z : 0.f;
+      rootmotion = z < -2.f && z > -4.f ? "1" : std::format("0({:.2f})", z); // ~1.1 s of Run at 3 m/s (part of it fading)
+      events = e->play.Animation().EventsSent() >= 2 ? "1" : std::format("0({})", e->play.Animation().EventsSent());
+      std::string got, last;
+      if (bdg::Component* pc = o->Find("AnimProbe"))
+        for (const bdg::FieldInfo& fi : pc->type->fields) {
+          if (fi.name == "events") got = bdg::Registry::ToJson(static_cast<unsigned char*>(pc->data) + fi.offset, fi.value);
+          if (fi.name == "lastEvent") last = bdg::Registry::ToJson(static_cast<unsigned char*>(pc->data) + fi.offset, fi.value);
+        }
+      csharp = !got.empty() && got != "0" && last == "\"Footstep\"" ? "1" : "0(" + got + " " + last + ")";
+      TogglePlay(e);
+      stopFrame = frame;
+      m->InspectAsset("Models/Rig.gltf"); // the Inspector's preview plays the model's first clip
+    } else e->play.Step();
+  }
+  if (stopFrame > 0 && frame == stopFrame + 3) previewTime = e->previews.LiveAnimating() ? e->previews.LiveClipTime() : -1.f;
+  if (stopFrame > 0 && frame == stopFrame + 8) {
+    const bool moving = e->previews.LiveAnimating() && previewTime >= 0 && e->previews.LiveClipTime() != previewTime;
+    preview = moving && e->previews.LiveClip() == "Idle" ? "1" : std::format("0({} {} {:.3f})", e->previews.LiveAnimating(), e->previews.LiveClip(), previewTime);
+  }
+}
+void ReportAnimTest(bdg_engine*) {
+  using namespace animtest;
+  bdg::LogInfo("anim test: render={} inspector={} fade={} bounds={} rootmotion={} events={} csharp={} preview={}", render, inspector, fade, bounds,
+               rootmotion, events, csharp, preview);
+}
+BDG_EDITOR_TEST("BDG_ANIM_TEST", InjectAnimTest, ReportAnimTest)
