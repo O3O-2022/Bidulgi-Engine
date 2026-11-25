@@ -53,6 +53,13 @@ bool CheckFailed(const char* expr, const char* file, int line, const std::string
 uint32_t CheckFailureCount() { return g_checks; }
 
 bool GuardedCall(const char* what, const std::function<void()>& fn, std::string* error) {
+  // A stack overflow is handled on the stack that overflowed: without room reserved for the handler the process
+  // can die instead of returning here (seen now and then in CI's unit tests). Reserve 64 KB once per thread.
+  static thread_local bool reserved = [] {
+    ULONG bytes = 64 * 1024;
+    return SetThreadStackGuarantee(&bytes) != 0;
+  }();
+  (void)reserved;
   Thunk t{&fn};
   DWORD code = SehCall(&CallThunk, &t);
   if (code == 0) return true;
