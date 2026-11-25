@@ -309,3 +309,47 @@ void InjectAwaitTest(bdg_engine* e, int frame, float) {
   }
 }
 BDG_EDITOR_TEST("BDG_AWAIT_TEST", InjectAwaitTest, nullptr)
+
+#include "Scripting/DataTable.h"
+
+// Scripted check of 4-4d (BDG_DATATABLE_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): a
+// Weapons.table.jsonl (header line, typed columns) and an Enemies.csv (quoted cells, an empty cell) in a data
+// folder under .cache; the C# DataProbe reads them with Data.Get / All / TryGet / Row in play mode.
+void InjectDataTableTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probe;
+  const std::filesystem::path dir = std::filesystem::current_path() / ".cache" / "datatable-test" / "Data";
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("data table test: {}", err);
+  };
+  if (frame == 2) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(dir / "Weapons.table.jsonl", std::ios::binary)
+        << R"({"$table":{"key":"id","columns":[{"name":"id","type":"string"},{"name":"damage","type":"int"},{"name":"range","type":"float"},{"name":"name","type":"string"},{"name":"automatic","type":"bool"}]}})" "\n"
+        << R"({"id":"rifle","damage":12,"range":50.5,"name":"Rifle, long","automatic":true})" "\n"
+        << R"({"id":"pistol","damage":5,"name":"Pistol"})" "\n";
+    std::ofstream(dir / "Enemies.csv", std::ios::binary) << "id,hp,speed,title\r\ngoblin,30,1.5,\"Goblin \"\"Boss\"\"\"\r\nghost,,2,Ghost\r\n";
+    const std::u8string u8 = dir.u8string();
+    bdg::SetDataFolders({std::string(u8.begin(), u8.end())});
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("data probe: ", 0) == 0) probe = l; });
+    run("add", "", R"({"id":"dt1","name":"Reader"})");
+    run("addcomp", "dt1", R"({"type":"DataProbe"})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame == 8) TogglePlay(e);
+  if (frame == 10) {
+    bdg::SetLogHook({});
+    bdg::SetDataFolders({});
+    std::error_code ec;
+    std::filesystem::remove_all(dir.parent_path(), ec);
+    bdg::LogInfo("data table test: probe={}", probe.empty() ? "none" : "seen");
+  }
+}
+BDG_EDITOR_TEST("BDG_DATATABLE_TEST", InjectDataTableTest, nullptr)

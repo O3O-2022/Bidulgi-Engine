@@ -134,7 +134,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
-  Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp
+  Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp
   Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp

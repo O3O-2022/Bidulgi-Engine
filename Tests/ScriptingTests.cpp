@@ -5,12 +5,15 @@
 #include "Scene/SceneFile.h"
 #include "Scripting/BehaviourRunner.h"
 #include "Scripting/CSharpBindings.h"
+#include "Scripting/DataTable.h"
 #include "Scripting/DotNetHost.h"
 #include "Scripting/ScriptApi.h"
 #include "bdg_test.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 
 using namespace bdg;
 
@@ -94,7 +97,7 @@ TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps,
 #else
   DotNetHost& host = DotNetHost::Instance();
   std::string err;
-  const int kSampleBehaviours = 6; // the Behaviour classes in Scripting/Bidulgi.Samples
+  const int kSampleBehaviours = 7; // the Behaviour classes in Scripting/Bidulgi.Samples
   CHECK(host.Start({}, &err));
   CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == kSampleBehaviours);
   const TypeInfo* spinner = Registry::Instance().Find("Spinner");
@@ -196,4 +199,64 @@ TEST_CASE("script requests: children, findall, spawn, destroy for the easy API (
   CHECK(bus.Undo() && bus.Undo() && !s.Find(id));
   CHECK(req(R"({"op":"spawn","source":"g99"})").find("no object") != std::string::npos);
   CHECK(req(R"({"op":"destroy","target":"g99"})").find("no object") != std::string::npos);
+}
+
+TEST_CASE("data tables: .table.jsonl rows, header types, problems, CSV import / export (queue 4-4d)") {
+  DataTable t;
+  std::vector<std::string> problems;
+  CHECK(ParseDataTable("{\"id\":\"rifle\",\"damage\":12}\n\n{\"id\":\"pistol\",\"damage\":5,\"range\":2.5}\n", t, &problems));
+  CHECK(problems.empty() && t.key == "id" && t.rows.size() == 2 && t.keys[1] == "pistol");
+  CHECK(t.columns.size() == 3 && t.columns[1].name == "damage" && t.columns[1].type == "int" && t.columns[2].type == "float");
+  CHECK(t.Row("rifle") && t.Row("rifle")->find("12") != std::string::npos && !t.Row("laser"));
+  // a header: key column and types are checked; bad rows are skipped with line numbers
+  const char* text = R"({"$table":{"key":"name","columns":[{"name":"name","type":"string"},{"name":"hp","type":"int"}]}}
+{"name":"goblin","hp":30}
+{"name":"orc","hp":"lots"}
+{"hp":3}
+{"name":"goblin","hp":31}
+not json
+{"name":"bat","hp":2,"wings":2}
+)";
+  problems.clear();
+  CHECK(ParseDataTable(text, t, &problems));
+  CHECK(t.hasHeader && t.key == "name" && t.rows.size() == 2 && t.keys[0] == "goblin" && t.keys[1] == "bat");
+  CHECK(problems.size() == 5);
+  CHECK(!problems.empty() && problems[0].find("line 3") != std::string::npos && problems[0].find("should be int") != std::string::npos);
+  // written with a header, read back the same
+  DataTable back;
+  CHECK(ParseDataTable(WriteDataTable(t), back) && back.rows == t.rows && back.key == "name" && back.columns.size() == 2);
+  // CSV: quotes, escaped quotes, commas and line breaks inside cells, CRLF, BOM, inferred types, empty cells
+  DataTable c;
+  std::string err;
+  CHECK(ImportCsv("\xEF\xBB\xBFid,hp,speed,boss,note\r\ngoblin,30,1.5,false,\"says \"\"hi\"\", loud\"\r\nghost,,2,TRUE,\"two\nlines\"\r\n", c, &err));
+  CHECK(c.key == "id" && c.rows.size() == 2);
+  CHECK(c.columns.size() == 5 && c.columns[1].type == "int" && c.columns[2].type == "float" && c.columns[3].type == "bool" && c.columns[4].type == "string");
+  // (raw strings with \" stay outside CHECK: MSVC cannot stringize them)
+  const std::string goblin = R"({"id":"goblin","hp":30,"speed":1.5,"boss":false,"note":"says \"hi\", loud"})";
+  const std::string ghost = R"({"id":"ghost","speed":2.0,"boss":true,"note":"two\nlines"})";
+  CHECK(c.rows.size() == 2 && c.rows[0] == goblin);
+  CHECK(c.rows.size() == 2 && c.rows[1] == ghost);
+  DataTable again;
+  CHECK(ImportCsv(ExportCsv(c), again) && again.rows == c.rows); // export -> import gives the same rows
+  CHECK(!ImportCsv("id,hp\ngoblin,\"30\n", c, &err) && err.find("not closed") != std::string::npos);
+  CHECK(!ImportCsv("id,id\na,b\n", c, &err) && err.find("twice") != std::string::npos);
+  // loading by name from the data folders; the script request answers the rows
+  const std::filesystem::path dir = std::filesystem::temp_directory_path() / "bdg_data_tables";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  std::ofstream(dir / "Weapons.table.jsonl") << "{\"id\":\"rifle\",\"damage\":12}\n";
+  std::ofstream(dir / "Enemies.csv") << "id,hp\ngoblin,30\n";
+  const std::u8string u8 = dir.u8string();
+  SetDataFolders({std::string(u8.begin(), u8.end())});
+  DataTable w;
+  CHECK(LoadDataTable("Weapons", w, &err) && w.rows.size() == 1);
+  CHECK(LoadDataTable("Enemies", w, &err) && w.Row("goblin"));
+  CHECK(!LoadDataTable("Nothing", w, &err) && err.find("no table") != std::string::npos);
+  CHECK(!LoadDataTable("../secret", w, &err));
+  Scene s;
+  CommandBus bus(s);
+  CHECK(HandleScriptRequest(s, bus, R"({"op":"table","name":"Weapons"})") == R"({"ok":true,"value":{"name":"Weapons","key":"id","rows":[{"id":"rifle","damage":12}]}})");
+  CHECK(HandleScriptRequest(s, bus, R"({"op":"table","name":"Nothing"})").find(R"("ok":false)") != std::string::npos);
+  SetDataFolders({});
+  std::filesystem::remove_all(dir);
 }

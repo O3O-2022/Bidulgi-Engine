@@ -458,7 +458,8 @@ int DotNetHost::Request(const char* json, char* out, int capacity) {
   } else if (!h.lastAnswer_.empty() && h.lastRequest_ == json) { // the retry of a request whose answer did not fit
     answer = std::move(h.lastAnswer_);
     h.lastAnswer_.clear();
-  } else if (!h.scene_ && std::strncmp(json, R"({"op":"log")", 11) == 0) { // logging needs no scene
+  } else if (!h.scene_ && (std::strncmp(json, R"({"op":"log")", 11) == 0 || std::strncmp(json, R"({"op":"table")", 13) == 0)) {
+    // logging and data tables need no scene
     static Scene none;
     static CommandBus noBus(none);
     answer = HandleScriptRequest(none, noBus, json);

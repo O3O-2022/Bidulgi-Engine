@@ -16,6 +16,8 @@
 //   {"op":"spawn","source":"g6","name":"Copy","parent":"","position":[..],"rotation":[..]} -> "g12"
 //        (source: a copy of that object and its children with new ids; no source: an empty object; one undo step)
 //   {"op":"destroy","target":"g6"}                                          -> ["g6","g7"] (the object and its children)
+// Data tables (4-4d):
+//   {"op":"table","name":"Weapons"}  -> {"name":"Weapons","key":"id","rows":[{...}]} (Data/Weapons.table.jsonl or .csv)
 // Answer: {"ok":true,"value":...} or {"ok":false,"error":"..."}.
 #include "Core/Command.h"
 #include <string>

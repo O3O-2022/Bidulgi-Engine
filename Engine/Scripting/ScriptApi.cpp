@@ -1,6 +1,7 @@
 #include "Scripting/ScriptApi.h"
 #include "Core/Log.h"
 #include "Core/Reflection.h"
+#include "Scripting/DataTable.h"
 #include <yyjson.h>
 #include <cstdlib>
 #include <format>
@@ -125,6 +126,14 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     if (const SceneObject* o = scene.Find(name)) return Ok(Q(o->id));
     const SceneObject* o = FindByName(scene, name);
     return Ok(o ? Q(o->id) : "null");
+  }
+  if (op == "table") { // a data table, whole (the script caches it until play stops)
+    DataTable t;
+    std::string err;
+    std::vector<std::string> problems;
+    if (!LoadDataTable(Str(r, "name"), t, &err, &problems)) return Fail(err);
+    for (const std::string& p : problems) LogWarn("data table: {}", p);
+    return Ok(DataTableJson(t));
   }
   if (op == "findall") { // by name ("" = all), hierarchy order, with world positions (FindAll / FindNearest)
     const std::string name = Str(r, "name");

@@ -186,6 +186,7 @@ internal static class Behaviours {
   public static int Reload(string path) {
     string full = Path.GetFullPath(path);
     if (!s_contexts.TryGetValue(full, out ScriptContext? old)) return Load(full); // not loaded yet: a first load
+    Data.Reload(); // typed rows hold the old classes
     var saved = new List<(int h, string obj, string type, bool enabled, bool started, JsonObject state)>();
     foreach (int h in s_order.ToArray()) {
       if (!s_instances.TryGetValue(h, out var i) || AssemblyLoadContext.GetLoadContext(i.B.GetType().Assembly) != old) continue;
@@ -342,7 +343,7 @@ internal static class Behaviours {
   // phase 0 = Start + Update (then timers, tweens, waits), 1 = FixedUpdate, 2 = LateUpdate, 3 = end of play
   public static void Tick(int phase, double dt, double time, int frame) {
     ScriptSyncContext.EnsureInstalled();
-    if (phase == 3) { Scheduler.Reset(); return; }
+    if (phase == 3) { Scheduler.Reset(); Data.Reload(); return; }
     Time.time = (float)time;
     Time.frameCount = frame;
     if (phase == 1) Time.fixedDeltaTime = (float)dt; else Time.deltaTime = (float)dt;
