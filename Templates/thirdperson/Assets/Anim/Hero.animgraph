@@ -1,0 +1,21 @@
+{"v":1, "skeleton":"Models/Hero.gltf",
+ "vars":{"Speed":"float", "MoveX":"float", "MoveY":"float", "Strafe":"bool", "Jump":"trigger", "Wave":"float", "Lean":"float"},
+ "stateMachines":{
+  "Locomotion":{
+   "entry":"Move",
+   "states":{
+     "Move":{"blendSpace":{"x":"Speed", "samples":[{"clip":"Idle", "x":0}, {"clip":"Walk", "x":1.6}, {"clip":"Run", "x":5}]},
+             "events":[{"event":"Footstep", "at":0.25}, {"event":"Footstep", "at":0.75}]},
+     "Strafe":{"blendSpace":{"x":"MoveX", "y":"MoveY", "samples":[{"clip":"Idle", "x":0, "y":0}, {"clip":"Walk", "x":0, "y":1},
+               {"clip":"WalkBack", "x":0, "y":-1}, {"clip":"StrafeLeft", "x":-1, "y":0}, {"clip":"StrafeRight", "x":1, "y":0}]}},
+     "Jump":{"play":"Jump", "loop":false}},
+   "transitions":[
+     {"from":"Move", "to":"Strafe", "when":"Strafe", "blend":0.2},
+     {"from":"Strafe", "to":"Move", "when":"!Strafe", "blend":0.2},
+     {"from":"*", "to":"Jump", "when":"Jump", "blend":0.08},
+     {"from":"Jump", "to":"Move", "exitTime":0.95, "blend":0.2}]},
+  "Arms":{"entry":"Wave", "states":{"Wave":{"play":"Wave"}}},
+  "Lean":{"entry":"Lean", "states":{"Lean":{"play":"LeanAdd"}}}},
+ "layers":[
+   {"name":"UpperBody", "machine":"Arms", "fromBone":"RightUpperArm", "weight":"Wave", "mode":"override"},
+   {"name":"Lean", "machine":"Lean", "fromBone":"Spine", "weight":"Lean", "mode":"additive"}]}

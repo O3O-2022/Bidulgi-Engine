@@ -304,7 +304,7 @@ public:
 // / .fbx); the Animator plays its clips, through a state machine when `graph` names an .animgraph. Events written in
 // the graph reach the object's Behaviours as OnAnimationEvent(string name). ----
 struct AnimatorOp { // a script call waiting for the next animation update (not saved)
-  enum Kind { Play, SetFloat, SetTrigger };
+  enum Kind { Play, SetFloat, SetTrigger, LayerWeight };
   Kind kind = Play;
   std::string name;
   float value = -1.f; // Play: fade seconds (< 0 = crossFade); SetFloat: the value
@@ -326,6 +326,8 @@ public:
   BFUNCTION(Callable) void SetBool(std::string name, bool value) { pending.push_back({AnimatorOp::SetFloat, std::move(name), value ? 1.f : 0.f}); }
   BFUNCTION(Callable) void SetInteger(std::string name, int32_t value) { pending.push_back({AnimatorOp::SetFloat, std::move(name), (float)value}); }
   BFUNCTION(Callable) void SetTrigger(std::string name) { pending.push_back({AnimatorOp::SetTrigger, std::move(name), 1.f}); }
+  // A layer of the graph (by name) mixed in by `weight` 0..1 (7-1, part 2); a variable named in the layer wins.
+  BFUNCTION(Callable) void SetLayerWeight(std::string layer, float weight) { pending.push_back({AnimatorOp::LayerWeight, std::move(layer), weight}); }
   BFUNCTION(Callable) float GetFloat(std::string name) const {
     for (auto it = pending.rbegin(); it != pending.rend(); ++it)
       if (it->kind != AnimatorOp::Play && it->name == name) return it->value;
@@ -339,5 +341,50 @@ public:
   std::string liveState;                                   // not saved: the state playing (or faded into), while playing
   std::vector<std::pair<std::string, float>> liveParams;   // not saved: graph variables, while playing (Inspector)
   float liveFade = 0.f;                                    // not saved: cross-fade progress 0..1 (0 = not fading)
+  std::string liveBlend;                                   // not saved: blend space weights ("Idle 0.25 · Walk 0.75")
+};
+
+// ---- IK (queue 7-1b): applied to the Animator's pose every frame while playing. Bones are found by name in the
+// skeleton; targets are object ids. Feet: two-bone IK onto the ground under them (physics raycasts), the hips drop
+// when a foot has to reach down. Look-at: the head (and a share on the two bones above it: an aim offset) turns to
+// the target. Reach: a hand on the target (two-bone IK). Chain: FABRIK for any chain of bones. ----
+BCLASS(Component)
+struct AnimatorIK {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Feet stand on the ground under them (slopes, steps)") bool footIK = true;
+  BPROPERTY(Edit) std::string leftFoot = "LeftFoot";
+  BPROPERTY(Edit) std::string rightFoot = "RightFoot";
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "How far a foot reaches up or down to the ground (m)") float maxStep = 0.45f;
+  BPROPERTY(Edit, Range = "0,0.3", Tooltip = "Ankle height above the sole (m); 0 = from the rest pose") float footHeight = 0.f;
+  BPROPERTY(Edit, Tooltip = "Object the head looks at (empty: none)") std::string lookAt;
+  BPROPERTY(Edit) std::string head = "Head";
+  BPROPERTY(Edit, Range = "0,1") float lookWeight = 1.f;
+  BPROPERTY(Edit, Range = "0,1", Tooltip = "Share of the turn the two bones above the head take (aim offset)") float aimSpine = 0.4f;
+  BPROPERTY(Edit, Range = "5,150", Tooltip = "Largest turn towards the target (degrees)") float maxLookAngle = 75.f;
+  BPROPERTY(Edit, Tooltip = "Object a hand reaches for (empty: none)") std::string reachTarget;
+  BPROPERTY(Edit) std::string hand = "RightHand";
+  BPROPERTY(Edit, Range = "0,1") float reachWeight = 1.f;
+  BPROPERTY(Edit, Tooltip = "Last bone of a chain solved with FABRIK (empty: none)") std::string chainEnd;
+  BPROPERTY(Edit, Range = "2,16") int32_t chainLength = 3;
+  BPROPERTY(Edit, Tooltip = "Object the chain reaches for") std::string chainTarget;
+  BPROPERTY(Edit, Range = "1,40", Tooltip = "How fast the feet and hips follow the ground (per second)") float smoothing = 14.f;
+  float liveLeftLift = 0.f, liveRightLift = 0.f, liveHipDrop = 0.f, liveLookError = 0.f; // not saved: last frame (tests)
+};
+
+// Ragdoll (7-1b): when `active` turns on while playing (a script calls Activate(), e.g. on death), the skeleton goes
+// limp: one physics capsule per bone, joints with swing / twist limits, starting from the current pose and velocity;
+// the Animator stops driving it. Turning it off gives the skeleton back to the Animator.
+BCLASS(Component)
+struct Ragdoll {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "Limp now (physics drives the bones)") bool active = false;
+  BPROPERTY(Edit, Range = "1,500", Tooltip = "Total mass (kg), shared by bone length") float mass = 60.f;
+  BPROPERTY(Edit, Range = "5,120", Tooltip = "Joint swing limit (degrees)") float swingLimit = 50.f;
+  BPROPERTY(Edit, Range = "0,90", Tooltip = "Joint twist limit (degrees)") float twistLimit = 25.f;
+  BPROPERTY(Edit, Range = "0.2,3", Tooltip = "Bone thickness scale") float thickness = 1.f;
+  BFUNCTION(Callable) void Activate() { active = true; }
+  BFUNCTION(Callable) void Deactivate() { active = false; }
 };
 }

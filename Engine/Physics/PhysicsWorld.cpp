@@ -117,8 +117,14 @@ uint64_t Fnv(uint64_t h, const void* p, size_t n) {
 }
 }
 
+namespace {
+const PhysicsWorld* g_activeWorld = nullptr;
+}
+const PhysicsWorld* PhysicsWorld::Current() { return g_activeWorld; }
+
 void PhysicsWorld::Begin(Scene& scene, const Settings& settings, const AssetDatabase* assets) {
   End();
+  g_activeWorld = this;
   assets_ = assets;
   jolt_ = phys::CreateJolt();
   box2d_ = phys::CreateBox2D();
@@ -414,7 +420,89 @@ void PhysicsWorld::WriteBack(Scene& scene, Body& b) {
   }
 }
 
+bool PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
+                           const std::vector<std::string>& ignore) const {
+  if (!active_ || !jolt_) return false;
+  std::vector<uint64_t> skip;
+  for (size_t i = 0; i < bodies_.size(); ++i)
+    if (!bodies_[i].is2D && std::find(ignore.begin(), ignore.end(), bodies_[i].object) != ignore.end()) skip.push_back(i + 1);
+  for (size_t i = 0; i < ragdolls_.size(); ++i)
+    if (std::find(ignore.begin(), ignore.end(), ragdolls_[i].object) != ignore.end()) skip.push_back(kRagdollUser + i);
+  phys::RayHit h;
+  if (!jolt_->Raycast(origin, direction, maxDistance, h, skip)) return false;
+  hit.point = h.point;
+  hit.normal = h.normal;
+  hit.distance = h.distance;
+  hit.object.clear();
+  if (h.user >= 1 && h.user <= bodies_.size()) hit.object = bodies_[h.user - 1].object;
+  else if (h.user >= kRagdollUser && h.user - kRagdollUser < ragdolls_.size()) hit.object = ragdolls_[h.user - kRagdollUser].object;
+  return true;
+}
+
+int PhysicsWorld::AddRagdoll(const std::string& object, const std::vector<RagdollBone>& bones, const glm::vec3& velocity) {
+  if (!active_ || !jolt_ || bones.empty()) return -1;
+  Ragdoll r;
+  r.object = object;
+  const int index = (int)ragdolls_.size();
+  for (const RagdollBone& b : bones) {
+    phys::BodyDesc d;
+    d.user = kRagdollUser + (uint64_t)index;
+    d.motion = phys::Motion::Dynamic;
+    d.shape.kind = phys::ShapeKind::Capsule;
+    d.shape.radius = std::max(b.radius, 0.01f);
+    d.shape.halfHeight = std::max(b.halfHeight, 0.005f);
+    d.position = b.position;
+    d.rotation = b.rotation;
+    d.velocity = velocity;
+    d.mass = std::max(b.mass, 0.05f);
+    d.linearDamping = 0.1f;
+    d.angularDamping = 0.6f;
+    d.friction = 0.8f;
+    d.group = 1000u + (uint32_t)index;
+    std::string err;
+    const phys::BodyId id = jolt_->Add(d, &err);
+    if (id == phys::kNoBody) LogWarn("physics: ragdoll bone of {}: {}", object, err);
+    r.bodies.push_back(id);
+  }
+  for (size_t i = 0; i < bones.size(); ++i) {
+    const RagdollBone& b = bones[i];
+    if (b.parent < 0 || (size_t)b.parent >= bones.size() || r.bodies[i] == phys::kNoBody || r.bodies[b.parent] == phys::kNoBody) continue;
+    phys::JointDesc j;
+    j.a = r.bodies[b.parent];
+    j.b = r.bodies[i];
+    j.anchor = b.anchor;
+    j.twistAxis = b.twistAxis;
+    j.swingDegrees = b.swing;
+    j.twistDegrees = b.twist;
+    r.joints.push_back(jolt_->AddJoint(j));
+  }
+  ragdolls_.push_back(std::move(r));
+  LogInfo("physics: ragdoll for {} ({} bones, {} joints)", object, bones.size(), ragdolls_.back().joints.size());
+  return index;
+}
+
+bool PhysicsWorld::RagdollState(int ragdoll, std::vector<phys::BodyState>& bones) const {
+  bones.clear();
+  if (!jolt_ || ragdoll < 0 || (size_t)ragdoll >= ragdolls_.size() || !ragdolls_[ragdoll].alive) return false;
+  for (phys::BodyId id : ragdolls_[ragdoll].bodies) bones.push_back(jolt_->Get(id));
+  return true;
+}
+
+void PhysicsWorld::RemoveRagdoll(int ragdoll) {
+  if (!jolt_ || ragdoll < 0 || (size_t)ragdoll >= ragdolls_.size() || !ragdolls_[ragdoll].alive) return;
+  Ragdoll& r = ragdolls_[ragdoll];
+  for (phys::JointId j : r.joints) jolt_->RemoveJoint(j); // joints before their bodies
+  for (phys::BodyId b : r.bodies) jolt_->Remove(b);
+  r.alive = false;
+}
+
+size_t PhysicsWorld::Ragdolls() const {
+  return (size_t)std::count_if(ragdolls_.begin(), ragdolls_.end(), [](const Ragdoll& r) { return r.alive; });
+}
+
 void PhysicsWorld::End() {
+  if (g_activeWorld == this) g_activeWorld = nullptr;
+  ragdolls_.clear();
   bodies_.clear();
   events_.clear();
   auto_.clear();

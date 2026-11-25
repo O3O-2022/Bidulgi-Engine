@@ -1,0 +1,26 @@
+{"v":1,"defaults":"1.0","scene":"Playground","mode":"3d"}
+{"id":"sun","name":"Sun","rot":[-48,-30,0],"Light":{"type":"Directional","intensity":3}}
+{"id":"sky","name":"Sky","Sky":{}}
+{"id":"world","name":"World Settings","WorldSettings":{}}
+{"id":"ground","name":"Ground","pos":[0,-0.5,0],"scale":[40,1,40],"MeshRenderer":{"mesh":"Cube","material":"bdg:Grid"},"Collider":{}}
+{"id":"wall_n","name":"Wall","pos":[0,1.5,-20.5],"scale":[42,3,1],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"wall_s","name":"Wall","pos":[0,1.5,20.5],"scale":[42,3,1],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"wall_e","name":"Wall","pos":[20.5,1.5,0],"scale":[1,3,40],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"wall_w","name":"Wall","pos":[-20.5,1.5,0],"scale":[1,3,40],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"step1","name":"Step","pos":[0,0.075,1.775],"scale":[3,0.15,0.45],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"step2","name":"Step","pos":[0,0.15,1.325],"scale":[3,0.3,0.45],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"step3","name":"Step","pos":[0,0.225,0.875],"scale":[3,0.45,0.45],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"step4","name":"Step","pos":[0,0.3,0.425],"scale":[3,0.6,0.45],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"landing","name":"Landing","pos":[0,0.3,-1.8],"scale":[3,0.6,4],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
+{"id":"ramp","name":"Ramp","pos":[-5,0.55,1],"rot":[12,0,0],"scale":[3,0.3,5.4],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider":{}}
+{"id":"deck","name":"Deck","pos":[-5,0.95,-3.6],"scale":[3,0.3,4],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider":{}}
+{"id":"crate1","name":"Crate","pos":[5,0.5,2],"scale":[1.2,1,1.2],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider":{}}
+{"id":"crate2","name":"Crate","pos":[6.5,0.75,-1],"scale":[1.5,1.5,1.5],"MeshRenderer":{"mesh":"Cube","material":"Wood"},"Collider":{}}
+{"id":"beacon","name":"Beacon","pos":[2.6,1.3,3.5],"scale":[0.4,0.4,0.4],"MeshRenderer":{"mesh":"Sphere","material":"Gold"}}
+{"id":"player","name":"Player","pos":[0,0.9,6],"Rigidbody":{"type":"Character","mass":70,"freezeRotation":true,"linearDamping":0},"Collider":{"shape":"Capsule","radius":0.3,"height":1.8},"ThirdPersonController":{}}
+{"id":"hero","name":"Hero","parent":"player","pos":[0,-0.9,0],"rot":[0,180,0],"MeshRenderer":{"mesh":"Models/Hero.gltf"},"Animator":{"graph":"Anim/Hero.animgraph"},"AnimatorIK":{}}
+{"id":"camera","name":"Camera","pos":[0,2.6,10.2],"rot":[-15,0,0],"Camera":{"fov":60},"AudioListener":{},"FollowCamera":{}}
+{"id":"hud","name":"HUD","UICanvas":{}}
+{"id":"ui_speed","name":"speed","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[40,28],"size":[420,64],"text":"속도 0.0 m/s","fontSize":40,"align":"Left","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_state","name":"state","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[40,100],"size":[420,52],"text":"상태 -","fontSize":32,"align":"Left","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_help","name":"help","parent":"hud","UIElement":{"kind":"Text","anchor":"BottomLeft","position":[40,-28],"size":[1000,48],"text":"WASD 이동 · Shift 달리기 · Space 점프 · 마우스 시점 · E 손 흔들기","fontSize":26,"align":"Left","textColor":[1,1,1,0.9]}}

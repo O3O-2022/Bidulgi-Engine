@@ -1,0 +1,7 @@
+{
+  "name": "thirdperson",
+  "title": "3인칭 액션 / Third-person",
+  "description": "Animated character (idle / walk / run blend space, jump, wave), follow camera with collision, foot IK on a ramp and stairs, HUD",
+  "sounds": ["Assets/Audio/Jump.wav"],
+  "models": ["Assets/Models/Hero.gltf"]
+}

@@ -221,6 +221,51 @@ bidulgi.anim.key("Panel", "opacity", t=0.25, value=1, ease="easeOut")
 - **테스트 캐릭터**: 다운로드 없이 코드로 만든 리그(`Anim/TestRig.*`: 3관절 기둥 + Idle·Run·Jump, 상태 머신).
 
 **남은 것**: 블렌드 스페이스, IK·래그돌(7-1b), 그래프 편집기, 여러 상태 머신·레이어·`pipeline`·`update`·그래프 함수(`{"fn":…}`), `.anim` 클립 파일의 노티파이·커브, 다른 파일의 클립(리타게팅), 스킨 없는 노드 애니메이션, 모프 타깃, 듀얼 쿼터니언, 워커 스레드·묶음 평가·업데이트 예산, 포즈 기준 피킹.
+(블렌드 스페이스·레이어·IK·래그돌은 아래 둘째 부분에서 넣었습니다.)
+
+### 구현 현황 — 7-1 둘째 부분과 7-1b 첫 부분 (2026-11-25)
+
+**블렌드 스페이스** — 상태가 클립 대신 블렌드 스페이스를 가집니다 (지금은 상태 안에 바로 씀, 파일 `.blend1d`/`.blend2d`는 다음):
+
+```jsonc
+"Move":{"blendSpace":{"x":"Speed", "samples":[{"clip":"Idle","x":0}, {"clip":"Walk","x":1.6}, {"clip":"Run","x":5}]},
+        "events":[{"event":"Footstep","at":0.25}]},          // 블렌드 상태의 at은 정규화 시간 0..1
+"Strafe":{"blendSpace":{"x":"MoveX", "y":"MoveY", "samples":[{"clip":"Idle","x":0,"y":0}, {"clip":"Walk","x":0,"y":1}, ...]}}
+```
+
+- 1D는 x에서 이웃한 두 샘플을 선형으로, 2D는 **그래디언트 밴드**(유니티 freeform cartesian)로 섞습니다: 샘플 위치에서는 그 클립만, 사이는 부드럽게, 가중치 합은 1.
+- 섞이는 클립은 **정규화 시간으로 발을 맞춥니다**(걷기 1 s와 달리기 0.66 s가 같은 박자). 길이는 가중치로 섞은 길이.
+- 루트 모션은 섞인 클립마다 가중치대로 더합니다.
+
+**레이어** — 첫 상태 머신이 기본 레이어(모든 뼈), `layers`가 다른 머신을 본 마스크 위에 얹습니다:
+
+```jsonc
+"layers":[{"name":"UpperBody", "machine":"Arms", "fromBone":"RightUpperArm", "weight":"Wave", "mode":"override"},
+          {"name":"Lean", "machine":"Lean", "fromBone":"Spine", "weight":0.5, "mode":"additive"}]
+```
+
+- 마스크: `fromBone`(그 뼈와 아래 전부) 또는 `bones` 목록. `weight`: 숫자 또는 변수 이름(매 프레임 그 값, C#은 `SetFloat`). 변수가 없으면 C# `SetLayerWeight(이름, w)`.
+- override는 마스크 뼈를 레이어 포즈 쪽으로, additive는 레이어 클립의 **첫 프레임 대비 움직임**을 더합니다.
+- `Play("상태")`는 그 상태가 있는 첫 레이어에서 재생합니다.
+
+**IK (7-1b)** — `Anim/IK.*` 해법 + 컴포넌트 `AnimatorIK`(플레이 중 매 프레임, 클립·레이어 다음, 스키닝 전):
+
+| 기능 | 방식 | 설정 |
+|---|---|---|
+| 발 IK (경사·계단) | 발밑으로 물리 레이캐스트(자기·부모 몸체 제외), 클립의 발 높이는 지형 위에 그대로 유지(걷기 스윙 보존), 낮은 쪽 발에 맞춰 골반을 내림, Two-Bone IK(무릎은 앞으로), 부드럽게 | footIK, leftFoot / rightFoot, maxStep, footHeight(0 = 휴지 포즈에서), smoothing |
+| Look-At / 에임 오프셋 | 머리가 대상을 보게, 머리 위 두 뼈가 `aimSpine` 몫을 나눠 돎, 최대 각도 제한 | lookAt(물체), head, lookWeight, aimSpine, maxLookAngle |
+| 손 뻗기 | Two-Bone IK (팔꿈치는 뒤·아래) | reachTarget, hand, reachWeight |
+| 체인 | FABRIK (꼬리·촉수·긴 팔) | chainEnd, chainLength, chainTarget |
+
+- 모델은 **+Z를 앞**(glTF 규칙)으로 봅니다. 뼈 이름이 다르면 컴포넌트에서 바꿉니다.
+
+**래그돌** — 컴포넌트 `Ragdoll`: `Activate()`(C#, 예: 죽을 때) 또는 `active`를 켜면 스킨 뼈마다 캡슐(뼈 길이·`thickness`)과 부모 뼈와의 스윙/트위스트 조인트(`swingLimit`, `twistLimit`)가 생기고, 현재 포즈·몸 속도에서 물리가 이어받습니다. 같은 래그돌의 뼈끼리는 충돌하지 않습니다(조인트가 붙잡음). 끄면 애니메이터로 돌아갑니다.
+
+**물리 쪽 추가 (PHI)** — `Raycast`(가장 가까운 단단한 면, 트리거 제외, 무시 목록), 스윙트위스트 조인트, 충돌 그룹. C#: `Physics.Raycast(origin, direction, out RaycastHit hit, maxDistance, ignore...)`.
+
+**테스트 캐릭터** — 코드로 만든 휴머노이드(`MakeHumanoidGltf`, CC0): 17관절, 상자 몸, 1.92 m, 클립 Idle·Walk·Run·WalkBack·StrafeLeft·StrafeRight·Jump·Wave·LeanAdd. 3인칭 템플릿이 이 캐릭터를 씁니다.
+
+**남은 것**: 블렌드 스페이스 파일, 그래프 편집기, 스프링 본·옷, 래그돌 자기 충돌·편집기·부분 래그돌(히트 반응)·애니메이션으로 돌아갈 때 블렌드, 발 회전을 경사면에 맞추기, CCD, Box2D 레이캐스트, 몽타주·싱크 그룹, 워커 스레드 평가.
 
 ---
 

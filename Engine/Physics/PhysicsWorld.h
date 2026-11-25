@@ -49,6 +49,28 @@ public:
   // whichever the object does not have yet; 2D objects (with a Rigidbody2D or Collider2D) get the 2D pair.
   static std::vector<Command> AddPhysicsCommands(const Scene& scene, const std::string& id);
 
+  // 7-1b: the first solid surface along a ray in the 3D world (foot IK, cameras, scripts), skipping the bodies of the
+  // objects in `ignore` (an object's own capsule, its ragdoll) and triggers.
+  struct RayResult { std::string object; glm::vec3 point{0}, normal{0}; float distance = 0; };
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
+               const std::vector<std::string>& ignore = {}) const;
+  // 7-1b ragdolls: one dynamic capsule per bone (world space at creation), bones of one ragdoll do not collide with
+  // each other, joints (swing cone + twist) between each bone and its parent bone. Returns a handle (-1: failed).
+  struct RagdollBone {
+    glm::vec3 position{0};      // capsule centre
+    glm::quat rotation{1, 0, 0, 0}; // capsule axis = local Y
+    float radius = 0.06f, halfHeight = 0.1f, mass = 3;
+    int parent = -1;            // index in the list
+    glm::vec3 anchor{0}, twistAxis{0, 1, 0}; // joint to the parent bone (world)
+    float swing = 45, twist = 20;
+  };
+  int AddRagdoll(const std::string& object, const std::vector<RagdollBone>& bones, const glm::vec3& velocity);
+  bool RagdollState(int ragdoll, std::vector<phys::BodyState>& bones) const;
+  void RemoveRagdoll(int ragdoll);
+  size_t Ragdolls() const;
+  // The world of the running game (set by Begin, cleared by End): script raycasts go through it. Null when stopped.
+  static const PhysicsWorld* Current();
+
 private:
   struct Body {
     std::string object;
@@ -64,6 +86,9 @@ private:
   void WriteBack(Scene& scene, Body& b);
   std::unique_ptr<phys::Backend> jolt_, box2d_;
   std::vector<Body> bodies_;
+  struct Ragdoll { std::string object; std::vector<phys::BodyId> bodies; std::vector<phys::JointId> joints; bool alive = true; };
+  std::vector<Ragdoll> ragdolls_;
+  static constexpr uint64_t kRagdollUser = 1ull << 40; // body user values of ragdoll bones: kRagdollUser + ragdoll index
   std::vector<Event> events_;
   std::vector<AutoChoice> auto_;
   const AssetDatabase* assets_ = nullptr;

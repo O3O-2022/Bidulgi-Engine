@@ -1,0 +1,17 @@
+{
+  "description": {
+    "name": "{{GAME_NAME}}",
+    "version": "0.1.0",
+    "description": "Third-person playground made from the Bidulgi Engine third-person template",
+    "company": "My Studio",
+    "identifier": "com.mystudio.thirdperson"
+  },
+  "maps": {
+    "gameStartScene": "Scenes/Main.scene"
+  },
+  "display": {
+    "width": 1600,
+    "height": 900,
+    "showCursor": false
+  }
+}
