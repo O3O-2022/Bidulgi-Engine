@@ -287,7 +287,8 @@ AssetDatabase::Changes AssetDatabase::Refresh() {
   }
   for (const std::string& g : gone) {
     ch.removed.push_back(byGuid_[g].path);
-    pathToGuid_.erase(byGuid_[g].path);
+    // the path may already belong to another GUID (the file was replaced together with a different .meta): keep that
+    if (auto p = pathToGuid_.find(byGuid_[g].path); p != pathToGuid_.end() && p->second == g) pathToGuid_.erase(p);
     byGuid_.erase(g);
   }
   orphans_.clear();

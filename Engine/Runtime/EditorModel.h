@@ -152,6 +152,10 @@ private:
   std::string moveSource_, moveTarget_; bool pendingMove_ = false; // Hierarchy drop, applied in Update
   void RebuildHistory();
   std::vector<Binding> bindings_;
+  // 7-1: the inspected Animator's live rows while playing (state + one per graph variable), updated by Refresh
+  std::vector<Widget*> animLive_;
+  std::string animLiveId_;
+  size_t animLiveParams_ = 0;
   std::set<std::string> playChanged_;
   std::unordered_map<std::string, bool> collapsed_; // Inspector card fold state by component type
   std::string selected_, pendingSelect_;

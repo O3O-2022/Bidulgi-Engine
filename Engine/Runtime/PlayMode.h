@@ -6,6 +6,7 @@
 // playing (set commands still done at Stop) are offered afterwards: KeepPending() applies them to the edited
 // world through commands, as one undo step; DiscardPending() forgets them. What the game itself changes
 // (behaviours such as Rotator) is never kept.
+#include "Anim/AnimationSystem.h"
 #include "Core/Command.h"
 #include "Physics/PhysicsWorld.h"
 #include "Scene/CameraShake.h"
@@ -41,6 +42,9 @@ public:
   const BehaviourRunner& Scripts() const { return scripts_; }
   BehaviourRunner& Scripts() { return scripts_; } // fixed step from the project settings
   const AudioRunner& Audio() const { return audio_; } // AudioSource components (6-3)
+  // Animators (7-1): updated after the scripts each frame (their Play / SetFloat / SetTrigger calls apply the same
+  // frame); events reach the object's Behaviours as OnAnimationEvent(string name).
+  const AnimationSystem& Animation() const { return anim_; }
   uint64_t Frames() const { return frames_; } // ticks since Start
   // Physics (6-2): stepped on the fixed step (Scripts().fixedStep / maxFixedSteps), before C# FixedUpdate; collision
   // and trigger events go to the object's Behaviours right after each step. Gravity from the project settings.
@@ -70,6 +74,7 @@ private:
   double physicsAcc_ = 0;   // fixed-step clock when no C# runs
   void StepPhysics(EditorModel& m, double step);
   AudioRunner audio_;       // AudioSource / AudioListener (6-3)
+  AnimationSystem anim_;    // 7-1
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

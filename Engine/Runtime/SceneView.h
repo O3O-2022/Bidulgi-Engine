@@ -156,6 +156,9 @@ public:
   int32_t PixelH() const { return ph_; }
   size_t ItemCount() const { return items_.size(); }
   size_t OutlinedCount() const { return extras_.outlined.size(); }
+  // 7-1 test hooks: objects drawn skinned (GPU) in the last BuildItems, and skinning passes run since Init.
+  size_t SkinnedObjects() const { return skinnedLast_; }
+  uint64_t SkinPasses() const { return skinPasses_; }
 
 private:
   struct MeshEntry {
@@ -166,7 +169,25 @@ private:
     uint64_t hash = 0;
     bool isModel = false, missing = false;
     std::vector<std::string> deps; // .gltf: the project paths of its buffers and images (2-5d)
+    // 7-1 skinned models: per primitive the skin weights (empty = rigid), GPU source and per-joint boxes
+    std::shared_ptr<const SkinnedModelData> skinned;
+    std::vector<Renderer3D::SkinSource> skinSrc;
+    std::vector<std::vector<JointBox>> jointBoxes;
+    std::vector<glm::mat4> restSkin; // rest pose (outside play mode)
+    uint64_t gen = 0;                // import number (skinned instances made for an older import are rebuilt)
   };
+  // 7-1: an object drawing a skinned model owns its posed meshes (one per skinned primitive) and joint buffer.
+  struct SkinInst {
+    uint64_t gen = 0, serial = ~0ull, used = 0;
+    std::vector<Mesh3D> targets; // per primitive (empty mesh for rigid ones)
+    BufferHandle joints;
+    size_t jointCount = 0;
+  };
+  std::unordered_map<std::string, SkinInst> skinInsts_;
+  uint64_t importGen_ = 0, builds_ = 0, skinPasses_ = 0;
+  size_t skinnedLast_ = 0;
+  void DestroyEntry(MeshEntry& e);
+  void DestroySkinInst(SkinInst& s);
   const MeshEntry* Resolve(const std::string& name, const AssetDatabase* assets);
   Material3D MaterialFor(const std::string& name); // project material asset first, then the name rules
   void BuildItems(EditorModel& model, const AssetDatabase* assets);
@@ -193,7 +214,14 @@ private:
   struct FaceStart { std::string id; int face = 0; Vec3 size, position; glm::mat4 world{1.f}, parentWorld{1.f}; } face_;
   int hotFace_ = -1;
   std::vector<DrawItem3D> items_;
-  struct ItemInfo { std::string owner; const MeshData* cpu; glm::vec3 lo{0}, hi{0}; glm::mat4 ownerWorld{1.f}; }; // world bounds
+  struct ItemInfo {
+    std::string owner;
+    const MeshData* cpu;
+    glm::vec3 lo{0}, hi{0};       // world bounds
+    glm::mat4 ownerWorld{1.f};
+    bool posed = false;           // 7-1 skinned: boxLo / boxHi (item space, this pose) instead of the bind-pose vertices
+    glm::vec3 boxLo{0}, boxHi{0};
+  };
   glm::mat4 ItemMatrix(const EditorModel& model, size_t i) const; // item i as the scene is now (moved since the render)
   bool Owned(const EditorModel& model, const std::string& owner, const std::set<std::string>& ids) const; // owner or a parent in ids
   std::vector<ItemInfo> info_;

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -47,6 +48,93 @@ bool LoadTexture(const ufbx_texture* t, const fs::path& dir, ImportedTexture& ou
   return false;
 }
 
+// 7-1: the skeleton of every node a skin cluster binds plus their ancestors (the scene root excepted), parents first.
+void BuildFbxSkeleton(const ufbx_scene* scene, std::map<const ufbx_node*, int>& nodeJoint, Skeleton& sk) {
+  std::map<const ufbx_node*, bool> want;
+  std::map<const ufbx_node*, const ufbx_skin_cluster*> firstCluster;
+  for (size_t i = 0; i < scene->skin_deformers.count; ++i) {
+    const ufbx_skin_deformer* d = scene->skin_deformers.data[i];
+    for (size_t c = 0; c < d->clusters.count; ++c) {
+      const ufbx_skin_cluster* cl = d->clusters.data[c];
+      if (!cl->bone_node) continue;
+      firstCluster.emplace(cl->bone_node, cl);
+      for (const ufbx_node* n = cl->bone_node; n && !n->is_root; n = n->parent) want[n] = true;
+    }
+  }
+  std::function<void(const ufbx_node*, int)> visit = [&](const ufbx_node* n, int parent) {
+    int self = parent;
+    if (!n->is_root && want.count(n)) {
+      Joint j;
+      j.name = Str(n->name);
+      j.parent = parent;
+      const ufbx_transform& t = n->local_transform;
+      j.t = {(float)t.translation.x, (float)t.translation.y, (float)t.translation.z};
+      j.r = glm::normalize(glm::quat((float)t.rotation.w, (float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z));
+      j.s = {(float)t.scale.x, (float)t.scale.y, (float)t.scale.z};
+      if (auto it = firstCluster.find(n); it != firstCluster.end()) {
+        j.skinned = true;
+        j.inverseBind = ToGlm(it->second->geometry_to_bone);
+      }
+      self = nodeJoint[n] = (int)sk.joints.size();
+      sk.joints.push_back(std::move(j));
+    }
+    for (size_t c = 0; c < n->children.count; ++c) visit(n->children.data[c], self);
+  };
+  if (scene->root_node) visit(scene->root_node, -1);
+  int best = -1, bestDepth = 1 << 30;
+  for (size_t j = 0; j < sk.joints.size(); ++j) {
+    if (!sk.joints[j].skinned) continue;
+    int depth = 0;
+    for (int p = sk.joints[j].parent; p >= 0; p = sk.joints[p].parent) ++depth;
+    if (depth < bestDepth) { best = (int)j; bestDepth = depth; }
+  }
+  sk.root = best;
+}
+
+// 7-1: every animation stack sampled at 30 frames per second (ufbx evaluates layers, curves and constraints); a value
+// that never changes keeps one key.
+void ReadFbxClips(const ufbx_scene* scene, const std::map<const ufbx_node*, int>& nodeJoint, std::vector<AnimClip>& clips) {
+  constexpr double kRate = 30.0;
+  for (size_t si = 0; si < scene->anim_stacks.count; ++si) {
+    const ufbx_anim_stack* st = scene->anim_stacks.data[si];
+    const double len = std::max(0.0, st->time_end - st->time_begin);
+    const size_t frames = (size_t)std::ceil(len * kRate - 1e-6) + 1;
+    AnimClip clip;
+    clip.name = Str(st->name).empty() ? std::format("Clip{}", si) : Str(st->name);
+    if (const size_t bar = clip.name.find('|'); bar != std::string::npos) clip.name = clip.name.substr(bar + 1); // "Armature|Run"
+    clip.duration = (float)len;
+    for (const auto& [node, joint] : nodeJoint) {
+      AnimChannel ch[3];
+      for (int k = 0; k < 3; ++k) {
+        ch[k].joint = joint;
+        ch[k].path = (AnimChannel::Path)k;
+        ch[k].times.resize(frames);
+        ch[k].values.resize(frames);
+      }
+      for (size_t f = 0; f < frames; ++f) {
+        const double local = std::min(len, f / kRate);
+        const ufbx_transform t = ufbx_evaluate_transform(st->anim, node, st->time_begin + local);
+        glm::vec4 q((float)t.rotation.x, (float)t.rotation.y, (float)t.rotation.z, (float)t.rotation.w);
+        if (f > 0 && glm::dot(q, ch[1].values[f - 1]) < 0.f) q = -q; // keep neighbouring keys on one hemisphere
+        ch[0].values[f] = {(float)t.translation.x, (float)t.translation.y, (float)t.translation.z, 0.f};
+        ch[1].values[f] = q;
+        ch[2].values[f] = {(float)t.scale.x, (float)t.scale.y, (float)t.scale.z, 0.f};
+        for (int k = 0; k < 3; ++k) ch[k].times[f] = (float)local;
+      }
+      for (AnimChannel& c : ch) {
+        bool constant = true;
+        for (size_t f = 1; f < frames && constant; ++f) constant = glm::all(glm::lessThan(glm::abs(c.values[f] - c.values[0]), glm::vec4(1e-6f)));
+        if (constant) {
+          c.times.resize(1);
+          c.values.resize(1);
+        }
+        clip.channels.push_back(std::move(c));
+      }
+    }
+    if (!clip.channels.empty()) clips.push_back(std::move(clip));
+  }
+}
+
 } // namespace
 
 bool IsModelFile(const std::string& p) {
@@ -54,13 +142,13 @@ bool IsModelFile(const std::string& p) {
   return e == ".glb" || e == ".gltf" || e == ".fbx" || e == ".obj";
 }
 
-bool ImportModel(const fs::path& path, ImportedModel& out, std::string* error) {
+bool ImportModel(const fs::path& path, ImportedModel& out, std::string* error, bool images) {
   const std::string e = Lower(path.extension().string());
-  if (e == ".fbx" || e == ".obj") return ImportFbxObj(path, out, error);
-  return ImportGltf(path, out, error);
+  if (e == ".fbx" || e == ".obj") return ImportFbxObj(path, out, error, images);
+  return ImportGltf(path, out, error, images);
 }
 
-bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) {
+bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error, bool images) {
   out = {};
   ufbx_load_opts opts = {};
   opts.target_axes = ufbx_axes_right_handed_y_up;
@@ -87,7 +175,8 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) 
     ImportedTexture it;
     it.srgb = srgb;
     int index = -1;
-    if (LoadTexture(t, dir, it)) {
+    if (!images) { // skeletons and clips only
+    } else if (LoadTexture(t, dir, it)) {
       index = (int)out.textures.size();
       out.textures.push_back(std::move(it));
     } else {
@@ -122,6 +211,13 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) 
     return index;
   };
 
+  std::map<const ufbx_node*, int> nodeJoint; // 7-1
+  if (scene->skin_deformers.count) {
+    out.skinned = std::make_shared<SkinnedModelData>();
+    BuildFbxSkeleton(scene, nodeJoint, out.skinned->skeleton);
+    ReadFbxClips(scene, nodeJoint, out.skinned->clips);
+  }
+
   // one primitive per mesh material part; instances per node using the mesh
   std::map<const ufbx_mesh*, std::vector<int>> meshPrims;
   std::vector<uint32_t> tri;
@@ -136,6 +232,7 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) 
       ImportedPrimitive ip;
       ip.material = part.index < mesh->materials.count ? material(mesh->materials.data[part.index]) : -1;
       MeshData& md = ip.mesh;
+      const ufbx_skin_deformer* skinDef = out.skinned && mesh->skin_deformers.count ? mesh->skin_deformers.data[0] : nullptr;
       for (size_t fi = 0; fi < part.face_indices.count; ++fi) {
         const ufbx_face face = mesh->faces.data[part.face_indices.data[fi]];
         const uint32_t n = ufbx_triangulate_face(tri.data(), tri.size(), mesh, face);
@@ -155,11 +252,28 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) 
           }
           md.indices.push_back((uint32_t)md.vertices.size());
           md.vertices.push_back(v);
+          if (skinDef) {
+            const uint32_t vert = mesh->vertex_indices.data[ix];
+            int joints[8];
+            float weights[8];
+            int count = 0;
+            if (vert < skinDef->vertices.count) {
+              const ufbx_skin_vertex& sv = skinDef->vertices.data[vert];
+              for (uint32_t w = 0; w < sv.num_weights && count < 8; ++w) {
+                const ufbx_skin_weight& sw = skinDef->weights.data[sv.weight_begin + w];
+                const ufbx_node* bone = sw.cluster_index < skinDef->clusters.count ? skinDef->clusters.data[sw.cluster_index]->bone_node : nullptr;
+                const auto it = bone ? nodeJoint.find(bone) : nodeJoint.end();
+                joints[count] = it == nodeJoint.end() ? -1 : it->second;
+                weights[count++] = (float)sw.weight;
+              }
+            }
+            ip.skin.push_back(MakeSkinVertex(joints, weights, count));
+          }
         }
       }
       if (md.indices.empty()) continue;
       out.stats.sourceVertices += md.vertices.size();
-      auto [b, a] = OptimizeMesh(md);
+      auto [b, a] = ip.skin.empty() ? OptimizeMesh(md) : OptimizeMesh(md, ip.skin);
       cacheBefore += b * md.indices.size();
       cacheAfter += a * md.indices.size();
       out.stats.vertices += md.vertices.size();
@@ -176,18 +290,15 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error) 
     const ufbx_node* node = scene->nodes.data[ni];
     if (!node->mesh) continue;
     const glm::mat4 world = ToGlm(node->geometry_to_world);
-    for (int prim : meshPrims[node->mesh]) out.instances.push_back({prim, world, Str(node->name)});
+    for (int prim : meshPrims[node->mesh]) // skinned parts: the joints place them (geometry_to_bone includes the node)
+      out.instances.push_back({prim, out.primitives[prim].skin.empty() ? world : glm::mat4(1.f), Str(node->name)});
   }
   ufbx_free_scene(scene);
+  if (out.skinned)
+    LogInfo("model: {} -> skeleton of {} joints, {} clips", std::string((const char*)path.filename().u8string().c_str()), out.skinned->skeleton.joints.size(),
+            out.skinned->clips.size());
 
-  bool any = false;
-  for (const ImportedModel::Instance& in : out.instances)
-    for (const Vertex3D& v : out.primitives[in.primitive].mesh.vertices) {
-      const glm::vec3 p = glm::vec3(in.world * glm::vec4(v.px, v.py, v.pz, 1.f));
-      out.boundsMin = any ? glm::min(out.boundsMin, p) : p;
-      out.boundsMax = any ? glm::max(out.boundsMax, p) : p;
-      any = true;
-    }
+  ComputeModelBounds(out);
   if (out.instances.empty()) {
     if (error) *error = "no meshes";
     return false;

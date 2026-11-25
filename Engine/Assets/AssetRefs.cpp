@@ -27,7 +27,9 @@ std::string Stem(const std::string& p) {
   size_t dot = f.find_last_of('.');
   return dot == std::string::npos ? f : f.substr(0, dot);
 }
-bool IsJsonDoc(const std::string& e) { return e == ".scene" || e == ".material" || e == ".matinst" || e == ".prefab" || e == ".json" || e == ".jsonl"; }
+bool IsJsonDoc(const std::string& e) {
+  return e == ".scene" || e == ".material" || e == ".matinst" || e == ".prefab" || e == ".json" || e == ".jsonl" || e == ".animgraph"; // 7-1: a graph names its skeleton
+}
 bool IsScript(const std::string& e) { return e == ".cs" || e == ".lua" || e == ".py" || e == ".h" || e == ".hpp" || e == ".cpp" || e == ".c"; }
 bool IsMaterial(const std::string& e) { return e == ".material" || e == ".matinst"; }
 

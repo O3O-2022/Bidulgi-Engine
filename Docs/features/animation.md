@@ -207,6 +207,21 @@ bidulgi.anim.key("Panel", "opacity", t=0.25, value=1, ease="easeOut")
 | 5 | IK, Linked Layers, 리타게팅, Root Motion |
 | 6 | Graph Editor, 컷신용 Sequencer |
 
+### 구현 현황 — 7-1 첫 부분 (2026-11-25)
+
+처음 쓸 수 있는 부분만 먼저 넣었습니다 (`Engine/Anim/`). 위 그래프 형식의 **부분 집합**이고, 같은 파일이 나중 기능을 더해도 그대로 읽힙니다.
+
+- **임포트**: glTF(cgltf)와 FBX(ufbx)에서 스킨·스켈레톤·클립. 스켈레톤 = 스킨이 쓰는 노드와 그 조상(움직이는 아마추어 노드도 따라감), 부모가 먼저. 정점당 영향 4개(큰 것, 합 1). FBX 애니메이션 스택은 30 fps로 샘플("Armature|Run" → 클립 이름 "Run"). glTF CUBICSPLINE은 키 값만 선형으로.
+- **렌더**: GPU 스키닝(컴퓨트 셰이더)이 물체마다 포즈 메시를 다시 써서, 그림자·프리패스·모든 품질 단계가 보통 메시처럼 그립니다. 경계는 관절별 상자를 스킨 행렬로 옮긴 것(포즈를 따라감). 플레이가 아닐 때는 휴지 포즈.
+- **컴포넌트 이름은 `Animator`** (문서의 `AnimGraph` 대신: 유니티·쉬운 API와 같은 이름, 허브 지시). 필드: `graph`(.animgraph), `clip`(처음 상태/클립), `speed`, `crossFade`(Play 기본 페이드), `rootMotion`.
+- **`.animgraph`에서 지금 읽는 것**: `skeleton`, `vars`(float·int·bool·trigger), 첫 `stateMachines` 하나 — `entry`, `states`의 `play`(모델의 클립 이름)·`loop`·`speed`·`events`(`[{"event":"Footstep","at":0.25}]`, 클립 초), `transitions`의 `from`(`*` = 아무 상태)·`to`·`when`(`변수 비교 상수`, 이름만 = bool/trigger, `!`·`&&`·`||`, 괄호 없음)·`exitTime`(정규화 시간)·`blend`(초). 트리거는 그 전환이 쓰면 꺼짐.
+- **루트 모션**: 최상위 스킨 관절의 수평 이동을 포즈에서 빼서 Transform으로 옮김(루프가 넘어갈 때도 이어짐).
+- **스크립트**: `var a = Get<Animator>(); a.Play("Run"); a.SetFloat("Speed", 3); a.SetTrigger("Jump"); a.CurrentState();` — 이벤트는 `void OnAnimationEvent(string name)`. 같은 프레임에 반영(스크립트 다음에 애니메이션 갱신).
+- **에디터**: 플레이 중 Inspector의 Animator 카드에 상태(전환 %)와 변수 값, Project에서 스킨 모델을 고르면 Inspector 미리보기가 첫 클립을 반복 재생.
+- **테스트 캐릭터**: 다운로드 없이 코드로 만든 리그(`Anim/TestRig.*`: 3관절 기둥 + Idle·Run·Jump, 상태 머신).
+
+**남은 것**: 블렌드 스페이스, IK·래그돌(7-1b), 그래프 편집기, 여러 상태 머신·레이어·`pipeline`·`update`·그래프 함수(`{"fn":…}`), `.anim` 클립 파일의 노티파이·커브, 다른 파일의 클립(리타게팅), 스킨 없는 노드 애니메이션, 모프 타깃, 듀얼 쿼터니언, 워커 스레드·묶음 평가·업데이트 예산, 포즈 기준 피킹.
+
 ---
 
 ## IK와 물리 애니메이션 (2026-11-23 보강)

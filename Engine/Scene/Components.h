@@ -299,4 +299,45 @@ public:
   BPROPERTY(Edit, ShowIf = "shape == Capsule", Range = "0.001,1000") float height = 2.f;
   BPROPERTY(Edit) bool isTrigger = false;
 };
+
+// ---- Animation (queue 7-1, Docs/features/animation.md). The object's MeshRenderer names a skinned model (.gltf / .glb
+// / .fbx); the Animator plays its clips, through a state machine when `graph` names an .animgraph. Events written in
+// the graph reach the object's Behaviours as OnAnimationEvent(string name). ----
+struct AnimatorOp { // a script call waiting for the next animation update (not saved)
+  enum Kind { Play, SetFloat, SetTrigger };
+  Kind kind = Play;
+  std::string name;
+  float value = -1.f; // Play: fade seconds (< 0 = crossFade); SetFloat: the value
+};
+
+BCLASS(Component)
+struct Animator {
+  GENERATED_BODY()
+public:
+  BPROPERTY(Edit, Tooltip = "State machine (.animgraph); empty = the model's clips played by name") std::string graph;
+  BPROPERTY(Edit, Tooltip = "State or clip played first (empty = the graph's entry, or the model's first clip)") std::string clip;
+  BPROPERTY(Edit, Range = "0,4", Tooltip = "Playback speed") float speed = 1.f;
+  BPROPERTY(Edit, Range = "0,2", Tooltip = "Seconds Play() cross-fades over") float crossFade = 0.2f;
+  BPROPERTY(Edit, Tooltip = "Move the object by the root joint's horizontal motion instead of playing it in place") bool rootMotion = false;
+  // Script calls (C#: animator.Play("Run"), SetFloat("Speed", 3), SetTrigger("Jump")); applied on the next update.
+  BFUNCTION(Callable) void Play(std::string state) { pending.push_back({AnimatorOp::Play, std::move(state), -1.f}); }
+  BFUNCTION(Callable) void CrossFade(std::string state, float seconds) { pending.push_back({AnimatorOp::Play, std::move(state), seconds < 0 ? 0.f : seconds}); }
+  BFUNCTION(Callable) void SetFloat(std::string name, float value) { pending.push_back({AnimatorOp::SetFloat, std::move(name), value}); }
+  BFUNCTION(Callable) void SetBool(std::string name, bool value) { pending.push_back({AnimatorOp::SetFloat, std::move(name), value ? 1.f : 0.f}); }
+  BFUNCTION(Callable) void SetInteger(std::string name, int32_t value) { pending.push_back({AnimatorOp::SetFloat, std::move(name), (float)value}); }
+  BFUNCTION(Callable) void SetTrigger(std::string name) { pending.push_back({AnimatorOp::SetTrigger, std::move(name), 1.f}); }
+  BFUNCTION(Callable) float GetFloat(std::string name) const {
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it)
+      if (it->kind != AnimatorOp::Play && it->name == name) return it->value;
+    for (const auto& [n, v] : liveParams)
+      if (n == name) return v;
+    return 0.f;
+  }
+  BFUNCTION(Callable) bool GetBool(std::string name) const { return GetFloat(std::move(name)) != 0.f; }
+  BFUNCTION(Callable) std::string CurrentState() const { return liveState; }
+  std::vector<AnimatorOp> pending;                         // not saved: taken by the animation update
+  std::string liveState;                                   // not saved: the state playing (or faded into), while playing
+  std::vector<std::pair<std::string, float>> liveParams;   // not saved: graph variables, while playing (Inspector)
+  float liveFade = 0.f;                                    // not saved: cross-fade progress 0..1 (0 = not fading)
+};
 }

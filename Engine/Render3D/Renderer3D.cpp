@@ -1135,8 +1135,9 @@ void Renderer3D::Shutdown() {
   if (lumRT_.Valid()) rhi_->DestroyRenderTarget(lumRT_);
   if (dofRT_.Valid()) rhi_->DestroyRenderTarget(dofRT_);
   if (shaftRT_.Valid()) rhi_->DestroyRenderTarget(shaftRT_);
-  for (PipelineHandle p : {lum_, adapt_, dof_, shafts_})
+  for (PipelineHandle p : {lum_, adapt_, dof_, shafts_, skin_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
+  skin_ = {};
   for (PipelineHandle p : {opaque_, twoSided_, blend_, grid_, mask_, outline_, sky_, shadowPipe_, toneMap_, fxaa_, bloomDown_, bloomUp_, wire_})
     rhi_->DestroyPipeline(p);
   for (TimerFrame& t : timers_)
@@ -1195,6 +1196,88 @@ Mesh3D Renderer3D::CreateMesh(const MeshData& d) {
     m.boundsMax = i ? glm::max(m.boundsMax, p) : p;
   }
   return m;
+}
+
+// 7-1: linear blend skinning of Vertex3D (14 floats) with 4 influences per vertex (skin: 6 uints, joints as two
+// 16-bit pairs and weights as float bits). Normals and tangents use the blended matrix's upper 3x3, renormalised.
+static const char* kSkinCS = R"(#version 450
+layout(local_size_x = 64) in;
+layout(std430, binding = 8) readonly buffer SrcV { float src[]; };
+layout(std430, binding = 9) readonly buffer SkinW { uint skin[]; };
+layout(std430, binding = 10) readonly buffer Joints { mat4 joints[]; };
+layout(std430, binding = 11) writeonly buffer DstV { float dst[]; };
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if (i >= uint(skin.length()) / 6u) return;
+  uint s = i * 6u, b = i * 14u;
+  uint j01 = skin[s], j23 = skin[s + 1u];
+  uint n = uint(joints.length());
+  uint j0 = min(j01 & 0xffffu, n - 1u), j1 = min(j01 >> 16, n - 1u), j2 = min(j23 & 0xffffu, n - 1u), j3 = min(j23 >> 16, n - 1u);
+  vec4 w = vec4(uintBitsToFloat(skin[s + 2u]), uintBitsToFloat(skin[s + 3u]), uintBitsToFloat(skin[s + 4u]), uintBitsToFloat(skin[s + 5u]));
+  mat4 m = joints[j0] * w.x + joints[j1] * w.y + joints[j2] * w.z + joints[j3] * w.w;
+  vec3 p = (m * vec4(src[b], src[b + 1u], src[b + 2u], 1.0)).xyz;
+  mat3 r = mat3(m);
+  vec3 nrm = r * vec3(src[b + 3u], src[b + 4u], src[b + 5u]);
+  nrm = dot(nrm, nrm) > 0.0 ? normalize(nrm) : vec3(0.0, 1.0, 0.0);
+  vec3 t = r * vec3(src[b + 8u], src[b + 9u], src[b + 10u]);
+  t = dot(t, t) > 0.0 ? normalize(t) : t;
+  dst[b] = p.x; dst[b + 1u] = p.y; dst[b + 2u] = p.z;
+  dst[b + 3u] = nrm.x; dst[b + 4u] = nrm.y; dst[b + 5u] = nrm.z;
+  dst[b + 6u] = src[b + 6u]; dst[b + 7u] = src[b + 7u];
+  dst[b + 8u] = t.x; dst[b + 9u] = t.y; dst[b + 10u] = t.z; dst[b + 11u] = src[b + 11u];
+  dst[b + 12u] = src[b + 12u]; dst[b + 13u] = src[b + 13u];
+}
+)";
+
+Renderer3D::SkinSource Renderer3D::CreateSkinSource(const MeshData& bind, const std::vector<SkinVertex>& skin) {
+  SkinSource s;
+  if (!rhi_ || bind.vertices.empty() || skin.size() != bind.vertices.size()) return s;
+  static_assert(sizeof(Vertex3D) == 14 * sizeof(float), "the skinning shader reads 14 floats per vertex");
+  std::vector<uint32_t> packed(skin.size() * 6);
+  for (size_t i = 0; i < skin.size(); ++i) {
+    uint32_t* o = &packed[i * 6];
+    o[0] = (uint32_t)skin[i].joint[0] | ((uint32_t)skin[i].joint[1] << 16);
+    o[1] = (uint32_t)skin[i].joint[2] | ((uint32_t)skin[i].joint[3] << 16);
+    std::memcpy(o + 2, skin[i].weight, 4 * sizeof(float));
+  }
+  s.vertices = rhi_->CreateBuffer(BufferUsage::Storage, bind.vertices.data(), bind.vertices.size() * sizeof(Vertex3D));
+  s.skin = rhi_->CreateBuffer(BufferUsage::Storage, packed.data(), packed.size() * sizeof(uint32_t));
+  s.vertexCount = (uint32_t)bind.vertices.size();
+  return s;
+}
+
+void Renderer3D::DestroySkinSource(SkinSource& s) {
+  if (rhi_) {
+    rhi_->DestroyBuffer(s.vertices);
+    rhi_->DestroyBuffer(s.skin);
+  }
+  s = {};
+}
+
+Mesh3D Renderer3D::CreateSkinTarget(const MeshData& bind) {
+  Mesh3D m = CreateMesh(bind);
+  m.source.reset();      // the pose changes every frame: no lightmap unwrap or baked-GI cache for it
+  m.contentHash = 0;
+  return m;
+}
+
+bool Renderer3D::Skin(const SkinSource& s, BufferHandle joints, Mesh3D& target) {
+  if (!rhi_ || !s.vertices.Valid() || !joints.Valid() || !target.vertices.Valid()) return false;
+  if (!skin_.Valid()) {
+    skin_ = rhi_->CreateComputePipeline(kSkinCS, "skinning");
+    if (!skin_.Valid()) return false;
+  }
+  rhi_->BindStorageBuffer(8, s.vertices);
+  rhi_->BindStorageBuffer(9, s.skin);
+  rhi_->BindStorageBuffer(10, joints);
+  rhi_->BindStorageBuffer(11, target.vertices);
+  rhi_->Dispatch(skin_, (s.vertexCount + 63) / 64);
+  skinnedVertices_ += s.vertexCount;
+  return true;
+}
+
+void Renderer3D::SkinBarrier() {
+  if (rhi_) rhi_->ComputeBarrier();
 }
 
 void Renderer3D::DestroyMesh(Mesh3D& m) {

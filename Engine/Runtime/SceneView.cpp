@@ -1,4 +1,5 @@
 #include "Runtime/SceneView.h"
+#include "Anim/AnimationSystem.h"
 #include "Assets/AssetImport.h"
 #include "Assets/ModelImport.h"
 #include "Assets/AssetDatabase.h"
@@ -117,12 +118,28 @@ bool SceneView::Init(RHI& rhi, Renderer3D& r) {
 void SceneView::Shutdown() {
   if (!r_) return;
   for (auto& [name, e] : builtins_) r_->DestroyMesh(e.mesh);
-  for (auto& [name, e] : meshes_) r_->DestroyModel(e.model);
+  for (auto& [name, e] : meshes_) DestroyEntry(e);
+  for (auto& [id, s] : skinInsts_) DestroySkinInst(s);
+  skinInsts_.clear();
   builtins_.clear();
   meshes_.clear();
   rhi_->DestroyRenderTarget(rt_);
   rhi_->DestroyRenderTarget(gameRT_);
   r_ = nullptr;
+}
+
+void SceneView::DestroyEntry(MeshEntry& e) {
+  if (!r_) return;
+  if (e.isModel) r_->DestroyModel(e.model);
+  for (Renderer3D::SkinSource& s : e.skinSrc) r_->DestroySkinSource(s);
+  e.skinSrc.clear();
+}
+
+void SceneView::DestroySkinInst(SkinInst& s) {
+  if (!r_) return;
+  for (Mesh3D& m : s.targets) r_->DestroyMesh(m);
+  rhi_->DestroyBuffer(s.joints);
+  s = {};
 }
 
 const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const AssetDatabase* assets) {
@@ -131,7 +148,7 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
   const AssetRecord* rec = assets && IsModelFile(ext) ? assets->ByPath(name) : nullptr;
   auto it = meshes_.find(name);
   if (it != meshes_.end() && (!rec || it->second.hash == rec->hash)) return it->second.missing ? &builtins_["cube"] : &it->second;
-  if (it != meshes_.end()) { r_->DestroyModel(it->second.model); meshes_.erase(it); } // the file changed: import again
+  if (it != meshes_.end()) { DestroyEntry(it->second); meshes_.erase(it); } // the file changed: import again
   MeshEntry e;
   if (rec) {
     ImportedModel im;
@@ -141,6 +158,22 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
       e.isModel = true;
       e.hash = rec->hash;
       e.model = r_->UploadModel(im);
+      e.gen = ++importGen_;
+      if (im.skinned) { // 7-1: skin sources on the GPU, joint boxes for the pose bounds, the rest pose
+        e.skinned = im.skinned;
+        RememberSkinnedModel(name, rec->hash, im.skinned); // the animation system reuses this import
+        const size_t joints = im.skinned->skeleton.joints.size();
+        for (const ImportedPrimitive& p : im.primitives) {
+          e.skinSrc.push_back(p.skin.empty() ? Renderer3D::SkinSource{} : r_->CreateSkinSource(p.mesh, p.skin));
+          e.jointBoxes.emplace_back();
+          if (!p.skin.empty()) JointBoxes(&p.mesh.vertices[0].px, sizeof(Vertex3D) / sizeof(float), p.skin, joints, e.jointBoxes.back());
+        }
+        LocalPose rest;
+        RestPose(im.skinned->skeleton, rest);
+        std::vector<glm::mat4> model;
+        PoseToModel(im.skinned->skeleton, rest, model);
+        ModelToSkin(im.skinned->skeleton, model, e.restSkin);
+      }
       for (ImportedPrimitive& p : im.primitives) e.cpuPrims.push_back(std::move(p.mesh));
       if (ext == ".gltf" || ext == ".obj") { // its buffers / .mtl and images: a change to one of them re-imports the model
         const size_t slash = name.find_last_of('/');
@@ -200,6 +233,10 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
   items_.clear();
   info_.clear();
   icons_.clear();
+  ++builds_;
+  skinnedLast_ = 0;
+  bool skinnedThisBuild = false;
+  const AnimationSystem* anim = AnimationSystem::Active();
   extras_ = {};
   extras_.grid = showGrid;
   extras_.view = debugView;
@@ -397,14 +434,58 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
     const MeshEntry* e = Resolve(mr->mesh, assets);
     if (!e) continue;
     bool sel = isSelected(id);
+    SkinInst* si = nullptr; // 7-1: pose this object's skinned primitives on the GPU
+    const std::vector<glm::mat4>* skin = nullptr;
+    if (e->isModel && e->skinned && !e->restSkin.empty()) {
+      const AnimationSystem::Pose* pose = anim ? anim->PoseOf(id) : nullptr;
+      if (pose && (pose->mesh != mr->mesh || pose->skin.size() != e->restSkin.size())) pose = nullptr;
+      skin = pose ? &pose->skin : &e->restSkin;
+      si = &skinInsts_[id];
+      if (si->gen != e->gen) { // first use, or the model was imported again
+        DestroySkinInst(*si);
+        si->gen = e->gen;
+        si->jointCount = e->restSkin.size();
+        si->joints = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, si->jointCount * sizeof(glm::mat4), true);
+        for (size_t p = 0; p < e->cpuPrims.size(); ++p)
+          si->targets.push_back(e->skinSrc[p].vertices.Valid() ? r_->CreateSkinTarget(e->cpuPrims[p]) : Mesh3D{});
+      }
+      si->used = builds_;
+      const uint64_t serial = pose ? pose->serial : 0;
+      if (serial != si->serial) {
+        rhi_->UpdateBuffer(si->joints, skin->data(), skin->size() * sizeof(glm::mat4));
+        for (size_t p = 0; p < si->targets.size(); ++p) {
+          if (!e->skinSrc[p].vertices.Valid() || !r_->Skin(e->skinSrc[p], si->joints, si->targets[p])) continue;
+          glm::vec3 lo, hi;
+          if (PoseBounds(e->jointBoxes[p], *skin, lo, hi)) { si->targets[p].boundsMin = lo; si->targets[p].boundsMax = hi; }
+          ++skinPasses_;
+          skinnedThisBuild = true;
+        }
+        si->serial = serial;
+      }
+      ++skinnedLast_;
+    }
     if (e->isModel) {
       for (const Model3D::Instance& in : e->model.instances) {
         if (in.mesh < 0 || in.mesh >= (int)e->model.meshes.size() || !e->model.meshes[in.mesh].indexCount) continue;
         if (sel) extras_.outlined.push_back(items_.size());
-        items_.push_back({&e->model.meshes[in.mesh], world * in.world, e->model.materials[in.mesh]});
-        items_.back().lightmapped = mr->bakeLightmap;
+        const bool posed = si && in.mesh < (int)si->targets.size() && si->targets[in.mesh].indexCount;
+        items_.push_back({posed ? &si->targets[in.mesh] : &e->model.meshes[in.mesh], world * in.world, e->model.materials[in.mesh]});
+        items_.back().lightmapped = mr->bakeLightmap && !posed;
         info_.push_back({id, &e->cpuPrims[in.mesh]});
         info_.back().ownerWorld = world;
+        if (posed) { // bounds of this pose: the joint boxes moved by the skin matrices (Renderer3D culls with them too)
+          ItemInfo& ii = info_.back();
+          ii.posed = true;
+          ii.boxLo = si->targets[in.mesh].boundsMin;
+          ii.boxHi = si->targets[in.mesh].boundsMax;
+          for (int c = 0; c < 8; ++c) {
+            const glm::vec3 corner((c & 1) ? ii.boxHi.x : ii.boxLo.x, (c & 2) ? ii.boxHi.y : ii.boxLo.y, (c & 4) ? ii.boxHi.z : ii.boxLo.z);
+            const glm::vec3 p = glm::vec3(items_.back().model * glm::vec4(corner, 1.f));
+            ii.lo = c ? glm::min(ii.lo, p) : p;
+            ii.hi = c ? glm::max(ii.hi, p) : p;
+          }
+          continue;
+        }
         bool any = false;
         Bounds(e->cpuPrims[in.mesh], items_.back().model, info_.back().lo, info_.back().hi, any);
       }
@@ -417,6 +498,11 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
       bool any = false;
       Bounds(e->cpu, world, info_.back().lo, info_.back().hi, any);
     }
+  }
+  if (skinnedThisBuild) r_->SkinBarrier(); // the posed vertices are written before any pass reads them
+  for (auto it = skinInsts_.begin(); it != skinInsts_.end();) { // objects gone or no longer skinned (kept a few builds: two views)
+    if (it->second.used + 4 < builds_) { DestroySkinInst(it->second); it = skinInsts_.erase(it); }
+    else ++it;
   }
   if ((int)light_.locals.size() > kMaxLocalLights) // nearest to what the camera looks at
     std::partial_sort(light_.locals.begin(), light_.locals.begin() + kMaxLocalLights, light_.locals.end(),
@@ -669,7 +755,19 @@ bool SceneView::ObjectBounds(const EditorModel& model, const std::string& id, gl
   bool any = false;
   const std::set<std::string> ids{id};
   for (size_t i = 0; i < items_.size(); ++i)
-    if (info_[i].cpu && Owned(model, info_[i].owner, ids)) Bounds(*info_[i].cpu, ItemMatrix(model, i), lo, hi, any);
+    if (info_[i].cpu && Owned(model, info_[i].owner, ids)) {
+      if (info_[i].posed) { // 7-1: the pose's box
+        const glm::mat4 m = ItemMatrix(model, i);
+        for (int c = 0; c < 8; ++c) {
+          const glm::vec3 corner((c & 1) ? info_[i].boxHi.x : info_[i].boxLo.x, (c & 2) ? info_[i].boxHi.y : info_[i].boxLo.y,
+                                 (c & 4) ? info_[i].boxHi.z : info_[i].boxLo.z);
+          const glm::vec3 p = glm::vec3(m * glm::vec4(corner, 1.f));
+          lo = any ? glm::min(lo, p) : p;
+          hi = any ? glm::max(hi, p) : p;
+          any = true;
+        }
+      } else Bounds(*info_[i].cpu, ItemMatrix(model, i), lo, hi, any);
+    }
   return any;
 }
 
@@ -781,7 +879,7 @@ int SceneView::Reimport(const std::vector<std::string>& changed) {
       if (std::find(e.deps.begin(), e.deps.end(), c) != e.deps.end()) { why = c + " changed"; break; }
     }
     if (why.empty()) { ++it; continue; }
-    if (e.isModel && r_) r_->DestroyModel(e.model);
+    DestroyEntry(e);
     LogInfo("assets: re-importing {} ({})", it->first, why);
     it = meshes_.erase(it);
     ++n;

@@ -543,7 +543,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=11 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=12 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
@@ -578,6 +578,27 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_PREFAB_TEST = '1'; BDG_ASSETS = "$PWD/ci-prefab/Assets" } 20 # BDG_SCRIPT_ASSEMBLIES: set above
           if ($log -notmatch 'prefab test: create=1 place=1 inspector=1 propagate=1 revert=1 apply=1 reopen=1 build=1 drop=1 csharp=1') { $errors += 'prefab test failed' }
+          # 7-1 skeletal animation: the generated test rig (glTF skin, 3 clips) and its .animgraph in a new project; the
+          # Scene view skins it on the GPU (rest-pose bounds), in play C# AnimProbe's SetFloat("Speed") cross-fades
+          # Idle -> Run over 0.25 s (Inspector shows state and Speed), root motion moves it, bounds follow the pose,
+          # Footstep events reach C#, the Inspector preview plays the first clip; then the project is built and the
+          # built player plays it (events reach C# there too)
+          $anim = Join-Path $env:RUNNER_TEMP 'bdg-anim'
+          Remove-Item -Recurse -Force $anim -ErrorAction SilentlyContinue
+          & "$PWD/build/Release/bdg.exe" new $anim | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_ANIM_TEST = '1'; BDG_ASSETS = "$anim/Assets" } 120 # BDG_SCRIPT_ASSEMBLIES: set above
+          if ($log -notmatch 'anim test: render=1 inspector=1 fade=1 bounds=1 rootmotion=1 events=1 csharp=1 preview=1') { $errors += 'animation test failed' }
+          Push-Location $anim
+          & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build --scripts "$env:GITHUB_WORKSPACE/build/Release/Managed/Bidulgi.Samples.dll" | Out-String | Write-Host
+          $animBuild = $LASTEXITCODE
+          Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$anim/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
+          $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-anim-cache'; $env:BDG_PLAYER_QUIET = '1'
+          $p = Start-Process "$anim/Builds/Windows-Development/My Game.exe" -ArgumentList '--frames', 120 -PassThru -Wait
+          Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET
+          $alog = Get-Content "$anim/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
+          Write-Host "----- built animation game (exit $($p.ExitCode))"; Write-Host $alog
+          if ($animBuild -ne 0 -or $p.ExitCode -ne 0 -or $alog -notmatch 'anim probe: run=1 events=[2-9]' -or $alog -notmatch 'animation: stopped \(1 animators') { $errors += 'built animation game failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           # 6-3 audio (no device: mixed and measured): a 3D AudioSource plays, fades with distance, pauses; C# Audio API
           $log = Invoke-Editor 'Release' @{ BDG_AUDIO_TEST = '1' } 30

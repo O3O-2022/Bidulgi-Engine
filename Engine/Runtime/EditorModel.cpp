@@ -687,8 +687,21 @@ std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
   return t;
 }
 
+namespace {
+// 7-1: Inspector rows of a playing Animator: row -1 the state ("Run  ← 40%" while cross-fading), else a variable.
+std::string AnimLiveText(const Animator& a, int row) {
+  if (row < 0)
+    return a.liveFade > 0.f ? std::format("상태  {}  (전환 {}%)", a.liveState, (int)std::lround(a.liveFade * 100.f))
+                            : std::format("상태  {}", a.liveState.empty() ? std::string("—") : a.liveState);
+  if (row >= (int)a.liveParams.size()) return {};
+  return std::format("{}  {:.2f}", a.liveParams[row].first, a.liveParams[row].second);
+}
+}
+
 void EditorModel::Rebuild() {
   needRebuild_ = needRefresh_ = false;
+  animLive_.clear();
+  animLiveId_.clear();
   if (!hierarchy_ || !inspector_) return;
   for (auto& c : inspector_->children) // keep fold state across rebuilds
     if (c->kind == WidgetKind::Card && c->id.rfind("c.", 0) == 0) collapsed_[c->id.substr(2)] = c->collapsed;
@@ -934,6 +947,20 @@ void EditorModel::Rebuild() {
             }
           }
         }
+      if (t.name == "Animator" && playing && targets.size() == 1) { // 7-1: what it plays right now, and its variables
+        const Animator& a = *static_cast<const Animator*>(c.data);
+        card.Add(MakeLabel("실행 중")).variant = 3;
+        animLiveId_ = o->id;
+        auto& st = card.Add(MakeLabel(AnimLiveText(a, -1)));
+        st.id = "anim.live.state";
+        animLive_.push_back(&st);
+        for (size_t i = 0; i < a.liveParams.size(); ++i) {
+          auto& p = card.Add(MakeLabel(AnimLiveText(a, (int)i)));
+          p.id = "anim.live." + a.liveParams[i].first;
+          animLive_.push_back(&p);
+        }
+        animLiveParams_ = a.liveParams.size();
+      }
       for (const TypeInfo* x : chain) // BFUNCTION(Button): one button per function, run as an undoable "call"
         for (const FunctionInfo& fn : x->functions) {
           if (!(fn.flags & kButton) || !fn.params.empty()) continue;
@@ -1112,6 +1139,13 @@ void EditorModel::PrefabFilesChanged(const std::vector<std::string>& paths) {
 void EditorModel::Refresh() {
   needRefresh_ = false;
   if (ShowIfState() != showIfState_) { Rebuild(); return; } // a ShowIf condition flipped: fields appear or go away
+  if (inspector_) { // 7-1: a playing Animator shows its state and variables (rows appear with play, follow each frame)
+    SceneObject* so = playing && selection_.size() == 1 ? scene.Find(selection_[0]) : nullptr;
+    Component* ac = so ? so->Find("Animator") : nullptr;
+    const Animator* a = ac ? static_cast<const Animator*>(ac->data) : nullptr;
+    if ((a != nullptr) != !animLive_.empty() || (a && (animLiveId_ != so->id || a->liveParams.size() != animLiveParams_))) { Rebuild(); return; }
+    for (size_t i = 0; a && i < animLive_.size(); ++i) animLive_[i]->text = AnimLiveText(*a, (int)i - 1);
+  }
   for (Binding& b : bindings_) {
     if (b.field->edited) continue; // the user is typing: do not overwrite
     b.field->text2 = DisplayFor(b.targets, b.path, b.type);
