@@ -1312,9 +1312,12 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
           bdg::LogWarn("quality: {}", err);
         if (bdg::Widget* badge = e->editor->Find("tool.quality")) {
           badge->text = bdg::TierLabel(tier);
-          badge->tooltip = "씬 뷰 품질 단계 (프로젝트에서 허용한 범위)";
+          badge->tooltip = std::string("씬 뷰 품질 단계 (프로젝트에서 허용한 범위)\n") + bdg::TierHint(tier);
           e->sceneView->onAutoTier = [e](bdg::QualityTier t) { // 3-5c frame drop step
-            if (bdg::Widget* w = e->editor->Find("tool.quality")) w->text = bdg::TierLabel(t);
+            if (bdg::Widget* w = e->editor->Find("tool.quality")) {
+              w->text = bdg::TierLabel(t);
+              w->tooltip = std::string("씬 뷰 품질 단계 (프로젝트에서 허용한 범위)\n") + bdg::TierHint(t);
+            }
           };
           badge->onClick = [e](bdg::Widget& w) { // a list of the allowed tiers, the current one marked
             std::vector<bdg::UIContext::MenuItem> items;
@@ -1325,6 +1328,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
                                  e->sceneView->quality = bdg::QualityPreset(tier);
                                  e->sceneView->autoQuality.on = false; // picked by hand: no automatic steps
                                  wp->text = bdg::TierLabel(tier);
+                                 wp->tooltip = std::string("씬 뷰 품질 단계 (프로젝트에서 허용한 범위)\n") + bdg::TierHint(tier);
                                  bdg::LogInfo("quality: {}", bdg::TierKey(tier));
                                }, true, tier == e->sceneView->quality.tier});
             }

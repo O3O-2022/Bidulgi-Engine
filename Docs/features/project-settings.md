@@ -42,7 +42,7 @@
 | | Packaging | 빌드 구성(Debug/Development/Shipping), 에셋 압축, 에디터 모듈 제외, 미사용 모듈 제외 |
 | | Supported Platforms | Windows, Linux, macOS, Android, iOS, Web, Console |
 | Engine | Rendering | RHI, 렌더 경로, 안티에일리어싱, HDR, VSync, 그림자 단계, 텍스처 압축 |
-| | Scalability (품질 단계) | 기본 단계(감자·저사양·중사양·고사양·초고사양, 기본 중사양), 게임의 최소·최대 단계, 자동 감지, 동적 조정, 해상도 배율, 프레임 제한 |
+| | Scalability (품질 단계) | 기본 단계(최소·낮음·보통·높음·최고, 기본 보통), 게임의 최소·최대 단계, 자동 감지, 동적 조정, 해상도 배율, 프레임 제한 |
 | | Physics | 3D/2D 중력, 고정 타임스텝 |
 | | Input | 액션 이름 ↔ 키 매핑 (`Jump = Space`) |
 | | Scripting | 기본 언어, 언어별 사용 여부, 핫 리로드 |

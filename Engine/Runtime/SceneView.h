@@ -127,7 +127,7 @@ public:
   bool BudgetOver() const;
   struct Culprit { std::string id, name; double triangles = 0; int draws = 0; };
   std::vector<Culprit> BudgetCulprits() const;            // heaviest objects of the last render (3 at most)
-  std::string DescribeBudget() const;                     // "Android · 중사양 · Draw 11 / 200 · ..." (log, bdg budget)
+  std::string DescribeBudget() const;                     // "Android · 보통 · Draw 11 / 200 · ..." (log, bdg budget)
   // Game view (queue 3-6): the scene seen by its first Camera component, no editor overlays. `playTime` < 0: not
   // playing (the corner badge says so).
   void RenderGame(EditorModel& model, const AssetDatabase* assets, const Widget& view, float scale);

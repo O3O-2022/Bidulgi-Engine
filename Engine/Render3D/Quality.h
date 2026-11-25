@@ -87,7 +87,8 @@ QualitySettings QualityPreset(QualityTier t);
 // Exact output for test boards: per-pixel lighting, shadows, full textures, no tone mapping or post, 4x MSAA.
 QualitySettings ReferenceQuality();
 const char* TierKey(QualityTier t);   // "potato", "low", ...
-const char* TierLabel(QualityTier t); // "감자", "저사양", "중사양", "고사양", "초고사양"
+const char* TierLabel(QualityTier t); // "최소", "낮음", "보통", "높음", "최고" (TierFromString also reads the old "감자" .. "초고사양")
+const char* TierHint(QualityTier t);  // one line for the tooltip: what is drawn, the hardware it is meant for
 bool TierFromString(std::string_view s, QualityTier& out);
 
 // Project rule: the game supports tiers min..max and starts at `fallback` (medium unless set).

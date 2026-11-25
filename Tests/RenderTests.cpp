@@ -179,7 +179,8 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
 
   QualityTier t;
   CHECK(TierFromString("low", t) && t == QualityTier::Low);
-  CHECK(TierFromString("고사양", t) && t == QualityTier::High);
+  CHECK(TierFromString("높음", t) && t == QualityTier::High);
+  CHECK(TierFromString("고사양", t) && t == QualityTier::High); // the old label still reads
   CHECK(!TierFromString("epic", t));
 
   ProjectQuality pq;

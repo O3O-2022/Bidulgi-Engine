@@ -34,7 +34,7 @@ void DrawSceneView(Widget& w, UIContext& ui) {
   b.Line(cx, cy, cx + 86, cy, 3, t.C("axis-x"));
   b.Line(cx, cy, cx, cy - 86, 3, t.C("axis-y"));
   b.Line(cx, cy, cx - 52, cy + 46, 3, t.C("axis-z"));
-  ui.Text(w.x + 10, w.y + 8, t.FontSize("overlay", 11), t.C("fg-dim"), "Perspective · Lit · 중사양");
+  ui.Text(w.x + 10, w.y + 8, t.FontSize("overlay", 11), t.C("fg-dim"), "Perspective · Lit · 보통");
   ui.Text(w.x + w.w - 92, w.y + 8, t.FontSize("overlay", 11), t.C("fg-dim"), "Draw 182 / 200");
 }
 
@@ -98,7 +98,7 @@ void DrawSceneViewV2(Widget& w, UIContext& ui) {
   b.Rect(cx - 4, cy - 88, 8, 8, t.C("axis-y"), 1);
   // Overlay chips (top-left) and stats (top-right)
   float px = w.x + 10;
-  for (const char* chip : {"Perspective", "Lit", "Show", "중사양"}) {
+  for (const char* chip : {"Perspective", "Lit", "Show", "보통"}) {
     float cw = ui.Measure(11, chip) + 18;
     b.Rect(px, w.y + 8, cw, 22, Alpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
     ui.Text(px + 9, w.y + 12, 11, t.C("fg-dim"), chip);
@@ -275,7 +275,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   speed.sliderMax = 4;
   speed.width = Length::Px(150);
   ws.Add(Spacer());
-  ws.Add(MakeBadge("중사양")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
+  ws.Add(MakeBadge("보통")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
   ws.Add(MakeBadge("Windows")).id = "tool.platform"; // target platform of the budget bars; a click steps (3-7)
   ws.Add(MakeButton("tool.build", "Build"));
 

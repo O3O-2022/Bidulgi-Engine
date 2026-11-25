@@ -654,7 +654,7 @@ void InjectQualityTest(bdg_engine* e, int frame, float scale) {
       e->window.InjectEvent({T::MouseUp, x, y, 1});
     }
   }
-  if (frame == 24) { // pick 초고사양 (the last item) from the list
+  if (frame == 24) { // pick 최고 (the last item) from the list
     using T = bdg::InputEvent::Type;
     const auto& items = e->editor->Menu();
     float x, y, w, h;
@@ -668,7 +668,7 @@ void InjectQualityTest(bdg_engine* e, int frame, float scale) {
   }
   if (frame == 25) {
     bdg::Widget* badge = e->editor->Find("tool.quality");
-    v[6] = std::format("{}", badge && badge->text == "초고사양" && sv->quality.tier == bdg::QualityTier::Ultra ? 1 : 0);
+    v[6] = std::format("{}", badge && badge->text == "최고" && sv->quality.tier == bdg::QualityTier::Ultra ? 1 : 0);
   }
 }
 
