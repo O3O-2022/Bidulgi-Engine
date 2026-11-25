@@ -542,6 +542,9 @@ jobs:
           if ($log -notmatch 'shafts test: sun=1 rays=1 occluded=1 away=1') { $errors += 'light shafts test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # AI-2 the AI reference (Docs/llms.txt, Docs/api/*) matches the components, bdg commands and C# API in this commit
+          $llms = (python -X utf8 Tools/gen_llms.py --check --bdg "$PWD/build/Release/bdg.exe") -join "`n"
+          if ($LASTEXITCODE -ne 0) { $errors += "AI reference out of date (python Tools/gen_llms.py): $llms" }
           # 2-7 `bdg` command line in a Korean-named folder: new, view, set (dry run and real), add, validate (exit codes)
           $cli = Join-Path $PWD 'ci-cli'
           Remove-Item -Recurse -Force $cli -ErrorAction SilentlyContinue

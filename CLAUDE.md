@@ -13,3 +13,5 @@ Key rules (details in `Docs/QUEUE.md` §0):
 - Only MIT-compatible dependencies; never expose third-party types in `Engine/include/bdg/bdg_api.h`.
 - Every edit goes through the command bus once it exists (M1 1-3); every engine type through reflection (M1 1-2).
 - Decisions live in `Docs/planning/decisions.md`; add a line when you change order or make a design call.
+
+- AI reference: after changing a component, a `bdg` command or the public C# API, run `python -X utf8 Tools/gen_llms.py` (CI fails when Docs/llms.txt or Docs/api/* are out of date). Start reading at Docs/llms.txt.
