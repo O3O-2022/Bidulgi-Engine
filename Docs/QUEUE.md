@@ -241,7 +241,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 3. **볼류메트릭 안개** — 프록시 볼륨(froxel), 해·점·스폿광 산란, 그림자, 높이 안개; 갓레이와 정리 — 레인 A
 4. **지형** — 높이맵·클립맵 LOD, 레이어 칠하기(splat), 지형 콜라이더(물리), 에디터 브러시(올리기·내리기·평탄화·칠하기) — 레인 B
 5. **풀·나무** — 인스턴싱 대량 배치, 거리별 페이드·LOD, 바람, 지형에 뿌리기 브러시 — 레인 B
-6. **실시간 GI (Halo GI Tier 1)** — 먼저 끝나는 레인이 시작 ([global-illumination](features/global-illumination.md))
+6. **실시간 GI (Halo GI Tier 1)** — 먼저 끝나는 레인이 시작 ([global-illumination](features/global-illumination.md)) — claimed: A (2026-11-25)
 
 ## ★ 지금 우선순위 (2026-11-25 오후, 허브 결정) — "첫 게임"을 만들 수 있게
 
