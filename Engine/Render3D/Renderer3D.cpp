@@ -33,6 +33,7 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   vec4 uCluster2;                                // near, slices / log(far / near), clustered on, -
   vec4 uFog;                                     // fog colour (linear), density per metre (0 = off) (2-6)
   vec4 uFog2;                                    // fog start (m), -, -, -
+  vec4 uLocalShadow;                             // point / spot shadow atlas (3-4b): tiles across, tiles up, tile size (px), -
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -206,6 +207,8 @@ vec2 EnvBRDFApprox(float NoV, float rough) { // Karis, mobile split-sum approxim
 layout(std140, binding = 3) uniform Lights3D { vec4 uLPos[16]; vec4 uLColor[16]; vec4 uLDir[16]; vec4 uLCone[16]; };
 layout(binding = 5) uniform sampler2DShadow uShadowMap;
 layout(binding = 6) uniform samplerCubeArray uEnv;
+layout(binding = 9) uniform sampler2DShadow uLocalShadowMap;                  // point / spot shadow atlas (3-4b)
+layout(std430, binding = 4) readonly buffer LocalShadow3D { mat4 uLSM[]; }; // light-space matrix per atlas tile
 #SKY_FN
 #PROBES_FN
 vec3 ProbeSpecular(int p, vec3 R, vec3 world, float rough) { // prefiltered environment, box-projected in rooms
@@ -275,7 +278,31 @@ float ShadowFactor(vec3 world, vec3 n) { // 1 = lit
   }
   return s;
 }
-vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) { // light i of the light list
+// Point / spot shadow (3-4b): a spot light has one tile (its cone), a point light six (cube faces +x -x +y -y +z -z,
+// picked by the largest axis toward the pixel). 3x3 taps of 2x2 hardware PCF inside the tile; the normal offset grows
+// with the distance like the tile's texels do.
+float LocalShadow(int first, bool spot, vec3 lightPos, vec3 world, vec3 ng, float offsetPerMetre) {
+  vec3 d = world - lightPos;
+  int tile = first;
+  if (!spot) {
+    vec3 a = abs(d);
+    tile += a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1) : a.y >= a.z ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5);
+  }
+  vec4 p = uLSM[tile] * vec4(world + ng * (offsetPerMetre * length(d)), 1.0);
+  if (p.w <= 0.0) return 1.0;
+  vec3 s = p.xyz / p.w * 0.5 + 0.5;
+  if (s.z >= 1.0 || s.x < 0.0 || s.y < 0.0 || s.x > 1.0 || s.y > 1.0) return 1.0;
+  int cols = int(uLocalShadow.x + 0.5);
+  vec2 cell = vec2(float(tile % cols), float(tile / cols)), grid = uLocalShadow.xy;
+  float t = 1.0 / uLocalShadow.z, sum = 0.0;
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+      vec2 uv = clamp(s.xy + vec2(x, y) * t, vec2(t * 0.5), vec2(1.0 - t * 0.5));
+      sum += textureLod(uLocalShadowMap, vec3((cell + uv) / grid, s.z), 0.0);
+    }
+  return sum / 9.0;
+}
+vec3 LocalLight(int i, vec3 world, vec3 ng, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float a) { // light i of the light list
   vec4 lp = uLL[i * 4], lc = uLL[i * 4 + 1], ld = uLL[i * 4 + 2], lk = uLL[i * 4 + 3];
   vec3 toL = lp.xyz - world;
   float d2 = max(dot(toL, toL), 1e-4);
@@ -285,6 +312,8 @@ vec3 LocalLight(int i, vec3 world, vec3 N, vec3 V, vec3 diffuse, vec3 f0, float 
   float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
   float atten = win * win / (d2 + 1.0); // windowed inverse square (no hard cut at the range)
   if (lk.y > 0.5) atten *= smoothstep(ld.w, lk.x, dot(-L, ld.xyz)); // spot cone
+  if (atten <= 0.0) return vec3(0.0);
+  if (lk.z > -0.5) atten *= LocalShadow(int(lk.z + 0.5), lk.y > 0.5, lp.xyz, world, ng, lk.w); // lk.z = first atlas tile
   return Brdf(N, V, L, diffuse, f0, a) * lc.rgb * atten;
 }
 void ClusterLights(vec3 world, out uint first, out uint count) { // this pixel's cluster (Forward+, 3-5b)
@@ -368,9 +397,9 @@ void main() {
   vec3 f0 = mix(vec3(0.04), base.rgb, metallic), diffuse = base.rgb * (1.0 - metallic);
   vec3 color = Brdf(N, V, L, diffuse, f0, a) * uLight.rgb * ShadowFactor(vWorld, ng);
   if (uCluster2.z > 0.5)
-    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(uCl[lightFirst + k]), vWorld, N, V, diffuse, f0, a);
+    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(uCl[lightFirst + k]), vWorld, ng, N, V, diffuse, f0, a);
   else
-    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, N, V, diffuse, f0, a);
+    for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, ng, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
   vec2 ab = EnvBRDFApprox(NoV, rough);
@@ -831,6 +860,7 @@ struct FrameData {
   float screen[4], flags[4];
   float cluster[4], cluster2[4];
   float fog[4], fog2[4];
+  float localShadow[4];
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
@@ -1138,6 +1168,8 @@ void Renderer3D::Shutdown() {
   rhi_->DestroyBuffer(lightsUbo_);
   rhi_->DestroyRenderTarget(shadowRT_);
   rhi_->DestroyRenderTarget(noShadowRT_);
+  rhi_->DestroyRenderTarget(localShadowRT_);
+  rhi_->DestroyBuffer(localShadowBuffer_);
   rhi_->DestroyBuffer(gridQuad_);
   rhi_->DestroyBuffer(fullscreen_);
   rhi_->DestroyRenderTarget(maskRT_);
@@ -1352,6 +1384,62 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     ld.cone[i][1] = l.spot ? 1.f : 0.f;
   }
   rhi_->UpdateBuffer(lightsUbo_, &ld, sizeof(ld));
+  // Point / spot shadows (3-4b): the shadow-casting lights whose range reaches the view, nearest the camera first, up
+  // to the tier's limit, get tiles in one depth atlas (spot 1, point 6 cube faces); one light-space matrix per tile.
+  std::vector<glm::mat4> tileVP;
+  std::vector<float> lightTile((size_t)std::max(locals, 1), -1.f), lightOffset((size_t)std::max(locals, 1), 0.f);
+  int localTile = 0, localCols = 0, localRows = 0, localSkipped = 0, localShadowed = 0;
+  {
+    const Frustum viewFrustum = Frustum::FromMatrix(vp);
+    std::vector<int> cand;
+    for (int i = 0; i < locals; ++i) {
+      const LocalLight3D& l = light.locals[i];
+      if (!l.castShadows || l.intensity <= 0 || l.range <= 0) continue;
+      if (!viewFrustum.Intersects(l.position - glm::vec3(l.range), l.position + glm::vec3(l.range))) continue; // lights nothing on screen
+      cand.push_back(i);
+    }
+    const int limit = q.lighting == LightingMode::Pixel ? std::max(q.localShadows, 0) : 0;
+    auto reach = [&](int i) { return std::max(glm::distance(light.locals[i].position, cam.position) - light.locals[i].range, 0.f); };
+    std::stable_sort(cand.begin(), cand.end(), [&](int a, int b) {
+      const float ra = reach(a), rb = reach(b);
+      return ra != rb ? ra < rb : glm::distance(light.locals[a].position, cam.position) < glm::distance(light.locals[b].position, cam.position);
+    });
+    if ((int)cand.size() > limit) {
+      localSkipped = (int)cand.size() - limit;
+      cand.resize(limit);
+    }
+    int tiles = 0;
+    for (int i : cand) tiles += light.locals[i].spot ? 1 : 6;
+    if (tiles > 0) {
+      constexpr int kAtlasMax = 4096;
+      localTile = std::clamp(q.localShadowSize, 64, kAtlasMax);
+      while (localTile > 128 && (kAtlasMax / localTile) * (kAtlasMax / localTile) < tiles) localTile /= 2; // keep the atlas <= 4096^2
+      localCols = std::min(tiles, kAtlasMax / localTile);
+      localRows = (tiles + localCols - 1) / localCols;
+      for (int i : cand) {
+        const LocalLight3D& l = light.locals[i];
+        const float nearZ = std::clamp(l.range * 0.005f, 0.02f, 0.2f);
+        float fov = 0;
+        lightTile[i] = (float)tileVP.size();
+        if (l.spot) { // the cone plus a margin for the filter taps
+          fov = std::min(std::max(l.outerAngle, 1.f) + 4.f, 170.f);
+          const glm::vec3 d = glm::normalize(l.direction), up = std::fabs(d.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+          tileVP.push_back(glm::perspective(glm::radians(fov), 1.f, nearZ, l.range) * glm::lookAt(l.position, l.position + d, up));
+        } else { // cube faces, a little wider than 90 degrees so the taps at a face's edge stay inside its tile
+          fov = 2.f * glm::degrees(std::atan(1.f + 3.f / (float)localTile));
+          static const glm::vec3 kDirs[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+          const glm::mat4 proj = glm::perspective(glm::radians(fov), 1.f, nearZ, l.range);
+          for (const glm::vec3& d : kDirs)
+            tileVP.push_back(proj * glm::lookAt(l.position, l.position + d, std::fabs(d.y) > 0.5f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0)));
+        }
+        lightOffset[i] = 1.5f * 2.f * std::tan(glm::radians(fov * 0.5f)) / (float)localTile; // 1.5 texels per metre of distance
+      }
+      localShadowed = (int)cand.size();
+    }
+    f.localShadow[0] = (float)localCols;
+    f.localShadow[1] = (float)localRows;
+    f.localShadow[2] = (float)localTile;
+  }
   {
     std::vector<float> list((size_t)std::max(locals, 1) * 16, 0.f);
     for (int i = 0; i < locals; ++i) {
@@ -1362,6 +1450,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       Put(o + 8, glm::normalize(l.direction), std::cos(glm::radians(std::max(l.outerAngle, 0.1f) * 0.5f)));
       o[12] = std::cos(glm::radians(std::clamp(l.innerAngle, 0.f, l.outerAngle - 0.01f) * 0.5f));
       o[13] = l.spot ? 1.f : 0.f;
+      o[14] = lightTile[i];   // first shadow atlas tile, -1 = no shadow (3-4b)
+      o[15] = lightOffset[i]; // shadow normal offset per metre of distance
     }
     if (list.size() * 4 > lightCapacity_) {
       rhi_->DestroyBuffer(lightBuffer_);
@@ -1574,6 +1664,16 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       shadowRuns[c] = buildRuns(casters, shadowKey, true);
     }
   }
+  // point / spot shadow tiles (3-4b): opaque and masked objects inside each tile's frustum (cone or cube face)
+  std::vector<std::vector<Run>> localRuns(tileVP.size());
+  for (size_t t = 0; t < tileVP.size(); ++t) {
+    const Frustum tileFrustum = Frustum::FromMatrix(tileVP[t]);
+    std::vector<size_t> casters;
+    for (size_t i = 0; i < items.size(); ++i)
+      if (drawable[i] && items[i].material.alpha != Material3D::Alpha::Blend && inside(tileFrustum, i)) casters.push_back(i);
+    std::stable_sort(casters.begin(), casters.end(), [&](size_t x, size_t y) { return shadowKey(x) < shadowKey(y); });
+    localRuns[t] = buildRuns(casters, shadowKey, true);
+  }
   // selection mask: each outlined object on its own
   std::vector<Run> maskRuns;
   if (extras)
@@ -1662,9 +1762,43 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       }
     }
     rhi_->EndRenderTarget();
-    if (timing) Mark(timer, "shadow");
   }
+  uint32_t localCasters = 0;
+  if (!tileVP.empty()) { // point / spot shadow atlas (3-4b)
+    const int32_t aw = localCols * localTile, ah = localRows * localTile;
+    if (!localShadowRT_.Valid() || localShadowW_ != aw || localShadowH_ != ah) {
+      rhi_->DestroyRenderTarget(localShadowRT_);
+      localShadowRT_ = rhi_->CreateDepthTarget(aw, ah);
+      localShadowW_ = aw;
+      localShadowH_ = ah;
+    }
+    rhi_->BeginRenderTarget(localShadowRT_, {0, 0, 0, 0});
+    for (size_t t = 0; t < tileVP.size(); ++t) {
+      rhi_->SetViewport((int32_t)(t % localCols) * localTile, (int32_t)(t / localCols) * localTile, localTile, localTile);
+      rhi_->UpdateBuffer(shadowPassUbo_, glm::value_ptr(tileVP[t]), sizeof(float) * 16);
+      rhi_->BindUniformBuffer(2, shadowPassUbo_);
+      for (const Run& r : localRuns[t]) {
+        const Material3D& m = items[r.item].material;
+        rhi_->BindTexture(0, m.baseMap.Valid() ? m.baseMap : white_);
+        drawRun(shadowPipe_, r);
+        localCasters += r.count;
+      }
+    }
+    rhi_->EndRenderTarget();
+  }
+  {
+    const size_t bytes = std::max<size_t>(tileVP.size(), 1) * sizeof(glm::mat4);
+    if (bytes > localShadowCapacity_) {
+      rhi_->DestroyBuffer(localShadowBuffer_);
+      localShadowCapacity_ = bytes * 2;
+      localShadowBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, localShadowCapacity_, true);
+    }
+    if (!tileVP.empty()) rhi_->UpdateBuffer(localShadowBuffer_, tileVP.data(), bytes);
+    rhi_->BindStorageBuffer(4, localShadowBuffer_);
+  }
+  if (timing && (f.shadow[0] > 0.5f || !tileVP.empty())) Mark(timer, "shadow");
   rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
+  rhi_->BindTexture(9, rhi_->RenderTargetDepth(!tileVP.empty() ? localShadowRT_ : noShadowRT_));
   stats_ = RenderStats{w, h, std::clamp(q.msaa, 1, 8), f.shadow[0] > 0.5f ? q.shadowMapSize : 0, locals, stats_.shadowCasters, 0, 0,
                        q.toneMap, q.fxaa, q.bloom, view, stats_.passes};
   stats_.shafts = shaftsOn; // light shafts (E-7)
@@ -1674,6 +1808,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.clustered = clustered;
   stats_.anisotropy = (int)aniso;
   stats_.blobs = blobCount;
+  stats_.shadowCasters += localCasters;
+  stats_.localShadows = localShadowed;
+  stats_.localShadowTiles = (int)tileVP.size();
+  stats_.localShadowTile = localTile;
+  stats_.localShadowSkipped = localSkipped;
   stats_.clusterRefs = clusterRefs;
   stats_.clusterMax = clusterMax;
   stats_.clustersUsed = clustersUsed;
@@ -2324,9 +2463,9 @@ std::string Renderer3D::DescribePasses() const {
 
 std::string Renderer3D::DescribeStats() const {
   const RenderStats& s = stats_;
-  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={} clustered={} cluster_refs={} cluster_max={} aniso={} blobs={} grading={}", s.w, s.h,
+  return std::format("{}x{} msaa={} view={} draws={} scene_draws={} objects={} culled={} shadow_culled={} tris={} lights={} shadow_map={} casters={} tonemap={} fxaa={} bloom={} cascades={} ssao={} clustered={} cluster_refs={} cluster_max={} aniso={} blobs={} grading={} local_shadows={} local_tiles={}x{}", s.w, s.h,
                      s.msaa, DebugViewName(s.view), s.draws, s.sceneDraws, s.objects, s.culled, s.shadowCulled, s.triangles, s.localLights, s.shadowMap, s.shadowCasters, s.toneMap ? 1 : 0,
                      s.fxaa ? 1 : 0, s.bloom ? 1 : 0, s.cascades, s.ssao ? 1 : 0, s.clustered ? 1 : 0, s.clusterRefs, s.clusterMax, s.anisotropy,
-                     s.blobs, s.grading ? 1 : 0);
+                     s.blobs, s.grading ? 1 : 0, s.localShadows, s.localShadowTiles, s.localShadowTile);
 }
 }

@@ -12,6 +12,7 @@ QualitySettings QualityPreset(QualityTier t) {
       q.lighting = LightingMode::Unlit;
       q.maxLights = 0;
       q.shadows = false;
+      q.localShadows = 0;
       q.textureBias = 2;
       q.toneMap = false; // unlit colours stay what the artist picked
       q.fxaa = false;
@@ -22,6 +23,7 @@ QualitySettings QualityPreset(QualityTier t) {
       q.maxLights = 4;
       q.blobShadows = true; // no shadow maps here: a soft spot under objects instead (3-5b)
       q.shadows = false;
+      q.localShadows = 0; // per-vertex lighting: no shadow lookups
       q.textureBias = 2;
       q.toneMap = true;
       q.fxaa = false;
@@ -44,6 +46,8 @@ QualitySettings QualityPreset(QualityTier t) {
       q.shadowCascades = 3;       // cascaded shadow maps (3-5b)
       q.shadowSoftness = 0.025f;  // rotated Poisson filter, the same width in every cascade
       q.ssao = true;
+      q.localShadows = t == QualityTier::Ultra ? 8 : 4; // point / spot shadows (3-4b)
+      q.localShadowSize = t == QualityTier::Ultra ? 1024 : 512;
       break;
   }
   return q;
@@ -63,6 +67,7 @@ QualitySettings ReferenceQuality() {
   q.maxLights = 16;
   q.clustered = false;
   q.anisotropy = 1;
+  q.localShadows = 0; // the board's point / spot checks were made without local shadows
   return q;
 }
 
@@ -151,6 +156,8 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "view") q.viewDistance = v;
     else if (key == "instancing") q.instancing = v != 0;
     else if (key == "culling") q.culling = v != 0;
+    else if (key == "localshadows") q.localShadows = std::clamp((int)v, 0, 16);
+    else if (key == "localshadowmap") q.localShadowSize = std::clamp((int)v, 64, 2048);
     else { if (error) *error = "unknown quality key " + key; return false; }
   }
   return true;

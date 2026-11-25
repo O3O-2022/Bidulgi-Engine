@@ -9,6 +9,7 @@
 //   medium   per pixel      8       1 map, 1024         1/2       ACES tone map, FXAA       1x    0.75
 //   high     per pixel      16      1 map, 2048         full      + bloom                   4x    1.0
 //   ultra    per pixel      16      1 map, 2048         full      + bloom                   4x    1.25
+// Point / spot shadows (3-4b): potato and low none, medium 1 light (512 tiles), high 4 (512), ultra 8 (1024).
 // high and ultra get their own features later (CSM, SSAO, Forward+, GI tiers); until then they differ in
 // view distance only. Tiers are keyed potato / low / medium / high / ultra in files and on the command line.
 #include <string>
@@ -26,6 +27,10 @@ struct QualitySettings {
   int shadowMapSize = 1024;   // per cascade
   int shadowCascades = 1;     // 1..4 (3-5b): more = sharp near the camera and shadows further away
   float shadowSoftness = 0;   // penumbra radius in metres (0 = the plain 3x3 filter)
+  // Point and spot light shadows (3-4b): how many local lights may cast shadows at once (nearest to the camera
+  // first) and the size of one tile of their shadow atlas. A spot light takes one tile, a point light six (cube faces).
+  int localShadows = 1;       // medium 1, high 4, ultra 8; potato / low 0
+  int localShadowSize = 512;  // pixels per atlas tile (halved while the lights' tiles do not fit a 4096 x 4096 atlas)
   bool clustered = false;     // Forward+ (3-5b): each pixel lights itself with its screen cluster's lights only
   int anisotropy = 1;         // texture filtering at grazing angles (3-5b): 1 off .. 16
   bool blobShadows = false;   // a soft dark spot under each object where there are no shadow maps (3-5b, low)

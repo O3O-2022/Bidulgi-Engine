@@ -557,8 +557,9 @@ jobs:
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
+          #     3-4b point / spot shadows: a spot tile and point cube faces darken the ground behind boxes, tier light limits
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
-          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }
+          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok local=ok local_tiers=ok result=pass') { $errors += 'cascaded / blob / point-spot shadow test failed' }
           if ($log -match '(shadow test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 29) 3-5b SSAO: open flat surfaces stay unoccluded, a box's foot and an inside corner darken, only on high
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ao'; BDG_RENDER_TEST = '1' } 5

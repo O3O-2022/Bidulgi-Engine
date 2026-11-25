@@ -203,6 +203,12 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(!medium.clustered && !ref.clustered && ref.maxLights == 16); // Forward+ only on the high tiers
   CHECK(ApplyQualityOverrides("cascades=9,softness=0.05,ssao=1,aoradius=0.8", q, &err));
   CHECK(q.shadowCascades == 4 && q.shadowSoftness == 0.05f && q.ssao && q.ssaoRadius == 0.8f); // cascades clamped to 4
+  // point / spot shadows (3-4b): none below medium, 1 / 4 / 8 lights, none on the reference board
+  CHECK(QualityPreset(QualityTier::Potato).localShadows == 0 && QualityPreset(QualityTier::Low).localShadows == 0);
+  CHECK(medium.localShadows == 1 && high.localShadows == 4 && QualityPreset(QualityTier::Ultra).localShadows == 8 && ref.localShadows == 0);
+  CHECK(QualityPreset(QualityTier::Ultra).localShadowSize == 1024 && high.localShadowSize == 512);
+  CHECK(ApplyQualityOverrides("localshadows=40,localshadowmap=8", q, &err));
+  CHECK(q.localShadows == 16 && q.localShadowSize == 64); // clamped
 
   CHECK(ToneMapACES(0.f) == 0.f && ToneMapACES(100.f) == 1.f);
   float prev = 0;

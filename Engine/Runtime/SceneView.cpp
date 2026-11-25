@@ -257,6 +257,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
           local.spot = l.type == LightType::Spot;
           local.outerAngle = l.spotAngle;
           local.innerAngle = l.innerSpotAngle;
+          local.castShadows = l.castShadows; // point / spot shadows (3-4b), limited per quality tier
           light_.locals.push_back(local);
         }
         if (icons_.empty() || icons_.back().id != id) {
@@ -541,7 +542,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     }
     budgetUse_.textureMB = rhi_->Memory().textures / (1024.0 * 1024.0);
     budgetUse_.lights = st.localLights + (light_.intensity > 0 ? 1 : 0);
-    budgetUse_.shadowLights = st.shadowMap > 0 ? 1 : 0;
+    budgetUse_.shadowLights = (st.shadowMap > 0 ? 1 : 0) + st.localShadows;
     culprits_.clear();
     for (auto& [id, c] : by) {
       const SceneObject* o = model.scene.Find(id);
