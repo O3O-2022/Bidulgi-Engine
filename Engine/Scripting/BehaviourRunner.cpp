@@ -1,6 +1,10 @@
 #include "Scripting/BehaviourRunner.h"
 #include "Scripting/DotNetHost.h"
+#include "Core/Log.h"
 #include <algorithm>
+#include <cstdlib>
+#include <format>
+#include <yyjson.h>
 
 namespace bdg {
 
@@ -29,12 +33,17 @@ void BehaviourRunner::Sync(Scene& scene) {
       if (!host.IsBehaviourType(c.type)) continue;
       const bool enabled = *static_cast<const bool*>(c.data); // ScriptComponentData::enabled is the first field
       auto it = std::find_if(insts_.begin(), insts_.end(), [&](const Inst& i) { return i.object == o->id && i.type == c.type->name; });
-      if (it == insts_.end()) {
-        Inst n{o->id, c.type->name, host.CreateBehaviour(o->id, c.type->name, enabled), enabled, true};
+      const std::string fields = DotNetHost::FieldsJson(c.data, *c.type);
+      if (it == insts_.end()) { // the saved values are on the C# fields before Awake (Unity order)
+        Inst n{o->id, c.type->name, host.CreateBehaviour(o->id, c.type->name, enabled, fields), enabled, true, fields};
         if (n.handle) insts_.push_back(std::move(n));
         continue;
       }
       it->seen = true;
+      if (it->sent != fields) { // edited in the Inspector while playing: the script sees the new values
+        it->sent = fields;
+        host.SetBehaviourFields(it->handle, fields);
+      }
       if (it->enabled != enabled) {
         it->enabled = enabled;
         host.SetBehaviourEnabled(it->handle, enabled);
@@ -63,6 +72,45 @@ void BehaviourRunner::Frame(Scene& scene, CommandBus& bus, double dt) {
   }
   if (acc_ >= fixedStep) acc_ = 0; // too slow: drop the rest instead of spiralling
   host.TickBehaviours(DotNetHost::Phase::LateUpdate, dt, time_, frame_);
+  Pull(scene, bus);
+}
+
+void BehaviourRunner::Pull(Scene& scene, CommandBus& bus) {
+  DotNetHost& host = DotNetHost::Instance();
+  for (Inst& i : insts_) {
+    SceneObject* o = scene.Find(i.object);
+    Component* c = o ? o->Find(i.type) : nullptr;
+    if (!c) continue;
+    const std::string now = host.GetBehaviourFields(i.handle);
+    yyjson_doc* d = now.empty() ? nullptr : yyjson_read(now.data(), now.size(), 0);
+    if (!d) continue;
+    yyjson_val* root = yyjson_doc_get_root(d);
+    for (const FieldInfo& f : c->type->fields) {
+      if (f.name == "enabled") continue; // a component setting, not script state
+      yyjson_val* v = yyjson_obj_get(root, f.name.c_str());
+      if (!v) continue;
+      char* text = yyjson_val_write(v, 0, nullptr);
+      if (!text) continue;
+      // compare in the engine's own JSON form (the C# text may spell the same number differently)
+      void* scratch = c->type->create ? c->type->create() : nullptr;
+      std::string engineNow = Registry::ToJson(static_cast<unsigned char*>(c->data) + f.offset, f.value), scriptNow;
+      if (scratch && Registry::FromJson(static_cast<unsigned char*>(scratch) + f.offset, f.value, text, nullptr))
+        scriptNow = Registry::ToJson(static_cast<unsigned char*>(scratch) + f.offset, f.value);
+      if (scratch) c->type->destroy(scratch);
+      if (!scriptNow.empty() && scriptNow != engineNow) {
+        Command cmd; // play mode: applied without an undo step (CommandBus, source "script")
+        cmd.name = "set";
+        cmd.target = i.object;
+        cmd.source = "script";
+        cmd.args = std::format("{{\"path\":\"{}.{}\",\"value\":{}}}", i.type, f.name, scriptNow);
+        std::string err;
+        if (!bus.Execute(cmd, &err)) LogWarn("C#: {}.{} on {}: {}", i.type, f.name, i.object, err);
+      }
+      std::free(text);
+    }
+    yyjson_doc_free(d);
+    i.sent = DotNetHost::FieldsJson(c->data, *c->type); // nothing to push back next frame
+  }
 }
 
 void BehaviourRunner::End() {

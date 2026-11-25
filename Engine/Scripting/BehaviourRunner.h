@@ -5,7 +5,7 @@
 //   sync    new components -> Awake (+ OnEnable), removed ones -> OnDisable + OnDestroy, "enabled" changes
 //   Update  pending Start first (an enabled behaviour's first frame), then Update
 //   Fixed   FixedUpdate 0..maxFixedSteps times per frame at fixedStep (physics joins here in M6)
-//   Late    LateUpdate
+//   Late    LateUpdate, then [Edit] field values the scripts changed go back to the components (4-3)
 //
 // Play mode owns one runner: Begin on Play, Frame every game frame (time scale and pause applied by the caller),
 // End on Stop (OnDisable + OnDestroy for everything, before the edited world comes back).
@@ -33,8 +33,10 @@ private:
     int handle = 0;
     bool enabled = true;
     bool seen = false;
+    std::string sent; // the component's fields as last given to / taken from C# (4-3)
   };
   void Sync(Scene& scene);
+  void Pull(Scene& scene, CommandBus& bus); // C# field values -> components (shown live in the Inspector)
   std::vector<Inst> insts_;
   bool active_ = false;
   double acc_ = 0, time_ = 0;

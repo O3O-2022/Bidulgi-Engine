@@ -14,6 +14,23 @@ using System.Text.Json.Nodes;
 
 namespace Bidulgi;
 
+// Inspector attributes (4-3), Unity style. [Edit] shows a field in the Inspector and saves it in the scene; it may be
+// private. Types: bool, int, float, double, string, Vector2/3/4, enums. [Range] makes a number a slider, [Tooltip]
+// is the hover help, [Header] a caption above the field.
+[AttributeUsage(AttributeTargets.Field)] public sealed class EditAttribute : Attribute {}
+[AttributeUsage(AttributeTargets.Field)] public sealed class RangeAttribute : Attribute {
+  public readonly double Min, Max;
+  public RangeAttribute(double min, double max) { Min = min; Max = max; }
+}
+[AttributeUsage(AttributeTargets.Field)] public sealed class TooltipAttribute : Attribute {
+  public readonly string Text;
+  public TooltipAttribute(string text) => Text = text;
+}
+[AttributeUsage(AttributeTargets.Field)] public sealed class HeaderAttribute : Attribute {
+  public readonly string Text;
+  public HeaderAttribute(string text) => Text = text;
+}
+
 public abstract class Behaviour {
   public GameObject gameObject { get; internal set; } = null!;
   public string name { get => gameObject.Name; set => gameObject.Name = value; }
@@ -47,6 +64,68 @@ internal static class Behaviours {
   static readonly Dictionary<string, Type> s_types = new();
   static readonly Dictionary<Type, Events> s_events = new();
   static readonly Dictionary<int, Instance> s_instances = new();
+  static readonly Dictionary<Type, FieldInfo[]> s_fields = new();
+
+  // The [Edit] fields of a class (base classes first), in declaration order.
+  static FieldInfo[] EditFields(Type t) {
+    if (s_fields.TryGetValue(t, out var f)) return f;
+    var chain = new List<Type>();
+    for (Type? x = t; x != null && x != typeof(Behaviour); x = x.BaseType) chain.Insert(0, x);
+    f = chain.SelectMany(x => x.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                                .Where(fi => fi.GetCustomAttribute<EditAttribute>() != null).OrderBy(fi => fi.MetadataToken)).ToArray();
+    s_fields[t] = f;
+    return f;
+  }
+
+  static string? KindOf(Type t) =>
+    t == typeof(bool) ? "bool" : t == typeof(int) ? "int" : t == typeof(float) ? "float" : t == typeof(double) ? "double" :
+    t == typeof(string) ? "string" : t == typeof(System.Numerics.Vector2) ? "vec2" : t == typeof(System.Numerics.Vector3) ? "vec3" :
+    t == typeof(System.Numerics.Vector4) ? "vec4" : t.IsEnum ? "enum" : null;
+
+  // What the engine needs to show and save a class's fields: name, type, default (from a fresh instance), range, help.
+  static JsonArray Describe(Type t) {
+    var list = new JsonArray();
+    object? fresh = null;
+    try { fresh = Activator.CreateInstance(t); } catch { }
+    foreach (FieldInfo f in EditFields(t)) {
+      string? kind = KindOf(f.FieldType);
+      if (kind == null) { Debug.LogWarning($"C#: {t.Name}.{f.Name}: [Edit] on a {f.FieldType.Name} is not supported yet"); continue; }
+      var o = new JsonObject { ["name"] = f.Name, ["type"] = kind };
+      if (fresh != null) o["default"] = Engine.ToNode(f.GetValue(fresh)) ?? (kind == "string" ? "" : null);
+      if (f.GetCustomAttribute<RangeAttribute>() is { } r) { o["min"] = r.Min; o["max"] = r.Max; }
+      if (f.GetCustomAttribute<TooltipAttribute>() is { } tip) o["tooltip"] = tip.Text;
+      if (f.GetCustomAttribute<HeaderAttribute>() is { } head) o["header"] = head.Text;
+      if (f.FieldType.IsEnum) {
+        var values = new JsonArray();
+        foreach (object v in Enum.GetValues(f.FieldType)) values.Add(new JsonArray(v.ToString(), Convert.ToInt64(v)));
+        o["values"] = values;
+      }
+      list.Add(o);
+    }
+    return list;
+  }
+
+  // Engine values -> the instance's [Edit] fields (keys it does not know are ignored).
+  public static void ApplyFields(Behaviour b, string json) {
+    if (string.IsNullOrEmpty(json)) return;
+    if (JsonNode.Parse(json) is not JsonObject obj) return;
+    foreach (FieldInfo f in EditFields(b.GetType())) {
+      if (!obj.TryGetPropertyValue(f.Name, out JsonNode? n) || n == null) continue;
+      try { f.SetValue(b, Engine.FromNode(f.FieldType, n)); }
+      catch (Exception e) { Debug.LogWarning($"C#: {b.GetType().Name}.{f.Name}: {e.Message}"); }
+    }
+  }
+
+  public static string ReadFields(int h) {
+    if (!s_instances.TryGetValue(h, out var i)) return "";
+    var o = new JsonObject();
+    foreach (FieldInfo f in EditFields(i.B.GetType())) o[f.Name] = Engine.ToNode(f.GetValue(i.B));
+    return o.ToJsonString();
+  }
+
+  public static void SetFields(int h, string json) {
+    if (s_instances.TryGetValue(h, out var i)) ApplyFields(i.B, json);
+  }
   static readonly List<int> s_order = new(); // creation order = call order
   static int s_next = 1;
 
@@ -85,7 +164,7 @@ internal static class Behaviours {
       if (t.GetConstructor(Type.EmptyTypes) == null) { Debug.LogWarning($"C#: {t.FullName} has no parameterless constructor (skipped)"); continue; }
       if (s_types.TryGetValue(t.Name, out Type? old) && old.Assembly.GetName().Name != asm.GetName().Name) Debug.LogWarning($"C#: two Behaviours named {t.Name} ({old.FullName}, {t.FullName}); the last one wins");
       s_types[t.Name] = t;
-      Engine.Request(new JsonObject { ["op"] = "register", ["name"] = t.Name, ["assembly"] = asm.GetName().Name });
+      Engine.Request(new JsonObject { ["op"] = "register", ["name"] = t.Name, ["assembly"] = asm.GetName().Name, ["fields"] = Describe(t) });
       ++n;
     }
     return n;
@@ -101,12 +180,13 @@ internal static class Behaviours {
     }
   }
 
-  public static int Create(string objectId, string typeName, bool enabled) {
+  public static int Create(string objectId, string typeName, bool enabled, string fieldsJson = "") {
     if (!s_types.TryGetValue(typeName, out Type? t)) { Debug.LogError($"C#: no Behaviour class {typeName}"); return 0; }
     Behaviour b;
     try { b = (Behaviour)Activator.CreateInstance(t)!; }
     catch (Exception e) { Debug.LogError($"C#: {typeName} constructor: {(e.InnerException ?? e).Message}"); return 0; }
     b.gameObject = new GameObject(objectId);
+    ApplyFields(b, fieldsJson); // the saved values, before Awake
     var inst = new Instance { B = b, E = EventsOf(t) };
     int h = s_next++;
     s_instances[h] = inst;
@@ -169,8 +249,23 @@ public static unsafe partial class Host {
   }
 
   [UnmanagedCallersOnly]
-  public static int CreateBehaviour(byte* objectId, byte* typeName, int enabled) {
-    try { return Behaviours.Create(Str(objectId), Str(typeName), enabled != 0); } catch { return 0; }
+  public static int CreateBehaviour(byte* objectId, byte* typeName, int enabled, byte* fieldsJson) {
+    try { return Behaviours.Create(Str(objectId), Str(typeName), enabled != 0, Str(fieldsJson)); } catch { return 0; }
+  }
+
+  [UnmanagedCallersOnly]
+  public static void SetBehaviourFields(int handle, byte* json) {
+    try { Behaviours.SetFields(handle, Str(json)); } catch { }
+  }
+
+  // Writes the [Edit] field values as JSON into out; returns the length (more than capacity: call again, larger).
+  [UnmanagedCallersOnly]
+  public static int GetBehaviourFields(int handle, byte* output, int capacity) {
+    try {
+      byte[] bytes = System.Text.Encoding.UTF8.GetBytes(Behaviours.ReadFields(handle));
+      if (bytes.Length <= capacity) Marshal.Copy(bytes, 0, (IntPtr)output, bytes.Length);
+      return bytes.Length;
+    } catch { return 0; }
   }
 
   [UnmanagedCallersOnly]

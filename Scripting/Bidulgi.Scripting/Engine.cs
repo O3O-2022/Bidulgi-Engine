@@ -52,6 +52,13 @@ public static unsafe class Engine {
     Enum e => JsonValue.Create(e.ToString()),
     _ => JsonSerializer.SerializeToNode(v, v.GetType(), Json),
   };
+  internal static object? FromNode(Type t, JsonNode n) {
+    if (t == typeof(System.Numerics.Vector3)) { var a = n.AsArray(); return new System.Numerics.Vector3((float)a[0]!, (float)a[1]!, (float)a[2]!); }
+    if (t == typeof(System.Numerics.Vector2)) { var a = n.AsArray(); return new System.Numerics.Vector2((float)a[0]!, (float)a[1]!); }
+    if (t == typeof(System.Numerics.Vector4)) { var a = n.AsArray(); return new System.Numerics.Vector4((float)a[0]!, (float)a[1]!, (float)a[2]!, (float)a[3]!); }
+    if (t.IsEnum) return Enum.Parse(t, n.GetValue<string>());
+    return n.Deserialize(t, Json);
+  }
   internal static T FromNode<T>(JsonNode? n) {
     object? r;
     Type t = typeof(T);
@@ -120,7 +127,7 @@ public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static int Initialize(IntPtr request) {
     Engine.Attach(request);
-    return 1; // scripting API version
+    return 2; // scripting API version (2: [Edit] fields, 4-3)
   }
 
   // Test hook (4-1 exit criterion): reads, calls and writes a Health component of `target` from C#.

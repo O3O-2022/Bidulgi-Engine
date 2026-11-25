@@ -533,6 +533,9 @@ jobs:
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
           if ($log -notmatch 'behaviour test: types=4 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
+          $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
+          if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
           Remove-Item Env:BDG_SCRIPT_ASSEMBLIES -ErrorAction SilentlyContinue
 
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node

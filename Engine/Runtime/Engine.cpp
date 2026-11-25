@@ -109,7 +109,7 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false, behaviourTest = false;
+  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false, behaviourTest = false, editFieldTest = false;
   std::string shakeTestValues[5];
   std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
@@ -1447,6 +1447,63 @@ void InjectBehaviourTest(bdg_engine* e, int frame) {
     const bool order = probeLine.find("events=Awake,OnEnable,Start,Update,OnDisable,OnEnable,Update,OnDisable,OnDestroy") != std::string::npos;
     bdg::LogInfo("behaviour test: types={} instances={} spun={} order={} restored={} ended={}", bdg::DotNetHost::Instance().BehaviourTypeCount(),
                  instances, spun > 0.01f ? 1 : 0, order ? 1 : 0, rotY() == 0.f ? 1 : 0, e->play.Scripts().Instances() == 0 ? 1 : 0);
+  }
+}
+
+// Scripted check of 4-3 (BDG_EDITFIELD_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): the C#
+// Spinner's [Edit] fields are component fields with the C# defaults (speed 90), the Inspector shows speed as a slider
+// ([Range]) and axis as a choice; a saved speed of 0 reaches the script before it runs (no turn), an Inspector edit
+// while playing reaches it too (it turns), the script's own counter comes back to the component, and Stop restores 0.
+void InjectEditFieldTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("edit field test: {}", err);
+  };
+  auto get = [&](const char* path) {
+    std::string json;
+    bdg::SceneObject* o = m->scene.Find("bh2");
+    bdg::Component* c = o ? o->Find("Spinner") : nullptr;
+    if (c) bdg::Registry::Get(c->data, *c->type, path, json);
+    return json;
+  };
+  auto rotY = [&] {
+    bdg::SceneObject* o = m->scene.Find("bh2");
+    const bdg::Component* t = o ? o->Find("Transform") : nullptr;
+    return t ? static_cast<const bdg::Transform*>(t->data)->rotation.y : -1.f;
+  };
+  static std::string v[6];
+  if (frame == 2) {
+    run("add", "", R"({"id":"bh2","name":"Spinning"})");
+    run("addcomp", "bh2", R"({"type":"Spinner"})");
+    v[0] = get("speed") == "90" && get("axis") == "\"Y\"" && get("label") == "\"spinner\"" ? "1" : "0(" + get("speed") + "," + get("axis") + ")";
+    run("set", "bh2", R"({"path":"Spinner.speed","value":0})");
+    m->Select("bh2");
+  }
+  if (frame == 4) {
+    bdg::Widget* speed = e->editor->Find("f.Spinner.speed");
+    bdg::Widget* axis = e->editor->Find("f.Spinner.axis");
+    v[1] = speed && speed->slider && speed->sliderMax == 720 && axis && axis->kind == bdg::WidgetKind::Choice ? "1" : "0";
+    TogglePlay(e);
+  }
+  if (frame > 4 && frame < 14) std::this_thread::sleep_for(std::chrono::milliseconds(15)); // game time passes
+  if (frame == 8) {
+    v[2] = rotY() == 0.f ? "1" : std::format("0({})", rotY());
+    run("set", "bh2", R"({"path":"Spinner.speed","value":180})"); // the Inspector's way, while playing
+  }
+  if (frame == 12) {
+    v[3] = rotY() > 0.01f ? "1" : "0";
+    v[4] = std::atoi(get("frames").c_str()) > 0 ? "1" : "0(" + get("frames") + ")";
+  }
+  if (frame == 13) TogglePlay(e);
+  if (frame == 15) {
+    v[5] = get("speed") == "0" && get("frames") == "0" ? "1" : "0";
+    bdg::LogInfo("edit field test: defaults={} inspector={} saved={} push={} pull={} restored={}", v[0], v[1], v[2], v[3], v[4], v[5]);
   }
 }
 
@@ -3671,6 +3728,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->shakeTest = std::getenv("BDG_SHAKE_TEST") != nullptr;
   e->csharpTest = std::getenv("BDG_CSHARP_TEST") != nullptr;
   e->behaviourTest = std::getenv("BDG_BEHAVIOUR_TEST") != nullptr;
+  e->editFieldTest = std::getenv("BDG_EDITFIELD_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -4152,6 +4210,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->shakeTest && !e->showGallery) InjectShakeTest(e, frames);
     if (e->csharpTest && !e->showGallery) InjectCSharpTest(e, frames);
     if (e->behaviourTest && !e->showGallery) InjectBehaviourTest(e, frames);
+    if (e->editFieldTest && !e->showGallery) InjectEditFieldTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);

@@ -5,12 +5,22 @@ using Bidulgi;
 
 namespace Bidulgi.Samples;
 
-// Turns its object around Y at 90 degrees per second of game time.
+public enum SpinAxis { X, Y, Z }
+
+// Turns its object around an axis. Its [Edit] fields show in the Inspector and are saved with the scene (4-3);
+// `frames` is changed by the script itself, so the Inspector shows it counting while the game runs.
 public class Spinner : Behaviour {
+  [Edit, Range(0, 720), Tooltip("Degrees per second of game time")] public float speed = 90f;
+  [Edit] public SpinAxis axis = SpinAxis.Y;
+  [Edit, Header("Info")] public string label = "spinner";
+  [Edit, Tooltip("Frames this spinner has turned (set by the script)")] int frames;
+
   void Update() {
     Transform t = transform;
     Vector3 r = t.Rotation;
-    t.Rotation = new Vector3(r.X, r.Y + 90f * Time.deltaTime, r.Z);
+    float step = speed * Time.deltaTime;
+    t.Rotation = axis == SpinAxis.X ? new Vector3(r.X + step, r.Y, r.Z) : axis == SpinAxis.Y ? new Vector3(r.X, r.Y + step, r.Z) : new Vector3(r.X, r.Y, r.Z + step);
+    ++frames;
   }
 }
 

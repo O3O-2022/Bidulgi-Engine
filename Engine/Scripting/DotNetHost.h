@@ -9,8 +9,11 @@
 // Object references are scene ids; a fast handle path for per-frame bulk access comes later (decisions 4-1).
 #include "Core/Reflection.h"
 #include <deque>
+#include <array>
 #include <set>
 #include <string>
+
+struct yyjson_val; // yyjson.h
 
 namespace bdg {
 class Scene;
@@ -45,7 +48,12 @@ public:
   size_t BehaviourTypeCount() const { return behaviourTypes_.size(); }
 
   // Lifecycle (driven by BehaviourRunner): create = new instance + Awake (+ OnEnable when enabled); 0 = failed.
-  int CreateBehaviour(const std::string& objectId, const std::string& type, bool enabled);
+  // fieldsJson: the component's values ({"speed":5,...}), set on the C# fields before Awake (Unity order).
+  int CreateBehaviour(const std::string& objectId, const std::string& type, bool enabled, const std::string& fieldsJson = "{}");
+  // [Edit] fields (4-3): engine -> C# (an Inspector edit while playing) and C# -> engine (what the script changed).
+  void SetBehaviourFields(int handle, const std::string& json);
+  std::string GetBehaviourFields(int handle); // "" when the instance is gone
+  static std::string FieldsJson(const void* data, const TypeInfo& type); // {"enabled":true,"speed":5}
   void SetBehaviourEnabled(int handle, bool enabled); // OnEnable / OnDisable on a change
   void DestroyBehaviour(int handle);                  // OnDisable (if enabled) + OnDestroy
   enum class Phase { Update = 0, FixedUpdate = 1, LateUpdate = 2 }; // Update runs pending Starts first
@@ -60,11 +68,14 @@ private:
   CommandBus* bus_ = nullptr;
   int (*selfTest_)(const char*) = nullptr;
   int (*loadAssembly_)(const char*) = nullptr;
-  int (*create_)(const char*, const char*, int) = nullptr;
+  int (*create_)(const char*, const char*, int, const char*) = nullptr;
+  void (*setFields_)(int, const char*) = nullptr;
+  int (*getFields_)(int, char*, int) = nullptr;
   void (*setEnabled_)(int, int) = nullptr;
   void (*destroy_)(int) = nullptr;
   void (*tick_)(int, double, double, int) = nullptr;
-  std::string RegisterBehaviourType(const std::string& name); // "" = ok, else why not
+  std::string RegisterBehaviourType(const std::string& name, yyjson_val* fields); // "" = ok, else why not
+  std::deque<EnumInfo> enums_;                                // C# enum fields (stable addresses)
   std::deque<TypeInfo> types_;                                // stable addresses for the Registry
   std::set<const TypeInfo*> behaviourTypes_;
   std::string version_;
