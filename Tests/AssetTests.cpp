@@ -115,6 +115,12 @@ TEST_CASE("assets: added, modified, removed, copies") {
   CHECK(ch.removed.size() == 1 && ch.removed[0] == "a.png");
   CHECK_EQ(db.OrphanMetas().size(), size_t(1)); // a.png.meta reported, not deleted
   CHECK(fs::exists(d / "a.png.meta"));
+  // b.png replaced by another file with its own .meta (another GUID) at the same path: found by that path
+  const std::string oldGuid = db.ByPath("b.png")->guid;
+  Write(d / "b.png", "another b");
+  Write(d / "b.png.meta", "{\"guid\":\"00000000feedbeef\",\"importer\":\"texture\"}\n");
+  ch = db.Refresh();
+  CHECK(db.ByPath("b.png") && db.ByPath("b.png")->guid == "00000000feedbeef" && !db.ByGuid(oldGuid));
   fs::remove_all(d);
 }
 
