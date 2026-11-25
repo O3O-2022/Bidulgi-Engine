@@ -457,7 +457,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 구조(텍스트 씬, `bdg` CLI, 명령 버스, `bdg schema`, `BDG_*_TEST`, `AGENTS.md`)는 이미 있음. 부족한 것은 AI가 엔진을 **보고·배우고·붙는** 도구.
 
 - [x] **AI-1. `bdg shot`** (2026-11-25) — 명령 하나로 장면 사진: 에디터 화면 전체, 카메라 지정(`--camera yaw,pitch,dist[,x,y,z]`), 북마크마다(`--bookmarks`), 품질 단계(`--quality`). 결과 파일 경로를 출력 — 허브
-- [x] **AI-2. API 레퍼런스 자동 생성 + `llms.txt`** (2026-11-25, `python Tools/gen_llms.py` — 컴포넌트·`bdg` 명령·C# API를 바꾸면 다시 돌릴 것, CI가 확인) — 리플렉션 스키마(컴포넌트·필드·타입·기본값), `bdg` 명령, C# 게임 API를 한 파일(`Docs/llms.txt`, `Docs/api/`)로. CI가 최신인지 확인 — 허브
+- [x] **AI-2. API 레퍼런스 자동 생성 + `llms.txt`** (2026-11-25, `python tools/gen_llms.py` — 컴포넌트·`bdg` 명령·C# API를 바꾸면 다시 돌릴 것, CI가 확인) — 리플렉션 스키마(컴포넌트·필드·타입·기본값), `bdg` 명령, C# 게임 API를 한 파일(`Docs/llms.txt`, `Docs/api/`)로. CI가 최신인지 확인 — 허브
 - [x] **AI-3. `--json` 구조화 출력** (2026-11-25) — 모든 `bdg` 명령이 `--json`이면 결과·오류를 JSON 한 개로(`{"ok":false,"error":{"code":..,"message":..,"hint":..}}`) — 허브
 - [ ] **AI-4. MCP 서버** — 실행 중인 에디터에 AI가 직접 붙음: 장면 조회·명령 실행(실행 취소 가능)·스크린샷·검사 실행·로그 읽기. `bdg mcp`(stdio) — 레인 배정 예정
 

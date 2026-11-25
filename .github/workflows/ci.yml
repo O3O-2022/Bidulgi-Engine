@@ -543,8 +543,8 @@ jobs:
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # AI-2 the AI reference (Docs/llms.txt, Docs/api/*) matches the components, bdg commands and C# API in this commit
-          $llms = (python -X utf8 Tools/gen_llms.py --check --bdg "$PWD/build/Release/bdg.exe") -join "`n"
-          if ($LASTEXITCODE -ne 0) { $errors += "AI reference out of date (python Tools/gen_llms.py): $llms" }
+          $llms = (python -X utf8 tools/gen_llms.py --check --bdg "$PWD/build/Release/bdg.exe" 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0) { $errors += "AI reference out of date (python tools/gen_llms.py): $llms" }
           # 2-7 `bdg` command line in a Korean-named folder: new, view, set (dry run and real), add, validate (exit codes)
           $cli = Join-Path $PWD 'ci-cli'
           Remove-Item -Recurse -Force $cli -ErrorAction SilentlyContinue
@@ -567,8 +567,12 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $val -notmatch '통과') { $errors += 'bdg validate failed on a valid scene' }
           if (Test-Path 'Bidulgi.log') { $errors += 'bdg wrote Bidulgi.log into the project' }
           # AI-1 `bdg shot`: the editor renders the scene, the picture path is printed; a camera; a missing scene fails
-          $shot = (& $bdg shot --camera '30,-20,8' --frames 12) -join "`n"
-          if ($LASTEXITCODE -ne 0 -or $shot -notmatch 'Main\.png' -or -not (Test-Path (Join-Path $cli '게임/.cache/shots/Main.png'))) { $errors += "bdg shot failed: $shot" }
+          $shot = (& $bdg shot --camera '30,-20,8' --frames 12 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $shot -notmatch 'Main\.png' -or -not (Test-Path (Join-Path $cli '게임/.cache/shots/Main.png'))) {
+            $errors += "bdg shot failed (exit $LASTEXITCODE): $shot"
+            if (Test-Path 'Bidulgi.log') { Write-Host '----- bdg shot: editor log'; Get-Content 'Bidulgi.log' -Encoding utf8 | Select-Object -Last 40 | Write-Host }
+          }
+          Remove-Item -Recurse -Force '.cache', 'Bidulgi.log' -ErrorAction SilentlyContinue
           & $bdg shot Nope 2>$null | Out-Null
           if ($LASTEXITCODE -ne 1) { $errors += 'bdg shot did not fail on a missing scene' }
           Pop-Location

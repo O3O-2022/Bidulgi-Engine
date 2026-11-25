@@ -1,7 +1,7 @@
 # 컴포넌트 레퍼런스
 
 장면 파일(`.scene`, 한 줄에 물체 하나)에 쓰는 컴포넌트와 필드입니다. `bdg schema <이름>`과 같은 내용이고,
-`bdg set <id> 컴포넌트.필드=값`, `bdg addcomp <id> <컴포넌트>`로 바꿉니다. 이 파일은 `Tools/gen_llms.py`가 만듭니다.
+`bdg set <id> 컴포넌트.필드=값`, `bdg addcomp <id> <컴포넌트>`로 바꿉니다. 이 파일은 `tools/gen_llms.py`가 만듭니다.
 
 ## Animator
 

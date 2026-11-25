@@ -1,7 +1,7 @@
 # C# 게임 API
 
 게임 스크립트(`Behaviour`를 상속한 클래스)에서 쓰는 공개 API입니다. 이름은 유니티와 비슷하게 맞췄습니다.
-이 파일은 `Tools/gen_llms.py`가 `Scripting/Bidulgi.Scripting/*.cs`에서 만듭니다(주석 = 설명).
+이 파일은 `tools/gen_llms.py`가 `Scripting/Bidulgi.Scripting/*.cs`에서 만듭니다(주석 = 설명).
 
 ## Audio.cs
 
