@@ -257,6 +257,10 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_QUALITY_TEST = '1' } 27
           if ($log -notmatch 'quality test: potato=flat,noshadow low=lit,noshadow medium=lit,shadow high=lit,shadow,msaa4 fxaa=1 bloom=1 badge=1') { $errors += 'quality tier test failed' }
+          # Round 6 TAA: thin bars against the sky; edge error against a 4x4 supersampled picture: no AA, FXAA, TAA (after 24
+          # still frames, must be under 0.6 x no AA); jitter and history, the sharpen pass, a camera cut resets, a small move keeps
+          $log = Invoke-Editor 'Release' @{ BDG_TAA_TEST = '1' } 50
+          if ($log -notmatch 'taa test: .* better=1 history=1 sharpen=1 cut=1 move=1') { $errors += 'TAA test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 24) Render reference scene (queue 3-8): bookmarks, Albedo/Normal/Depth/Shadow views, wireframe, stored bookmark, GPU timers

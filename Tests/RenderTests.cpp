@@ -207,6 +207,8 @@ TEST_CASE("quality: tiers, project range, overrides and the tone curve (queue 3-
   CHECK(QualityPreset(QualityTier::Potato).localShadows == 0 && QualityPreset(QualityTier::Low).localShadows == 0);
   CHECK(medium.localShadows == 1 && high.localShadows == 4 && QualityPreset(QualityTier::Ultra).localShadows == 8 && ref.localShadows == 0);
   CHECK(QualityPreset(QualityTier::Ultra).localShadowSize == 1024 && high.localShadowSize == 512);
+  CHECK(QualityPreset(QualityTier::Ultra).taa && !high.taa && !medium.taa && !ref.taa); // round 6: TAA on ultra
+  CHECK(ApplyQualityOverrides("taa=1,sharpen=3", q, &err) && q.taa && q.taaSharpen == 1.f);
   CHECK(ApplyQualityOverrides("localshadows=40,localshadowmap=8", q, &err));
   CHECK(q.localShadows == 16 && q.localShadowSize == 64); // clamped
 

@@ -795,6 +795,91 @@ void main() {
 }
 )";
 // Bloom (Jimenez, Call of Duty 2014): 13-tap downsample, 3x3 tent upsample added into the next larger level.
+// ---- Temporal anti-aliasing (round 6) ----
+// uCurVP / uInvCurVP: this frame without jitter; uPrevVP: the previous frame's (no jitter); uJitVP: what the scene
+// pass used. uTaa = (-, -, feedback, history valid), uTaa2 = (sharpen, -, -, -)
+#define TEMPORAL_UBO "layout(std140, binding = 9) uniform Temporal3D { mat4 uCurVP; mat4 uPrevVP; mat4 uJitVP; mat4 uInvCurVP; vec4 uTaa; vec4 uTaa2; };\n"
+// Motion vectors: where each opaque surface point was on the previous frame's picture (its object's previous
+// placement, the previous camera), as a UV offset; alpha 1 marks surfaces (0: background, the camera alone).
+const char* kVelocityVS = "#version 450 core\n#OBJECTS_VS\n" TEMPORAL_UBO R"(
+layout(location = 0) in vec3 aPos;
+layout(std430, binding = 6) readonly buffer PrevModels { mat4 uPrevModel[]; };
+out vec4 vCur; out vec4 vPrev;
+void main() {
+  vObject = int(aObject + 0.5);
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vCur = uCurVP * w;
+  vPrev = uPrevVP * (uPrevModel[vObject] * vec4(aPos, 1.0));
+  gl_Position = uJitVP * w;
+}
+)";
+const char* kVelocityFS = R"(#version 450 core
+in vec4 vCur; in vec4 vPrev;
+out vec4 oColor;
+void main() { oColor = vec4((vCur.xy / vCur.w - vPrev.xy / vPrev.w) * 0.5, 0.0, 1.0); }
+)";
+// Resolve: this frame's pixel mixed with the history found through the motion vector; the history is clamped to the
+// colour range of the pixel's 3x3 neighbourhood (YCoCg, in a tone-mapped space so bright pixels do not dominate),
+// which removes ghosts of things that moved or appeared. No history (first frame, camera cut, off screen): this frame.
+const char* kTaaFS = "#version 450 core\n" TEMPORAL_UBO R"(
+layout(binding = 0) uniform sampler2D uCur;
+layout(binding = 1) uniform sampler2D uHist;
+layout(binding = 2) uniform sampler2D uVel;
+in vec2 vUV;
+out vec4 oColor;
+vec3 ToYCoCg(vec3 c) { return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+vec3 FromYCoCg(vec3 c) { return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+vec3 Squash(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 Unsquash(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4); }
+vec3 Fetch(vec2 uv) { return ToYCoCg(Squash(max(textureLod(uCur, uv, 0.0).rgb, vec3(0.0)))); }
+void main() {
+  vec2 texel = 1.0 / vec2(textureSize(uCur, 0));
+  vec3 cur = Fetch(vUV), lo = cur, hi = cur;
+  // velocity of the nearest surface in the neighbourhood (edges keep their object's motion)
+  vec4 vel = textureLod(uVel, vUV, 0.0);
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+      if (x == 0 && y == 0) continue;
+      vec3 c = Fetch(vUV + vec2(x, y) * texel);
+      lo = min(lo, c);
+      hi = max(hi, c);
+      vec4 v = textureLod(uVel, vUV + vec2(x, y) * texel, 0.0);
+      if (v.a > vel.a || (v.a > 0.5 && dot(v.xy, v.xy) > dot(vel.xy, vel.xy))) vel = v;
+    }
+  vec2 motion = vel.xy;
+  if (vel.a < 0.5) { // background: the camera's motion at the far plane
+    vec4 wp = uInvCurVP * vec4(vUV * 2.0 - 1.0, 1.0, 1.0);
+    vec4 pp = uPrevVP * vec4(wp.xyz / wp.w, 1.0);
+    motion = vUV - (pp.xy / pp.w * 0.5 + 0.5);
+  }
+  vec2 huv = vUV - motion;
+  if (uTaa.w < 0.5 || any(lessThan(huv, vec2(0.0))) || any(greaterThan(huv, vec2(1.0)))) {
+    oColor = vec4(max(textureLod(uCur, vUV, 0.0).rgb, vec3(0.0)), 1.0);
+    return;
+  }
+  vec3 hist = clamp(ToYCoCg(Squash(max(textureLod(uHist, huv, 0.0).rgb, vec3(0.0)))), lo, hi);
+  // faster motion keeps less history (less blur), still enough to smooth edges
+  float speed = length(motion / texel);
+  float fb = mix(uTaa.z, uTaa.z * 0.8, clamp(speed / 8.0, 0.0, 1.0));
+  oColor = vec4(Unsquash(FromYCoCg(mix(cur, hist, fb))), 1.0);
+}
+)";
+// Sharpen after the resolve (the blend softens a little): unsharp mask on the 4 neighbours, in the squashed space.
+const char* kSharpenFS = "#version 450 core\n" TEMPORAL_UBO R"(
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+vec3 Squash(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 Unsquash(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4); }
+void main() {
+  vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
+  vec3 c = Squash(textureLod(uSrc, vUV, 0.0).rgb);
+  vec3 n = Squash(textureLod(uSrc, vUV + vec2(0, t.y), 0.0).rgb) + Squash(textureLod(uSrc, vUV - vec2(0, t.y), 0.0).rgb) +
+           Squash(textureLod(uSrc, vUV + vec2(t.x, 0), 0.0).rgb) + Squash(textureLod(uSrc, vUV - vec2(t.x, 0), 0.0).rgb);
+  vec3 s = clamp(c + (c * 4.0 - n) * uTaa2.x * 0.25, vec3(0.0), vec3(0.999));
+  oColor = vec4(Unsquash(s), 1.0);
+}
+)";
 const char* kBloomDownFS = R"(#version 450 core
 layout(binding = 0) uniform sampler2D uSrc;
 in vec2 vUV;
@@ -902,6 +987,15 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
   return glm::ortho(-radius, radius, -radius, radius, 0.f, depthRange) * view;
 }
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4], lightmap[4]; };
+struct TemporalData { float curVP[16], prevVP[16], jitVP[16], invCurVP[16], taa[4], taa2[4]; };
+float Halton(uint32_t i, uint32_t base) {
+  float f = 1, r = 0;
+  for (; i > 0; i /= base) {
+    f /= (float)base;
+    r += f * (float)(i % base);
+  }
+  return r;
+}
 }
 
 glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, up); }
@@ -1080,6 +1174,27 @@ bool Renderer3D::Init(RHI& rhi) {
   aoBlur_ = rhi.CreatePipeline(pp);
   if (!ssao_.Valid() || !aoBlur_.Valid()) return false;
   ssaoUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(SsaoData), true);
+  { // temporal anti-aliasing (round 6)
+    const std::string velVS = Src(kVelocityVS);
+    PipelineDesc vd = pd; // the scene's vertex layout
+    vd.vertexSource = velVS.c_str();
+    vd.fragmentSource = kVelocityFS;
+    vd.alphaBlend = vd.additive = vd.wireframe = false;
+    vd.depthTest = true;
+    vd.depthWrite = true;
+    vd.cull = CullMode::None;
+    vd.depthBiasConstant = vd.depthBiasSlope = 0;
+    vd.debugName = "taa.velocity";
+    velocity_ = rhi.CreatePipeline(vd);
+    pp.fragmentSource = kTaaFS;
+    pp.debugName = "taa.resolve";
+    taa_ = rhi.CreatePipeline(pp);
+    pp.fragmentSource = kSharpenFS;
+    pp.debugName = "taa.sharpen";
+    sharpen_ = rhi.CreatePipeline(pp);
+    if (!velocity_.Valid() || !taa_.Valid() || !sharpen_.Valid()) return false;
+    temporalUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(TemporalData), true);
+  }
   pp.fragmentSource = kBloomUpFS;
   pp.additive = true;
   pp.debugName = "post.bloom.up";
@@ -1123,8 +1238,23 @@ bool Renderer3D::Init(RHI& rhi) {
   return true;
 }
 
+void Renderer3D::ReleaseTemporal(Temporal& t) {
+  for (RenderTargetHandle& r : t.hist) { rhi_->DestroyRenderTarget(r); r = {}; }
+  rhi_->DestroyRenderTarget(t.out);
+  rhi_->DestroyRenderTarget(t.velocity);
+  t.out = t.velocity = {};
+  t.w = t.h = 0;
+  t.valid = false;
+}
+
 void Renderer3D::Shutdown() {
   if (!rhi_) return;
+  for (auto& [id, t] : temporal_) ReleaseTemporal(t);
+  temporal_.clear();
+  rhi_->DestroyBuffer(temporalUbo_);
+  rhi_->DestroyBuffer(prevModelBuffer_);
+  for (PipelineHandle p : {velocity_, taa_, sharpen_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectBuffer_);
   rhi_->DestroyBuffer(instanceIds_);
@@ -1420,6 +1550,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     q.toneMap = q.bloom = q.fxaa = false;
     q.exposure = 1;
   }
+  // Temporal anti-aliasing (round 6): on the lit view of a camera only (not captures or debug views); it replaces
+  // MSAA and FXAA. The state (history, previous camera and placements) belongs to the output target.
+  const bool taaOn = q.taa && view == DebugView::Lit && !(extras && extras->linearOutput);
+  if (taaOn) {
+    q.msaa = 1;
+    q.fxaa = false;
+  }
   lastQuality_ = q;
   CollectTimers();
   stats_.shadowCasters = 0;
@@ -1431,7 +1568,26 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   cam.farZ *= q.viewDistance;
   FrameData f{};
   const float aspect = (float)w / (float)h;
-  glm::mat4 vp = cam.Projection(aspect) * cam.View(), ivp = glm::inverse(vp);
+  const glm::mat4 vp0 = cam.Projection(aspect) * cam.View(); // without jitter (motion vectors, reprojection)
+  glm::mat4 vp = vp0;
+  Temporal* temporal = nullptr;
+  glm::vec2 jitter(0.f);
+  if (taaOn) {
+    Temporal& t = temporal_[rt.id];
+    temporal = &t;
+    const glm::vec3 fwd = glm::normalize(cam.target - cam.position);
+    // a camera cut (a jump, a sharp turn, another size) starts again without history
+    if (t.w != w || t.h != h || glm::distance(t.prevPos, cam.position) > 2.f || glm::dot(t.prevFwd, fwd) < 0.85f) {
+      t.valid = false;
+      t.jitterIndex = 0;
+    }
+    jitter = {Halton(t.jitterIndex % 8 + 1, 2) - 0.5f, Halton(t.jitterIndex % 8 + 1, 3) - 0.5f}; // pixels
+    glm::mat4 proj = cam.Projection(aspect);
+    proj[2][0] -= jitter.x * 2.f / (float)w; // NDC offset = -proj[2][xy] (clip w = -view z)
+    proj[2][1] -= jitter.y * 2.f / (float)h;
+    vp = proj * cam.View();
+  }
+  const glm::mat4 ivp = glm::inverse(vp);
   std::memcpy(f.viewProj, glm::value_ptr(vp), sizeof(f.viewProj));
   std::memcpy(f.invViewProj, glm::value_ptr(ivp), sizeof(f.invViewProj));
   Put(f.camPos, cam.position);
@@ -1799,6 +1955,49 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->DrawIndexedInstanced(p, mesh.vertices, mesh.indices, mesh.indexCount, r.count, r.first, instanceIds_);
     ++draws_;
   };
+  // TAA: each item's placement on the previous frame (found by mesh and occurrence: the same object keeps its place in
+  // the list from frame to frame), for the motion vectors; this frame's placements are kept for the next one.
+  std::vector<glm::mat4> prevModels;
+  std::unordered_map<uint64_t, glm::mat4> nextModels;
+  if (temporal) {
+    prevModels.resize(std::max<size_t>(items.size(), 1), glm::mat4(1.f));
+    std::unordered_map<const Mesh3D*, uint32_t> seen;
+    for (size_t i = 0; i < items.size(); ++i) {
+      const uint64_t key = ((uint64_t)(uintptr_t)items[i].mesh * 1099511628211ull) ^ ((uint64_t)seen[items[i].mesh]++ * 0x9E3779B97F4A7C15ull);
+      auto it = temporal->prevModels.find(key);
+      prevModels[i] = it != temporal->prevModels.end() ? it->second : items[i].model;
+      nextModels[key] = items[i].model;
+    }
+    if (prevModels.size() * sizeof(glm::mat4) > prevModelCapacity_) {
+      rhi_->DestroyBuffer(prevModelBuffer_);
+      prevModelCapacity_ = prevModels.size() * sizeof(glm::mat4) * 2;
+      prevModelBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, prevModelCapacity_, true);
+    }
+    rhi_->UpdateBuffer(prevModelBuffer_, prevModels.data(), prevModels.size() * sizeof(glm::mat4));
+    TemporalData td{};
+    std::memcpy(td.curVP, glm::value_ptr(vp0), sizeof(td.curVP));
+    std::memcpy(td.prevVP, glm::value_ptr(temporal->valid ? temporal->prevVP : vp0), sizeof(td.prevVP));
+    std::memcpy(td.jitVP, glm::value_ptr(vp), sizeof(td.jitVP));
+    const glm::mat4 inv0 = glm::inverse(vp0);
+    std::memcpy(td.invCurVP, glm::value_ptr(inv0), sizeof(td.invCurVP));
+    td.taa[2] = std::clamp(q.taaFeedback, 0.f, 0.98f);
+    td.taa[3] = temporal->valid ? 1.f : 0.f;
+    td.taa2[0] = std::clamp(q.taaSharpen, 0.f, 1.f);
+    rhi_->UpdateBuffer(temporalUbo_, &td, sizeof(td));
+    rhi_->BindUniformBuffer(9, temporalUbo_);
+    rhi_->BindStorageBuffer(6, prevModelBuffer_);
+    if (temporal->w != w || temporal->h != h) {
+      ReleaseTemporal(*temporal);
+      for (RenderTargetHandle& r : temporal->hist) r = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      temporal->out = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      temporal->velocity = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
+      temporal->w = w;
+      temporal->h = h;
+    }
+    rhi_->BeginRenderTarget(temporal->velocity, {0, 0, 0, 0}); // motion vectors of the opaque surfaces
+    for (size_t r = 0; r < opaqueRuns; ++r) drawRun(velocity_, runs[r]);
+    rhi_->EndRenderTarget();
+  }
   const float aniso = std::min((float)std::max(q.anisotropy, 1), rhi_->MaxAnisotropy());
   auto bindMaps = [&](const Material3D& m) {
     const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
@@ -1990,6 +2189,35 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
 
   // Bloom: blur the bright parts over a chain of half-size targets.
   TextureHandle hdr = rhi_->RenderTargetColor(hdrRT_);
+  stats_.taa = temporal != nullptr;
+  stats_.taaHistory = temporal && temporal->valid;
+  stats_.jitterX = jitter.x;
+  stats_.jitterY = jitter.y;
+  if (temporal) { // TAA resolve into the next history, then sharpen into the picture the post passes read
+    Temporal& t = *temporal;
+    const int next = 1 - t.cur;
+    rhi_->BindUniformBuffer(9, temporalUbo_);
+    rhi_->BeginRenderTarget(t.hist[next], {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(t.hist[t.cur]));
+    rhi_->BindTexture(2, rhi_->RenderTargetColor(t.velocity));
+    rhi_->Draw(taa_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    rhi_->BeginRenderTarget(t.out, {0, 0, 0, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(t.hist[next]));
+    rhi_->Draw(sharpen_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    draws_ += 2;
+    hdr = rhi_->RenderTargetColor(t.out);
+    t.cur = next;
+    t.valid = true;
+    t.prevVP = vp0;
+    t.prevPos = cam.position;
+    t.prevFwd = glm::normalize(cam.target - cam.position);
+    t.prevModels = std::move(nextModels);
+    ++t.jitterIndex;
+    if (timing) Mark(timer, "taa");
+  }
   if (q.bloom) {
     int bw = std::max(w / 2, 1), bh = std::max(h / 2, 1);
     if (!bloom_[0].Valid() || bloomW_ != bw || bloomH_ != bh) {

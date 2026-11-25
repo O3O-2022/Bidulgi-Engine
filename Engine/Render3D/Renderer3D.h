@@ -180,6 +180,9 @@ struct RenderStats {
   int localShadows = 0;     // point / spot lights drawn with a shadow map (3-4b)
   int localShadowTiles = 0, localShadowTile = 0; // atlas tiles used (spot 1, point 6) and their size in pixels
   int localShadowSkipped = 0; // shadow-casting lights over the tier's limit (or off screen): lit without shadows
+  bool taa = false;         // temporal anti-aliasing ran (round 6)
+  bool taaHistory = false;  // ... and blended with an earlier frame (false right after a camera cut)
+  float jitterX = 0, jitterY = 0; // this frame's sub-pixel offset (pixels)
 };
 
 class Renderer3D {
@@ -279,6 +282,22 @@ private:
   int32_t dofW_ = 0, dofH_ = 0;
   struct Adapt { RenderTargetHandle rt[2]; int cur = 0; double last = 0; bool primed = false; };
   std::unordered_map<uint32_t, Adapt> adapt_s;
+  // Temporal state per output target (round 6, TAA / SSR): the previous frame's resolved colour, its camera, the
+  // objects' previous placements (by mesh and occurrence), and the jitter sequence.
+  struct Temporal {
+    RenderTargetHandle hist[2], out, velocity;
+    int cur = 0, w = 0, h = 0;
+    glm::mat4 prevVP{1.f};
+    glm::vec3 prevPos{0}, prevFwd{0, 0, -1};
+    bool valid = false;
+    uint32_t jitterIndex = 0;
+    std::unordered_map<uint64_t, glm::mat4> prevModels;
+  };
+  std::unordered_map<uint32_t, Temporal> temporal_;
+  PipelineHandle velocity_, taa_, sharpen_;
+  BufferHandle temporalUbo_, prevModelBuffer_;
+  size_t prevModelCapacity_ = 0;
+  void ReleaseTemporal(Temporal& t);
   uint32_t postFrame_ = 0; // grain seed
   // SSAO (3-5b): normals + view depth of opaque objects (full size), occlusion and its blur (half size).
   PipelineHandle prepass_, prepassTwo_, ssao_, aoBlur_;
