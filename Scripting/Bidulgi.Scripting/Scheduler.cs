@@ -116,28 +116,30 @@ internal static class Scheduler {
   static readonly List<Job> s_added = new(); // started while jobs run: join after this pass
   static bool s_stepping;
 
-  // The behaviour whose code is running (event method or async continuation): new jobs belong to it.
-  [ThreadStatic] static Behaviour? t_current;
-  internal static Behaviour? Current => t_current;
+  // The behaviour whose code is running (event method or async continuation): new jobs belong to it. An AsyncLocal,
+  // so it flows into async methods and comes back with their continuations (also after awaiting a Task.Run).
+  static readonly AsyncLocal<Behaviour?> s_current = new();
+  static Behaviour? CurrentOwner { get => s_current.Value; set => s_current.Value = value; }
+  internal static Behaviour? Current => CurrentOwner;
 
   internal static void Call(Behaviour? owner, Action action) {
-    Behaviour? before = t_current;
-    t_current = owner;
+    Behaviour? before = CurrentOwner;
+    CurrentOwner = owner;
     try { action(); }
     catch (Exception e) { Behaviours.ReportException(owner, "timer", e); }
-    finally { t_current = before; }
+    finally { CurrentOwner = before; }
   }
 
   internal static void Resume(Behaviour? owner, Action continuation) {
-    Behaviour? before = t_current;
-    t_current = owner;
+    Behaviour? before = CurrentOwner;
+    CurrentOwner = owner;
     try { continuation(); }
     catch (Exception e) { Behaviours.ReportException(owner, "async", e); }
-    finally { t_current = before; }
+    finally { CurrentOwner = before; }
   }
 
   static T Add<T>(T job) where T : Job {
-    job.Owner ??= t_current;
+    job.Owner ??= CurrentOwner;
     job.StartFrame = Time.frameCount;
     job.StartTime = Time.time;
     (s_stepping ? s_added : s_jobs).Add(job);
@@ -147,7 +149,7 @@ internal static class Scheduler {
   static bool OwnerStopped(Behaviour? owner) => owner != null && !owner.Running;
 
   internal static Waiting Wait(float seconds, Func<bool>? until = null) {
-    Behaviour? owner = t_current;
+    Behaviour? owner = CurrentOwner;
     if (OwnerStopped(owner)) return Waiting.Cancelled(owner); // a disabled behaviour cannot wait (no endless loops)
     var w = new Waiting { Owner = owner };
     Add(new WaitJob { W = w, Seconds = seconds, Until = until });
@@ -156,7 +158,7 @@ internal static class Scheduler {
 
   internal static Timer Every(float first, float interval, Action action) {
     var timer = new Timer();
-    if (OwnerStopped(t_current)) return timer;
+    if (OwnerStopped(CurrentOwner)) return timer;
     timer.Job = Add(new TimerJob { Action = action, Next = Math.Max(first, 0), Interval = interval });
     return timer;
   }
@@ -165,14 +167,14 @@ internal static class Scheduler {
     var timer = new Timer();
     var job = new TimerJob { Action = action, Next = Math.Max(seconds, 0), Interval = 0 };
     job.Owner = null;
-    Behaviour? before = t_current;
-    t_current = null;
-    try { timer.Job = Add(job); } finally { t_current = before; }
+    Behaviour? before = CurrentOwner;
+    CurrentOwner = null;
+    try { timer.Job = Add(job); } finally { CurrentOwner = before; }
     return timer;
   }
 
   internal static TweenJob Tween(float seconds, Ease ease, bool pingPong, Action<float> apply) {
-    Behaviour? owner = t_current;
+    Behaviour? owner = CurrentOwner;
     var w = new Waiting { Owner = owner };
     var job = new TweenJob { Apply = apply, W = w, Seconds = seconds, Ease = ease, PingPong = pingPong };
     if (OwnerStopped(owner)) { job.Done = true; w.Finish(true); return job; }

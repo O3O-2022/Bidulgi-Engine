@@ -94,7 +94,7 @@ TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps,
 #else
   DotNetHost& host = DotNetHost::Instance();
   std::string err;
-  const int kSampleBehaviours = 5; // the Behaviour classes in Scripting/Bidulgi.Samples
+  const int kSampleBehaviours = 6; // the Behaviour classes in Scripting/Bidulgi.Samples
   CHECK(host.Start({}, &err));
   CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == kSampleBehaviours);
   const TypeInfo* spinner = Registry::Instance().Find("Spinner");

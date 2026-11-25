@@ -145,7 +145,9 @@ internal static class Behaviours {
     Action<Behaviour>? Find(string n) {
       for (Type? x = t; x != null && x != typeof(Behaviour); x = x.BaseType) {
         MethodInfo? m = x.GetMethod(n, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, Type.EmptyTypes);
-        if (m != null && m.ReturnType == typeof(void)) return b => m.Invoke(b, null);
+        if (m != null && m.ReturnType == typeof(void)) return b => m.Invoke(b, null); // also `async void Start()`
+        if (m != null && m.ReturnType == typeof(System.Threading.Tasks.Task)) // `async Task Start()`: its failure is logged
+          return b => { if (m.Invoke(b, null) is System.Threading.Tasks.Task t) Observe(t, b, n); };
       }
       return null;
     }
@@ -279,6 +281,14 @@ internal static class Behaviours {
   public static void ObjectsGone(HashSet<string> ids) {
     foreach (int h in s_order.ToArray())
       if (s_instances.TryGetValue(h, out var i) && ids.Contains(i.B.gameObject.Id)) Destroy(h);
+  }
+
+  // A Task-returning event method: when it fails (not a cancellation) the error is logged on the game thread.
+  static void Observe(System.Threading.Tasks.Task t, Behaviour b, string what) {
+    if (t.IsCompleted) { if (t.Exception is { } done) ReportException(b, what, done.InnerException ?? done); return; }
+    t.ContinueWith(x => { if (x.Exception is { } e) ReportException(b, what, e.InnerException ?? e); },
+                   System.Threading.CancellationToken.None, System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted,
+                   System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
   }
 
   static void Stop(Instance i) { // no more timers, tweens or waits for this behaviour
