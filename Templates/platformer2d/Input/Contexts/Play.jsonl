@@ -1,0 +1,9 @@
+{"context":"Play","priority":0}
+{"action":"Move","key":"WASD"}
+{"action":"Move","key":"Arrows"}
+{"action":"Move","key":"Gamepad.LeftStick","mods":[{"deadzone":0.2}]}
+{"action":"Move","key":"Gamepad.DPad"}
+{"action":"Jump","key":"Space"}
+{"action":"Jump","key":"Gamepad.South"}
+{"action":"Run","key":"Shift"}
+{"action":"Run","key":"Gamepad.West"}

@@ -613,3 +613,56 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_FPS_TEST", InjectFpsTest, nullptr)
+
+
+// Scripted check of the 2D platformer template (BDG_PLATFORMER_TEST=1, run in a project made by `bdg new <dir>
+// --template platformer2d` with that folder as the working folder): Play, D held runs the hero right on Box2D and
+// through the first two coins (triggers: the coin count in the log goes up), then Space jumps, the camera follows; Stop.
+void InjectPlatformerTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  using T = bdg::InputEvent::Type;
+  static std::string coins;
+  static float x0 = 0, x1 = 0, y0 = 0, yMax = -1e9f, cam0 = 0, cam1 = 0;
+  auto key = [&](bdg::Key k, bool down) {
+    bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
+    ev.key = k;
+    e->window.InjectEvent(ev);
+  };
+  auto pos = [&](const char* id) -> bdg::Vec3 {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    return c ? static_cast<const bdg::Transform*>(c->data)->position : bdg::Vec3{-999, -999, -999};
+  };
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("coins: ", 0) == 0) coins = l; });
+    TogglePlay(e);
+  }
+  if (frame == 8) {
+    x0 = pos("hero").x;
+    y0 = pos("hero").y;
+    cam0 = pos("camera").x;
+    key(bdg::Key::D, true);
+  }
+  static int jumpedAt = 0; // jump once past the first two coins (x > 5)
+  if (frame > 8 && !jumpedAt && (pos("hero").x > 5 || frame >= 50)) {
+    jumpedAt = frame;
+    key(bdg::Key::Space, true);
+  }
+  if (jumpedAt && frame == jumpedAt + 10) key(bdg::Key::Space, false);
+  if (jumpedAt && frame <= 60) yMax = std::max(yMax, pos("hero").y);
+  if (frame == 60) {
+    key(bdg::Key::D, false);
+    x1 = pos("hero").x;
+    cam1 = pos("camera").x;
+  }
+  if (frame == 62) TogglePlay(e);
+  if (frame == 64) {
+    bdg::SetLogHook({});
+    const int count = coins.size() > 7 ? std::atoi(coins.c_str() + 7) : 0;
+    bdg::LogInfo("platformer test: ran={} jumped={} coins={} camera={} (x {:.2f} -> {:.2f}, jump {:.2f} m, camera {:.2f} -> {:.2f}, last \"{}\")",
+                 x1 - x0 > 2 ? 1 : 0, yMax - y0 > 1 ? 1 : 0, count >= 2 ? 1 : 0, cam1 - cam0 > 0.5f ? 1 : 0, x0, x1, yMax - y0, cam0, cam1, coins);
+  }
+}
+BDG_EDITOR_TEST("BDG_PLATFORMER_TEST", InjectPlatformerTest, nullptr)

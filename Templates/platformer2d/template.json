@@ -1,0 +1,6 @@
+{
+  "name": "platformer2d",
+  "title": "2D 플랫포머 / 2D platformer",
+  "description": "Side-scrolling platformer on Box2D: run, jump (coyote time, jump buffer), coins, a goal, a following camera",
+  "sounds": ["Assets/Audio/Jump.wav", "Assets/Audio/Coin.wav", "Assets/Audio/Goal.wav"]
+}
