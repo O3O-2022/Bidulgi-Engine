@@ -1131,7 +1131,19 @@ void UseEngineFolder() {
   wchar_t exe[MAX_PATH] = {};
   if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return;
   const fs::path root = engineFolder(fs::path(exe).parent_path());
-  if (!root.empty()) fs::current_path(root, ec);
+  if (root.empty()) return;
+  const fs::path here = fs::current_path(ec);
+  if (fs::exists(here / "ProjectSettings", ec) || fs::exists(here / "Scenes", ec)) {
+    // started in a game project (bdg new, templates): open it, with the engine's look from the engine folder
+    auto use = [](const char* var, const fs::path& p) { if (!std::getenv(var)) _wputenv_s(fs::path(var).wstring().c_str(), p.wstring().c_str()); };
+    use("BDG_TOKENS", root / "design-system" / "project" / "tokens.json");
+    use("BDG_FONT", root / "Assets" / "Fonts" / "Pretendard-Regular.otf");
+    use("BDG_FONT_MONO", root / "Assets" / "Fonts" / "JetBrainsMono-Regular.ttf");
+    use("BDG_ICONS", root / "Assets" / "Icons");
+    if (fs::exists(here / "Assets", ec)) use("BDG_ASSETS", here / "Assets");
+    return;
+  }
+  fs::current_path(root, ec);
 }
 } // namespace
 

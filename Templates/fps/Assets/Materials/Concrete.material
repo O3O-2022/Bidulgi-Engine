@@ -1,0 +1,3 @@
+{"material":"Concrete","shading":"lit","blend":"opaque"}
+{"param":"BaseColor","type":"color","value":"#9a9690"}
+{"param":"Roughness","type":"float","value":0.9,"range":[0,1]}

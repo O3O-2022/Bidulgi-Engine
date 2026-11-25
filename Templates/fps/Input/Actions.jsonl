@@ -1,0 +1,6 @@
+{"action":"Move","type":"vec2"}
+{"action":"Look","type":"vec2"}
+{"action":"Jump","type":"button"}
+{"action":"Sprint","type":"button"}
+{"action":"Fire","type":"button"}
+{"action":"Reload","type":"button"}

@@ -1,0 +1,17 @@
+{
+  "description": {
+    "name": "{{GAME_NAME}}",
+    "version": "0.1.0",
+    "description": "First-person shooting range made from the Bidulgi Engine FPS template",
+    "company": "My Studio",
+    "identifier": "com.mystudio.fps"
+  },
+  "maps": {
+    "gameStartScene": "Scenes/Main.scene"
+  },
+  "display": {
+    "width": 1600,
+    "height": 900,
+    "showCursor": false
+  }
+}

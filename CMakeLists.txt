@@ -194,7 +194,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Scene/Prefab.h Engine/Scene/Prefab.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp
   Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
-  Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
+  Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Templates.h Engine/Build/Templates.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
   Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
@@ -268,6 +268,10 @@ add_custom_command(TARGET bdg POST_BUILD
 add_custom_command(TARGET BidulgiPlayer POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:BidulgiPlayer> ${CMAKE_SOURCE_DIR}/Bin/)
+# game templates (bdg new --template fps): next to bdg.exe in the build folder and in Bin/
+add_custom_command(TARGET bdg POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Templates $<TARGET_FILE_DIR:bdg>/Templates
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Templates ${CMAKE_SOURCE_DIR}/Bin/Templates)
 
 # ---- C# scripting (queue 4-1): Bidulgi.Scripting.dll into <exe folder>/Managed ----
 # The component classes come from reflection: bdg writes Bindings.g.cs, then `dotnet build` compiles the assembly.
@@ -319,6 +323,7 @@ endif()
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
 add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_dependencies(BidulgiTests BidulgiPlayer) # the 7-4 build test packs the player exe found next to the tests
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

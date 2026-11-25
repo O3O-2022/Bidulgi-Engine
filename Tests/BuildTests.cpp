@@ -87,7 +87,7 @@ TEST_CASE("build: a small project becomes a player folder with a pack, report an
   const fs::path proj = d / "Game";
   Write(proj / "Scenes" / "Main.scene", kScene);
   Write(proj / "Data" / "Weapons.table.jsonl", "{\"id\":\"rifle\",\"damage\":12}\n");
-  Write(proj / "Assets" / "Materials" / "M_Rock.material", R"({"baseColor":[0.5,0.4,0.3,1]})");
+  Write(proj / "Assets" / "Materials" / "M_Rock.material", "{\"material\":\"M_Rock\"}\n{\"param\":\"BaseColor\",\"type\":\"color\",\"value\":\"#806040\"}\n");
   Write(proj / "Assets" / "Unused" / "Old.material", R"({"baseColor":[1,0,0,1]})");
   std::vector<uint8_t> px(64 * 64 * 4, 200);
   CHECK(WritePNG(S(proj / "Icon.png").c_str(), 64, 64, px.data(), false));
@@ -141,7 +141,8 @@ TEST_CASE("build --check: a deliberately broken project reports every problem wi
 {"id":"box","name":"Box","MeshRenderer":{"mesh":"Statue.glb"},"Spinnner":{},"AudioSource":{"clip":"Boom.wav"}}
 )");
   Write(proj / "Scenes" / "Bad.scene", "this is not a scene\n{{{\n");
-  Write(proj / "Assets" / "M_Wall.material", R"({"baseColorMap":"Textures/Wall_D.png"})");
+  Write(proj / "Assets" / "M_Wall.material", "{\"material\":\"M_Wall\",\"shading\":\"lit\"}\n"
+                                             "{\"param\":\"BaseColorMap\",\"type\":\"texture\",\"value\":\"Textures/Wall_D.png\"}\n");
   Write(proj / "Data" / "Items.table.jsonl", "{\"id\":\"a\"}\n{\"id\":\"a\"}\n");
   ProjectSettings s;
   s.description.version = "one";

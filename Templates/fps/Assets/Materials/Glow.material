@@ -1,0 +1,4 @@
+{"material":"Glow","shading":"lit","blend":"opaque"}
+{"param":"BaseColor","type":"color","value":"#ffb35c"}
+{"param":"Emissive","type":"color","value":"#ff9a3c"}
+{"param":"EmissiveStrength","type":"float","value":6,"range":[0,50]}

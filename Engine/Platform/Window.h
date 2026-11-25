@@ -49,6 +49,9 @@ public:
   void SetTitle(const std::string& title);
   void SetGameMode(int mode, bool resizable, bool showCursor);
   bool HasFocus() const; // keyboard focus (the game mutes in the background unless audio.playInBackground)
+  // First-person look in a built game: the cursor is hidden and held; mouse moves still arrive, with a position that
+  // keeps adding the relative motion (so code that takes deltas between positions works the same).
+  void SetRelativeMouse(bool on);
   // Swap interval actually in effect: -1 adaptive vsync, 1 vsync, 0 off. Request -1 to try adaptive, then 1.
   int SwapInterval() const { return swapInterval_; }
   void SetSwapInterval(int interval);
@@ -77,5 +80,7 @@ private:
   uint32_t wakeEvent_ = 0;
   int swapInterval_ = 0;
   bool hadEvents_ = false;
+  bool relative_ = false;
+  float relMouse_[2] = {0, 0}; // the relative mouse's made-up position
 };
 }

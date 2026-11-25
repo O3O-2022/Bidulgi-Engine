@@ -1,0 +1,4 @@
+{"material":"Steel","shading":"lit","blend":"opaque"}
+{"param":"BaseColor","type":"color","value":"#8e9399"}
+{"param":"Metallic","type":"float","value":1,"range":[0,1]}
+{"param":"Roughness","type":"float","value":0.35,"range":[0,1]}

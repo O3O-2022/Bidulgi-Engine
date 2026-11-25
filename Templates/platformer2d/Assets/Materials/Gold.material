@@ -1,0 +1,4 @@
+{"material":"Gold","shading":"lit","blend":"opaque"}
+{"param":"BaseColor","type":"color","value":"#ffc34a"}
+{"param":"Metallic","type":"float","value":1,"range":[0,1]}
+{"param":"Roughness","type":"float","value":0.3,"range":[0,1]}

@@ -6,6 +6,12 @@
 namespace bdg {
 bool Window::HasFocus() const { return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0; }
 
+void Window::SetRelativeMouse(bool on) {
+  if (!window_ || relative_ == on) return;
+  relative_ = on;
+  SDL_SetWindowRelativeMouseMode(window_, on);
+}
+
 void Window::SetTitle(const std::string& title) {
   if (window_) SDL_SetWindowTitle(window_, title.c_str());
 }
@@ -91,12 +97,13 @@ Key MapKey(SDL_Keycode k) {
 
 namespace {
 // Translates one SDL event into an InputEvent (if it is one the UI cares about). false = quit requested.
-bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out) {
+bool Translate(const SDL_Event& e, float density, std::vector<InputEvent>& out, float* rel = nullptr) { // rel: x, y of the relative mouse (or nullptr)
   InputEvent ev;
   switch (e.type) {
     case SDL_EVENT_QUIT: return false;
     case SDL_EVENT_MOUSE_MOTION:
       ev.type = InputEvent::Type::MouseMove; ev.x = e.motion.x * density; ev.y = e.motion.y * density;
+      if (rel) { rel[0] += e.motion.xrel * density; rel[1] += e.motion.yrel * density; ev.x = rel[0]; ev.y = rel[1]; }
       { SDL_Keymod m = SDL_GetModState(); ev.ctrl = (m & SDL_KMOD_CTRL) != 0; ev.shift = (m & SDL_KMOD_SHIFT) != 0; ev.alt = (m & SDL_KMOD_ALT) != 0; }
       out.push_back(ev); break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -145,11 +152,11 @@ bool Window::PumpEvents(int32_t waitMs) {
   // Any event (input, resize, expose, focus, Wake) means the picture may have changed.
   if (waitMs > 0 && SDL_WaitEventTimeout(&e, waitMs)) {
     hadEvents_ = true;
-    if (!Translate(e, density, events_)) return false;
+    if (!Translate(e, density, events_, relative_ ? relMouse_ : nullptr)) return false;
   }
   while (SDL_PollEvent(&e)) {
     hadEvents_ = true;
-    if (!Translate(e, density, events_)) return false;
+    if (!Translate(e, density, events_, relative_ ? relMouse_ : nullptr)) return false;
   }
   return true;
 }
