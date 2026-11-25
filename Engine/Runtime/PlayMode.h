@@ -10,6 +10,7 @@
 #include "Physics/PhysicsWorld.h"
 #include "Scene/CameraShake.h"
 #include "Scripting/BehaviourRunner.h"
+#include "Audio/AudioRunner.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -26,7 +27,7 @@ public:
   bool Playing() const { return playing_; }
   // Play mode tools (queue 3-6b): pause (also before Play: the game starts paused), one frame at a time, and a
   // time scale for game time (0.1x .. 4x).
-  void SetPaused(bool p) { paused_ = p; if (!p) step_ = false; }
+  void SetPaused(bool p) { paused_ = p; if (!p) step_ = false; audio_.SetPaused(p); }
   bool Paused() const { return paused_; }
   void Step() { if (playing_) { paused_ = true; step_ = true; } } // advance exactly one frame (1/60 s), then hold
   void SetTimeScale(float s);
@@ -39,6 +40,7 @@ public:
   size_t ShakesPlaying() const { return shaker_.Active(); }
   const BehaviourRunner& Scripts() const { return scripts_; }
   BehaviourRunner& Scripts() { return scripts_; } // fixed step from the project settings
+  const AudioRunner& Audio() const { return audio_; } // AudioSource components (6-3)
   uint64_t Frames() const { return frames_; } // ticks since Start
   // Physics (6-2): stepped on the fixed step (Scripts().fixedStep / maxFixedSteps), before C# FixedUpdate; collision
   // and trigger events go to the object's Behaviours right after each step. Gravity from the project settings.
@@ -67,6 +69,7 @@ private:
   PhysicsCounts physicsCounts_;
   double physicsAcc_ = 0;   // fixed-step clock when no C# runs
   void StepPhysics(EditorModel& m, double step);
+  AudioRunner audio_;       // AudioSource / AudioListener (6-3)
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

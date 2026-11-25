@@ -3,6 +3,7 @@
 #include "Core/Log.h"
 #include "Core/Reflection.h"
 #include "Scripting/DataTable.h"
+#include "Audio/Audio.h"
 #include <yyjson.h>
 #include <cstdlib>
 #include <format>
@@ -132,6 +133,43 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
   if (op == "inputcontext") {
     const bool on = yyjson_get_bool(yyjson_obj_get(r, "on"));
     return InputSystem::Instance().EnableContext(Str(r, "name"), on) ? Ok() : Fail("no input context \"" + Str(r, "name") + "\"");
+  }
+  if (op.rfind("audio.", 0) == 0) { // the easy API's Audio (6-3): not undoable, not logged (game state)
+    AudioSystem& audio = AudioSystem::Instance();
+    if (!audio.Running()) return Fail("audio is not running (it starts with Play)");
+    auto num = [&](const char* key, double def) {
+      yyjson_val* v = yyjson_obj_get(r, key);
+      return yyjson_is_num(v) ? yyjson_get_num(v) : def;
+    };
+    if (op == "audio.play") {
+      AudioPlay p;
+      p.clip = Str(r, "clip");
+      if (const std::string g = Str(r, "group"); !g.empty()) p.group = g;
+      p.volume = (float)num("volume", 1);
+      p.pitch = (float)num("pitch", 1);
+      p.loop = yyjson_get_bool(yyjson_obj_get(r, "loop"));
+      if (yyjson_val* at = yyjson_obj_get(r, "at"); yyjson_is_arr(at) && yyjson_arr_size(at) == 3) {
+        p.spatial = true;
+        p.position = {(float)yyjson_get_num(yyjson_arr_get(at, 0)), (float)yyjson_get_num(yyjson_arr_get(at, 1)), (float)yyjson_get_num(yyjson_arr_get(at, 2))};
+        p.minDistance = (float)num("minDistance", 1);
+        p.maxDistance = (float)num("maxDistance", 50);
+      }
+      std::string err;
+      const uint32_t id = audio.Play(p, &err);
+      return id ? Ok(std::to_string(id)) : Fail(err);
+    }
+    const uint32_t id = (uint32_t)num("id", 0);
+    if (op == "audio.stop") { audio.Stop(id); return Ok(); }
+    if (op == "audio.playing") return Ok(audio.IsPlaying(id) ? "true" : "false");
+    if (op == "audio.stopall") { audio.StopAll(); return Ok(); }
+    if (op == "audio.volume") {
+      const std::string group = Str(r, "group");
+      if (yyjson_is_num(yyjson_obj_get(r, "volume")) && !audio.SetGroupVolume(group, (float)num("volume", 1)))
+        return Fail(std::format("no mixer group \"{}\" (groups: Master, Music, Effects, Voice, UI, Ambient, ...)", group));
+      const float v = audio.GroupVolume(group);
+      return v < 0 ? Fail(std::format("no mixer group \"{}\"", group)) : Ok(std::format("{}", v));
+    }
+    return Fail(std::format("unknown op \"{}\"", op));
   }
   if (op == "table") { // a data table, whole (the script caches it until play stops)
     DataTable t;

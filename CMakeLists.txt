@@ -45,6 +45,19 @@ FetchContent_Declare(glm
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(glm)
 
+# ---- External: zstd (BSD) ---- compression of the packed game assets (.bpak, queue 7-4)
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_STATIC ON CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
+set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zstd
+  URL https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
+  SOURCE_SUBDIR build/cmake
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(zstd)
+
 find_package(OpenGL REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -89,6 +102,13 @@ target_include_directories(glad PUBLIC ThirdParty/glad/include)
 set_target_properties(glad PROPERTIES FOLDER ThirdParty)
 
 # ---- External: stb_image_write (MIT / public domain, vendored single header) ??PNG compression ----
+# miniaudio 0.11.26 (public domain / MIT-0): audio output, decoding, 3D sound, mixing (queue 6-3)
+add_library(miniaudio STATIC ThirdParty/miniaudio/miniaudio.c)
+target_include_directories(miniaudio SYSTEM PUBLIC ThirdParty/miniaudio)
+target_compile_definitions(miniaudio PUBLIC MA_NO_ENCODING MA_NO_GENERATION)
+if(MSVC)
+  target_compile_options(miniaudio PRIVATE /W0)
+endif()
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ThirdParty/stb)
 
@@ -172,6 +192,8 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp
+  Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
+  Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
   Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
@@ -209,8 +231,8 @@ add_library(BidulgiEngine STATIC
   Engine/Physics/Physics.h Engine/Physics/PhysicsJolt.cpp Engine/Physics/PhysicsBox2D.cpp Engine/Physics/PhysicsWorld.h Engine/Physics/PhysicsWorld.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
-bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h)
-target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx Jolt box2d glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h)
+target_link_libraries(BidulgiEngine PRIVATE libzstd_static miniaudio SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx Jolt box2d glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
@@ -220,11 +242,17 @@ target_link_libraries(BidulgiEditor PRIVATE BidulgiEngine)
 # `bdg` command line (queue 2-7): console tool over the same engine library
 add_executable(bdg tools/bdg/main.cpp)
 target_link_libraries(bdg PRIVATE BidulgiEngine)
+# Game player (queue 7-4): runs a built game (no editor UI); `bdg build` copies it into the build folder
+add_executable(BidulgiPlayer Player/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
+target_link_libraries(BidulgiPlayer PRIVATE BidulgiEngine)
+add_dependencies(bdg BidulgiPlayer)
 
 if(MSVC)
   target_compile_options(BidulgiEngine PRIVATE /W4 /utf-8)
   target_compile_options(BidulgiEditor PRIVATE /W4 /utf-8)
   target_compile_options(bdg PRIVATE /W4 /utf-8)
+  target_compile_options(BidulgiPlayer PRIVATE /W4 /utf-8)
+  target_link_options(BidulgiPlayer PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
   # Double-click opens a window only (no console). main() stays the entry point.
   target_link_options(BidulgiEditor PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()
@@ -236,6 +264,9 @@ add_custom_command(TARGET BidulgiEditor POST_BUILD
 add_custom_command(TARGET bdg POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
   COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:bdg> ${CMAKE_SOURCE_DIR}/Bin/)
+add_custom_command(TARGET BidulgiPlayer POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/Bin
+  COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:BidulgiPlayer> ${CMAKE_SOURCE_DIR}/Bin/)
 
 # ---- C# scripting (queue 4-1): Bidulgi.Scripting.dll into <exe folder>/Managed ----
 # The component classes come from reflection: bdg writes Bindings.g.cs, then `dotnet build` compiles the assembly.
@@ -286,7 +317,7 @@ endif()
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)
 target_link_libraries(BidulgiTests PRIVATE BidulgiEngine glm::glm)

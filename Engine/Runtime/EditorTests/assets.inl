@@ -458,3 +458,84 @@ void InjectProjectTest(bdg_engine* e, int frame, float scale) {
     v[3] = h && c && h->guid == guidH && c->guid == guidCpp ? "1" : "0";
   }
 }
+
+// Scripted check of 6-3 (BDG_AUDIO_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll; no output
+// device: BDG_AUDIO_NULL is set): a camera with an AudioListener at the origin and a looping 3D AudioSource 2 m in
+// front. In play mode the source plays at once (playOnStart), the mixed level drops when the source is moved 40 m
+// away (an Inspector-style set command), pausing silences it and resuming brings it back; then the C# AudioProbe is
+// added (Audio.Play, groups, a missing clip, AudioSource.Play), and Stop ends every sound.
+#include "Audio/Audio.h"
+
+void InjectAudioTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probe;
+  static float level[4] = {-1, -1, -1, -1};
+  static int playing[2] = {-1, -1};
+  const std::filesystem::path dir = std::filesystem::current_path() / ".cache" / "audio-test";
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("audio test: {}", err);
+  };
+  bdg::AudioSystem& audio = bdg::AudioSystem::Instance();
+  if (frame == 2) {
+    _putenv_s("BDG_AUDIO_NULL", "1"); // measure instead of playing out loud
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    { // a 2 s, 440 Hz mono tone
+      const int rate = 48000;
+      const uint32_t frames = rate * 2;
+      std::vector<int16_t> pcm(frames);
+      for (uint32_t i = 0; i < frames; ++i) pcm[i] = (int16_t)(std::sin(6.283185307 * 440.0 * i / rate) * 16000);
+      std::ofstream f(dir / "Beep.wav", std::ios::binary);
+      auto u32 = [&](uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
+      auto u16 = [&](uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
+      f.write("RIFF", 4); u32(36 + frames * 2); f.write("WAVE", 4);
+      f.write("fmt ", 4); u32(16); u16(1); u16(1); u32(rate); u32(rate * 2); u16(2); u16(16);
+      f.write("data", 4); u32(frames * 2);
+      f.write(reinterpret_cast<const char*>(pcm.data()), (std::streamsize)pcm.size() * 2);
+    }
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("audio probe: ", 0) == 0) probe = l; });
+    run("add", "", R"({"id":"au0","name":"Ears"})");
+    run("addcomp", "au0", R"({"type":"Camera"})");
+    run("addcomp", "au0", R"({"type":"AudioListener"})");
+    run("add", "", R"({"id":"au1","name":"Speaker"})");
+    run("set", "au1", R"({"path":"Transform.position","value":[0,0,-2]})");
+    run("addcomp", "au1", R"({"type":"AudioSource","value":{"clip":".cache/audio-test/Beep.wav","loop":true,"spatial":true}})");
+    run("add", "", R"({"id":"au2","name":"Probe"})");
+    run("addcomp", "au2", R"({"type":"AudioSource","value":{"clip":".cache/audio-test/Beep.wav","playOnStart":false,"spatial":false}})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 26) std::this_thread::sleep_for(std::chrono::milliseconds(12));
+  if (frame == 8) {
+    level[0] = audio.Stats().rms;
+    playing[0] = audio.Stats().playing;
+    run("set", "au1", R"({"path":"Transform.position","value":[0,0,-40]})");
+  }
+  if (frame == 13) level[1] = audio.Stats().rms;
+  if (frame == 14) SetPlayPaused(e, true);
+  if (frame == 16) level[2] = audio.Stats().rms;
+  if (frame == 17) SetPlayPaused(e, false);
+  if (frame == 20) level[3] = audio.Stats().rms;
+  if (frame == 21) // the C# part after the measurements (its own 2D sounds would cover the distance fade)
+    run("addcomp", "au2", R"({"type":"AudioProbe","value":{"clip":".cache/audio-test/Beep.wav"}})");
+  if (frame == 26) TogglePlay(e);
+  if (frame == 28) {
+    playing[1] = audio.Stats().playing;
+    bdg::SetLogHook({});
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    const bool plays = level[0] > 0.02f && playing[0] >= 1;
+    const bool follows = level[1] > 0.f && level[1] < level[0] * 0.25f;
+    const bool paused = level[2] < 1e-4f && level[3] > 0.f;
+    bdg::LogInfo("audio test: plays={} distance={} pause={} csharp={} stopped={} (rms near {:.3f} far {:.4f} paused {:.5f} resumed {:.4f}, playing {})",
+                 plays ? 1 : 0, follows ? 1 : 0, paused ? 1 : 0,
+                 probe.find("play=1 group=1 missing=1 component=1 stopped=1") != std::string::npos ? 1 : 0, playing[1] == 0 ? 1 : 0, level[0], level[1],
+                 level[2], level[3], playing[0]);
+  }
+}
+BDG_EDITOR_TEST("BDG_AUDIO_TEST", InjectAudioTest, nullptr)
