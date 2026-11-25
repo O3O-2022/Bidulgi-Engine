@@ -182,6 +182,7 @@ struct RenderStats {
   int localShadowSkipped = 0; // shadow-casting lights over the tier's limit (or off screen): lit without shadows
   bool taa = false;         // temporal anti-aliasing ran (round 6)
   bool taaHistory = false;  // ... and blended with an earlier frame (false right after a camera cut)
+  bool ssr = false;         // screen-space reflections were traced (round 6; not on the first frame after a cut)
   float jitterX = 0, jitterY = 0; // this frame's sub-pixel offset (pixels)
 };
 
@@ -285,7 +286,8 @@ private:
   // Temporal state per output target (round 6, TAA / SSR): the previous frame's resolved colour, its camera, the
   // objects' previous placements (by mesh and occurrence), and the jitter sequence.
   struct Temporal {
-    RenderTargetHandle hist[2], out, velocity;
+    RenderTargetHandle hist[2], out, velocity, prevColor; // prevColor: SSR without TAA
+    bool taaTargets = false;
     int cur = 0, w = 0, h = 0;
     glm::mat4 prevVP{1.f};
     glm::vec3 prevPos{0}, prevFwd{0, 0, -1};
@@ -294,7 +296,7 @@ private:
     std::unordered_map<uint64_t, glm::mat4> prevModels;
   };
   std::unordered_map<uint32_t, Temporal> temporal_;
-  PipelineHandle velocity_, taa_, sharpen_;
+  PipelineHandle velocity_, taa_, sharpen_, copy_;
   BufferHandle temporalUbo_, prevModelBuffer_;
   size_t prevModelCapacity_ = 0;
   void ReleaseTemporal(Temporal& t);

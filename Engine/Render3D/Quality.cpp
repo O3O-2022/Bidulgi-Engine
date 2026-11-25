@@ -79,6 +79,8 @@ QualitySettings QualityPreset(QualityTier t) {
       q.localShadows = t == QualityTier::Ultra ? 8 : 4; // point / spot shadows (3-4b)
       q.localShadowSize = t == QualityTier::Ultra ? 1024 : 512;
       q.taa = t == QualityTier::Ultra; // round 6: temporal AA on ultra (MSAA stays on high)
+      q.ssr = true;                    // round 6: screen-space reflections
+      q.ssrSteps = t == QualityTier::Ultra ? 64 : 40;
       break;
   }
   return q;
@@ -173,6 +175,9 @@ bool ApplyQualityOverrides(std::string_view list, QualitySettings& q, std::strin
     else if (key == "bloom") q.bloom = v != 0;
     else if (key == "fxaa") q.fxaa = v != 0;
     else if (key == "taa") q.taa = v != 0;
+    else if (key == "ssr") q.ssr = v != 0;
+    else if (key == "ssrsteps") q.ssrSteps = std::clamp((int)v, 8, 128);
+    else if (key == "ssrdistance") q.ssrDistance = std::max(v, 1.f);
     else if (key == "sharpen") q.taaSharpen = std::clamp(v, 0.f, 1.f);
     else if (key == "shadows") q.shadows = v != 0;
     else if (key == "tonemap") q.toneMap = v != 0;

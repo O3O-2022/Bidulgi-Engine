@@ -56,6 +56,12 @@ struct QualitySettings {
   bool taa = false;
   float taaSharpen = 0.2f;     // 0 = off .. 1 = strong
   float taaFeedback = 0.9f;    // share of the history kept each frame
+  // Screen-space reflections (round 6): smooth surfaces mirror what is on screen (traced against the depth prepass,
+  // coloured from the previous frame), fading with roughness, at the edges and with distance into the probe / sky
+  // reflection. High and ultra.
+  bool ssr = false;
+  float ssrDistance = 20.f;    // metres a reflected ray travels
+  int ssrSteps = 48;
   bool bloom = false;
   float bloomIntensity = 0.2f;    // share of the blurred image added back (glow around bright light)
   int msaa = 1;

@@ -270,6 +270,10 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_REFSCENE_TEST = '1'; BDG_RENDER_STATS = '1' } 24
           if ($log -notmatch 'refscene test: objects=290 jump=1 albedo=1 normal=1 depth=1 shadow=1 wire=1 store=1 undo=1 tier=potato timers=1') { $errors += 'render reference scene test failed' }
+          # Round 6 SSR on the reference scene: a mirror floor and a red box at bookmark 1; the box's mirror image with SSR,
+          # the probe / sky where rays leave the picture, nothing on a rough floor
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_SSR_TEST = '1' } 24
+          if ($log -notmatch 'ssr test: ran=1 mirror=1 fallback=1 rough=1') { $errors += 'SSR test failed' }
           if ($log -notmatch 'render passes: .*scene \d') { $errors += 'no GPU pass timings' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 

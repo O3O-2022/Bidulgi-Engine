@@ -170,3 +170,77 @@ void ReportTaaTest(bdg_engine*) {
                history, sharpen, cut, move);
 }
 BDG_EDITOR_TEST("BDG_TAA_TEST", InjectTaaTest, ReportTaaTest)
+
+// BDG_SSR_TEST=1 with BDG_ASSETS = Tests/RenderReference/Assets and BDG_SCENE_FILE = its RenderReference.scene: at
+// bookmark 1 (the material matrix) a mirror floor (MI_Matrix_r0_m6: metal, roughness 0) and a red box on it are
+// added; high tier with SSR off, then on. Checks: where the box's mirror image falls the floor turns red with SSR (the
+// probe there shows the sky), a mirror point whose reflection leaves the picture keeps the probe / sky reflection
+// (fallback), a rough floor (MI_Matrix_r6_m6) gets no SSR (roughness fade), the stats say SSR ran.
+namespace ssrtest {
+std::string mirror = "-", fallback = "-", rough = "-", ran = "-";
+gfxtest::Shot off;
+}
+void InjectSsrTest(bdg_engine* e, int frame, float) {
+  using namespace ssrtest;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  if (!m || !sv) return;
+  auto pixel = [&](const gfxtest::Shot& s, const glm::vec3& p, int c) { // channel c at the pixel showing world point p
+    float px = 0, py = 0;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), s.w, s.h, p, px, py)) return -1;
+    const int x = std::clamp((int)px, 0, s.w - 1), y = std::clamp((int)py, 0, s.h - 1);
+    return (int)s.px[((size_t)y * s.w + x) * 4 + c];
+  };
+  const glm::vec3 image{0, 0.005f - 0.45f, 2.65f}; // mirror image of the box's front face centre (box 0.9 m at z 2.2)
+  const glm::vec3 open{3.2f, 0.005f, 3.4f};        // a floor point beside the matrix: it mirrors the sky
+  if (frame == 2) {
+    sv->JumpToBookmark(*m, 1);
+    gfxtest::Run(m, "add", "", R"({"id":"ssrfloor","name":"Mirror"})");
+    gfxtest::Run(m, "set", "ssrfloor", R"({"path":"Transform.position","value":[0,0.005,2.4]})");
+    gfxtest::Run(m, "set", "ssrfloor", R"({"path":"Transform.scale","value":[7,1,2.8]})");
+    gfxtest::Run(m, "addcomp", "ssrfloor", R"({"type":"MeshRenderer","value":{"mesh":"Plane","material":"MI_Matrix_r0_m6"}})");
+    gfxtest::Run(m, "add", "", R"({"id":"ssrbox","name":"Red box"})");
+    gfxtest::Run(m, "set", "ssrbox", R"({"path":"Transform.position","value":[0,0.455,2.2]})");
+    gfxtest::Run(m, "set", "ssrbox", R"({"path":"Transform.scale","value":[0.9,0.9,0.9]})");
+    gfxtest::Run(m, "addcomp", "ssrbox", R"({"type":"MeshRenderer","value":{"mesh":"Cube","material":"M_AxisX"}})");
+    m->SetSelection({});
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    sv->quality.ssr = false;
+  }
+  if (frame == 8) {
+    off = gfxtest::Grab(e);
+    sv->quality.ssr = true;
+  }
+  if (frame == 12) {
+    const gfxtest::Shot on = gfxtest::Grab(e);
+    if (const char* dump = std::getenv("BDG_SSR_DUMP")) {
+      bdg::WritePNG((std::string(dump) + "_off.png").c_str(), off.w, off.h, off.px.data(), true);
+      bdg::WritePNG((std::string(dump) + "_on.png").c_str(), on.w, on.h, on.px.data(), true);
+    }
+    ran = sv->LastStats().ssr ? "1" : "0";
+    const int rOn = pixel(on, image, 0), gOn = pixel(on, image, 1), rOff = pixel(off, image, 0), gOff = pixel(off, image, 1);
+    mirror = rOn > gOn * 1.6 && rOn > 60 && !(rOff > gOff * 1.6) ? "1" : std::format("0(on {},{} off {},{})", rOn, gOn, rOff, gOff);
+    int diff = 0;
+    for (int c = 0; c < 3; ++c) diff = std::max(diff, std::abs(pixel(on, open, c) - pixel(off, open, c)));
+    fallback = pixel(on, open, 0) >= 0 && diff <= 6 ? "1" : std::format("0({})", diff);
+    gfxtest::Run(m, "set", "ssrfloor", R"({"path":"MeshRenderer.material","value":"MI_Matrix_r6_m6"})");
+    sv->quality.ssr = false;
+  }
+  if (frame == 16) {
+    off = gfxtest::Grab(e);
+    sv->quality.ssr = true;
+  }
+  if (frame == 20) {
+    const gfxtest::Shot on = gfxtest::Grab(e);
+    int diff = 0;
+    for (int c = 0; c < 3; ++c) diff = std::max(diff, std::abs(pixel(on, image, c) - pixel(off, image, c)));
+    rough = diff <= 4 ? "1" : std::format("0({})", diff);
+  }
+}
+void ReportSsrTest(bdg_engine*) {
+  using namespace ssrtest;
+  bdg::LogInfo("ssr test: ran={} mirror={} fallback={} rough={}", ran, mirror, fallback, rough);
+}
+BDG_EDITOR_TEST("BDG_SSR_TEST", InjectSsrTest, ReportSsrTest)

@@ -34,6 +34,8 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   vec4 uFog;                                     // fog colour (linear), density per metre (0 = off) (2-6)
   vec4 uFog2;                                    // fog start (m), -, -, -
   vec4 uLocalShadow;                             // point / spot shadow atlas (3-4b): tiles across, tiles up, tile size (px), -
+  mat4 uPrevViewProj;                            // the previous frame's camera (round 6: SSR reads that frame's colour)
+  vec4 uSsr;                                     // SSR (round 6): on (previous frame there), max distance m, thickness m, steps
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -116,11 +118,55 @@ const char* kFaceDir = R"(vec3 FaceDir(int f, vec2 st) {
   return vec3(-c.x, -c.y, -1.0);
 }
 )";
+const char* kSsrFn = R"(// Screen-space reflection (round 6): march the reflected ray in world space, projecting each step onto this frame's
+// depth (the prepass); a hit is a step just behind the visible surface (within a thickness growing with distance),
+// refined by bisection. Its colour comes from the previous frame's picture, reprojected with that frame's camera.
+// Weight fades with roughness, at the picture's edges, with distance and for rays towards the camera; what is left
+// is the probe / sky reflection (fallback).
+vec4 TraceSSR(vec3 P, vec3 N, vec3 R, float rough) {
+  if (uSsr.x < 0.5 || rough > 0.6) return vec4(0.0);
+  int steps = int(uSsr.w);
+  float maxD = uSsr.y, stride = maxD / float(steps);
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  vec3 start = P + N * 0.03;
+  float prev = 0.0, hitT = -1.0;
+  for (int i = 1; i <= steps; ++i) {
+    float t = stride * (float(i) - 0.5 + noise * 0.5);
+    vec3 p = start + R * t;
+    vec4 c = uViewProj * vec4(p, 1.0);
+    if (c.w <= 0.0) break;
+    vec2 uv = c.xy / c.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+    float behind = dot(p - uCamPos.xyz, uCamFwd.xyz) - textureLod(uGeoSSR, uv, 0.0).w;
+    if (behind > 0.0 && behind < uSsr.z + t * 0.02) { hitT = t; break; }
+    prev = t;
+  }
+  if (hitT < 0.0) return vec4(0.0);
+  float lo = prev, hi = hitT; // bisection between the last step in front and the hit
+  for (int k = 0; k < 5; ++k) {
+    float mid = 0.5 * (lo + hi);
+    vec3 p = start + R * mid;
+    vec4 c = uViewProj * vec4(p, 1.0);
+    float behind = dot(p - uCamPos.xyz, uCamFwd.xyz) - textureLod(uGeoSSR, c.xy / c.w * 0.5 + 0.5, 0.0).w;
+    if (behind > 0.0) hi = mid; else lo = mid;
+  }
+  vec3 hit = start + R * hi;
+  vec4 pc = uPrevViewProj * vec4(hit, 1.0);
+  if (pc.w <= 0.0) return vec4(0.0);
+  vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+  vec2 edge = min(puv, 1.0 - puv);
+  float fade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
+  fade *= 1.0 - smoothstep(0.6 * maxD, maxD, hi);
+  fade *= 1.0 - smoothstep(0.25, 0.6, rough);
+  fade *= smoothstep(-0.6, -0.1, -dot(R, -uCamFwd.xyz)); // rays coming back to the camera find little
+  return vec4(textureLod(uPrevColor, puv, 0.0).rgb, clamp(fade, 0.0, 1.0));
+}
+)";
 std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS, #OBJECTS_FS, #PROBES_FN, #FACE_DIR
   std::string s = text;
   const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
   for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
-                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}})
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
@@ -177,6 +223,9 @@ layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
 layout(binding = 7) uniform sampler2D uLightmap;
 layout(binding = 8) uniform sampler2D uSSAO; // screen-space ambient occlusion, half resolution (3-5b)
+layout(binding = 10) uniform sampler2D uGeoSSR;   // SSR (round 6): this frame's prepass (normal, view depth)
+layout(binding = 11) uniform sampler2D uPrevColor; // SSR: the previous frame's resolved HDR picture
+#SSR_FN
 layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; }; // per light: pos + range, colour, dir + cos outer, cos inner + spot
 layout(std430, binding = 3) readonly buffer Clusters3D { uint uCl[]; };  // per cluster: first, count; then light indices
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
@@ -402,6 +451,10 @@ void main() {
     for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, ng, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
+  if (uSsr.x > 0.5 && view == 0) { // screen-space reflection where the ray finds the picture; the probe elsewhere
+    vec4 ssr = TraceSSR(vWorld, ng, R, rough);
+    env = mix(env, ssr.rgb, ssr.a);
+  }
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = (uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0) * ssao; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
@@ -864,6 +917,13 @@ void main() {
   oColor = vec4(Unsquash(FromYCoCg(mix(cur, hist, fb))), 1.0);
 }
 )";
+// A plain copy (SSR without TAA keeps the previous frame's picture this way).
+const char* kCopyFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+void main() { oColor = vec4(textureLod(uSrc, vUV, 0.0).rgb, 1.0); }
+)";
 // Sharpen after the resolve (the blend softens a little): unsharp mask on the 4 neighbours, in the squashed space.
 const char* kSharpenFS = "#version 450 core\n" TEMPORAL_UBO R"(
 layout(binding = 0) uniform sampler2D uSrc;
@@ -946,6 +1006,8 @@ struct FrameData {
   float cluster[4], cluster2[4];
   float fog[4], fog2[4];
   float localShadow[4];
+  float prevViewProj[16];
+  float ssr[4];
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
@@ -1192,7 +1254,10 @@ bool Renderer3D::Init(RHI& rhi) {
     pp.fragmentSource = kSharpenFS;
     pp.debugName = "taa.sharpen";
     sharpen_ = rhi.CreatePipeline(pp);
-    if (!velocity_.Valid() || !taa_.Valid() || !sharpen_.Valid()) return false;
+    pp.fragmentSource = kCopyFS;
+    pp.debugName = "post.copy";
+    copy_ = rhi.CreatePipeline(pp);
+    if (!velocity_.Valid() || !taa_.Valid() || !sharpen_.Valid() || !copy_.Valid()) return false;
     temporalUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(TemporalData), true);
   }
   pp.fragmentSource = kBloomUpFS;
@@ -1242,7 +1307,8 @@ void Renderer3D::ReleaseTemporal(Temporal& t) {
   for (RenderTargetHandle& r : t.hist) { rhi_->DestroyRenderTarget(r); r = {}; }
   rhi_->DestroyRenderTarget(t.out);
   rhi_->DestroyRenderTarget(t.velocity);
-  t.out = t.velocity = {};
+  rhi_->DestroyRenderTarget(t.prevColor);
+  t.out = t.velocity = t.prevColor = {};
   t.w = t.h = 0;
   t.valid = false;
 }
@@ -1253,7 +1319,7 @@ void Renderer3D::Shutdown() {
   temporal_.clear();
   rhi_->DestroyBuffer(temporalUbo_);
   rhi_->DestroyBuffer(prevModelBuffer_);
-  for (PipelineHandle p : {velocity_, taa_, sharpen_})
+  for (PipelineHandle p : {velocity_, taa_, sharpen_, copy_})
     if (p.Valid()) rhi_->DestroyPipeline(p);
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectBuffer_);
@@ -1553,6 +1619,8 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   // Temporal anti-aliasing (round 6): on the lit view of a camera only (not captures or debug views); it replaces
   // MSAA and FXAA. The state (history, previous camera and placements) belongs to the output target.
   const bool taaOn = q.taa && view == DebugView::Lit && !(extras && extras->linearOutput);
+  // Screen-space reflections (round 6): per-pixel lighting on a camera's lit view; they read the previous frame.
+  const bool ssrOn = q.ssr && q.lighting == LightingMode::Pixel && view == DebugView::Lit && !(extras && extras->linearOutput);
   if (taaOn) {
     q.msaa = 1;
     q.fxaa = false;
@@ -1572,7 +1640,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   glm::mat4 vp = vp0;
   Temporal* temporal = nullptr;
   glm::vec2 jitter(0.f);
-  if (taaOn) {
+  if (taaOn || ssrOn) {
     Temporal& t = temporal_[rt.id];
     temporal = &t;
     const glm::vec3 fwd = glm::normalize(cam.target - cam.position);
@@ -1581,11 +1649,26 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
       t.valid = false;
       t.jitterIndex = 0;
     }
-    jitter = {Halton(t.jitterIndex % 8 + 1, 2) - 0.5f, Halton(t.jitterIndex % 8 + 1, 3) - 0.5f}; // pixels
-    glm::mat4 proj = cam.Projection(aspect);
-    proj[2][0] -= jitter.x * 2.f / (float)w; // NDC offset = -proj[2][xy] (clip w = -view z)
-    proj[2][1] -= jitter.y * 2.f / (float)h;
-    vp = proj * cam.View();
+    if (taaOn) {
+      jitter = {Halton(t.jitterIndex % 8 + 1, 2) - 0.5f, Halton(t.jitterIndex % 8 + 1, 3) - 0.5f}; // pixels
+      glm::mat4 proj = cam.Projection(aspect);
+      proj[2][0] -= jitter.x * 2.f / (float)w; // NDC offset = -proj[2][xy] (clip w = -view z)
+      proj[2][1] -= jitter.y * 2.f / (float)h;
+      vp = proj * cam.View();
+    }
+    if (t.w != w || t.h != h || t.taaTargets != taaOn) { // targets for this size and mode
+      ReleaseTemporal(t);
+      if (taaOn) {
+        for (RenderTargetHandle& r : t.hist) r = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+        t.out = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+        t.velocity = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
+      } else {
+        t.prevColor = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      }
+      t.taaTargets = taaOn;
+      t.w = w;
+      t.h = h;
+    }
   }
   const glm::mat4 ivp = glm::inverse(vp);
   std::memcpy(f.viewProj, glm::value_ptr(vp), sizeof(f.viewProj));
@@ -1778,6 +1861,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->UpdateBuffer(clusterBuffer_, cl.data(), cl.size() * 4);
   }
   Put(f.camFwd, glm::normalize(cam.target - cam.position));
+  std::memcpy(f.prevViewProj, glm::value_ptr(temporal && temporal->valid ? temporal->prevVP : vp0), sizeof(f.prevViewProj));
+  f.ssr[0] = ssrOn && temporal && temporal->valid ? 1.f : 0.f;
+  f.ssr[1] = std::max(q.ssrDistance, 1.f);
+  f.ssr[2] = 0.35f; // thickness of what the depth buffer shows (m)
+  f.ssr[3] = (float)std::clamp(q.ssrSteps, 8, 128);
   f.screen[0] = (float)w;
   f.screen[1] = (float)h;
   f.screen[2] = 1.f / w;
@@ -1959,7 +2047,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   // the list from frame to frame), for the motion vectors; this frame's placements are kept for the next one.
   std::vector<glm::mat4> prevModels;
   std::unordered_map<uint64_t, glm::mat4> nextModels;
-  if (temporal) {
+  if (temporal && taaOn) {
     prevModels.resize(std::max<size_t>(items.size(), 1), glm::mat4(1.f));
     std::unordered_map<const Mesh3D*, uint32_t> seen;
     for (size_t i = 0; i < items.size(); ++i) {
@@ -1986,14 +2074,6 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->UpdateBuffer(temporalUbo_, &td, sizeof(td));
     rhi_->BindUniformBuffer(9, temporalUbo_);
     rhi_->BindStorageBuffer(6, prevModelBuffer_);
-    if (temporal->w != w || temporal->h != h) {
-      ReleaseTemporal(*temporal);
-      for (RenderTargetHandle& r : temporal->hist) r = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
-      temporal->out = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
-      temporal->velocity = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
-      temporal->w = w;
-      temporal->h = h;
-    }
     rhi_->BeginRenderTarget(temporal->velocity, {0, 0, 0, 0}); // motion vectors of the opaque surfaces
     for (size_t r = 0; r < opaqueRuns; ++r) drawRun(velocity_, runs[r]);
     rhi_->EndRenderTarget();
@@ -2120,7 +2200,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
-  if (ssaoOn || dofOn || shaftsOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+  if (ssaoOn || dofOn || shaftsOn || ssrOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
     const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
     if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
       for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -2160,6 +2240,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     if (timing) Mark(timer, "ssao");
   }
   rhi_->BindTexture(8, ssaoOn ? rhi_->RenderTargetColor(aoRT_[0]) : white_);
+  if (ssrOn) { // SSR: this frame's depth / normals, the previous frame's picture
+    rhi_->BindTexture(10, rhi_->RenderTargetColor(geoRT_));
+    rhi_->BindTexture(11, rhi_->RenderTargetColor(taaOn ? temporal->hist[temporal->cur] : temporal->prevColor));
+  } else {
+    rhi_->BindTexture(10, white_);
+    rhi_->BindTexture(11, white_);
+  }
   stats_.ssao = ssaoOn;
   Color linearClear = SrgbToLinear((uint8_t)std::lround(std::clamp(clear.r, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
@@ -2189,11 +2276,12 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
 
   // Bloom: blur the bright parts over a chain of half-size targets.
   TextureHandle hdr = rhi_->RenderTargetColor(hdrRT_);
-  stats_.taa = temporal != nullptr;
+  stats_.taa = taaOn;
   stats_.taaHistory = temporal && temporal->valid;
   stats_.jitterX = jitter.x;
   stats_.jitterY = jitter.y;
-  if (temporal) { // TAA resolve into the next history, then sharpen into the picture the post passes read
+  stats_.ssr = ssrOn && f.ssr[0] > 0.5f;
+  if (taaOn) { // TAA resolve into the next history, then sharpen into the picture the post passes read
     Temporal& t = *temporal;
     const int next = 1 - t.cur;
     rhi_->BindUniformBuffer(9, temporalUbo_);
@@ -2210,13 +2298,21 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     draws_ += 2;
     hdr = rhi_->RenderTargetColor(t.out);
     t.cur = next;
-    t.valid = true;
-    t.prevVP = vp0;
-    t.prevPos = cam.position;
-    t.prevFwd = glm::normalize(cam.target - cam.position);
     t.prevModels = std::move(nextModels);
     ++t.jitterIndex;
     if (timing) Mark(timer, "taa");
+  } else if (ssrOn) { // keep this frame's picture for the next frame's reflections
+    rhi_->BeginRenderTarget(temporal->prevColor, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->Draw(copy_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+  }
+  if (temporal) {
+    temporal->valid = true;
+    temporal->prevVP = vp0;
+    temporal->prevPos = cam.position;
+    temporal->prevFwd = glm::normalize(cam.target - cam.position);
   }
   if (q.bloom) {
     int bw = std::max(w / 2, 1), bh = std::max(h / 2, 1);
