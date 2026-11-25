@@ -622,6 +622,7 @@ jobs:
           if ($buildExit -ne 0) { $errors += 'bdg build failed' }
           $built = "$game/Builds/Windows-Development"
           if (-not (Test-Path "$built/Content/game.bpak") -or -not (Test-Path "$built/build-report.txt") -or -not (Test-Path "$game/Builds/My Game-0.1.0-Development.zip")) { $errors += 'bdg build output incomplete' }
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$built/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-game-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$built/My Game.exe" -ArgumentList '--frames', 90 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET
@@ -630,7 +631,8 @@ jobs:
           if ($p.ExitCode -ne 0 -or $plog -notmatch 'player: 90 frames, 1.50 s of game time, 2 C# behaviours, camera yes' -or $plog -notmatch 'probe: box .*update=90') { $errors += 'built game player failed' }
 
           # FPS template: bdg new --template fps (C# built by dotnet) -> the editor plays it in that folder with injected
-          # input (walk, jump, shoot the first target: hit, pushed, score 1, look) -> bdg build -> the built game runs it
+          # input (walk, jump, shoot the first target: hit, pushed, score 1, look; the HUD score text and pixels change)
+          # -> bdg build -> the built game runs it with its HUD (game UI, 7-3)
           $fps = Join-Path $env:RUNNER_TEMP 'bdg-fps'
           Remove-Item -Recurse -Force $fps -ErrorAction SilentlyContinue
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $fps --template fps --name 'Range Test' | Out-String | Write-Host
@@ -640,37 +642,40 @@ jobs:
           Remove-Item Env:BDG_FPS_TEST
           $flog = Get-Content "$fps/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- fps template in the editor (exit $($p.ExitCode))"; Write-Host $flog
-          if ($p.ExitCode -ne 0 -or $flog -notmatch 'fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1') { $errors += 'fps template play test failed' }
+          if ($p.ExitCode -ne 0 -or $flog -notmatch 'fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1 hud=1') { $errors += 'fps template play test failed' }
           Push-Location $fps
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
           $fpsBuild = $LASTEXITCODE
           Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$fps/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-fps-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$fps/Builds/Windows-Development/Range Test.exe" -ArgumentList '--frames', 120 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
           $fplog = Get-Content "$fps/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- built fps game (exit $($p.ExitCode))"; Write-Host $fplog
-          if ($fpsBuild -ne 0 -or $p.ExitCode -ne 0 -or $fplog -notmatch 'player: 120 frames, 2.00 s of game time, 20 C# behaviours, camera yes' -or $fplog -notmatch 'physics: jolt 31 bodies') { $errors += 'fps template build / player failed' }
-          # 2D platformer template: Box2D hero runs right through two coins, jumps, the camera follows; build and run it
+          if ($fpsBuild -ne 0 -or $p.ExitCode -ne 0 -or $fplog -notmatch 'player: 120 frames, 2.00 s of game time, 20 C# behaviours, camera yes, ui elements 5' -or $fplog -notmatch 'physics: jolt 31 bodies') { $errors += 'fps template build / player failed' }
+          # 2D platformer template: Box2D hero runs right through two coins, jumps, the camera follows, a click on the HUD's
+          # help button reaches C#; build and run it (HUD in the built game)
           $plat = Join-Path $env:RUNNER_TEMP 'bdg-platformer'
           Remove-Item -Recurse -Force $plat -ErrorAction SilentlyContinue
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $plat --template platformer2d --name 'Coin Run' | Out-String | Write-Host
           $env:BDG_PLATFORMER_TEST = '1'; $env:BDG_AUDIO_NULL = '1'
-          $p = Start-Process "$env:GITHUB_WORKSPACE/build/Release/BidulgiEditor.exe" -ArgumentList '--frames', 66 -WorkingDirectory $plat -PassThru -Wait
+          $p = Start-Process "$env:GITHUB_WORKSPACE/build/Release/BidulgiEditor.exe" -ArgumentList '--frames', 76 -WorkingDirectory $plat -PassThru -Wait
           Remove-Item Env:BDG_PLATFORMER_TEST
           $plog = Get-Content "$plat/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- platformer template in the editor (exit $($p.ExitCode))"; Write-Host $plog
-          if ($p.ExitCode -ne 0 -or $plog -notmatch 'platformer test: ran=1 jumped=1 coins=1 camera=1') { $errors += 'platformer template play test failed' }
+          if ($p.ExitCode -ne 0 -or $plog -notmatch 'platformer test: ran=1 jumped=1 coins=1 camera=1 button=1 hud=1') { $errors += 'platformer template play test failed' }
           Push-Location $plat
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
           $platBuild = $LASTEXITCODE
           Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$plat/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-platformer-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$plat/Builds/Windows-Development/Coin Run.exe" -ArgumentList '--frames', 90 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
           $pplog = Get-Content "$plat/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- built platformer (exit $($p.ExitCode))"; Write-Host $pplog
-          if ($platBuild -ne 0 -or $p.ExitCode -ne 0 -or $pplog -notmatch 'player: 90 frames, 1.50 s of game time, 13 C# behaviours, camera yes' -or $pplog -notmatch 'box2d 20 bodies') { $errors += 'platformer template build / player failed' }
+          if ($platBuild -ne 0 -or $p.ExitCode -ne 0 -or $pplog -notmatch 'player: 90 frames, 1.50 s of game time, 13 C# behaviours, camera yes, ui elements 3' -or $pplog -notmatch 'box2d 20 bodies') { $errors += 'platformer template build / player failed' }
 
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"

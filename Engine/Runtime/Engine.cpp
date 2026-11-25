@@ -16,6 +16,8 @@
 #include "Scene/GraphLibrary.h"
 #include "Scripting/DotNetHost.h"
 #include "Runtime/MaterialLibrary.h"
+#include "GameUI/GameUI.h"
+#include "Input/InputActions.h"
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
 #include "Core/Utf8Path.h"
@@ -1062,6 +1064,20 @@ void SetupShortcuts(bdg_engine* e) {
 void TogglePlay(bdg_engine* e);
 
 
+// In-game UI (7-3) over the Game view: buttons react while playing with the Game view focused.
+bdg::GameUI& GameViewUI() {
+  static bdg::GameUI ui;
+  return ui;
+}
+void DrawGameViewUI(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
+  if (!e->model) return;
+  const bdg::GameUI::Rect r{w.x, w.y, w.w, w.h};
+  const bdg::InputSystem& in = bdg::InputSystem::Instance();
+  if (e->play.Playing() && in.gameFocused) GameViewUI().Input(e->model->scene, r, in.MousePosition().x, in.MousePosition().y, in.MouseButton(1));
+  const std::string assets = e->assetsOpen ? e->assets.Root() : (std::filesystem::current_path() / "Assets").string();
+  GameViewUI().Draw(e->model->scene, ui.Batch(), e->hasFont ? &e->font : nullptr, e->rhi, r, assets);
+}
+
 // Play mode tools (queue 3-6b): pause (lights the button), one frame, the time scale field.
 void SetPlayPaused(bdg_engine* e, bool paused) {
   e->play.SetPaused(paused);
@@ -1331,7 +1347,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
         };
       }
       if (bdg::Widget* game = e->editor->Find("game")) // the scene from its camera (3-6)
-        game->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->DrawGame(w, ui, e->play.Playing() ? e->play.Time() : -1.0); };
+        game->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) {
+          e->sceneView->DrawGame(w, ui, e->play.Playing() ? e->play.Time() : -1.0);
+          DrawGameViewUI(e, w, ui); // the game's own UI over it (7-3)
+        };
       if (bdg::Widget* b = e->editor->Find("tool.play")) b->onClick = [e](bdg::Widget&) { TogglePlay(e); };
       if (bdg::Widget* b = e->editor->Find("tool.pause")) b->onClick = [e](bdg::Widget&) { SetPlayPaused(e, !e->play.Paused()); };
       if (bdg::Widget* b = e->editor->Find("tool.step")) b->onClick = [e](bdg::Widget&) { StepPlay(e); };

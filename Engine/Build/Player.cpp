@@ -9,6 +9,8 @@
 #include <bdg/bdg_api.h>
 #include "Assets/AssetDatabase.h"
 #include "Audio/Audio.h"
+#include "GameUI/GameUI.h"
+#include "Text/Font.h"
 #include "Input/GameInput.h"
 #include "Input/InputActions.h"
 #include "Build/Pak.h"
@@ -194,6 +196,22 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   window.SetSwapInterval(d.vsync ? -1 : 0);
   bdg::Batch2D batch;
   batch.Init(rhi);
+  // the game UI's font (7-3): Fonts/ next to the exe (bdg build copies it), the engine's own in a source tree
+  bdg::Font font;
+  bool haveFont = false;
+  {
+    std::vector<fs::path> tries{exeDir / "Fonts" / "Pretendard-Regular.otf"};
+    for (fs::path p = exeDir; !p.empty() && p != p.parent_path(); p = p.parent_path()) tries.push_back(p / "Assets" / "Fonts" / "Pretendard-Regular.otf");
+    tries.push_back("C:/Windows/Fonts/malgun.ttf");
+    for (const fs::path& f : tries)
+      if (fs::exists(f, ec) && font.Load(rhi, U(f).c_str())) {
+        haveFont = true;
+        batch.SetTextAtlas(font.Atlas());
+        break;
+      }
+    if (!haveFont) bdg::LogWarn("player: no font for the game UI (Fonts/Pretendard-Regular.otf)");
+  }
+  bdg::GameUI gameUi;
   auto renderer = std::make_unique<bdg::Renderer3D>();
   auto view = std::make_unique<bdg::SceneView>();
   bdg::MaterialLibrary materials;
@@ -235,6 +253,8 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   const double period = d.frameLimit > 0 ? 1000.0 / d.frameLimit : 0.0;
   int frames = 0;
   bdg::Widget area;
+  int32_t shotW = 0, shotH = 0;
+  std::vector<uint8_t> shotPixels;
   while (window.PumpEvents(0)) {
     const auto start = clock::now();
     double dt = std::chrono::duration<double>(start - last).count();
@@ -267,8 +287,19 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     batch.Begin(w, h);
     const bdg::TextureHandle img = view->GameColor();
     if (img.Valid()) batch.Image(0, 0, (float)w, (float)h, img, 0, 1, 1, 0);
+    { // the game's UI over it (7-3)
+      const bdg::GameUI::Rect r{0, 0, (float)w, (float)h};
+      const bdg::InputSystem& in = bdg::InputSystem::Instance();
+      if (in.gameFocused) gameUi.Input(model.scene, r, in.MousePosition().x, in.MousePosition().y, in.MouseButton(1));
+      gameUi.Draw(model.scene, batch, haveFont ? &font : nullptr, rhi, r, U(content / "Assets"));
+    }
     batch.End();
     rhi.EndFrame();
+    if (maxFrames > 0 && frames + 1 >= maxFrames && std::getenv("BDG_SCREENSHOT")) { // the last frame, UI included
+      shotW = w;
+      shotH = h;
+      rhi.ReadPixels(w, h, shotPixels);
+    }
     window.Present();
     ++frames;
     if (maxFrames > 0 && frames >= maxFrames) break;
@@ -277,16 +308,15 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
       if (ms < period) bdg::Window::SleepPrecise(period - ms);
     }
   }
-  bdg::LogInfo("player: {} frames, {:.2f} s of game time, {} C# behaviours, camera {}", frames, play.Time(), play.Scripts().Instances(),
-               view->GameColor().Valid() ? "yes" : "no");
-  if (const char* shot = std::getenv("BDG_SCREENSHOT")) { // the last game image (automated checks)
-    int32_t sw = 0, sh = 0;
-    std::vector<uint8_t> rgba;
-    view->ReadGamePixels(sw, sh, rgba);
-    const bool saved = sw > 0 && bdg::WritePNG(shot, sw, sh, rgba.data(), true);
-    bdg::LogInfo("player: screenshot {} {} ({}x{})", saved ? "saved" : "FAILED", shot, sw, sh);
+  bdg::LogInfo("player: {} frames, {:.2f} s of game time, {} C# behaviours, camera {}, ui elements {}", frames, play.Time(),
+               play.Scripts().Instances(), view->GameColor().Valid() ? "yes" : "no", gameUi.Elements());
+  if (const char* shot = std::getenv("BDG_SCREENSHOT")) { // the last frame as players saw it (automated checks)
+    const bool saved = shotW > 0 && shotPixels.size() >= (size_t)shotW * shotH * 4 && bdg::WritePNG(shot, shotW, shotH, shotPixels.data(), true);
+    bdg::LogInfo("player: screenshot {} {} ({}x{}), ui elements {}", saved ? "saved" : "FAILED", shot, shotW, shotH, gameUi.Elements());
   }
   play.Stop(model); // OnDisable / OnDestroy of the behaviours
+  gameUi.Shutdown(rhi);
+  if (haveFont) font.Shutdown();
   materials.Shutdown();
   view->Shutdown();
   renderer->Shutdown();

@@ -55,6 +55,42 @@
 - 같은 텍스처를 쓰는 위젯은 한 번에 배칭
 - World/Camera 위젯은 렌더 텍스처 또는 직접 메시로 그림 (위젯 수에 따라 자동 선택)
 
+## 구현 현황 — 런타임 게임 UI (7-3 런타임, 2026-11-25)
+
+디자이너·`.ui` 에셋 전에 **게임이 쓰는 화면 UI**부터: 장면 파일에 들어가는 컴포넌트 두 개와 C# 쉬운 API. 에디터의 Game 뷰와 빌드한 게임에서 똑같이 그려집니다(`Engine/GameUI/`).
+
+```jsonl
+{"id":"hud","name":"HUD","UICanvas":{}}
+{"id":"ui_score","name":"score","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[40,28],"size":[460,70],"text":"점수 0","fontSize":48,"align":"Left","color":[0,0,0,0.35]}}
+{"id":"ui_help","name":"help","parent":"hud","UIElement":{"kind":"Button","anchor":"TopRight","position":[-40,116],"size":[220,64],"text":"도움말 ?"}}
+```
+
+| 컴포넌트 | 필드 |
+|---|---|
+| **UICanvas** | `referenceSize`(배치 기준 크기, 기본 1920×1080), `matchHeight`(0 = 화면 너비, 1 = 높이에 맞춰 배율; 유니티 Canvas Scaler), `order`(높을수록 위), `visible` |
+| **UIElement** | `kind`(Panel·Text·Image·Button·ProgressBar), `anchor`(TopLeft·Top·TopRight·Left·Center·Right·BottomLeft·Bottom·BottomRight·Stretch), `position`(앵커에서의 거리, +y 아래; Stretch는 왼쪽·위 여백), `size`(Stretch는 오른쪽·아래 여백), `text`·`fontSize`·`align`·`textColor`, `color`(배경·이미지 색), `fillColor`·`value`(진행 막대 0..1), `image`(Assets 기준 PNG·JPG), `cornerRadius`, `visible`, `interactable`, `clicks`(읽기 전용: 플레이 중 클릭 수) |
+
+- 앵커 점에 요소의 같은 점이 붙습니다(TopRight 요소는 오른쪽 위 모서리가 화면 오른쪽 위에서 `position`만큼). 자식 요소는 부모 요소의 사각형 안에 배치, 보이지 않는 요소는 자식과 함께 빠집니다.
+- 글자는 엔진의 SDF 글꼴(Pretendard, 한글 포함). `bdg build`가 `Fonts/Pretendard-Regular.otf`와 OFL 라이선스를 게임 폴더에 넣고 고지문에 적습니다.
+- 버튼: 플레이 중 Game 뷰가 입력을 가질 때(빌드한 게임은 늘) 마우스를 올리면 밝게, 누르면 어둡게, **같은 버튼 위에서 누르고 떼면 클릭**(`clicks` + 1, 로그 `ui: <이름> clicked`). 위에 있는 캔버스가 먼저 받음.
+- 에디터 Game 뷰는 플레이하지 않을 때도 UI를 그려서 배치를 바로 봄.
+
+C# (`Scripting/Bidulgi.Scripting/UI.cs`, 4-4c 쉬운 API와 같은 방식 — 오브젝트 이름으로 찾고, 없으면 경고 + 아무것도 안 하는 대역):
+
+```csharp
+UI.Text("score").text = $"점수 {score}";
+UI.Bar("health").value = hp / 100f;
+if (UI.Button("restart").clicked) Restart();      // 클릭 한 번에 한 번 true
+UI.Button("help").OnClick(ToggleHelp);             // 이 Behaviour가 도는 동안 클릭마다 (끄면 같이 취소)
+UI.Image("crosshair").visible = aiming;   UI.Panel("pause").visible = paused;
+```
+
+템플릿: FPS는 점수(왼쪽 위)·탄약·무기 이름(오른쪽 아래)·조준점·라운드 끝 메시지, 2D 플랫포머는 동전·시간·도움말 버튼(패널 켜고 끔)·골 메시지 — 로그 전용이던 점수를 바꿈.
+
+검사: 단위 테스트(앵커·Stretch·중첩·배율·숨김·캔버스 순서·클릭/밖에서 떼기/비활성), `BDG_FPS_TEST`의 `hud=1`(점수 글자 "점수 0" → "점수 1"을 API로 읽고 화면 픽셀도 바뀜), `BDG_PLATFORMER_TEST`의 `button=1`(주입한 클릭 → C# OnClick → 도움말 패널 보임)·`hud=1`, 빌드한 게임 로그 `ui elements 5` / `3`(CI).
+
+**남은 것**: UI 디자이너와 `.ui` 에셋·바인딩(`bind`), Flex/Grid 레이아웃, 9-slice, Toggle·Slider·InputField·Scroll, 키보드·패드로 버튼 고르기, 월드·카메라 공간 위젯, 현지화 키(`@loc`).
+
 ## UI Designer 워크스페이스
 
 ```

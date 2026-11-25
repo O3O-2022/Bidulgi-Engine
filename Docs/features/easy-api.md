@@ -35,6 +35,7 @@
 | 씬 이동 | `await Scene.Load(Scenes.Forest, fade: 0.5f);` | `Scene::Load(...)` | `Scene.Load(Scenes.Forest)` | Load Scene |
 | 이벤트 보내기·받기 | `Events.Send(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |
 | 저장·불러오기 | `SaveGame.Save("slot1")`, `SaveGame.Load("slot1")` | 같음 | 같음 | Save / Load Game |
+| 화면 UI ([7-3](ui-widgets.md#구현-현황--런타임-게임-ui-7-3-런타임-2026-11-25)) | `UI.Text("score").text = "점수 1"`, `UI.Button("restart").clicked` | — | — | Set Text / On Click |
 | 데이터 테이블 ([4-4d](data-tables.md)) | `Data.Get<Weapon>("rifle").damage` | `Data::Get<FWeapon>("rifle")` | `Data.get("Weapons", "rifle").damage` | Get Data Row |
 | 무작위 | `Random.Range(1, 6)`, `Random.Chance(0.2f)`, `list.PickRandom()` | 같음 | `random.range(1,6)`, `random.chance(0.2)` | Random |
 | 화면 글자·디버그 | `Debug.Log("hp", hp)`, `Debug.DrawSphere(pos, 1, Color.red, 2)` | 같음 | `print("hp", hp)`, `Debug.DrawSphere(...)` | Print / Draw Debug |

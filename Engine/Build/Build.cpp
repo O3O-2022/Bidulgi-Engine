@@ -441,6 +441,7 @@ const char* kNotices =
     "xatlas - MIT License - https://github.com/jpcy/xatlas\n"
     "ufbx - MIT / public domain - https://github.com/ufbx/ufbx\n"
     "miniaudio - public domain / MIT-0 - https://miniaud.io\n"
+    "Pretendard (game UI font, Fonts/) - SIL Open Font License 1.1 - https://github.com/orioncactus/pretendard (Fonts/Pretendard-LICENSE.txt)\n"
     ".NET runtime (when the game uses C#) - MIT License - https://github.com/dotnet/runtime\n"
     "\nFull license texts: https://github.com/O3O-2022/Bidulgi-Engine/tree/main/ThirdParty\n";
 
@@ -567,6 +568,18 @@ void Build(Plan& p) {
   else if (!p.settings.description.icon.empty() && !SetExeIcon(p.res.exePath, U(p.root / P(p.settings.description.icon)), &err))
     p.Warn("아이콘", p.settings.description.icon, "실행 파일에 아이콘을 넣지 못함: " + err, "PNG 아이콘을 다시 저장해 보세요 (게임 창 아이콘은 그대로 쓰임)");
   if (FILE* f = OpenU8(U(p.out / "THIRD-PARTY-NOTICES.txt"), "wb")) { std::fputs(kNotices, f); std::fclose(f); }
+  { // the game UI's font (7-3): next to bdg.exe (the build copies it there), else the engine source tree's
+    std::vector<fs::path> dirs{P(ProgramDir()) / "Fonts"};
+    for (fs::path d = P(ProgramDir()); !d.empty() && d != d.parent_path(); d = d.parent_path()) dirs.push_back(d / "Assets" / "Fonts");
+    bool copied = false;
+    for (const fs::path& d : dirs)
+      if (fs::exists(d / "Pretendard-Regular.otf", ec)) {
+        copied = CopyFileTo(d / "Pretendard-Regular.otf", p.out / "Fonts" / "Pretendard-Regular.otf", &err);
+        if (fs::exists(d / "Pretendard-LICENSE.txt", ec)) CopyFileTo(d / "Pretendard-LICENSE.txt", p.out / "Fonts" / "Pretendard-LICENSE.txt", &err);
+        break;
+      }
+    if (!copied) p.Warn("출력", "Fonts/Pretendard-Regular.otf", "게임 UI 글꼴을 찾지 못함 (게임 화면의 글자가 시스템 글꼴로 나오거나 안 나옴)", "엔진을 다시 빌드해 bdg.exe 옆에 Fonts/가 생기게 하세요");
+  }
   step("출력");
 
   // report

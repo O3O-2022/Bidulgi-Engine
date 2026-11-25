@@ -83,6 +83,9 @@ public:
 
   // Editor routing (play mode): the Game view has the keyboard and mouse while focused (clicked or just started).
   bool gameFocused = false;
+  // The mouse as the game got it (game UI buttons, 7-3): position in the fed events' units, button 1 left 2 middle 3 right.
+  glm::vec2 MousePosition() const { return lastMouse_; }
+  bool MouseButton(int button) const { return button >= 0 && button < 4 && mouse_[button]; }
 
 private:
   float KeyValue(const std::string& key, const GamepadState& pad) const; // a button / axis source, 0..1 (sticks: magnitude)

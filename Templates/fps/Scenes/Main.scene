@@ -3,6 +3,13 @@
 {"id":"sky","name":"Sky","Sky":{}}
 {"id":"world","name":"World Settings","WorldSettings":{}}
 {"id":"rules","name":"Game Rules","ScoreKeeper":{}}
+{"id":"hud","name":"HUD","UICanvas":{}}
+{"id":"ui_score","name":"score","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[40,28],"size":[460,70],"text":"점수 0","fontSize":48,"align":"Left","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_ammo","name":"ammo","parent":"hud","UIElement":{"kind":"Text","anchor":"BottomRight","position":[-40,-28],"size":[360,70],"text":"30 / 30","fontSize":48,"align":"Right","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_weapon","name":"weapon","parent":"hud","UIElement":{"kind":"Text","anchor":"BottomRight","position":[-40,-104],"size":[360,44],"text":"Rifle","fontSize":30,"align":"Right","textColor":[1,0.85,0.5,1]}}
+{"id":"ui_cross_h","name":"crosshair","parent":"hud","UIElement":{"kind":"Panel","anchor":"Center","size":[26,3],"color":[1,1,1,0.9],"cornerRadius":1}}
+{"id":"ui_cross_v","name":"crosshair_v","parent":"hud","UIElement":{"kind":"Panel","anchor":"Center","size":[3,26],"color":[1,1,1,0.9],"cornerRadius":1}}
+{"id":"ui_message","name":"message","parent":"hud","UIElement":{"kind":"Text","anchor":"Center","position":[0,-180],"size":[1000,90],"text":"","fontSize":56,"color":[0,0,0,0.5],"cornerRadius":16,"visible":false}}
 {"id":"ground","name":"Ground","pos":[0,-0.5,0],"scale":[40,1,40],"MeshRenderer":{"mesh":"Cube","material":"bdg:Grid"},"Collider":{}}
 {"id":"wall_n","name":"Wall","pos":[0,2,-20.5],"scale":[42,4,1],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
 {"id":"wall_s","name":"Wall","pos":[0,2,20.5],"scale":[42,4,1],"MeshRenderer":{"mesh":"Cube","material":"Concrete"},"Collider":{}}
