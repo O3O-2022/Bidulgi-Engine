@@ -42,7 +42,12 @@ public class Weapon : Behaviour {
     pool.AddRange(FindAll("Bullet"));
     if (pool.Count == 0) Debug.LogWarning("Weapon: no \"Bullet\" objects in the scene (the projectile pool)");
     Debug.Log($"weapon: {data.name} — {data.magazine} rounds, {data.fireRate}/s (R = reload)");
+    UI.Text("weapon").text = data.name;
+    ShowAmmo();
   }
+
+  // HUD (bottom right): rounds left / magazine. 화면 오른쪽 아래: 남은 탄 / 탄창.
+  void ShowAmmo() => UI.Text("ammo").text = reloading ? "재장전…" : $"{ammo} / {data.magazine}";
 
   void Update() {
     cooldown -= Time.deltaTime;
@@ -64,15 +69,17 @@ public class Weapon : Behaviour {
     }
     player.Kick(data.recoilDegrees);
     Audio.Play("Audio/Shoot.wav", volume: 0.5f);
+    ShowAmmo();
   }
 
   async void Reload() {
     if (reloading || ammo == data.magazine) return;
     reloading = true;
-    Debug.Log("weapon: reloading");
+    ShowAmmo();
     await Wait(data.reloadSeconds); // cancelled if the player is destroyed / disabled 플레이어가 사라지면 취소
     ammo = data.magazine;
     reloading = false;
+    ShowAmmo();
   }
 
   // A direction inside a cone around `dir`. dir 둘레 원뿔 안의 방향.

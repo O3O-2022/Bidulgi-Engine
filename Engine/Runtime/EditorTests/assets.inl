@@ -542,10 +542,37 @@ BDG_EDITOR_TEST("BDG_AUDIO_TEST", InjectAudioTest, nullptr)
 
 
 
+// Game UI (7-3) check helpers: an element's field as JSON, and a checksum of its pixels on screen (the back buffer
+// holds the last frame while a check injects).
+std::string UiField(bdg_engine* e, const char* id, const char* field) {
+  bdg::SceneObject* o = e->model ? e->model->scene.Find(id) : nullptr;
+  bdg::Component* c = o ? o->Find("UIElement") : nullptr;
+  std::string json;
+  if (c) bdg::Registry::Get(c->data, *c->type, field, json);
+  return json;
+}
+uint64_t UiPixels(bdg_engine* e, const char* id, float scale) {
+  bdg::GameUI::Rect r;
+  if (!GameViewUI().ElementRect(id, r)) return 0;
+  int32_t w = 0, h = 0;
+  e->window.GetDrawableSize(w, h);
+  std::vector<uint8_t> px;
+  e->rhi.ReadPixels(w, h, px);
+  if (px.size() < (size_t)w * h * 4) return 0;
+  const int x0 = std::clamp((int)(r.x * scale), 0, w), x1 = std::clamp((int)((r.x + r.w) * scale), 0, w);
+  const int y0 = std::clamp((int)(r.y * scale), 0, h), y1 = std::clamp((int)((r.y + r.h) * scale), 0, h);
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  for (int y = y0; y < y1; ++y) // rows are bottom-up
+    for (int x = x0; x < x1; ++x)
+      for (int k = 0; k < 3; ++k) { hash ^= px[((size_t)(h - 1 - y) * w + x) * 4 + k]; hash *= 0x100000001b3ULL; }
+  return hash;
+}
+
 // Scripted check of the FPS template (BDG_FPS_TEST=1, run in a project made by `bdg new <dir> --template fps` with
 // that folder as the working folder and BDG_ASSETS=<dir>/Assets): Play, then input injected through the focused Game
 // view — W walks the player toward the first target, Space jumps, once landed a left click fires a physics bullet
 // that hits the target (it is knocked away and the score in the log goes up), a mouse move turns the head; Stop.
+// The HUD (7-3): the score element's text goes from "점수 0" to "점수 1" and its pixels on screen change.
 // Run with --frames 150 (the shot waits for the landing).
 void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   bdg::EditorModel* m = e->model.get();
@@ -555,6 +582,8 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
   static float z0 = 0, z1 = 0, y0 = 0, yMax = -1e9f, yaw0 = 0, yaw1 = 0;
   static bdg::Vec3 target0{};
   static bool targetMoved = false, playing = false;
+  static std::string hudBefore, hudAfter;
+  static uint64_t pixBefore = 0, pixAfter = 0;
   auto key = [&](bdg::Key k, bool down) {
     bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
     ev.key = k;
@@ -589,6 +618,8 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
     if (const auto* t = transform("player"); t && ((frame > 44 && std::fabs(t->position.y - lastY) < 0.002f && t->position.y < y0 + 0.2f) || frame >= 110)) {
       fired = frame;
       z1 = t->position.z;
+      hudBefore = UiField(e, "ui_score", "text");
+      pixBefore = UiPixels(e, "ui_score", scale);
       e->window.InjectEvent({T::MouseMove, gx * scale, gy * scale, 0});
       e->window.InjectEvent({T::MouseDown, gx * scale, gy * scale, 1});
     }
@@ -599,6 +630,8 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
     targetMoved = !t || glm::length(glm::vec3(t->position.x - target0.x, t->position.y - target0.y, t->position.z - target0.z)) > 0.05f;
     if (const auto* h = transform("head")) yaw0 = h->rotation.y;
     e->window.InjectEvent({T::MouseMove, (gx + 40) * scale, gy * scale, 0});
+    hudAfter = UiField(e, "ui_score", "text");
+    pixAfter = UiPixels(e, "ui_score", scale);
   }
   if (fired && frame == fired + 24)
     if (const auto* h = transform("head")) yaw1 = h->rotation.y;
@@ -607,9 +640,10 @@ void InjectFpsTest(bdg_engine* e, int frame, float scale) {
     bdg::SetLogHook({});
     const bool moved = z0 - z1 > 1.0f, jumped = yMax - y0 > 0.4f, hit = score.find("score: 1 (+1 Target)") != std::string::npos ||
                                                                          score.find("score: 1 ") != std::string::npos;
-    bdg::LogInfo("fps test: play={} moved={} jumped={} hit={} pushed={} look={} (z {:.2f} -> {:.2f}, jump {:.2f} m, shot at frame {}, yaw {:.1f} -> {:.1f}, last \"{}\")",
-                 playing ? 1 : 0, moved ? 1 : 0, jumped ? 1 : 0, hit ? 1 : 0, targetMoved ? 1 : 0, std::fabs(yaw1 - yaw0) > 1 ? 1 : 0, z0, z1,
-                 yMax - y0, fired, yaw0, yaw1, score);
+    const bool hud = hudBefore == "\"점수 0\"" && hudAfter == "\"점수 1\"" && pixBefore != 0 && pixAfter != 0 && pixBefore != pixAfter;
+    bdg::LogInfo("fps test: play={} moved={} jumped={} hit={} pushed={} look={} hud={} (z {:.2f} -> {:.2f}, jump {:.2f} m, shot at frame {}, yaw {:.1f} -> {:.1f}, hud {} -> {}, last \"{}\")",
+                 playing ? 1 : 0, moved ? 1 : 0, jumped ? 1 : 0, hit ? 1 : 0, targetMoved ? 1 : 0, std::fabs(yaw1 - yaw0) > 1 ? 1 : 0, hud ? 1 : 0, z0, z1,
+                 yMax - y0, fired, yaw0, yaw1, hudBefore, hudAfter, score);
   }
 }
 BDG_EDITOR_TEST("BDG_FPS_TEST", InjectFpsTest, nullptr)
@@ -617,13 +651,15 @@ BDG_EDITOR_TEST("BDG_FPS_TEST", InjectFpsTest, nullptr)
 
 // Scripted check of the 2D platformer template (BDG_PLATFORMER_TEST=1, run in a project made by `bdg new <dir>
 // --template platformer2d` with that folder as the working folder): Play, D held runs the hero right on Box2D and
-// through the first two coins (triggers: the coin count in the log goes up), then Space jumps, the camera follows; Stop.
-void InjectPlatformerTest(bdg_engine* e, int frame, float) {
+// through the first two coins (triggers: the coin count in the log goes up), then Space jumps, the camera follows;
+// then a click on the HUD's help button (7-3) reaches C# (GameRules shows the help panel); Stop.
+void InjectPlatformerTest(bdg_engine* e, int frame, float scale) {
   bdg::EditorModel* m = e->model.get();
   if (!m) return;
   using T = bdg::InputEvent::Type;
-  static std::string coins;
+  static std::string coins, help, coinsHud;
   static float x0 = 0, x1 = 0, y0 = 0, yMax = -1e9f, cam0 = 0, cam1 = 0;
+  static bool panelBefore = true, panelAfter = false;
   auto key = [&](bdg::Key k, bool down) {
     bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
     ev.key = k;
@@ -636,7 +672,10 @@ void InjectPlatformerTest(bdg_engine* e, int frame, float) {
   };
   if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
   if (frame == 2) {
-    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("coins: ", 0) == 0) coins = l; });
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) {
+      if (l.rfind("coins: ", 0) == 0) coins = l;
+      if (l.rfind("platformer: help", 0) == 0) help = l;
+    });
     TogglePlay(e);
   }
   if (frame == 8) {
@@ -657,12 +696,25 @@ void InjectPlatformerTest(bdg_engine* e, int frame, float) {
     x1 = pos("hero").x;
     cam1 = pos("camera").x;
   }
-  if (frame == 62) TogglePlay(e);
-  if (frame == 64) {
+  bdg::GameUI::Rect hb;
+  if (frame == 62 && GameViewUI().ElementRect("ui_help", hb)) { // click the help button (UI units -> window pixels)
+    panelBefore = UiField(e, "ui_helppanel", "visible") == "true";
+    coinsHud = UiField(e, "ui_coins", "text");
+    const float cx = (hb.x + hb.w * 0.5f) * scale, cy = (hb.y + hb.h * 0.5f) * scale;
+    e->window.InjectEvent({T::MouseMove, cx, cy, 0});
+    e->window.InjectEvent({T::MouseDown, cx, cy, 1});
+  }
+  if (frame == 64 && GameViewUI().ElementRect("ui_help", hb))
+    e->window.InjectEvent({T::MouseUp, (hb.x + hb.w * 0.5f) * scale, (hb.y + hb.h * 0.5f) * scale, 1});
+  if (frame == 68) panelAfter = UiField(e, "ui_helppanel", "visible") == "true";
+  if (frame == 70) TogglePlay(e);
+  if (frame == 72) {
     bdg::SetLogHook({});
     const int count = coins.size() > 7 ? std::atoi(coins.c_str() + 7) : 0;
-    bdg::LogInfo("platformer test: ran={} jumped={} coins={} camera={} (x {:.2f} -> {:.2f}, jump {:.2f} m, camera {:.2f} -> {:.2f}, last \"{}\")",
-                 x1 - x0 > 2 ? 1 : 0, yMax - y0 > 1 ? 1 : 0, count >= 2 ? 1 : 0, cam1 - cam0 > 0.5f ? 1 : 0, x0, x1, yMax - y0, cam0, cam1, coins);
+    const bool button = !panelBefore && panelAfter && help.find("shown") != std::string::npos && GameViewUI().Clicks() >= 1;
+    bdg::LogInfo("platformer test: ran={} jumped={} coins={} camera={} button={} hud={} (x {:.2f} -> {:.2f}, jump {:.2f} m, camera {:.2f} -> {:.2f}, hud {}, last \"{}\")",
+                 x1 - x0 > 2 ? 1 : 0, yMax - y0 > 1 ? 1 : 0, count >= 2 ? 1 : 0, cam1 - cam0 > 0.5f ? 1 : 0, button ? 1 : 0,
+                 coinsHud == "\"동전 2 / 8\"" ? 1 : 0, x0, x1, yMax - y0, cam0, cam1, coinsHud, coins);
   }
 }
 BDG_EDITOR_TEST("BDG_PLATFORMER_TEST", InjectPlatformerTest, nullptr)

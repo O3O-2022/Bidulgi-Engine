@@ -194,6 +194,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Scene/Prefab.h Engine/Scene/Prefab.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp
   Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
+  Engine/GameUI/GameUI.h Engine/GameUI/GameUI.cpp Engine/GameUI/GameUIComponents.h
   Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Templates.h Engine/Build/Templates.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
   Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
@@ -232,7 +233,7 @@ add_library(BidulgiEngine STATIC
   Engine/Physics/Physics.h Engine/Physics/PhysicsJolt.cpp Engine/Physics/PhysicsBox2D.cpp Engine/Physics/PhysicsWorld.h Engine/Physics/PhysicsWorld.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
-bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h)
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h Engine/GameUI/GameUIComponents.h)
 target_link_libraries(BidulgiEngine PRIVATE libzstd_static miniaudio SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx Jolt box2d glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
@@ -271,7 +272,9 @@ add_custom_command(TARGET BidulgiPlayer POST_BUILD
 # game templates (bdg new --template fps): next to bdg.exe in the build folder and in Bin/
 add_custom_command(TARGET bdg POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Templates $<TARGET_FILE_DIR:bdg>/Templates
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Templates ${CMAKE_SOURCE_DIR}/Bin/Templates)
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Templates ${CMAKE_SOURCE_DIR}/Bin/Templates
+  # the game UI font (7-3): bdg build ships it with the game
+  COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/Assets/Fonts $<TARGET_FILE_DIR:bdg>/Fonts)
 
 # ---- C# scripting (queue 4-1): Bidulgi.Scripting.dll into <exe folder>/Managed ----
 # The component classes come from reflection: bdg writes Bindings.g.cs, then `dotnet build` compiles the assembly.
@@ -322,7 +325,7 @@ endif()
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/GameUITests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 add_dependencies(BidulgiTests BidulgiPlayer) # the 7-4 build test packs the player exe found next to the tests
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)

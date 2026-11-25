@@ -3,6 +3,12 @@
 {"id":"sky","name":"Sky","Sky":{}}
 {"id":"world","name":"World Settings","WorldSettings":{}}
 {"id":"rules","name":"Game Rules","GameRules":{}}
+{"id":"hud","name":"HUD","UICanvas":{}}
+{"id":"ui_coins","name":"coins","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[40,28],"size":[420,70],"text":"동전 0 / 8","fontSize":46,"align":"Left","textColor":[1,0.85,0.3,1],"color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_time","name":"time","parent":"hud","UIElement":{"kind":"Text","anchor":"TopRight","position":[-40,28],"size":[260,70],"text":"0.0 초","fontSize":46,"align":"Right","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_help","name":"help","parent":"hud","UIElement":{"kind":"Button","anchor":"TopRight","position":[-40,116],"size":[220,64],"text":"도움말 ?","fontSize":34}}
+{"id":"ui_helppanel","name":"helpPanel","parent":"hud","UIElement":{"kind":"Panel","anchor":"Center","size":[820,330],"color":[0.05,0.06,0.09,0.85],"cornerRadius":20,"fontSize":38,"text":"A / D · ← → : 이동\nSpace : 점프 (길게 누르면 높이)\nShift : 달리기\n동전을 모아 오른쪽 깃발까지!","visible":false}}
+{"id":"ui_message","name":"message","parent":"hud","UIElement":{"kind":"Text","anchor":"Center","position":[0,-200],"size":[1100,90],"text":"","fontSize":54,"color":[0,0,0,0.5],"cornerRadius":16,"visible":false}}
 {"id":"camera","name":"Main Camera","pos":[0,3,14],"rot":[-6,0,0],"Camera":{"fov":45},"AudioListener":{},"CameraFollow":{}}
 {"id":"hero","name":"Hero","pos":[0,1,0],"scale":[0.8,1.6,0.8],"MeshRenderer":{"mesh":"Cube","material":"Hero"},"Rigidbody2D":{"freezeRotation":true},"Collider2D":{},"PhysicsMaterial":{"friction":0},"PlatformerController":{}}
 {"id":"ground1","name":"Ground","pos":[3.5,-3,0],"scale":[17,6,2],"MeshRenderer":{"mesh":"Cube","material":"Grass"},"Collider2D":{}}
