@@ -52,7 +52,7 @@ struct Contact {
   glm::vec3 point{0}, normal{0}; // world; normal from a to b (begin only)
 };
 
-// 7-1b: the first surface along a ray.
+// The first surface along a ray (7-1b foot IK, 6-5b scripts' Raycast).
 struct RayHit {
   uint64_t user = 0;       // BodyDesc::user of the body hit
   glm::vec3 point{0}, normal{0};
@@ -90,12 +90,18 @@ public:
   virtual const std::vector<Contact>& Contacts() const = 0; // of the last Step
   virtual size_t Bodies() const = 0;
   virtual float Volume(BodyId id) const = 0; // of the collision shape (m^3; 2D: m^2): Collider Auto error
-  // 7-1b: the nearest solid surface along origin + t * direction (t <= maxDistance), skipping triggers and bodies whose
-  // user value is in `ignore`. false: nothing hit (or the backend has no ray queries).
-  virtual bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayHit& hit,
+  // The nearest surface along origin + t * direction (t <= maxDistance), skipping bodies whose user value is in
+  // `ignore`; triggers only with hitTriggers (7-1b, 6-5b). 2D: the XY plane (z ignored). false: nothing hit (or the
+  // backend has no ray queries). hit.user is the body's BodyDesc::user.
+  virtual bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit,
                        const std::vector<uint64_t>& ignore = {}) const {
-    (void)origin, (void)direction, (void)maxDistance, (void)hit, (void)ignore;
+    (void)origin, (void)direction, (void)maxDistance, (void)hitTriggers, (void)hit, (void)ignore;
     return false;
+  }
+  // Bodies whose shape is inside or touches the sphere (2D: circle), as BodyDesc::user values, in no particular order
+  // (may repeat a body) (6-5b).
+  virtual void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const {
+    (void)center, (void)radius, (void)hitTriggers, (void)users;
   }
   virtual JointId AddJoint(const JointDesc& desc) { (void)desc; return 0xFFFFFFFFu; }
   virtual void RemoveJoint(JointId id) { (void)id; }

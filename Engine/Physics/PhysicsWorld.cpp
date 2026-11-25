@@ -421,22 +421,44 @@ void PhysicsWorld::WriteBack(Scene& scene, Body& b) {
 }
 
 bool PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
-                           const std::vector<std::string>& ignore) const {
-  if (!active_ || !jolt_) return false;
-  std::vector<uint64_t> skip;
+                           const std::vector<std::string>& ignore, bool hitTriggers) const {
+  if (!active_) return false;
+  std::vector<uint64_t> skip; // user values: body index + 1, ragdoll bones kRagdollUser + ragdoll
   for (size_t i = 0; i < bodies_.size(); ++i)
-    if (!bodies_[i].is2D && std::find(ignore.begin(), ignore.end(), bodies_[i].object) != ignore.end()) skip.push_back(i + 1);
+    if (std::find(ignore.begin(), ignore.end(), bodies_[i].object) != ignore.end()) skip.push_back(i + 1);
   for (size_t i = 0; i < ragdolls_.size(); ++i)
     if (std::find(ignore.begin(), ignore.end(), ragdolls_[i].object) != ignore.end()) skip.push_back(kRagdollUser + i);
-  phys::RayHit h;
-  if (!jolt_->Raycast(origin, direction, maxDistance, h, skip)) return false;
-  hit.point = h.point;
-  hit.normal = h.normal;
-  hit.distance = h.distance;
-  hit.object.clear();
-  if (h.user >= 1 && h.user <= bodies_.size()) hit.object = bodies_[h.user - 1].object;
-  else if (h.user >= kRagdollUser && h.user - kRagdollUser < ragdolls_.size()) hit.object = ragdolls_[h.user - kRagdollUser].object;
-  return true;
+  bool found = false;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()}) {
+    phys::RayHit h;
+    if (!be || !be->Raycast(origin, direction, maxDistance, hitTriggers, h, skip)) continue;
+    if (found && h.distance >= hit.distance) continue;
+    std::string object = ObjectOfUser(h.user);
+    if (object.empty()) continue;
+    hit = {std::move(object), h.point, h.normal, h.distance};
+    found = true;
+  }
+  return found;
+}
+
+std::string PhysicsWorld::ObjectOfUser(uint64_t user) const {
+  if (user >= 1 && user <= bodies_.size()) return bodies_[user - 1].object;
+  if (user >= kRagdollUser && user - kRagdollUser < ragdolls_.size()) return ragdolls_[user - kRagdollUser].object;
+  return {};
+}
+
+std::vector<std::string> PhysicsWorld::OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers) const {
+  std::vector<uint64_t> users;
+  for (const phys::Backend* be : {jolt_.get(), box2d_.get()})
+    if (be) be->OverlapSphere(center, radius, hitTriggers, users);
+  std::sort(users.begin(), users.end());
+  users.erase(std::unique(users.begin(), users.end()), users.end());
+  std::vector<std::string> out;
+  for (uint64_t u : users) {
+    std::string object = ObjectOfUser(u);
+    if (!object.empty() && std::find(out.begin(), out.end(), object) == out.end()) out.push_back(std::move(object));
+  }
+  return out;
 }
 
 int PhysicsWorld::AddRagdoll(const std::string& object, const std::vector<RagdollBone>& bones, const glm::vec3& velocity) {

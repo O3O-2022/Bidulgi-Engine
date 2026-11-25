@@ -543,7 +543,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=12 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=13 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
@@ -551,6 +551,21 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_EASYAPI_TEST = '1' } 75
           if ($log -notmatch 'easy probe: get=1 find=1 spawn=1 nearest=1 destroy=1 after=1 every=1 wait=1 tween=1 random=1') { $errors += 'C# easy API test failed' }
           if ($log -notmatch 'easy api test: restored=1 instances=0') { $errors += 'C# easy API test: play mode did not clean up' }
+          # 6-5b game API: C# GameApiProbe saves (Vector3, list, Korean text) to the save folder, the second Play reads
+          # it back; event bus (name, value, type, Off, a destroyed listener), Raycast / OverlapSphere on static boxes,
+          # Vfx.Play (12 sparks spawn, then the one-shot is gone); the slot file is versioned JSON
+          $ga = Join-Path $env:RUNNER_TEMP 'bdg-gameapi'
+          Remove-Item -Recurse -Force $ga -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$ga/Assets", "$ga/Saves" | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_GAMEAPI_TEST = '1'; BDG_ASSETS = "$ga/Assets"; BDG_SAVE_DIR = "$ga/Saves" } 200
+          if ($log -notmatch 'game api test: save=1 events=1 raycast=1 overlap=1 vfx=1 restored=1 file=1') { $errors += 'game API test (saves, events, raycast, vfx) failed' }
+          # 6-VFX P-1 particles: a ParticleSystem flame in front of the game camera: live count = rate x time, then rate x
+          # lifetime, particles die, the Game view is brighter with them (pixels); a 3000 burst is cut to 500 at potato,
+          # whole at ultra; Stop clears all
+          New-Item -ItemType Directory -Force "$ga/VfxAssets" | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_VFX_TEST = '1'; BDG_ASSETS = "$ga/VfxAssets" } 150
+          if ($log -notmatch 'vfx test: count=1 render=1 tiers=1 cleared=1') { $errors += 'particle (VFX) test failed' }
+          if ($log -match '(vfx test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 4-6b async waits: game time (paused = no progress), cancelled on delete / disable / self-destroy, back on the game thread
           $log = Invoke-Editor 'Release' @{ BDG_AWAIT_TEST = '1' } 70
           if ($log -notmatch 'await test: pause=1 deleted=1 disabled=1 timed=1 self=1 errors=0') { $errors += 'C# await test failed' }
@@ -640,8 +655,9 @@ jobs:
           if ($p.ExitCode -ne 0 -or $plog -notmatch 'player: 90 frames, 1.50 s of game time, 2 C# behaviours, camera yes' -or $plog -notmatch 'probe: box .*update=90') { $errors += 'built game player failed' }
 
           # FPS template: bdg new --template fps (C# built by dotnet) -> the editor plays it in that folder with injected
-          # input (walk, jump, shoot the first target: hit, pushed, score 1, look; the HUD score text and pixels change)
-          # -> bdg build -> the built game runs it with its HUD (game UI, 7-3)
+          # input (walk, jump, shoot the first target: hit, pushed, score 1, look; the HUD score text and pixels change;
+          # sparks fly, the best score 1 is saved to the default save folder %APPDATA%/My Studio/Range Test/Saves)
+          # -> bdg build -> the built game runs it with its HUD and starts with the saved best score (6-5b)
           $fps = Join-Path $env:RUNNER_TEMP 'bdg-fps'
           Remove-Item -Recurse -Force $fps -ErrorAction SilentlyContinue
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $fps --template fps --name 'Range Test' | Out-String | Write-Host
@@ -651,7 +667,9 @@ jobs:
           Remove-Item Env:BDG_FPS_TEST
           $flog = Get-Content "$fps/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- fps template in the editor (exit $($p.ExitCode))"; Write-Host $flog
-          if ($p.ExitCode -ne 0 -or $flog -notmatch 'fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1 hud=1') { $errors += 'fps template play test failed' }
+          if ($p.ExitCode -ne 0 -or $flog -notmatch 'fps test: play=1 moved=1 jumped=1 hit=1 pushed=1 look=1 hud=1 sparks=1 best=1') { $errors += 'fps template play test failed' }
+          $fpsSave = "$env:APPDATA/My Studio/Range Test/Saves/main.save.json"
+          if (-not (Test-Path $fpsSave) -or (Get-Content $fpsSave -Raw -Encoding utf8) -notmatch '"format":"bidulgi-save","version":1,"game":"Range Test".*"data":\{"best":1\}') { $errors += 'fps template: the best score is not in the default save folder' }
           Push-Location $fps
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
           $fpsBuild = $LASTEXITCODE
@@ -662,7 +680,9 @@ jobs:
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_AUDIO_NULL
           $fplog = Get-Content "$fps/Builds/Windows-Development/Bidulgi.log" -Raw -Encoding utf8
           Write-Host "----- built fps game (exit $($p.ExitCode))"; Write-Host $fplog
-          if ($fpsBuild -ne 0 -or $p.ExitCode -ne 0 -or $fplog -notmatch 'player: 120 frames, 2.00 s of game time, 20 C# behaviours, camera yes, ui elements 5' -or $fplog -notmatch 'physics: jolt 31 bodies') { $errors += 'fps template build / player failed' }
+          if ($fpsBuild -ne 0 -or $p.ExitCode -ne 0 -or $fplog -notmatch 'player: 120 frames, 2.00 s of game time, 20 C# behaviours, camera yes, ui elements 6' -or $fplog -notmatch 'physics: jolt 31 bodies') { $errors += 'fps template build / player failed' }
+          if ($fplog -notmatch 'best score: 1') { $errors += 'fps template: the built game did not load the best score the editor run saved' }
+          Remove-Item -Recurse -Force "$env:APPDATA/My Studio/Range Test" -ErrorAction SilentlyContinue
           # 2D platformer template: Box2D hero runs right through two coins, jumps, the camera follows, a click on the HUD's
           # help button reaches C#; build and run it (HUD in the built game)
           $plat = Join-Path $env:RUNNER_TEMP 'bdg-platformer'

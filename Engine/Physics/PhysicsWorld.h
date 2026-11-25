@@ -49,11 +49,14 @@ public:
   // whichever the object does not have yet; 2D objects (with a Rigidbody2D or Collider2D) get the 2D pair.
   static std::vector<Command> AddPhysicsCommands(const Scene& scene, const std::string& id);
 
-  // 7-1b: the first solid surface along a ray in the 3D world (foot IK, cameras, scripts), skipping the bodies of the
-  // objects in `ignore` (an object's own capsule, its ragdoll) and triggers.
+  // Scene queries by object id (7-1b foot IK and cameras, 6-5b scripts' Raycast / OverlapSphere). Raycast: the first
+  // surface along the ray, skipping the bodies of the objects in `ignore` (an object's own capsule, its ragdoll) and
+  // triggers unless hitTriggers; the 3D world and the 2D one (XY plane) are both asked, the nearest hit wins.
+  // OverlapSphere: objects with a body inside or touching the sphere, each once. Bodies are where the last step left them.
   struct RayResult { std::string object; glm::vec3 point{0}, normal{0}; float distance = 0; };
   bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayResult& hit,
-               const std::vector<std::string>& ignore = {}) const;
+               const std::vector<std::string>& ignore = {}, bool hitTriggers = false) const;
+  std::vector<std::string> OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers = false) const;
   // 7-1b ragdolls: one dynamic capsule per bone (world space at creation), bones of one ragdoll do not collide with
   // each other, joints (swing cone + twist) between each bone and its parent bone. Returns a handle (-1: failed).
   struct RagdollBone {
@@ -83,6 +86,7 @@ private:
     glm::vec3 scale{1};
   };
   bool MakeBody(Scene& scene, const std::string& id, bool is2D);
+  std::string ObjectOfUser(uint64_t user) const; // a body's object id from its BodyDesc::user ("" = none)
   void WriteBack(Scene& scene, Body& b);
   std::unique_ptr<phys::Backend> jolt_, box2d_;
   std::vector<Body> bodies_;
