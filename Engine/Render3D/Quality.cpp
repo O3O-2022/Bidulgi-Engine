@@ -125,6 +125,18 @@ const char* TierKey(QualityTier t) {
 
 const char* TierLabel(QualityTier t) {
   switch (t) {
+    case QualityTier::Potato: return "최소";
+    case QualityTier::Low: return "낮음";
+    case QualityTier::Medium: return "보통";
+    case QualityTier::High: return "높음";
+    case QualityTier::Ultra: return "최고";
+  }
+  return "보통";
+}
+
+// Labels before 2026-11-25 ("감자" .. "초고사양"): still read from settings files and the command line.
+static const char* OldTierLabel(QualityTier t) {
+  switch (t) {
     case QualityTier::Potato: return "감자";
     case QualityTier::Low: return "저사양";
     case QualityTier::Medium: return "중사양";
@@ -134,9 +146,22 @@ const char* TierLabel(QualityTier t) {
   return "중사양";
 }
 
+// What the tier draws and the hardware it is meant for. The top tier is this engine's best today (no ray tracing),
+// about a "high" preset in current PC games, so it is not called "ultra" in the UI.
+const char* TierHint(QualityTier t) {
+  switch (t) {
+    case QualityTier::Potato: return "최소: 조명 없이 색만, 그림자 없음 — 아주 오래된 기기, 가장 가벼움";
+    case QualityTier::Low: return "낮음: 정점 조명, 바닥 그림자 점 — 저가 휴대폰, 오래된 내장 그래픽";
+    case QualityTier::Medium: return "보통: 픽셀 조명, 해 그림자, FXAA — 내장 그래픽(Iris Xe, Radeon 680M급)";
+    case QualityTier::High: return "높음: 그림자 캐스케이드, SSAO, SSR, 볼류메트릭 포그, 실시간 GI, MSAA 4x — GTX 1060급";
+    case QualityTier::Ultra: return "최고: 높음 + TAA, 더 많은 광원·그림자, 더 촘촘한 포그·GI, 시야 거리 1.25배 — RTX 2060급 이상";
+  }
+  return "";
+}
+
 bool TierFromString(std::string_view s, QualityTier& out) {
   for (QualityTier t : {QualityTier::Potato, QualityTier::Low, QualityTier::Medium, QualityTier::High, QualityTier::Ultra})
-    if (s == TierKey(t) || s == TierLabel(t)) { out = t; return true; }
+    if (s == TierKey(t) || s == TierLabel(t) || s == OldTierLabel(t)) { out = t; return true; }
   return false;
 }
 
