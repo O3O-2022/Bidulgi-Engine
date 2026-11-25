@@ -563,6 +563,11 @@ jobs:
           $val = (& $bdg validate) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $val -notmatch '통과') { $errors += 'bdg validate failed on a valid scene' }
           if (Test-Path 'Bidulgi.log') { $errors += 'bdg wrote Bidulgi.log into the project' }
+          # AI-1 `bdg shot`: the editor renders the scene, the picture path is printed; a camera; a missing scene fails
+          $shot = (& $bdg shot --camera '30,-20,8' --frames 12) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $shot -notmatch 'Main\.png' -or -not (Test-Path (Join-Path $cli '게임/.cache/shots/Main.png'))) { $errors += "bdg shot failed: $shot" }
+          & $bdg shot Nope 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 1) { $errors += 'bdg shot did not fail on a missing scene' }
           Pop-Location
 
           # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)

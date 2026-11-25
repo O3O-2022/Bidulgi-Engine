@@ -16,6 +16,11 @@
 #include "Build/Build.h"
 #include "Build/Templates.h"
 #include <yyjson.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -670,6 +675,106 @@ int CmdNew(Ctx& c) {
   return 0;
 }
 
+// AI-1: `bdg shot` - the editor opened on a scene, pictures written, the paths printed. The editor exe next to bdg
+// renders (bdg has no GPU context); existing switches do the work: BDG_SCREENSHOT (the whole editor window on the
+// last frame), BDG_SCENE_CAMERA (the Scene view camera), BDG_RENDER_COMPARE (one picture of the Scene view per camera
+// bookmark), BDG_QUALITY (tier).
+fs::path SelfDir() {
+#ifdef _WIN32
+  wchar_t buf[MAX_PATH * 4];
+  const DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)std::size(buf));
+  if (n > 0 && n < std::size(buf)) return fs::path(std::wstring(buf, n)).parent_path();
+#endif
+  return fs::current_path();
+}
+
+// Runs exe in dir with extra environment variables; waits up to timeoutSec. Returns the exit code (-1: not started,
+// -2: timed out and stopped).
+int RunWithEnv(const fs::path& exe, const std::vector<std::string>& args, const fs::path& dir,
+               const std::vector<std::pair<std::string, std::string>>& env, int timeoutSec) {
+#ifdef _WIN32
+  struct Saved { std::wstring key, value; bool had; };
+  std::vector<Saved> saved;
+  for (const auto& [k, v] : env) {
+    const std::wstring wk = U8(k).wstring();
+    wchar_t old[4096];
+    const DWORD n = GetEnvironmentVariableW(wk.c_str(), old, (DWORD)std::size(old));
+    const bool had = n > 0 && n < std::size(old);
+    saved.push_back({wk, had ? std::wstring(old, n) : std::wstring(), had});
+    SetEnvironmentVariableW(wk.c_str(), U8(v).wstring().c_str());
+  }
+  std::wstring cmd = L"\"" + exe.wstring() + L"\"";
+  for (const std::string& a : args) cmd += L" \"" + U8(a).wstring() + L"\"";
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi{};
+  const BOOL ok = CreateProcessW(exe.wstring().c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                                 dir.wstring().c_str(), &si, &pi);
+  for (const Saved& sv : saved) SetEnvironmentVariableW(sv.key.c_str(), sv.had ? sv.value.c_str() : nullptr);
+  if (!ok) return -1;
+  int code = -2;
+  if (WaitForSingleObject(pi.hProcess, (DWORD)timeoutSec * 1000) == WAIT_OBJECT_0) {
+    DWORD c = 0;
+    GetExitCodeProcess(pi.hProcess, &c);
+    code = (int)c;
+  } else {
+    TerminateProcess(pi.hProcess, 1);
+  }
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  return code;
+#else
+  (void)exe, (void)args, (void)dir, (void)env, (void)timeoutSec;
+  return -1;
+#endif
+}
+
+int CmdShot(Ctx& c) {
+  const fs::path root = ProjectRoot(c);
+  const fs::path scene = ScenePath(c, root, c.pos.empty() ? std::string() : c.pos[0]);
+  std::error_code ec;
+  if (!fs::exists(scene, ec)) { c.err += std::format("오류: 장면이 없음: {}\n", Utf8(scene)); return 1; }
+  const fs::path editor = SelfDir() / "BidulgiEditor.exe";
+  if (!fs::exists(editor, ec)) { c.err += std::format("오류: 에디터를 찾지 못함: {} (bdg.exe 옆)\n", Utf8(editor)); return 1; }
+  const bool bookmarks = c.Has("bookmarks");
+  const std::string outOpt = c.Opt("out");
+  const fs::path out = outOpt.empty() ? root / ".cache" / "shots" : (U8(outOpt).is_absolute() ? U8(outOpt) : c.cwd / U8(outOpt));
+  fs::create_directories(out, ec);
+  std::vector<std::pair<std::string, std::string>> env{{"BDG_SCENE_FILE", Utf8(scene)}};
+  if (fs::exists(root / "Assets", ec)) env.push_back({"BDG_ASSETS", Utf8(root / "Assets")});
+  if (!c.Opt("quality").empty()) env.push_back({"BDG_QUALITY", c.Opt("quality")});
+  if (!c.Opt("camera").empty()) env.push_back({"BDG_SCENE_CAMERA", c.Opt("camera")});
+  if (!c.Opt("set").empty()) env.push_back({"BDG_QUALITY_SET", c.Opt("set")});
+  const fs::path base = root / ".cache" / "shot-base";
+  const fs::path picture = out / U8(Utf8(scene.stem()) + ".png");
+  const int frames = std::atoi(c.Opt("frames", bookmarks ? "44" : "30").c_str());
+  if (bookmarks) {
+    fs::remove_all(base, ec); // fresh baselines each time: every bookmark gets a picture
+    for (int slot = 1; slot <= 9; ++slot) fs::remove(out / std::format("{}.png", slot), ec);
+    env.push_back({"BDG_RENDER_COMPARE", Utf8(base)});
+    env.push_back({"BDG_COMPARE_OUT", Utf8(out)});
+  } else {
+    fs::remove(picture, ec);
+    env.push_back({"BDG_SCREENSHOT", Utf8(picture)});
+  }
+  const int code = RunWithEnv(editor, {"--frames", std::to_string(std::max(frames, 6))}, root, env, 300);
+  if (bookmarks) fs::remove_all(base, ec);
+  if (code != 0) { c.err += std::format("오류: 에디터가 코드 {}로 끝남 (로그: {})\n", code, Utf8(root / "Bidulgi.log")); return 1; }
+  std::vector<std::string> files;
+  if (bookmarks) {
+    for (int slot = 1; slot <= 9; ++slot)
+      if (fs::exists(out / std::format("{}.png", slot), ec)) files.push_back(Utf8(out / std::format("{}.png", slot)));
+    if (files.empty()) { c.err += "오류: 카메라 북마크가 없음 (장면에 CameraBookmark를 넣거나 --bookmarks 없이)\n"; return 1; }
+  } else if (fs::exists(picture, ec)) {
+    files.push_back(Utf8(picture));
+  } else {
+    c.err += std::format("오류: 사진이 저장되지 않음 (로그: {})\n", Utf8(root / "Bidulgi.log"));
+    return 1;
+  }
+  for (const std::string& f : files) c.out += f + "\n";
+  return 0;
+}
+
 const char* kHelp =
     "bdg — 비둘기 엔진 명령줄 (에디터와 같은 명령 버스)\n"
     "  new <dir> [--template basic3d|empty|fps|platformer2d|thirdperson] [--name 게임 이름]   (fps, platformer2d, thirdperson = 바로 할 수 있는 게임 템플릿)\n"
@@ -681,9 +786,12 @@ const char* kHelp =
     "  table import <csv> [out] | export <table.jsonl> [out] | check <file>  (데이터 테이블)\n"
     "  build [--check] [--out <dir>] [--config Debug|Development|Shipping] [--zip] [--scripts a.dll;b.dll]  (게임 빌드)\n"
     "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
-    "공통: --project <dir> --scene <이름 또는 경로>\n";
+    "  shot [scene] [--bookmarks] [--camera yaw,pitch,dist[,x,y,z]] [--quality 최소|낮음|보통|높음|최고] [--out <dir>] [--frames N]  (장면 사진, 파일 경로 출력)\n"
+    "공통: --project <dir> --scene <이름 또는 경로> --json (결과·오류를 JSON 한 개로)\n";
 
 } // namespace
+
+static int Dispatch(Ctx& c, const std::string& cmd);
 
 int RunCli(const std::vector<std::string>& args, std::string& out, std::string& err, const fs::path& cwd) {
   Ctx c{{}, {}, {}, out, err, cwd};
@@ -693,11 +801,74 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   }
   for (size_t i = 1; i < args.size(); ++i) {
     const std::string& a = args[i];
-    if (a == "--dry-run" || a == "--check" || a == "--zip") c.flags.insert(a.substr(2));
+    if (a == "--dry-run" || a == "--check" || a == "--zip" || a == "--bookmarks" || a == "--json") c.flags.insert(a.substr(2));
     else if ((a.rfind("--", 0) == 0 || a == "-f") && i + 1 < args.size()) c.opt[a.substr(a[1] == '-' ? 2 : 1)].push_back(args[++i]);
     else c.pos.push_back(a);
   }
   const std::string& cmd = args[0];
+  if (!c.Has("json")) return Dispatch(c, cmd);
+  // AI-3 `--json`: one JSON object instead of text, for tools and agents. The command's text lines go to "output";
+  // "오류:" lines become error.message, a line after an arrow (→) or starting with "힌트" becomes error.hint.
+  std::string textOut, textErr;
+  Ctx j{c.pos, c.opt, c.flags, textOut, textErr, c.cwd};
+  const int code = Dispatch(j, cmd);
+  auto lines = [](const std::string& t) {
+    std::vector<std::string> v;
+    size_t at = 0;
+    while (at < t.size()) {
+      size_t nl = t.find('\n', at);
+      if (nl == std::string::npos) nl = t.size();
+      std::string l = t.substr(at, nl - at);
+      if (!l.empty() && l.back() == '\r') l.pop_back();
+      if (!l.empty()) v.push_back(l);
+      at = nl + 1;
+    }
+    return v;
+  };
+  yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
+  yyjson_mut_val* root = yyjson_mut_obj(doc);
+  yyjson_mut_doc_set_root(doc, root);
+  yyjson_mut_obj_add_bool(doc, root, "ok", code == 0);
+  yyjson_mut_obj_add_int(doc, root, "exit", code);
+  yyjson_mut_obj_add_strcpy(doc, root, "command", cmd.c_str());
+  yyjson_mut_val* arr = yyjson_mut_arr(doc);
+  for (const std::string& l : lines(textOut)) yyjson_mut_arr_add_strcpy(doc, arr, l.c_str());
+  yyjson_mut_obj_add_val(doc, root, "output", arr);
+  if (code != 0 || !textErr.empty()) {
+    std::string message, hint;
+    std::vector<std::string> rest;
+    for (const std::string& l : lines(textErr)) {
+      if (message.empty() && l.rfind("오류: ", 0) == 0) message = l.substr(std::string("오류: ").size());
+      else if (hint.empty() && (l.find("→") != std::string::npos || l.rfind("힌트", 0) == 0)) hint = l;
+      else rest.push_back(l);
+    }
+    if (const size_t arrow = message.find(" → "); arrow != std::string::npos && hint.empty()) {
+      hint = message.substr(arrow + std::string(" → ").size());
+      message = message.substr(0, arrow);
+    }
+    if (message.empty() && !rest.empty()) { message = rest.front(); rest.erase(rest.begin()); }
+    yyjson_mut_val* e = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_strcpy(doc, e, "code", code == 2 ? "usage" : code == 0 ? "warning" : "failed");
+    yyjson_mut_obj_add_strcpy(doc, e, "message", message.c_str());
+    if (!hint.empty()) yyjson_mut_obj_add_strcpy(doc, e, "hint", hint.c_str());
+    yyjson_mut_val* d = yyjson_mut_arr(doc);
+    for (const std::string& l : rest) yyjson_mut_arr_add_strcpy(doc, d, l.c_str());
+    yyjson_mut_obj_add_val(doc, e, "details", d);
+    yyjson_mut_obj_add_val(doc, root, "error", e);
+  }
+  size_t len = 0;
+  char* json = yyjson_mut_write(doc, 0, &len);
+  if (json) {
+    out += std::string(json, len) + "\n";
+    std::free(json);
+  }
+  yyjson_mut_doc_free(doc);
+  return code;
+}
+
+static int Dispatch(Ctx& c, const std::string& cmd) {
+  std::string& out = c.out;
+  std::string& err = c.err;
   if (cmd == "view") return CmdView(c);
   if (cmd == "outline") return CmdOutline(c);
   if (cmd == "query") return CmdQuery(c);
@@ -714,6 +885,7 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   if (cmd == "csharp-bindings") return CmdCSharpBindings(c);
   if (cmd == "table") return CmdTable(c);
   if (cmd == "build") return CmdBuild(c);
+  if (cmd == "shot") return CmdShot(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;
