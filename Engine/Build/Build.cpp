@@ -441,6 +441,7 @@ const char* kNotices =
     "xatlas - MIT License - https://github.com/jpcy/xatlas\n"
     "ufbx - MIT / public domain - https://github.com/ufbx/ufbx\n"
     "miniaudio - public domain / MIT-0 - https://miniaud.io\n"
+    "ENet (multiplayer) - MIT License - https://github.com/lsalzman/enet\n"
     "Pretendard (game UI font, Fonts/) - SIL Open Font License 1.1 - https://github.com/orioncactus/pretendard (Fonts/Pretendard-LICENSE.txt)\n"
     ".NET runtime (when the game uses C#) - MIT License - https://github.com/dotnet/runtime\n"
     "\nFull license texts: https://github.com/O3O-2022/Bidulgi-Engine/tree/main/ThirdParty\n";

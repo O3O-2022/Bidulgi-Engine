@@ -237,7 +237,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 
 목표: 언리얼만큼 쉬운 멀티플레이 게임 — **서버 권한**(서버가 정답, 클라이언트는 예측·보간). 문서 [multiplayer](features/multiplayer.md). 항목마다 검사를 통과하면 커밋.
 
-- [ ] **M-1. 전송층** — ENet(MIT, FetchContent) 뒤에 엔진 API `Engine/Net/Transport.*`: 서버 열기·접속·끊기·시간 초과, 채널(신뢰·순서 / 비신뢰), 지연·흔들림·손실 흉내, 통계(핑·손실·대역폭). 단위 테스트(같은 프로세스 루프백: 접속, 손실 속 신뢰 채널 순서 보장, 끊김·시간 초과, 통계)
+- [x] **M-1. 전송층** — ENet(MIT, FetchContent) 뒤에 엔진 API `Engine/Net/Transport.*`: 서버 열기·접속·끊기·시간 초과, 채널(신뢰·순서 / 비신뢰), 지연·흔들림·손실 흉내, 통계(핑·손실·대역폭). 단위 테스트(같은 프로세스 루프백: 접속, 손실 속 신뢰 채널 순서 보장, 끊김·시간 초과, 통계)
 - [ ] **M-2. 직렬화·스냅샷 수학** — 비트 쓰기/읽기, 위치·회전 양자화, 기준(ack) 대비 델타, 스냅샷 버퍼 보간(지연 렌더 시각), 예측·재조정(입력 순번, 다시 적용). 단위 테스트
 - [ ] **M-3. 복제 핵심 (C++)** — `NetworkObject`(net id·소유자·관련 거리)·`NetworkTransform`(보간, 소유자 예측) 컴포넌트, `NetWorld`: 넷 모드(Standalone·Listen Server·Dedicated Server·Client), 접속 시 장면 보내기, 생성·삭제 복제, 늦게 들어온 클라이언트에 전체 상태, 관련 거리, 끊기면 정리. 플레이 모드에 연결. 단위 테스트: 한 프로세스 안 서버 + 클라이언트 2(손실 흉내)
 - [ ] **M-4. C# 넷 API** — `IsServer`·`IsClient`·`IsOwner`·`HasAuthority`, `[Replicated]` 필드 + `OnRep_X`, RPC `[Server]`·`[Client]`·`[Multicast]`(신뢰/비신뢰, `Rpc(nameof(Fire), …)`), 서버의 `Spawn`이 클라이언트에 보임, 게임 프레임워크(GameMode: 접속하면 `PlayerStart`에 플레이어 프리팹, 플레이어 목록, `OnPlayerJoined`/`OnPlayerLeft`), `Net.Host`/`Net.Join`
