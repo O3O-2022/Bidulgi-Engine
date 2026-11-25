@@ -139,3 +139,17 @@ TEST_CASE("cli: nodes and call run Graph nodes on a saved scene (queue E-8)") {
   CHECK(Cli(p, {"call", "hero", "Health.Damage"}).code == 1); // missing argument
   fs::remove_all(base);
 }
+
+TEST_CASE("cli: --json gives one object with ok, output and a structured error (queue AI-3)") {
+  const fs::path base = Fresh(u8"bdg_cli_json");
+  CHECK(Cli(base, {"new", "p"}).code == 0);
+  const fs::path p = base / "p";
+  Run r = Cli(p, {"view", "--json"});
+  CHECK(r.code == 0 && r.out.rfind("{\"ok\":true,\"exit\":0,\"command\":\"view\",\"output\":[\"# ", 0) == 0 && r.err.empty());
+  r = Cli(p, {"set", "nope", "Light.intensity=2", "--json"});
+  CHECK(r.code == 1 && Has(r.out, "\"ok\":false") && Has(r.out, "\"error\":{\"code\":\"failed\",\"message\":") &&
+        Has(r.out, "\"hint\":") && r.err.empty());
+  r = Cli(p, {"frob", "--json"});
+  CHECK(r.code == 2 && Has(r.out, "\"code\":\"usage\""));
+  fs::remove_all(base);
+}

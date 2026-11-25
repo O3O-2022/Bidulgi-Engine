@@ -1159,6 +1159,27 @@ void SceneView::Frame(const EditorModel& model) {
   camera.pivot = (lo + hi) * 0.5f;
   float radius = glm::length(hi - lo) * 0.5f / std::sqrt(3.f) * 1.2f; // the cube around a sphere back to its radius
   camera.distance = std::max(radius / std::sin(glm::radians(camera.fovY * 0.5f)), 0.5f);
+  frameT_ = 1.f;
+}
+
+void SceneView::FrameSmooth(const EditorModel& model) {
+  const glm::vec3 fromPivot = camera.pivot;
+  const float fromDist = camera.distance;
+  Frame(model);
+  frameFromPivot_ = fromPivot;
+  frameFromDist_ = fromDist;
+  frameToPivot_ = camera.pivot;
+  frameToDist_ = camera.distance;
+  camera.pivot = fromPivot;
+  camera.distance = fromDist;
+  frameT_ = frameEaseSeconds > 0 ? 0.f : 1.f;
+  if (frameT_ >= 1.f) { camera.pivot = frameToPivot_; camera.distance = frameToDist_; }
+}
+
+void SceneView::SetFlySpeed(float s) {
+  flySpeed_ = std::clamp(s, 0.1f, 500.f);
+  bookmarkNote_ = std::format("카메라 속도 {:.2g} m/s", flySpeed_);
+  noteFrames_ = 90;
 }
 
 void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, EditorModel& model, double dt, bool textFocused) {
@@ -1179,6 +1200,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
       events.erase(events.begin() + (std::ptrdiff_t)i);
       continue;
     }
+    if (drag_ == Drag::Fly && e.type != InputEvent::Type::Text) flyBoost_ = e.shift; // x3 only while Shift is held
     switch (e.type) {
       case T::MouseDown:
         if (drag_ == Drag::None && inside(e) && e.button == 3) { // right-click on a stepping chip: its whole list
@@ -1304,6 +1326,12 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           lastY_ = downY_ = e.y;
           clickCtrl_ = e.ctrl || e.shift;
           used = drag_ != Drag::None;
+          frameT_ = 1.f; // a drag takes the camera back from a framing ease
+          if (drag_ == Drag::Pan) { // the surface under the cursor follows it at its own depth (not the pivot's)
+            glm::vec3 hit;
+            panDepth_ = MeasurePoint(model, e.x, e.y, hit) ? glm::dot(hit - camera.Position(), camera.Forward()) : 0.f;
+            if (panDepth_ < 0.05f) panDepth_ = 0.f;
+          }
         }
         break;
       case T::MouseMove: {
@@ -1400,7 +1428,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           camera.pivot = pos + camera.Forward() * camera.distance;
         } else if (drag_ == Drag::Pan) { // the point under the cursor follows it
           glm::vec3 f = camera.Forward(), right = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0))), up = glm::cross(right, f);
-          float k = 2.f * camera.distance * std::tan(glm::radians(camera.fovY * 0.5f)) / vh_;
+          float k = 2.f * (panDepth_ > 0 ? panDepth_ : camera.distance) * std::tan(glm::radians(camera.fovY * 0.5f)) / vh_;
           camera.pivot += (-dx * right + dy * up) * k;
         }
         used = true;
@@ -1445,8 +1473,21 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         break;
       case T::Wheel:
         if (inside(e)) {
-          if (drag_ == Drag::Fly) flySpeed_ = std::clamp(flySpeed_ * std::pow(1.2f, e.wheel), 0.1f, 500.f);
-          else camera.distance = std::clamp(camera.distance * std::pow(0.88f, e.wheel), 0.05f, 20000.f);
+          if (drag_ == Drag::Fly) SetFlySpeed(flySpeed_ * std::pow(1.2f, e.wheel));
+          else {
+            frameT_ = 1.f;
+            const float s = std::pow(0.88f, e.wheel);
+            glm::vec3 hit;
+            if (MeasurePoint(model, e.x, e.y, hit)) { // zoom toward the point under the cursor (scale about it)
+              const glm::vec3 pos = hit + (camera.Position() - hit) * s;
+              camera.distance = std::clamp(camera.distance * s, 0.05f, 20000.f);
+              camera.pivot = pos + camera.Forward() * camera.distance;
+            } else if (camera.distance * s < 0.3f && e.wheel > 0) { // at the pivot already: keep moving forward
+              camera.pivot += camera.Forward() * std::max(0.3f, flySpeed_ * 0.05f) * e.wheel;
+            } else {
+              camera.distance = std::clamp(camera.distance * s, 0.05f, 20000.f);
+            }
+          }
           used = true;
         }
         break;
@@ -1493,10 +1534,9 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
           held_.insert(e.key);
           used = true;
         } else if (e.key == Key::F && hover_ && !textFocused && !e.ctrl && !e.alt) {
-          Frame(model);
+          FrameSmooth(model);
           used = true;
         }
-        if (drag_ == Drag::Fly && e.shift) flySpeed_ = std::max(flySpeed_, 15.f);
         break;
       case T::KeyUp:
         held_.erase(e.key);
@@ -1508,6 +1548,14 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     if (used) events.erase(events.begin() + (std::ptrdiff_t)i);
     else ++i;
   }
+  const float step = (float)std::clamp(dt, 0.0, 0.1);
+  if (frameT_ < 1.f) { // ease onto a framed selection (smoothstep, 0.25 s)
+    frameT_ = std::min(1.f, frameT_ + step / std::max(frameEaseSeconds, 1e-3f));
+    const float k = frameT_ * frameT_ * (3.f - 2.f * frameT_);
+    camera.pivot = glm::mix(frameFromPivot_, frameToPivot_, k);
+    camera.distance = glm::mix(frameFromDist_, frameToDist_, k);
+  }
+  glm::vec3 want{0};
   if (drag_ == Drag::Fly && !held_.empty()) {
     glm::vec3 f = camera.Forward(), right = glm::normalize(glm::cross(f, glm::vec3(0, 1, 0)));
     glm::vec3 move{0};
@@ -1517,8 +1565,15 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     if (held_.count(Key::A)) move -= right;
     if (held_.count(Key::E)) move += glm::vec3(0, 1, 0);
     if (held_.count(Key::Q)) move -= glm::vec3(0, 1, 0);
-    if (glm::length(move) > 0) camera.pivot += glm::normalize(move) * flySpeed_ * (float)std::clamp(dt, 0.0, 0.1);
+    if (glm::length(move) > 0) want = glm::normalize(move) * flySpeed_ * (flyBoost_ ? 3.f : 1.f);
   }
+  if (drag_ != Drag::Fly) want = glm::vec3(0);
+  // speed up over ~0.1 s, glide to a stop over ~0.12 s (frame-rate independent exponential ease)
+  const float rate = glm::length(want) > 0 ? 10.f : 8.f;
+  if (flyEasing) flyVel_ += (want - flyVel_) * (1.f - std::exp(-rate * step));
+  else flyVel_ = want;
+  if (glm::length(want) == 0 && glm::length(flyVel_) < 0.02f * std::max(flySpeed_, 1.f)) flyVel_ = glm::vec3(0);
+  camera.pivot += flyVel_ * step;
 }
 
 namespace {
