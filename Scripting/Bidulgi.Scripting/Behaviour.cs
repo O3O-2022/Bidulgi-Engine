@@ -343,10 +343,11 @@ internal static class Behaviours {
   // phase 0 = Start + Update (then timers, tweens, waits), 1 = FixedUpdate, 2 = LateUpdate, 3 = end of play
   public static void Tick(int phase, double dt, double time, int frame) {
     ScriptSyncContext.EnsureInstalled();
-    if (phase == 3) { Scheduler.Reset(); Data.Reload(); return; }
+    if (phase == 3) { Scheduler.Reset(); Data.Reload(); Input.Reset(); return; }
     Time.time = (float)time;
     Time.frameCount = frame;
     if (phase == 1) Time.fixedDeltaTime = (float)dt; else Time.deltaTime = (float)dt;
+    if (phase == 1) Input.BeginFixed(); // input presses count per fixed step there (6-4)
     foreach (int h in s_order.ToArray()) { // a snapshot: behaviours may disable each other while running
       if (!s_instances.TryGetValue(h, out var i) || !i.Enabled) continue;
       if (phase == 0) {
@@ -357,6 +358,7 @@ internal static class Behaviours {
       } else if (i.Started) Run(i, i.E.LateUpdate, "LateUpdate");
     }
     if (phase == 0) Scheduler.Update();
+    if (phase == 1) Input.EndFixed();
   }
 
   public static int Count => s_instances.Count;

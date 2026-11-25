@@ -1160,3 +1160,104 @@ void ReportPhysicsTest(bdg_engine* e) {
   (void)e;
 }
 BDG_EDITOR_TEST("BDG_PHYSICS_TEST", InjectPhysicsTest, ReportPhysicsTest)
+
+// Scripted check of 6-4 input actions (BDG_INPUT_TEST=1, BDG_ASSETS = an empty folder, BDG_SCRIPT_ASSEMBLIES =
+// <Managed>/Bidulgi.Samples.dll): writes Input/Actions.jsonl and two contexts next to the assets, plays an object with
+// the C# InputProbe, and injects keys and mouse moves into the window. The Game view has the input right after Play:
+// D moves, Space jumps (seen in Update and in FixedUpdate), the mouse looks; Escape gives the input back to the editor
+// (D no longer moves); a click into the Game view takes it again; the Vehicle context (higher priority) takes Space
+// for Brake.
+namespace inputtest {
+std::string focusStart = "-", move = "-", jump = "-", look = "-", escape = "-", click = "-", context = "-", fixed = "-";
+}
+void InjectInputTest(bdg_engine* e, int frame, float scale) {
+  namespace fs = std::filesystem;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen) return;
+  using T = bdg::InputEvent::Type;
+  auto key = [&](bdg::Key k, bool down) {
+    bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
+    ev.key = k;
+    e->window.InjectEvent(ev);
+  };
+  auto mouse = [&](T type, float x, float y) { e->window.InjectEvent({type, x * scale, y * scale, type == T::MouseMove ? 0 : 1}); };
+  auto field = [&](const char* name) {
+    bdg::SceneObject* o = m->scene.Find("ip1");
+    bdg::Component* c = o ? o->Find("InputProbe") : nullptr;
+    if (!c) return std::string("?");
+    for (const bdg::FieldInfo& fi : c->type->fields)
+      if (fi.name == name) return bdg::Registry::ToJson(static_cast<unsigned char*>(c->data) + fi.offset, fi.value);
+    return std::string("?");
+  };
+  auto num = [&](const char* name) { return std::atof(field(name).c_str()); };
+  bdg::InputSystem& in = bdg::InputSystem::Instance();
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // at least one fixed step per frame
+  if (frame == 2) {
+    const fs::path root = bdg::PathU8(e->assets.Root()).parent_path() / "Input";
+    fs::create_directories(root / "Contexts");
+    auto write = [](const fs::path& p, const char* text) {
+      if (std::FILE* f = _wfopen(p.c_str(), L"wb")) { std::fwrite(text, 1, std::strlen(text), f); std::fclose(f); }
+    };
+    write(root / "Actions.jsonl", "{\"action\":\"Move\",\"type\":\"vec2\"}\n{\"action\":\"Look\",\"type\":\"vec2\"}\n"
+                                  "{\"action\":\"Jump\",\"type\":\"button\"}\n{\"action\":\"Brake\",\"type\":\"button\"}\n");
+    write(root / "Contexts" / "OnFoot.jsonl", "{\"context\":\"OnFoot\",\"priority\":0}\n{\"action\":\"Move\",\"key\":\"WASD\"}\n"
+                                              "{\"action\":\"Jump\",\"key\":\"Space\"}\n{\"action\":\"Look\",\"key\":\"Mouse.Delta\"}\n");
+    write(root / "Contexts" / "Vehicle.jsonl", "{\"context\":\"Vehicle\",\"priority\":10,\"enabled\":false}\n{\"action\":\"Brake\",\"key\":\"Space\"}\n");
+    bdg::Command c;
+    c.name = "add";
+    c.args = R"({"id":"ip1","name":"Player"})";
+    std::string err;
+    m->bus.Execute(c, &err);
+    c.name = "addcomp";
+    c.target = "ip1";
+    c.args = R"({"type":"InputProbe"})";
+    if (!m->bus.Execute(c, &err)) bdg::LogError("input test: {}", err);
+    TogglePlay(e);
+  }
+  bdg::Widget* game = e->editor->Find("game");
+  const float gx = game ? game->x + game->w * 0.5f : 0, gy = game ? game->y + game->h * 0.5f : 0;
+  if (frame == 4) {
+    inputtest::focusStart = in.gameFocused ? "1" : "0";
+    key(bdg::Key::D, true);
+  }
+  if (frame == 6) key(bdg::Key::Space, true);
+  if (frame == 7) key(bdg::Key::Space, false);
+  if (frame == 9) {
+    inputtest::move = num("moveX") > 0.99 ? "1" : "0(" + field("moveX") + ")";
+    inputtest::jump = field("jumps") == "1" ? "1" : "0(" + field("jumps") + ")";
+    inputtest::fixed = field("fixedJumps") == "1" ? "1" : "0(" + field("fixedJumps") + ")";
+    key(bdg::Key::D, false);
+    mouse(T::MouseMove, gx, gy);
+  }
+  if (frame == 10) mouse(T::MouseMove, gx + 30, gy);
+  if (frame == 12) {
+    inputtest::look = num("lookX") > 20 ? "1" : "0(" + field("lookX") + ")";
+    key(bdg::Key::Escape, true);
+    key(bdg::Key::Escape, false);
+  }
+  if (frame == 13) key(bdg::Key::D, true); // goes to the editor now
+  if (frame == 15) {
+    const bdg::ActionState* mv = in.State("Move");
+    inputtest::escape = !in.gameFocused && mv && glm::length(mv->value) == 0 && num("moveX") == 0 ? "1" : "0";
+    key(bdg::Key::D, false);
+    mouse(T::MouseMove, gx, gy);
+    mouse(T::MouseDown, gx, gy);
+    mouse(T::MouseUp, gx, gy);
+  }
+  if (frame == 17) {
+    inputtest::click = in.gameFocused ? "1" : "0";
+    in.EnableContext("Vehicle", true);
+    key(bdg::Key::Space, true);
+  }
+  if (frame == 20) {
+    inputtest::context = field("brakes") == "1" && field("jumps") == "1" ? "1" : "0(brakes " + field("brakes") + " jumps " + field("jumps") + ")";
+    key(bdg::Key::Space, false);
+  }
+  if (frame == 22) TogglePlay(e);
+}
+void ReportInputTest(bdg_engine*) {
+  using namespace inputtest;
+  bdg::LogInfo("input test: focus={} move={} jump={} fixed={} look={} escape={} click={} context={}", focusStart, move, jump, fixed, look, escape,
+               click, context);
+}
+BDG_EDITOR_TEST("BDG_INPUT_TEST", InjectInputTest, ReportInputTest)
