@@ -14,7 +14,7 @@ jobs:
   windows:
     name: Windows (MSVC)
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 75  # build ~16 min + smoke tests ~25 min on software OpenGL (more as features land)
     steps:
       - uses: actions/checkout@v4
 
