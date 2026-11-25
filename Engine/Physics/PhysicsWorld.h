@@ -86,6 +86,7 @@ private:
     glm::vec3 scale{1};
   };
   bool MakeBody(Scene& scene, const std::string& id, bool is2D);
+  bool MakeTerrainBody(Scene& scene, const std::string& id); // Terrain/TerrainPhysics.cpp: a static height field (round 6)
   std::string ObjectOfUser(uint64_t user) const; // a body's object id from its BodyDesc::user ("" = none)
   void WriteBack(Scene& scene, Body& b);
   std::unique_ptr<phys::Backend> jolt_, box2d_;

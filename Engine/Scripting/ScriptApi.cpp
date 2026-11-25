@@ -8,6 +8,8 @@
 #include "Project/ProjectSettings.h"
 #include "Scripting/SaveGame.h"
 #include "VFX/VfxWorld.h"
+#include "Terrain/TerrainComponents.h"
+#include "Terrain/TerrainData.h"
 #include <glm/gtc/quaternion.hpp>
 #include <filesystem>
 #include <yyjson.h>
@@ -222,6 +224,27 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     for (const std::string& id : world->OverlapSphere(center, (float)number("radius", 1), yyjson_get_bool(yyjson_obj_get(r, "triggers"))))
       if (scene.Find(id)) ids.push_back(id);
     return Ok(IdList(ids));
+  }
+  if (op == "terrain.height") { // round 6: Terrain.HeightAt / NormalAt (world x, z): the first terrain that covers it
+    const double x = number("x", 0), z = number("z", 0);
+    std::vector<std::string> stack(scene.Roots().rbegin(), scene.Roots().rend());
+    while (!stack.empty()) {
+      SceneObject* o = scene.Find(stack.back());
+      stack.pop_back();
+      if (!o) continue;
+      stack.insert(stack.end(), o->children.rbegin(), o->children.rend());
+      Component* c = o->Find("Terrain");
+      if (!c) continue;
+      const std::string& assetPath = static_cast<const Terrain*>(c->data)->asset;
+      TerrainData* t = TerrainRegistry::Instance().Get(assetPath);
+      if (!t) continue;
+      const glm::vec3 origin(scene.WorldMatrix(o->id)[3]);
+      const float lx = (float)x - origin.x, lz = (float)z - origin.z;
+      if (!t->Contains(lx, lz)) continue;
+      const glm::vec3 n = t->NormalAt(lx, lz);
+      return Ok(std::format(R"({{"id":{},"height":{},"normal":[{},{},{}]}})", Q(o->id), origin.y + t->HeightAt(lx, lz), n.x, n.y, n.z));
+    }
+    return Ok("null");
   }
   if (op.rfind("vfx.", 0) == 0) { // particle effects (6-VFX P-1), while playing
     VfxWorld& vfx = VfxWorld::Instance();

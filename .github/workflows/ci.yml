@@ -334,6 +334,22 @@ jobs:
           if ($log -notmatch 'blockout test: create=1 push=1 top=1 cancel=1 undo=1 shapes=3 pick=1') { $errors += 'greybox test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # Round 6 terrain: a heightmap terrain (hills, 4 layers) in the Scene view: chunks at several LODs, culled ones,
+          # no sky through cracks looking straight down; the Terrain tool (T) raises ground (one undo step, undo / redo),
+          # paints a layer (colour map rebaked there, the grass on the other layer goes); per tier triangles / grass / ms;
+          # in play a C# TerrainProbe capsule stands on the Jolt height field where Terrain.HeightAt says
+          $tr = Join-Path $env:RUNNER_TEMP 'bdg-terrain'
+          Remove-Item -Recurse -Force $tr -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$tr/Assets", "$tr/FoliageAssets" | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_TERRAIN_TEST = '1'; BDG_ASSETS = "$tr/Assets"; BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll" } 200
+          if ($log -notmatch 'terrain test: render=1 lods=1 cracks=1 sculpt=1 undo=1 paint=1 foliage=1 tiers=1 stand=1') { $errors += 'terrain test failed' }
+          if ($log -match '(terrain test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # Round 6 foliage: grass and trees (LOD 0, LOD 1, far cards) scattered on a terrain; wind sways them (two wind times
+          # differ, wind 0 does not), fade with distance, culled facing away, the low tier's grass budget
+          $log = Invoke-Editor 'Release' @{ BDG_FOLIAGE_TEST = '1'; BDG_ASSETS = "$tr/FoliageAssets" } 40
+          if ($log -notmatch 'foliage test: plants=1 lods=1 wind=1 calm=1 fade=1 culled=1 budget=1') { $errors += 'foliage test failed' }
+          if ($log -match '(foliage test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+
           # 3-6 play mode: a copy of the world runs (Rotator), edits inside play undo among themselves, Stop restores
           # the edited world and its history, the kept values are one undo step, the Game view renders the camera
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
@@ -543,7 +559,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=13 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=14 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }

@@ -23,6 +23,8 @@
 #include <format>
 #include <glm/gtc/matrix_transform.hpp>
 #include "VFX/VfxRender.h"
+#include "Terrain/TerrainTool.h"
+#include "Terrain/TerrainView.h"
 #include "VFX/VfxWorld.h"
 
 namespace bdg {
@@ -85,6 +87,8 @@ Camera3D EditorCamera::ToCamera() const {
 bool SceneView::Init(RHI& rhi, Renderer3D& r) {
   rhi_ = &rhi;
   r_ = &r;
+  terrain_ = std::make_shared<TerrainView>();
+  terrainTool_ = std::make_shared<TerrainTool>();
   auto add = [&](const char* name, MeshData d) {
     MeshEntry e;
     e.cpu = std::move(d);
@@ -119,6 +123,7 @@ bool SceneView::Init(RHI& rhi, Renderer3D& r) {
 
 void SceneView::Shutdown() {
   if (!r_) return;
+  if (terrain_ && rhi_) terrain_->Shutdown(*rhi_, *r_);
   if (rhi_) ShutdownParticleRenderer(*rhi_);
   for (auto& [name, e] : builtins_) r_->DestroyMesh(e.mesh);
   for (auto& [name, e] : meshes_) DestroyEntry(e);
@@ -666,7 +671,10 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     VfxWorld::Instance().SetTier(quality.tier);
     DrawParticles(*rhi_, VfxWorld::Instance(), view, proj);
   };
+  const size_t sceneItems = items_.size();
+  terrain_->Append(model.scene, assets ? assets->Root() : std::string(), *rhi_, *r_, camera.ToCamera(), pw_ / (float)std::max(ph_, 1), quality, items_);
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
+  items_.resize(sceneItems);
   lastShafts_ = r_->Stats().shafts;
   lastStats_ = r_->Stats();
   if (autoQuality.on && !r_->Stats().passes.empty()) { // frame drop guard (3-5c): the GPU time of a finished frame
@@ -1159,6 +1167,11 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     const bool mouseEvent = e.type == T::MouseDown || e.type == T::MouseUp || e.type == T::MouseMove || e.type == T::Wheel;
     if (ui_ && ui_->DialogOpen()) { ++i; continue; }                                    // a modal dialog owns all input
     if (mouseEvent && ui_ && ui_->MenuOpen() && drag_ == Drag::None) { ++i; continue; } // an open list owns the mouse
+    if (mouseEvent && model.tool == "terrain" && drag_ == Drag::None && e.type != T::Wheel && // the Terrain tool (round 6)
+        terrainTool_->Handle(e, v, camera.ToCamera(), model)) {
+      events.erase(events.begin() + (std::ptrdiff_t)i);
+      continue;
+    }
     switch (e.type) {
       case T::MouseDown:
         if (drag_ == Drag::None && inside(e) && e.button == 3) { // right-click on a stepping chip: its whole list
@@ -1671,7 +1684,7 @@ void SceneView::OpenChipMenu(const Chip& chip, EditorModel& model) {
   } else if (chip.name == "tool") {
     static const struct { const char* id; const char* label; } tools[] = {
         {"select", "Select (Q)"}, {"move", "Move (W)"}, {"rotate", "Rotate (E)"}, {"scale", "Scale (R)"},
-        {"measure", "Measure (M)"}, {"blockout", "Blockout (B)"}, {"view", "View (pan)"}};
+        {"measure", "Measure (M)"}, {"blockout", "Blockout (B)"}, {"terrain", "Terrain (T)"}, {"view", "View (pan)"}};
     EditorModel* m = &model;
     for (auto& tl : tools)
       items.push_back({tl.label, [m, id = std::string(tl.id)] { m->tool = id; LogInfo("tool: {}", id); }, true, model.tool == tl.id});
@@ -1748,7 +1761,10 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
     VfxWorld::Instance().SetTier(quality.tier);
     DrawParticles(*rhi_, VfxWorld::Instance(), view, proj);
   };
+  const size_t sceneItems = items_.size();
+  terrain_->Append(model.scene, assets ? assets->Root() : std::string(), *rhi_, *r_, c, pw / (float)std::max(ph, 1), quality, items_);
   r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, &gameExtras, &quality);
+  items_.resize(sceneItems);
   ++gameFrames_;
 }
 
@@ -1778,6 +1794,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   b.Image(w.x, w.y, w.w, w.h, rhi_->RenderTargetColor(rt_), 0, 1, 1, 0);
   b.PushClip(w.x, w.y, w.w, w.h);
   if (model) DrawSelectionShapes(b, t, *model); // camera frustum, light range / cone / direction (E-3)
+  if (model && model->tool == "terrain") // the brush ring (round 6)
+    terrainTool_->Draw(b, *model, [this](const glm::vec3& p, float& x, float& y) { return ProjectUI(p, x, y); });
   // Icons of objects without a surface (lights, cameras, probes, bookmarks), the same size at any distance (E-3).
   const float isz = IconPixels(iconSize), ir = isz * 0.5f;
   for (const Icon& ic : icons_) {

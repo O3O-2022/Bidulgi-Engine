@@ -4,6 +4,9 @@
 #include "Scripting/SaveGame.h"
 #include "VFX/VfxComponents.h"
 #include "VFX/VfxWorld.h"
+#include "Terrain/TerrainData.h"
+#include "Terrain/TerrainTool.h"
+#include "Terrain/TerrainView.h"
 
 // Scripted check of 2-5d (BDG_IMPORT_TEST=1, BDG_IMPORT_SRC = a folder outside the project with rock.png 8x8,
 // Box.gltf + Box.bin; BDG_ASSETS = an empty project whose AssetRules.json wants T_ textures up to 4 px): drop two
@@ -952,3 +955,333 @@ void InjectVfxTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_VFX_TEST", InjectVfxTest, nullptr)
+
+
+// ---- Terrain and foliage (round 6) ----
+namespace edtest_terrain {
+// Share of the Scene view's last picture that is sky (blue above red and green): cracks in the terrain show it.
+double SkyShare(bdg_engine* e) {
+  int32_t w = 0, h = 0;
+  std::vector<uint8_t> px;
+  e->sceneView->ReadPixels(w, h, px);
+  if (px.size() < (size_t)w * h * 4 || w == 0) return -1;
+  size_t sky = 0;
+  for (size_t i = 0; i < (size_t)w * h; ++i) {
+    const uint8_t* p = &px[i * 4];
+    sky += p[2] > p[0] + 8 && p[2] > p[1] + 4;
+  }
+  return sky / double((size_t)w * h);
+}
+// Grass plants (foliage layer 0) within `radius` of a terrain-local point. before: the same count from the terrain as it
+// was when the test saved its plants list (frame 17), so both counts use the same point.
+std::vector<bdg::FoliageInstance> g_before;
+size_t PlantsNear(bdg::TerrainData* t, glm::vec2 at, float radius, size_t* before = nullptr) {
+  if (!t) return 0;
+  std::vector<bdg::FoliageInstance> all, chunk;
+  for (int cz = 0; cz < bdg::TerrainChunksZ(*t); ++cz)
+    for (int cx = 0; cx < bdg::TerrainChunksX(*t); ++cx) {
+      bdg::ScatterFoliage(*t, 0, cx, cz, 1, chunk);
+      all.insert(all.end(), chunk.begin(), chunk.end());
+    }
+  if (!before) g_before = all; // the first call keeps every plant
+  auto count = [&](const std::vector<bdg::FoliageInstance>& v) {
+    size_t n = 0;
+    for (const bdg::FoliageInstance& f : v) n += glm::length(glm::vec2(f.position.x, f.position.z) - at) < radius;
+    return n;
+  };
+  if (before) *before = count(g_before);
+  return count(all);
+}
+// Average colour of the middle of the Scene view's last picture.
+glm::vec3 MiddleColor(bdg_engine* e) {
+  int32_t w = 0, h = 0;
+  std::vector<uint8_t> px;
+  e->sceneView->ReadPixels(w, h, px);
+  glm::vec3 sum(0);
+  int n = 0;
+  for (int y = h * 2 / 5; y < h * 3 / 5; ++y)
+    for (int x = w * 2 / 5; x < w * 3 / 5; ++x, ++n) sum += glm::vec3(px[((size_t)y * w + x) * 4], px[((size_t)y * w + x) * 4 + 1], px[((size_t)y * w + x) * 4 + 2]);
+  return n ? sum / float(n) : glm::vec3(0);
+}
+} // namespace edtest_terrain
+
+// Scripted check of round 6 terrain + foliage (BDG_TERRAIN_TEST=1, BDG_ASSETS = an empty assets folder,
+// BDG_SCRIPT_ASSEMBLIES = the samples): a 128 x 128 m terrain (hills, 4 layers, grass and trees) is written to the
+// assets and placed. Seen from above at an angle the Scene view draws its chunks at several LODs, with grass, trees
+// and far tree cards; looking straight down no sky shows through (no cracks between LODs). The Terrain tool (T) raises
+// the ground under a drag (one undo step: undo puts it back, redo again), paints a layer (the colour there changes)
+// and erases grass; per tier the chunk triangles, plants and CPU ms are reported (potato: no grass). In play a C#
+// TerrainProbe on a Character capsule falls onto the height field collider and stands where Terrain.HeightAt says.
+// Run with --frames 200.
+void InjectTerrainTest(bdg_engine* e, int frame, float scale) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->sceneView) return;
+  using T = bdg::InputEvent::Type;
+  static std::string probe, perTier;
+  static int render = 0, cracks = 0, lods = 0, sculpt = 0, undo = 0, paint = 0, foliage = 0, tiers = 0, stand = 0;
+  static float h0 = 0, h1 = 0;
+  static glm::vec3 color0{0}, color1{0};
+  static int grass0 = 0, playAt = 0;
+  static size_t chunkGrass0 = 0, chunkGrass1 = 0, chunkGrass0Before = 0; // grass within 12 m of the paint stroke, from the data
+  static double sky = -1;
+  bdg::TerrainView& tv = e->sceneView->Terrains();
+  bdg::Widget* sw = e->editor->Find("scene");
+  const float cx = sw ? sw->x + sw->w * 0.5f : 0, cy = sw ? sw->y + sw->h * 0.5f : 0;
+  auto ev = [&](T type, float x, float y) { e->window.InjectEvent({type, x * scale, y * scale, type == T::MouseMove ? 0 : 1}); };
+  auto run = [&](const char* name, const char* target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("terrain test: {} {}: {}", name, target, err);
+  };
+  auto data = [&]() { return bdg::TerrainRegistry::Instance().Get("Terrain/Test.terrain", m->assets ? m->assets->Root() : std::string()); };
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("terrain probe: ", 0) == 0) probe = l; });
+    bdg::TerrainData t = bdg::MakeTerrain("Test", 129, {128, 128}, 24, 10, 11);
+    t.foliage.push_back({"Grass", bdg::FoliageKind::Grass, 3, 0, 0.7f, 1.3f, 25, 35, 70, 35, {0.33f, 0.52f, 0.2f}});
+    t.foliage.push_back({"Trees", bdg::FoliageKind::Tree, 0.004f, -1, 0.8f, 1.3f, 160, 200, 45, 30, {0.2f, 0.38f, 0.15f}});
+    const char* assets = std::getenv("BDG_ASSETS");
+    std::string err;
+    if (!assets || !bdg::SaveTerrain(t, std::string(assets) + "/Terrain/Test.terrain", &err)) bdg::LogError("terrain test: cannot write the terrain: {}", err);
+    run("add", "", R"({"id":"tr_ter","name":"Ground Terrain"})");
+    run("set", "tr_ter", R"({"path":"Transform.position","value":[-64,0,-64]})");
+    run("addcomp", "tr_ter", R"({"type":"Terrain","value":{"asset":"Terrain/Test.terrain"}})");
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    e->sceneView->showGrid = false;
+    e->sceneView->camera.pivot = {0, 6, 0};
+    e->sceneView->camera.distance = 55;
+    e->sceneView->camera.pitch = -28;
+    e->sceneView->camera.yaw = 20;
+  }
+  if (frame == 6) { // drawn: several LODs, plants, far cards
+    const bdg::TerrainView::Stats& s = tv.LastStats();
+    int used = 0;
+    for (int c : s.lodCount) used += c > 0;
+    lods = used >= 2 ? 1 : 0;
+    render = s.terrains == 1 && s.chunks > 0 && s.triangles > 0 && s.culled > 0 && e->sceneView->LastStats().triangles >= (uint64_t)s.triangles ? 1 : 0;
+    foliage = s.grass > 500 && s.trees > 0 && s.impostors > 0 ? 1 : 0;
+    perTier = std::format("medium: {} chunks {} tris, grass {} trees {} cards {}, {:.2f} ms cpu, bake {:.1f} ms", s.chunks, s.triangles, s.grass, s.trees,
+                          s.impostors, s.ms, s.bakeMs);
+    e->sceneView->camera.pitch = -89; // straight down from high up: every chunk LOD at once, no sky may show through
+    e->sceneView->camera.distance = 120;
+  }
+  if (frame == 9) {
+    sky = edtest_terrain::SkyShare(e);
+    cracks = sky >= 0 && sky < 0.0005 && tv.LastStats().chunks >= 9 ? 1 : 0;
+    e->sceneView->camera.pitch = -60;
+    e->sceneView->camera.distance = 40;
+    m->tool = "terrain";
+    m->Select("tr_ter");
+    run("set", "tr_ter", R"({"path":"Terrain.brushRadius","value":10})");
+    run("set", "tr_ter", R"({"path":"Terrain.brushStrength","value":1})");
+  }
+  if (frame == 12) { // a drag across the middle raises it
+    bdg::TerrainData* t = data();
+    h0 = t ? t->HeightAt(64, 64) : 0;
+    ev(T::MouseMove, cx, cy);
+    ev(T::MouseDown, cx, cy);
+    for (int k = 1; k <= 6; ++k) ev(T::MouseMove, cx + k * 2.f, cy);
+    ev(T::MouseUp, cx + 12, cy);
+  }
+  if (frame == 15) {
+    bdg::TerrainData* t = data();
+    h1 = t ? t->HeightAt(64, 64) : 0;
+    sculpt = h1 > h0 + 0.3f && e->sceneView->TerrainBrushTool().strokes == 1 ? 1 : 0;
+    std::string err;
+    const bool undone = m->bus.Undo(&err) && t && std::fabs(t->HeightAt(64, 64) - h0) < 1e-3f;
+    const bool redone = m->bus.Redo(&err) && t && std::fabs(t->HeightAt(64, 64) - h1) < 1e-3f;
+    undo = undone && redone ? 1 : 0;
+    run("set", "tr_ter", R"({"path":"Terrain.brush","value":"Paint"})");
+    run("set", "tr_ter", R"({"path":"Terrain.brushLayer","value":3})"); // sand
+    run("set", "tr_ter", R"({"path":"Terrain.brushRadius","value":30})");
+    e->sceneView->camera.pitch = -28; // near enough for the grass
+    e->sceneView->camera.distance = 55;
+  }
+  if (frame == 17) {
+    color0 = edtest_terrain::MiddleColor(e);
+    grass0 = tv.LastStats().grass;
+    chunkGrass0 = edtest_terrain::PlantsNear(data(), {64, 64}, 12);
+    if (const char* shot = std::getenv("BDG_TERRAIN_SHOT")) { // a look at it (not part of the check)
+      int32_t w = 0, h = 0;
+      std::vector<uint8_t> px;
+      e->sceneView->ReadPixels(w, h, px);
+      bdg::WritePNG(shot, w, h, px.data(), true);
+    }
+  }
+  if (frame == 18) {
+    ev(T::MouseMove, cx, cy);
+    ev(T::MouseDown, cx, cy);
+    for (int k = 1; k <= 8; ++k) ev(T::MouseMove, cx + (k % 2) * 3.f, cy);
+    ev(T::MouseUp, cx, cy);
+  }
+  if (frame == 22) { // the sand shows (the colour map was rebaked there), the grass that grows on layer 1 is gone there
+    color1 = edtest_terrain::MiddleColor(e);
+    bdg::TerrainData* t = data();
+    paint = t && t->LayerWeight(3, 64, 64) > 0.8f && glm::length(color1 - color0) > 8 ? 1 : 0;
+    const int grassAfter = tv.LastStats().grass;
+    const glm::vec3 at = e->sceneView->TerrainBrushTool().LastPoint() + glm::vec3(64, 0, 64); // terrain-local
+    chunkGrass0 = edtest_terrain::PlantsNear(t, {at.x, at.z}, 12, &chunkGrass0Before);
+    chunkGrass1 = chunkGrass0;
+    chunkGrass0 = chunkGrass0Before;
+    foliage = foliage && grassAfter <= grass0 && chunkGrass1 * 4 < chunkGrass0 ? 1 : 0;
+    m->SetSelection({});
+    m->tool = "move";
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Potato);
+  }
+  static int tris[3] = {}, grass[3] = {};
+  static double ms[3] = {};
+  if (frame == 25) {
+    const auto& s = tv.LastStats();
+    tris[0] = s.triangles; grass[0] = s.grass; ms[0] = s.ms;
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+  }
+  if (frame == 28) {
+    const auto& s = tv.LastStats();
+    tris[1] = s.triangles; grass[1] = s.grass; ms[1] = s.ms;
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Ultra);
+  }
+  if (frame == 31) {
+    const auto& s = tv.LastStats();
+    tris[2] = s.triangles; grass[2] = s.grass; ms[2] = s.ms;
+    tiers = grass[0] == 0 && grass[1] > 0 && grass[2] > grass[1] && tris[0] < tris[1] && tris[1] < tris[2] ? 1 : 0;
+    perTier += std::format("; potato {} tris {} grass {:.2f} ms; medium {} / {} / {:.2f}; ultra {} / {} / {:.2f}", tris[0], grass[0], ms[0], tris[1], grass[1],
+                           ms[1], tris[2], grass[2], ms[2]);
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    // a walker over the terrain, then Play: it falls onto the height field collider
+    run("add", "", R"({"id":"tr_walk","name":"Walker"})");
+    run("set", "tr_walk", R"({"path":"Transform.position","value":[10,16,-6]})");
+    run("addcomp", "tr_walk", R"({"type":"Rigidbody","value":{"type":"Character"}})");
+    run("addcomp", "tr_walk", R"({"type":"Collider","value":{"shape":"Capsule","radius":0.4,"height":2}})");
+    run("addcomp", "tr_walk", R"({"type":"TerrainProbe"})");
+  }
+  if (frame == 33) {
+    TogglePlay(e);
+    playAt = frame;
+  }
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  if (playAt && e->play.Playing() && (!probe.empty() || frame > playAt + 150)) {
+    TogglePlay(e);
+    stand = probe.find("stand=1 normal=1 missing=1") != std::string::npos ? 1 : 0;
+  }
+  if (playAt && frame == 198) {
+    bdg::SetLogHook({});
+    bdg::LogInfo("terrain test: render={} lods={} cracks={} sculpt={} undo={} paint={} foliage={} tiers={} stand={} (sky {:.4f}, height {:.2f} -> {:.2f}, colour {:.0f},{:.0f},{:.0f} -> {:.0f},{:.0f},{:.0f}, grass {} -> {} (painted chunk {} -> {}); {}; \"{}\")",
+                 render, lods, cracks, sculpt, undo, paint, foliage, tiers, stand, sky, h0, h1, color0.r, color0.g, color0.b, color1.r, color1.g, color1.b,
+                 grass0, tv.LastStats().grass, chunkGrass0, chunkGrass1, perTier, probe);
+  }
+}
+BDG_EDITOR_TEST("BDG_TERRAIN_TEST", InjectTerrainTest, nullptr)
+
+
+// Scripted check of round 6 foliage (BDG_FOLIAGE_TEST=1, BDG_ASSETS = an empty assets folder): a gentle 128 m
+// terrain with dense grass and trees, seen from 1.7 m above the ground. Plants are drawn (grass clumps, trees at
+// LOD 0, LOD 1 and as far cards); the wind moves them (two wind times give different pictures) and with the
+// Terrain's wind at 0 the same two times give the same picture; from high above every plant has faded out and the
+// trees left are cards; facing away from the terrain its chunks and plants are culled; the low tier keeps the grass
+// under its budget. Run with --frames 40.
+void InjectFoliageTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->sceneView) return;
+  static int plants = 0, lods = 0, wind = 0, calm = 0, fade = 0, culled = 0, budget = 0;
+  static std::vector<uint8_t> a, b;
+  static double windDiff = 0, calmDiff = 0;
+  static std::string info;
+  bdg::TerrainView& tv = e->sceneView->Terrains();
+  auto run = [&](const char* name, const char* target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("foliage test: {} {}: {}", name, target, err);
+  };
+  auto shot = [&](std::vector<uint8_t>& px) {
+    int32_t w = 0, h = 0;
+    e->sceneView->ReadPixels(w, h, px);
+  };
+  auto differ = [](const std::vector<uint8_t>& x, const std::vector<uint8_t>& y) {
+    if (x.size() != y.size() || x.empty()) return 1.0;
+    size_t n = 0;
+    for (size_t i = 0; i + 3 < x.size(); i += 4) n += std::abs(x[i] - y[i]) + std::abs(x[i + 1] - y[i + 1]) + std::abs(x[i + 2] - y[i + 2]) > 6;
+    return n / double(x.size() / 4);
+  };
+  auto view = [&](glm::vec3 pivot, float yaw, float pitch, float distance) {
+    e->sceneView->camera.pivot = pivot;
+    e->sceneView->camera.yaw = yaw;
+    e->sceneView->camera.pitch = pitch;
+    e->sceneView->camera.distance = distance;
+  };
+  if (frame == 2) {
+    bdg::TerrainData t = bdg::MakeTerrain("Meadow", 129, {128, 128}, 10, 3, 4);
+    t.foliage.push_back({"Grass", bdg::FoliageKind::Grass, 6, -1, 0.8f, 1.4f, 20, 30, 70, 40, {0.36f, 0.58f, 0.22f}});
+    t.foliage.push_back({"Trees", bdg::FoliageKind::Tree, 0.02f, -1, 0.9f, 1.3f, 120, 160, 50, 40, {0.2f, 0.38f, 0.15f}});
+    for (size_t i = 0; i < t.heights.size(); ++i) t.splat[0][i * 4] = 0, t.splat[0][i * 4 + 2] = 255; // dirt: the grass stands out
+    const char* assets = std::getenv("BDG_ASSETS");
+    std::string err;
+    if (!assets || !bdg::SaveTerrain(t, std::string(assets) + "/Terrain/Meadow.terrain", &err)) bdg::LogError("foliage test: {}", err);
+    run("add", "", R"({"id":"fo_ter","name":"Meadow"})");
+    run("set", "fo_ter", R"({"path":"Transform.position","value":[-64,0,-64]})");
+    run("addcomp", "fo_ter", R"({"type":"Terrain","value":{"asset":"Terrain/Meadow.terrain"}})");
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    e->sceneView->showGrid = false;
+    bdg::TerrainData* td = bdg::TerrainRegistry::Instance().Get("Terrain/Meadow.terrain");
+    const float ground = td ? td->HeightAt(64, 84) : 0;
+    view({0, ground + 1.7f, 20}, 0, -8, 0.01f); // standing in the meadow, looking along -Z
+    tv.windTime = 0;
+  }
+  if (frame == 6) {
+    const auto& s = tv.LastStats();
+    plants = s.grass > 2000 && s.trees > 20 ? 1 : 0;
+    lods = s.trees - s.treesLod1 - s.impostors > 0 && s.treesLod1 > 0 && s.impostors > 0 ? 1 : 0;
+    info = std::format("grass {} trees {} (lod1 {}, cards {}), {} chunks, {:.2f} ms", s.grass, s.trees, s.treesLod1, s.impostors, s.chunks, s.ms);
+    shot(a);
+    tv.windTime = 0.8;
+  }
+  if (frame == 8) {
+    shot(b);
+    windDiff = differ(a, b);
+    wind = windDiff > 0.005 ? 1 : 0;
+    run("set", "fo_ter", R"({"path":"Terrain.wind","value":0})");
+    tv.windTime = 0;
+  }
+  if (frame == 10) {
+    shot(a);
+    tv.windTime = 0.8;
+  }
+  if (frame == 12) {
+    shot(b);
+    calmDiff = differ(a, b);
+    calm = calmDiff < 0.0005 ? 1 : 0;
+    view({0, 0, 0}, 0, -89, 140); // high above: the grass has faded, the trees left are cards
+  }
+  if (frame == 15) {
+    const auto& s = tv.LastStats();
+    fade = s.grass == 0 && s.impostors > 0 && s.trees == s.impostors ? 1 : 0;
+    info += std::format("; from 140 m: grass {} trees {} cards {}", s.grass, s.trees, s.impostors);
+    view({0, 3, -70}, 0, 0, 0.01f); // past the -Z edge, facing away (-Z; the terrain is behind): nothing of it in view
+  }
+  if (frame == 18) {
+    const auto& s = tv.LastStats();
+    culled = s.culled > 0 && s.chunks <= 4 && s.grass == 0 ? 1 : 0;
+    info += std::format("; facing away: {} chunks drawn, {} culled, grass {}", s.chunks, s.culled, s.grass);
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Low);
+    run("set", "fo_ter", R"({"path":"Terrain.wind","value":1})");
+    bdg::TerrainData* td = bdg::TerrainRegistry::Instance().Get("Terrain/Meadow.terrain");
+    view({0, (td ? td->HeightAt(64, 84) : 0) + 1.7f, 20}, 0, -8, 0.01f);
+  }
+  if (frame == 21) {
+    const auto& s = tv.LastStats();
+    budget = s.grass > 0 && s.grass <= bdg::TerrainTier(bdg::QualityTier::Low).grassBudget ? 1 : 0;
+    info += std::format("; low tier: grass {} ({:.2f} ms)", s.grass, s.ms);
+    e->sceneView->quality = bdg::QualityPreset(bdg::QualityTier::Medium);
+    tv.windTime = -1;
+  }
+  if (frame == 23)
+    bdg::LogInfo("foliage test: plants={} lods={} wind={} calm={} fade={} culled={} budget={} (wind {:.4f}, calm {:.5f}; {})", plants, lods, wind, calm,
+                 fade, culled, budget, windDiff, calmDiff, info);
+}
+BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)

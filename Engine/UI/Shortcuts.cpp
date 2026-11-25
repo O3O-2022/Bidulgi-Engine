@@ -36,6 +36,7 @@ const PresetRow kTable[] = {
     {"tool.scale", "R", "R"},
     {"tool.measure", "M", "M"},
     {"tool.blockout", "B", "B"},
+    {"tool.terrain", "T", "T"}, // round 6: sculpt / paint terrains
     {"view.focus", "F", "F"},
     {"view.gallery", "F1", "F1"},
     {"view.nextPanel", "Ctrl+F6", "Ctrl+F6"},

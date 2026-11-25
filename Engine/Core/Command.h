@@ -66,6 +66,12 @@ public:
 
   static bool IsStructural(const std::string& name) { return name != "set"; } // changes the object tree
 
+  // Commands other modules add (terrain edits, round 6): `apply` does it and fills the inverse command (undo runs the
+  // inverse through the same handler); it may rewrite cmd.args for the log. `label` names it in the history.
+  using Handler = std::function<bool(Scene& scene, Command& cmd, Command& inverse, std::string* error)>;
+  using Labeler = std::function<std::string(const Scene& scene, const Command& cmd)>;
+  static void RegisterHandler(const std::string& name, Handler apply, Labeler label = {});
+
   // Undo history for the History panel: done steps (oldest first) then undone steps (future = true).
   struct HistoryEntry {
     std::string label, source; // source of the first command: ui, ai, script, terminal, replay

@@ -19,7 +19,7 @@ using namespace bdg;
 
 TEST_CASE("C# bindings: components, fields, functions and enums from reflection (queue 4-1)") {
   const std::string cs = GenerateCSharpBindings();
-  CHECK(cs.find("public sealed class Health : Component {") != std::string::npos);
+  CHECK(cs.find("public sealed partial class Health : Component {") != std::string::npos);
   CHECK(cs.find("public int MaxHealth { get => Get<int>(\"maxHealth\"); set => Set(\"maxHealth\", value); }") != std::string::npos);
   CHECK(cs.find("public int Damage(int amount) => Call<int>(\"Damage\", amount);") != std::string::npos);
   CHECK(cs.find("public float Ratio() => Call<float>(\"Ratio\");") != std::string::npos);
@@ -97,7 +97,7 @@ TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps,
 #else
   DotNetHost& host = DotNetHost::Instance();
   std::string err;
-  const int kSampleBehaviours = 13; // the Behaviour classes in Scripting/Bidulgi.Samples (PhysicsProbe 6-2, InputProbe 6-4, audio sample 6-3, PrefabSpawner 6-1, AnimProbe 7-1, GameApiProbe 6-5b)
+  const int kSampleBehaviours = 14; // the Behaviour classes in Scripting/Bidulgi.Samples (PhysicsProbe 6-2, InputProbe 6-4, audio sample 6-3, PrefabSpawner 6-1, AnimProbe 7-1, GameApiProbe 6-5b, TerrainProbe round 6)
   CHECK(host.Start({}, &err));
   CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == kSampleBehaviours);
   const TypeInfo* spinner = Registry::Instance().Find("Spinner");
