@@ -1,0 +1,4 @@
+{"material":"M_Bulb","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#fff0d0"}
+{"param":"Emissive","type":"color","value":"#ffc880"}
+{"param":"EmissiveStrength","type":"float","value":8.0}

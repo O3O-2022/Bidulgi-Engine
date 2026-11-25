@@ -575,6 +575,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   light_.post = PostAt(camera.ToCamera().position);
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   lastShafts_ = r_->Stats().shafts;
+  lastStats_ = r_->Stats();
   if (autoQuality.on && !r_->Stats().passes.empty()) { // frame drop guard (3-5c): the GPU time of a finished frame
     double gpu = 0;
     for (const RenderStats::Pass& p : r_->Stats().passes) gpu += p.ms;

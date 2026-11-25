@@ -1,0 +1,4 @@
+{"material":"M_Gold","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#ffc356"}
+{"param":"Metallic","type":"float","value":1.0}
+{"param":"Roughness","type":"float","value":0.25}

@@ -577,6 +577,16 @@ jobs:
           if ($log -notmatch 'autoq test: bench=1 cached=1 tier=\w+ ms=[\d.]+ governor=1 groups=1') { $errors += 'quality automation test failed' }
           if ($log -match '(autoq test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # 3-8b indoor composite scene (generated, CC0): every material / texture group loads, light and shadow limits,
+          # a point light shadow in the side room and the window piers' sun shadow
+          python tools/make_indoor_scene.py
+          git diff --exit-code -- Tests/IndoorScene
+          if ($LASTEXITCODE -ne 0) { $errors += 'Tests/IndoorScene is out of date: run tools/make_indoor_scene.py' }
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/IndoorScene/Assets"; BDG_SCENE_FILE = "$PWD/Tests/IndoorScene/Assets/Scenes/Cloister.scene"; BDG_INDOOR_TEST = '1' } 16
+          if ($log -notmatch 'indoor test: objects=74 materials=10/10 textures=6,4,2 .* textures=ok lights=ok room=ok sun=ok') { $errors += 'indoor scene test failed' }
+          if ($log -match '(indoor test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'

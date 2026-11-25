@@ -739,3 +739,115 @@ void InjectAutoQualityTest(bdg_engine* e, int frame, float) {
 }
 void ReportAutoQualityTest(bdg_engine*) { bdg::LogInfo("autoq test: {} {} {}", autoq::bench, autoq::governor, autoq::groups); }
 BDG_EDITOR_TEST("BDG_AUTOQ_TEST", InjectAutoQualityTest, ReportAutoQualityTest)
+
+// Scripted check of 3-8b, the indoor composite scene (BDG_INDOOR_TEST=1 with BDG_ASSETS = Tests/IndoorScene/Assets and
+// BDG_SCENE_FILE = its Scenes/Cloister.scene, made by tools/make_indoor_scene.py): every material and texture loads
+// (world, normal and masks groups), the lights and the tiers' shadow limits, a point light's shadow on the side room's
+// back wall and the window piers' sun shadow on the floor (each pixel against the same view without that shadow).
+namespace indoor {
+std::string scene = "objects=-", textures = "materials=-", lights = "lights=-", room = "room=-", sun = "sun=-", perf;
+bool lightsOk = false, roomOk = false, sunOk = false, texturesOk = false;
+struct Shot { int32_t w = 0, h = 0; std::vector<uint8_t> px; };
+Shot room1, sun1;
+}
+void InjectIndoorTest(bdg_engine* e, int frame, float) {
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::EditorModel* m = e->model.get();
+  if (!sv || !m) return;
+  using indoor::Shot;
+  auto grab = [&] { Shot s; sv->ReadPixels(s.w, s.h, s.px); return s; };
+  auto lum = [&](const Shot& s, glm::vec3 p) { // 3x3 average around the projected point
+    float x, y;
+    if (!bdg::ProjectToPixel(sv->camera.ToCamera(), s.w, s.h, p, x, y)) return -1.0;
+    double sum = 0;
+    int n = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int px = (int)x + dx, py = (int)y + dy;
+        if (px < 0 || py < 0 || px >= s.w || py >= s.h) continue;
+        const uint8_t* q = &s.px[((size_t)py * s.w + px) * 4];
+        sum += q[0] * 0.2126 + q[1] * 0.7152 + q[2] * 0.0722;
+        ++n;
+      }
+    return n ? sum / n : -1.0;
+  };
+  auto tier = [&](bdg::QualityTier t, const char* overrides = nullptr) {
+    sv->quality = bdg::QualityPreset(t);
+    if (overrides) bdg::ApplyQualityOverrides(overrides, sv->quality, nullptr);
+  };
+  // side room: the gold sphere / pedestal shadow on the back wall (lamp -> sphere centre -> wall) and the open wall
+  // between the pedestals; window light: floor behind a pier (the sun comes through x = 5 toward -x) and floor in a window's patch
+  const glm::vec3 roomShadow{-2.45f, 0.625f, -21.38f}, roomLit{0, 0.625f, -21.38f}, pierShadow{0.3f, 0.005f, -3.f}, windowPatch{0.3f, 0.005f, -1.f};
+  if (frame == 2) {
+    indoor::scene = std::format("objects={}", m->scene.ObjectCount());
+    int ok = 0;
+    const char* mats[] = {"M_Brick", "M_Tiles", "M_Plaster", "M_Stone", "M_Wood", "M_Painting", "M_Railing", "M_Bulb", "M_Gold", "M_Copper"};
+    for (const char* name : mats) {
+      bdg::Material3D mat;
+      ok += e->materials.Find(name, mat) ? 1 : 0;
+    }
+    sv->JumpToBookmark(*m, 4);
+    tier(bdg::QualityTier::High);
+    indoor::textures = std::format("materials={}/{}", ok, std::size(mats));
+    indoor::texturesOk = ok == (int)std::size(mats);
+  }
+  if (frame == 4) {
+    const auto world = e->materials.TextureGroupUse(bdg::TextureGroup::World), normal = e->materials.TextureGroupUse(bdg::TextureGroup::Normal),
+               masks = e->materials.TextureGroupUse(bdg::TextureGroup::Masks);
+    indoor::textures += std::format(" textures={},{},{} ({} KB)", world.textures, normal.textures, masks.textures,
+                                    (world.bytes + normal.bytes + masks.bytes) / 1024);
+    indoor::texturesOk = indoor::texturesOk && world.textures == 6 && normal.textures == 4 && masks.textures == 2;
+    indoor::room1 = grab();
+    tier(bdg::QualityTier::High, "localshadows=0");
+  }
+  if (frame == 6) {
+    const Shot off = grab();
+    double rs = -1; // the darkest spot of the shadow (a 5 x 5 grid, 0.5 m across, on the wall)
+    for (int j = -2; j <= 2; ++j)
+      for (int i = -2; i <= 2; ++i) {
+        const glm::vec3 p = roomShadow + glm::vec3(i * 0.125f, j * 0.125f, 0);
+        const double s1 = lum(indoor::room1, p), s0 = lum(off, p);
+        if (s1 >= 0 && s0 > 0 && (rs < 0 || s1 / s0 < rs)) rs = s1 / s0;
+      }
+    const double l1 = lum(indoor::room1, roomLit), l0 = lum(off, roomLit), rl = l0 > 0 ? l1 / l0 : -1;
+    indoor::roomOk = rs >= 0 && rs < 0.62 && rl > 0.9; // ambient and the hall lanterns still reach the wall
+    indoor::room = std::format("room={:.2f}/{:.2f}", rs, rl);
+    sv->JumpToBookmark(*m, 2);
+    tier(bdg::QualityTier::High);
+  }
+  if (frame == 8) {
+    indoor::sun1 = grab();
+    tier(bdg::QualityTier::High, "shadows=0");
+  }
+  if (frame == 10) {
+    const Shot off = grab();
+    const double s1 = lum(indoor::sun1, pierShadow), s0 = lum(off, pierShadow), l1 = lum(indoor::sun1, windowPatch), l0 = lum(off, windowPatch);
+    const double rs = s0 > 0 ? s1 / s0 : -1, rl = l0 > 0 ? l1 / l0 : -1;
+    indoor::sunOk = rs >= 0 && rs < 0.6 && rl > 0.9;
+    indoor::sun = std::format("sun={:.2f}/{:.2f}", rs, rl);
+    sv->JumpToBookmark(*m, 1);
+    tier(bdg::QualityTier::High);
+  }
+  static int highShadows = -1, highLights = -1, highSkipped = -1;
+  if (frame == 12) {
+    const bdg::RenderStats& st = sv->LastStats();
+    highShadows = st.localShadows;
+    highLights = st.localLights;
+    highSkipped = st.localShadowSkipped;
+    double gpu = 0;
+    for (const auto& p : st.passes) gpu += p.ms;
+    indoor::perf = std::format("| high {}x{} draws={} tris={} gpu={:.2f}ms tiles={}", st.w, st.h, st.sceneDraws, st.triangles, gpu, st.localShadowTiles);
+    tier(bdg::QualityTier::Medium);
+  }
+  if (frame == 14) {
+    const bdg::RenderStats& st = sv->LastStats();
+    indoor::lightsOk = highLights == 9 && highShadows == 4 && highSkipped >= 1 && st.localShadows == 1;
+    indoor::lights = std::format("lights={} shadows_high={} skipped={} shadows_medium={}", highLights, highShadows, highSkipped, st.localShadows);
+  }
+}
+void ReportIndoorTest(bdg_engine*) {
+  bdg::LogInfo("indoor test: {} {} {} {} {} | textures={} lights={} room={} sun={} {}", indoor::scene, indoor::textures, indoor::lights,
+               indoor::room, indoor::sun, indoor::texturesOk ? "ok" : "bad", indoor::lightsOk ? "ok" : "bad", indoor::roomOk ? "ok" : "bad",
+               indoor::sunOk ? "ok" : "bad", indoor::perf);
+}
+BDG_EDITOR_TEST("BDG_INDOOR_TEST", InjectIndoorTest, ReportIndoorTest)
