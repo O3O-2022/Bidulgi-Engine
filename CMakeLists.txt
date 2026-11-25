@@ -177,7 +177,8 @@ FetchContent_Declare(box2d
   URL https://github.com/erincatto/box2d/archive/refs/tags/v3.1.0.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(box2d)
-set_target_properties(box2d PROPERTIES FOLDER ThirdParty)
+set_target_properties(box2d PROPERTIES FOLDER ThirdParty
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL") # Box2D asks for the static CRT (/MT); the engine uses /MD (LNK4098)
 
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
