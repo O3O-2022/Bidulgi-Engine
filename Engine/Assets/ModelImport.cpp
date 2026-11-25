@@ -1,5 +1,6 @@
 #include "Assets/ModelImport.h"
 #include "Assets/AssetImport.h"
+#include "Core/DDS.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include <ufbx.h>
@@ -33,17 +34,40 @@ glm::mat4 ToGlm(const ufbx_matrix& m) {
   return r;
 }
 
+// Image bytes into the texture: a DDS stays block-compressed with its mips (the renderer uploads or decodes it),
+// anything else is decoded to RGBA8.
+bool TakeImage(const uint8_t* data, size_t size, const std::string& name, ImportedTexture& out) {
+  if (IsDDS(data, size)) {
+    auto dds = std::make_shared<DdsImage>();
+    std::string why;
+    if (!ParseDDS(data, size, *dds, &why)) {
+      LogWarn("model: texture '{}': {}", name, why);
+      return false;
+    }
+    if (dds->format == DdsFormat::BC6H) {
+      LogWarn("model: texture '{}' is BC6H (HDR), which is not supported yet", name);
+      return false;
+    }
+    out.w = dds->w;
+    out.h = dds->h;
+    out.dds = std::move(dds);
+    return true;
+  }
+  return DecodeImageRGBA(data, size, out.w, out.h, out.rgba);
+}
+
 // A texture of the file: embedded bytes, else the file next to the model, else the path written in the file.
 bool LoadTexture(const ufbx_texture* t, const fs::path& dir, ImportedTexture& out) {
   out.name = Str(t->relative_filename).empty() ? Str(t->filename) : Str(t->relative_filename);
-  if (t->content.size > 0 && DecodeImageRGBA((const uint8_t*)t->content.data, t->content.size, out.w, out.h, out.rgba)) return true;
+  if (t->content.size > 0 && TakeImage((const uint8_t*)t->content.data, t->content.size, out.name, out)) return true;
+  std::vector<uint8_t> bytes;
   std::error_code ec;
   for (const std::string& cand : {Str(t->relative_filename), Str(t->filename), Str(t->absolute_filename)}) {
     if (cand.empty()) continue;
     fs::path p = U8(cand);
     if (p.is_relative()) p = dir / p;
     if (!fs::exists(p, ec)) p = dir / U8(cand).filename(); // a path from the artist's machine: try the name here
-    if (fs::exists(p, ec) && LoadImageRGBA(p, out.w, out.h, out.rgba)) return true;
+    if (fs::exists(p, ec) && ReadFileBytes(p, bytes) && TakeImage(bytes.data(), bytes.size(), out.name, out)) return true;
   }
   return false;
 }

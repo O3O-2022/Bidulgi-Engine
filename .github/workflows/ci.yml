@@ -269,6 +269,12 @@ jobs:
           # sunlit probes outside from lighting the inside, a lamp's bounce light arrives within a few sweeps, off on medium
           $log = Invoke-Editor 'Release' @{ BDG_GI1_TEST = '1' } 66
           if ($log -notmatch 'gi1 test: ran=1 leak=1 react=1 tiers=1') { $errors += 'realtime GI (Tier 1) test failed' }
+          # DDS textures (Bistro): BC1 / BC3 / BC5 / BC7 files uploaded as blocks where the driver has them, and with
+          # BDG_NO_BLOCK_TEXTURES=1 decoded on the CPU first; each keeps its colour on the GPU
+          $log = Invoke-Editor 'Release' @{ BDG_DDS_TEST = '1' } 5
+          if ($log -notmatch 'dds test: .* all=1') { $errors += 'DDS texture test failed' }
+          $log = Invoke-Editor 'Release' @{ BDG_DDS_TEST = '1'; BDG_NO_BLOCK_TEXTURES = '1' } 5
+          if ($log -notmatch 'dds test: uploaded=0 decoded=4 .* all=1') { $errors += 'DDS texture test (decoded) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 24) Render reference scene (queue 3-8): bookmarks, Albedo/Normal/Depth/Shadow views, wireframe, stored bookmark, GPU timers
@@ -283,6 +289,10 @@ jobs:
           # the probe / sky where rays leave the picture, nothing on a rough floor
           $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_SSR_TEST = '1' } 24
           if ($log -notmatch 'ssr test: ran=1 mirror=1 fallback=1 rough=1') { $errors += 'SSR test failed' }
+          # View modes (UE-like): each of 20 modes renders the reference scene's bookmark 1 and differs from Lit the way it
+          # should; Alt + 3 / 8 / 4, the grouped view menu (a click), the heat map legend
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_VIEWMODE_TEST = '1' } 80
+          if ($log -notmatch 'viewmode test: .* all=1') { $errors += 'view mode test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 25) Stress (queue 3-9): 10,000 instanced cubes + 16 4K BC7 textures; the same picture without instancing

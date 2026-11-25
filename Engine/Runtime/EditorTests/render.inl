@@ -503,19 +503,19 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
   }
   if (frame == 4) {
     v[1] = std::format("{}", sv->camera.pivot.y == 2.4f && sv->camera.yaw == 0.f && sv->camera.distance == 10.5f ? 1 : 0);
-    key(bdg::Key::Num2, false, true); // Alt + 2: albedo
+    sv->debugView = bdg::DebugView::Albedo; // (Alt + digit are Unreal's view-mode keys now: BDG_VIEWMODE_TEST)
   }
   if (frame == 6) {
     int c[3];
     at(grab(), sphereFront, c); // linear 0.85 white -> sRGB 237
     v[2] = sv->debugView == bdg::DebugView::Albedo && std::abs(c[0] - 237) <= 3 && std::abs(c[2] - 237) <= 3 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
-    key(bdg::Key::Num3, false, true); // normal
+    sv->debugView = bdg::DebugView::Normal;
   }
   if (frame == 8) {
     int c[3];
     at(grab(), sphereFront, c); // facing +Z: (0.5, 0.5, 1) -> (128, 128, 255)
     v[3] = c[2] > 235 && std::abs(c[0] - 128) < 30 && std::abs(c[1] - 128) < 30 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
-    key(bdg::Key::Num6, false, true); // depth
+    sv->debugView = bdg::DebugView::Depth;
   }
   if (frame == 10) {
     Shot s = grab();
@@ -524,7 +524,7 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     at(s, farWall, f);
     v[4] = n[0] >= 0 && f[0] > n[0] + 5 ? "1" : std::format("0({}<{})", n[0], f[0]); // farther = brighter
     key(bdg::Key::Num2);                      // bookmark 2: lights and shadows
-    key(bdg::Key::Num7, false, true);         // shadow view
+    sv->debugView = bdg::DebugView::Shadow;
   }
   if (frame == 12) {
     Shot s = grab();
@@ -532,7 +532,7 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     at(s, shade, in);
     at(s, open, out);
     v[5] = in[0] >= 0 && in[0] < 90 && out[0] > 200 ? "1" : std::format("0({},{})", in[0], out[0]);
-    key(bdg::Key::Num1, false, true); // back to lit
+    sv->debugView = bdg::DebugView::Lit;
   }
   static long long wireBefore = 0;
   auto cyan = [](const Shot& s) {

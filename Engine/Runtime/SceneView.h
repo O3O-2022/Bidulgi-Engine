@@ -92,6 +92,10 @@ public:
   // Feeds one frame's time to the frame drop guard (Render does it with the GPU time of each frame); true = stepped down.
   bool FeedFrameTime(double nowSeconds, double frameMs);
   DebugView debugView = DebugView::Lit;
+  struct LegendRect { float x, y, w, h; };
+  LegendRect LegendArea() const { return legendRect_; } // heat map legend drawn last frame (w = 0: none); test hook
+  // Where a toolbar chip ("view", "tier", ...) was drawn last frame (UI units); false if not drawn. Test hook.
+  bool ChipArea(const std::string& name, LegendRect& out) const;
   bool wireframe = false, bounds = false, statsPanel = false;
   void RequestGIBake() { bakeRequested_ = true; } // one more bounce on the next render
   bool JumpToBookmark(const EditorModel& model, int slot);     // false: no bookmark with that number
@@ -256,6 +260,7 @@ private:
   int gizmoLines_ = 0; // segments of the selected objects' shapes drawn last frame (test hook)
   void DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorModel& model);
   struct Chip { std::string name; float x, y, w, h; };
+  LegendRect legendRect_{0, 0, 0, 0};
   std::vector<Chip> chips_; // clickable chips of the last Draw
   UIContext* ui_ = nullptr;  // set by Draw: chips open their option lists as popup menus
   void OpenChipMenu(const Chip& chip, EditorModel& model);

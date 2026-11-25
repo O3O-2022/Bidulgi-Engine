@@ -171,9 +171,50 @@ TextureHandle RHI::CreateTexture(const TextureDesc& d, const void* pixels) {
   return {t};
 }
 
+namespace {
+// S3TC (EXT_texture_compression_s3tc / EXT_texture_sRGB) enums; glad's core profile header leaves them out.
+constexpr GLenum kDXT1 = 0x83F1, kDXT3 = 0x83F2, kDXT5 = 0x83F3, kSrgbDXT1 = 0x8C4D, kSrgbDXT3 = 0x8C4E, kSrgbDXT5 = 0x8C4F;
+bool IsBlockTexture(TextureFormat f) {
+  switch (f) {
+    case TextureFormat::BC7: case TextureFormat::BC7_SRGB: case TextureFormat::BC5: case TextureFormat::BC4:
+    case TextureFormat::BC1: case TextureFormat::BC1_SRGB: case TextureFormat::BC2: case TextureFormat::BC2_SRGB:
+    case TextureFormat::BC3: case TextureFormat::BC3_SRGB: return true;
+    default: return false;
+  }
+}
+GLenum InternalOf(TextureFormat f) {
+  switch (f) {
+    case TextureFormat::BC7: return GL_COMPRESSED_RGBA_BPTC_UNORM;
+    case TextureFormat::BC7_SRGB: return GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+    case TextureFormat::BC5: return GL_COMPRESSED_RG_RGTC2;
+    case TextureFormat::BC4: return GL_COMPRESSED_RED_RGTC1;
+    case TextureFormat::BC1: return kDXT1;
+    case TextureFormat::BC1_SRGB: return kSrgbDXT1;
+    case TextureFormat::BC2: return kDXT3;
+    case TextureFormat::BC2_SRGB: return kSrgbDXT3;
+    case TextureFormat::BC3: return kDXT5;
+    case TextureFormat::BC3_SRGB: return kSrgbDXT5;
+    case TextureFormat::SRGBA8: return GL_SRGB8_ALPHA8;
+    case TextureFormat::R8: return GL_R8;
+    case TextureFormat::RGBA16F: return GL_RGBA16F;
+    case TextureFormat::RGBA8: return GL_RGBA8;
+  }
+  return GL_RGBA8;
+}
+}
+
+bool RHI::SupportsTextureFormat(TextureFormat f) {
+  if (!IsBlockTexture(f)) return true;
+  if (const char* no = std::getenv("BDG_NO_BLOCK_TEXTURES"); no && *no == '1') return false;
+  GLint ok = 0;
+  glGetInternalformativ(GL_TEXTURE_2D, InternalOf(f), GL_INTERNALFORMAT_SUPPORTED, 1, &ok);
+  while (glGetError() != GL_NO_ERROR) {} // a driver that does not know the enum reports an error: not supported
+  return ok == GL_TRUE;
+}
+
 TextureHandle RHI::CreateTextureMips(const TextureDesc& d, const std::vector<const void*>& levels, const std::vector<size_t>& sizes) {
   if (levels.empty() || levels.size() != sizes.size()) return {};
-  GLenum internal = 0;
+  GLenum internal = InternalOf(d.format);
   switch (d.format) {
     case TextureFormat::BC7: internal = GL_COMPRESSED_RGBA_BPTC_UNORM; break;
     case TextureFormat::BC7_SRGB: internal = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM; break;
@@ -183,8 +224,7 @@ TextureHandle RHI::CreateTextureMips(const TextureDesc& d, const std::vector<con
     case TextureFormat::RGBA8: internal = GL_RGBA8; break;
     case TextureFormat::R8: internal = GL_R8; break;
   }
-  const bool block = d.format == TextureFormat::BC7 || d.format == TextureFormat::BC7_SRGB || d.format == TextureFormat::BC5 ||
-                     d.format == TextureFormat::BC4;
+  const bool block = IsBlockTexture(d.format);
   GLuint t = 0;
   glCreateTextures(GL_TEXTURE_2D, 1, &t);
   glTextureStorage2D(t, (GLsizei)levels.size(), internal, d.w, d.h);

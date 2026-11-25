@@ -20,7 +20,7 @@ struct RenderTargetHandle { uint32_t id = 0; bool Valid() const { return id != 0
 enum class BufferUsage { Vertex, Index, Uniform, Storage };
 // SRGBA8: 8-bit sRGB-encoded colour, decoded to linear when sampled (albedo textures, colour pictures).
 // BCn: 4x4 blocks (cooked textures). RGBA16F: half floats on the GPU, uploaded from 32-bit float RGBA (lightmaps).
-enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4, RGBA16F };
+enum class TextureFormat { R8, RGBA8, SRGBA8, BC7, BC7_SRGB, BC5, BC4, RGBA16F, BC1, BC1_SRGB, BC2, BC2_SRGB, BC3, BC3_SRGB };
 enum class CullMode { None, Back };
 
 struct TextureDesc {
@@ -74,6 +74,9 @@ public:
   TextureHandle CreateTexture(const TextureDesc& desc, const void* pixels); // pixels: level 0, top row first
   // Every mip level given (level 0 first, top row first); block formats take ceil(w/4) x ceil(h/4) blocks.
   TextureHandle CreateTextureMips(const TextureDesc& desc, const std::vector<const void*>& levels, const std::vector<size_t>& sizes);
+  // The driver samples this format (block formats: BC1-3 need S3TC, BC4/5 RGTC, BC7 BPTC). BDG_NO_BLOCK_TEXTURES=1
+  // answers false for block formats (tests of the decode path).
+  bool          SupportsTextureFormat(TextureFormat f);
   // Cubemaps (image-based lighting, GI Tier 0): RGBA16F, trilinear, faces in GL order +X -X +Y -Y +Z -Z.
   // layers > 0 makes a cube map array (GLSL samplerCubeArray) with that many cubes.
   TextureHandle CreateCubemap(int32_t size, int32_t levels, int32_t layers = 0);

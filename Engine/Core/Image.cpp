@@ -1,4 +1,6 @@
 #include "Core/Image.h"
+#include "Core/DDS.h"
+#include <cstring>
 #include <cstdio>
 #include <vector>
 
@@ -61,12 +63,24 @@ bool LoadImageRGBA(const std::filesystem::path& path, int32_t& w, int32_t& h, st
 bool ImageSize(const std::filesystem::path& path, int32_t& w, int32_t& h) {
   std::vector<uint8_t> bytes;
   int comp = 0;
-  return ReadFileBytes(path, bytes) && !bytes.empty() && bytes.size() <= 0x7fffffff &&
-         stbi_info_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &comp) != 0;
+  if (!ReadFileBytes(path, bytes) || bytes.empty() || bytes.size() > 0x7fffffff) return false;
+  if (IsDDS(bytes.data(), bytes.size())) {
+    uint32_t hd[3] = {};
+    if (bytes.size() < 4 + 16) return false;
+    std::memcpy(hd, bytes.data() + 8, sizeof(hd)); // flags, height, width
+    h = (int32_t)hd[1];
+    w = (int32_t)hd[2];
+    return w > 0 && h > 0;
+  }
+  return stbi_info_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &comp) != 0;
 }
 
 bool DecodeImageRGBA(const uint8_t* data, size_t size, int32_t& w, int32_t& h, std::vector<uint8_t>& rgba) {
   if (!data || size == 0 || size > 0x7fffffff) return false;
+  if (IsDDS(data, size)) {
+    DdsImage dds;
+    return ParseDDS(data, size, dds) && DecodeDDS(dds, 0, rgba, w, h);
+  }
   int comp = 0;
   stbi_uc* px = stbi_load_from_memory(data, (int)size, &w, &h, &comp, 4);
   if (!px) return false;
