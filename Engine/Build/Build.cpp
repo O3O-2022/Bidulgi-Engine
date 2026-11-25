@@ -228,8 +228,6 @@ void CheckAssets(Plan& p) {
   for (const AssetRecord* r : p.db.All()) {
     if (r->importer != "material") continue;
     const std::string text = ReadText(P(p.db.Root()) / P(r->path));
-    yyjson_doc* d = yyjson_read(text.data(), text.size(), 0);
-    if (!d) { p.Error("에셋", "Assets/" + r->path, "머티리얼 JSON을 읽을 수 없음", "에디터에서 머티리얼을 다시 저장하세요"); continue; }
     std::function<void(yyjson_val*, const std::string&)> walk = [&](yyjson_val* v, const std::string& key) {
       if (yyjson_is_obj(v)) {
         size_t i, n;
@@ -246,8 +244,27 @@ void CheckAssets(Plan& p) {
           p.Error("에셋", std::format("Assets/{} · {}", r->path, key), std::format("텍스처 '{}'가 프로젝트에 없음", val), "텍스처를 Assets에 넣거나 머티리얼에서 다른 텍스처를 고르세요");
       }
     };
-    walk(yyjson_doc_get_root(d), "");
-    yyjson_doc_free(d);
+    // JSON lines (Assets/MaterialFile.h): one object per line; a bad line is a problem of its own
+    int lineNo = 0;
+    for (size_t at = 0; at < text.size();) {
+      size_t end = text.find('\n', at);
+      if (end == std::string::npos) end = text.size();
+      std::string_view line(text.data() + at, end - at);
+      at = end + 1;
+      ++lineNo;
+      while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+      if (line.empty()) continue;
+      yyjson_doc* d = yyjson_read(line.data(), line.size(), 0);
+      if (!d) {
+        p.Error("에셋", std::format("Assets/{}:{}", r->path, lineNo), "머티리얼 줄이 JSON이 아님", "그 줄을 고치거나 에디터에서 머티리얼을 다시 저장하세요");
+        continue;
+      }
+      yyjson_val* root = yyjson_doc_get_root(d);
+      const char* param = yyjson_get_str(yyjson_obj_get(root, "param"));
+      const char* set = yyjson_get_str(yyjson_obj_get(root, "set"));
+      walk(root, param ? param : set ? set : "");
+      yyjson_doc_free(d);
+    }
   }
 }
 
@@ -455,6 +472,8 @@ void Build(Plan& p) {
   for (const std::string& s : p.scenes) add(p.root / P(s), s);
   for (const auto& f : fs::directory_iterator(p.root / "Data", ec))
     if (f.is_regular_file()) add(f.path(), "Data/" + U(f.path().filename()));
+  for (const auto& f : fs::recursive_directory_iterator(p.root / "Input", ec)) // input actions and contexts (6-4)
+    if (f.is_regular_file()) add(f.path(), "Input/" + U(fs::relative(f.path(), p.root / "Input")));
   std::vector<std::string> unused;
   std::vector<const AssetRecord*> used;
   if (p.haveAssets) {

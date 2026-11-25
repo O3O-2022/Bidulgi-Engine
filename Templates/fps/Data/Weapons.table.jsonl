@@ -1,0 +1,4 @@
+{"$table":{"key":"id","columns":[{"name":"id","type":"string"},{"name":"name","type":"string"},{"name":"fireRate","type":"float"},{"name":"automatic","type":"bool"},{"name":"magazine","type":"int"},{"name":"reloadSeconds","type":"float"},{"name":"pellets","type":"int"},{"name":"spreadDegrees","type":"float"},{"name":"bulletSpeed","type":"float"},{"name":"impulse","type":"float"},{"name":"recoilDegrees","type":"float"}]}}
+{"id":"rifle","name":"Rifle","fireRate":8,"automatic":true,"magazine":30,"reloadSeconds":1.6,"pellets":1,"spreadDegrees":0.6,"bulletSpeed":45,"impulse":5,"recoilDegrees":0.6}
+{"id":"pistol","name":"Pistol","fireRate":4,"automatic":false,"magazine":12,"reloadSeconds":1.1,"pellets":1,"spreadDegrees":0.3,"bulletSpeed":40,"impulse":4,"recoilDegrees":1.2}
+{"id":"shotgun","name":"Shotgun","fireRate":1.2,"automatic":false,"magazine":6,"reloadSeconds":2.2,"pellets":6,"spreadDegrees":5,"bulletSpeed":35,"impulse":3,"recoilDegrees":4}

@@ -539,3 +539,77 @@ void InjectAudioTest(bdg_engine* e, int frame, float) {
   }
 }
 BDG_EDITOR_TEST("BDG_AUDIO_TEST", InjectAudioTest, nullptr)
+
+
+
+// Scripted check of the FPS template (BDG_FPS_TEST=1, run in a project made by `bdg new <dir> --template fps` with
+// that folder as the working folder and BDG_ASSETS=<dir>/Assets): Play, then input injected through the focused Game
+// view — W walks the player toward the first target, Space jumps, once landed a left click fires a physics bullet
+// that hits the target (it is knocked away and the score in the log goes up), a mouse move turns the head; Stop.
+// Run with --frames 150 (the shot waits for the landing).
+void InjectFpsTest(bdg_engine* e, int frame, float scale) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  using T = bdg::InputEvent::Type;
+  static std::string score;
+  static float z0 = 0, z1 = 0, y0 = 0, yMax = -1e9f, yaw0 = 0, yaw1 = 0;
+  static bdg::Vec3 target0{};
+  static bool targetMoved = false, playing = false;
+  auto key = [&](bdg::Key k, bool down) {
+    bdg::InputEvent ev{down ? T::KeyDown : T::KeyUp};
+    ev.key = k;
+    e->window.InjectEvent(ev);
+  };
+  auto transform = [&](const char* id) -> const bdg::Transform* {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    return c ? static_cast<const bdg::Transform*>(c->data) : nullptr;
+  };
+  bdg::Widget* game = e->editor->Find("game");
+  const float gx = game ? game->x + game->w * 0.5f : 0, gy = game ? game->y + game->h * 0.5f : 0;
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // game time passes (fixed steps)
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("score: ", 0) == 0) score = l; });
+    TogglePlay(e);
+    playing = e->play.Playing();
+  }
+  if (frame == 8) { // landed on the ground by now
+    if (const auto* t = transform("player")) { z0 = t->position.z; y0 = t->position.y; }
+    if (const auto* t = transform("target1")) target0 = t->position;
+    key(bdg::Key::W, true);
+  }
+  if (frame == 16) key(bdg::Key::Space, true);
+  if (frame == 18) key(bdg::Key::Space, false);
+  if (frame >= 16 && frame <= 34)
+    if (const auto* t = transform("player")) yMax = std::max(yMax, t->position.y);
+  if (frame == 30) key(bdg::Key::W, false);
+  static int fired = 0; // the frame of the shot: once the player has landed again (height steady near the start)
+  static float lastY = 0;
+  if (frame >= 40 && !fired)
+    if (const auto* t = transform("player"); t && ((frame > 44 && std::fabs(t->position.y - lastY) < 0.002f && t->position.y < y0 + 0.2f) || frame >= 110)) {
+      fired = frame;
+      z1 = t->position.z;
+      e->window.InjectEvent({T::MouseMove, gx * scale, gy * scale, 0});
+      e->window.InjectEvent({T::MouseDown, gx * scale, gy * scale, 1});
+    }
+  if (const auto* t = transform("player")) lastY = t->position.y;
+  if (fired && frame == fired + 2) e->window.InjectEvent({T::MouseUp, gx * scale, gy * scale, 1});
+  if (fired && frame == fired + 20) { // the bullet has hit and the target was pushed (it is removed 1.5 s after the hit)
+    const auto* t = transform("target1");
+    targetMoved = !t || glm::length(glm::vec3(t->position.x - target0.x, t->position.y - target0.y, t->position.z - target0.z)) > 0.05f;
+    if (const auto* h = transform("head")) yaw0 = h->rotation.y;
+    e->window.InjectEvent({T::MouseMove, (gx + 40) * scale, gy * scale, 0});
+  }
+  if (fired && frame == fired + 24)
+    if (const auto* h = transform("head")) yaw1 = h->rotation.y;
+  if (fired && frame == fired + 26) TogglePlay(e);
+  if (fired && frame == fired + 28) {
+    bdg::SetLogHook({});
+    const bool moved = z0 - z1 > 1.0f, jumped = yMax - y0 > 0.4f, hit = score.find("score: 1 (+1 Target)") != std::string::npos ||
+                                                                         score.find("score: 1 ") != std::string::npos;
+    bdg::LogInfo("fps test: play={} moved={} jumped={} hit={} pushed={} look={} (z {:.2f} -> {:.2f}, jump {:.2f} m, shot at frame {}, yaw {:.1f} -> {:.1f}, last \"{}\")",
+                 playing ? 1 : 0, moved ? 1 : 0, jumped ? 1 : 0, hit ? 1 : 0, targetMoved ? 1 : 0, std::fabs(yaw1 - yaw0) > 1 ? 1 : 0, z0, z1,
+                 yMax - y0, fired, yaw0, yaw1, score);
+  }
+}
+BDG_EDITOR_TEST("BDG_FPS_TEST", InjectFpsTest, nullptr)
