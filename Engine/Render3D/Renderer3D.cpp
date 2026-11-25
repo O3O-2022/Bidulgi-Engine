@@ -1,4 +1,5 @@
 #include "Render3D/Renderer3D.h"
+#include "Render3D/DynamicGI.h"
 #include "Assets/GltfImport.h"
 #include "Render3D/Culling.h"
 #include "Render3D/Lightmap.h"
@@ -34,6 +35,8 @@ const char* kFrameUBO = R"(layout(std140, binding = 1) uniform Frame3D {
   vec4 uFog;                                     // fog colour (linear), density per metre (0 = off) (2-6)
   vec4 uFog2;                                    // fog start (m), -, -, -
   vec4 uLocalShadow;                             // point / spot shadow atlas (3-4b): tiles across, tiles up, tile size (px), -
+  mat4 uPrevViewProj;                            // the previous frame's camera (round 6: SSR reads that frame's colour)
+  vec4 uSsr;                                     // SSR (round 6): on (previous frame there), max distance m, thickness m, steps
 };
 )";
 // Sky colour along a direction; blur widens the horizon (rough reflections). Used by the sky pass and shading.
@@ -67,6 +70,25 @@ const char* kProbesFn = R"(layout(std140, binding = 5) uniform Probes3D {
   vec4 uVolMin; vec4 uVolMax; vec4 uVolCount;
 };
 layout(std430, binding = 1) readonly buffer Volume3D { vec4 uVolSH[]; };
+// GI Tier 1 (round 6): per probe (36 vec4, see Render3D/DynamicGI.h) an 8 x 8 octahedral map of the mean and mean
+// square of its ray distances (2 texels per vec4), then a 512-bit mask of the small boxes around it it sees (4 vec4,
+// bits in the floats); uVolMax.w = 1 when present. A point further than the probe sees that way gets little light.
+layout(std430, binding = 7) readonly buffer VolumeVis3D { vec4 uVolVis[]; };
+vec2 VisTexel(int probe, int tx, int ty) {
+  int t = ty * 8 + tx;
+  vec4 pair = uVolVis[probe * 36 + (t >> 1)];
+  return (t & 1) == 0 ? pair.xy : pair.zw;
+}
+bool VisMask(int probe, int bit) {
+  uint word = floatBitsToUint(uVolVis[probe * 36 + 32 + (bit >> 7)][(bit >> 5) & 3]);
+  return ((word >> uint(bit & 31)) & 1u) != 0u;
+}
+vec2 OctUV(vec3 d) {
+  vec3 p = d / max(abs(d.x) + abs(d.y) + abs(d.z), 1e-8);
+  vec2 s = vec2(p.x >= 0.0 ? 1.0 : -1.0, p.z >= 0.0 ? 1.0 : -1.0);
+  vec2 e = p.y >= 0.0 ? p.xz : vec2((1.0 - abs(p.z)) * s.x, (1.0 - abs(p.x)) * s.y);
+  return e * 0.5 + 0.5;
+}
 void SHBasis(vec3 n, out float b[9]) {
   b[0] = 0.282095; b[1] = 0.488603 * n.y; b[2] = 0.488603 * n.z; b[3] = 0.488603 * n.x;
   b[4] = 1.092548 * n.x * n.y; b[5] = 1.092548 * n.y * n.z; b[6] = 0.315392 * (3.0 * n.z * n.z - 1.0);
@@ -99,6 +121,31 @@ vec3 VolumeIrradiance(vec3 p, vec3 n) { // the 8 nearest grid probes, blended by
     vec3 s = vec3(0.0);
     for (int k = 0; k < 9; ++k) s += uVolSH[base + k].rgb * b[k];
     float w = w3.x * w3.y * w3.z * max(uVolSH[base].w, 1e-4); // probes inside objects are switched off (w = 0)
+    if (uVolMax.w > 0.5) { // visibility (GI Tier 1): no light through walls; probes behind the surface count less
+      vec3 cellSize = (uVolMax.xyz - uVolMin.xyz) / vec3(cnt);
+      vec3 to = p - (uVolMin.xyz + (vec3(q) + 0.5) * cellSize);
+      float dist = length(to);
+      vec3 dir = dist > 1e-5 ? to / dist : vec3(0.0, 1.0, 0.0);
+      float facing = dot(-dir, n) * 0.5 + 0.5;
+      w *= facing * facing + 0.05;
+      int probeIndex = (q.z * cnt.y + q.y) * cnt.x + q.x;
+      // p was pushed a quarter cell off the surface by the caller (normal bias, like DDGI): a probe just behind a thin
+      // wall then sees the wall clearly in front of it (Render3D/DynamicGI.cpp Irradiance does the same)
+      vec2 st = OctUV(dir) * 8.0 - 0.5;
+      ivec2 t0 = clamp(ivec2(floor(st)), ivec2(0), ivec2(7)), t1 = min(t0 + 1, ivec2(7));
+      vec2 fr = clamp(st - vec2(t0), vec2(0.0), vec2(1.0));
+      vec2 mm = mix(mix(VisTexel(probeIndex, t0.x, t0.y), VisTexel(probeIndex, t1.x, t0.y), fr.x),
+                    mix(VisTexel(probeIndex, t0.x, t1.y), VisTexel(probeIndex, t1.x, t1.y), fr.x), fr.y);
+      float mean = mm.x, mom2 = mm.y;
+      // the mask first: the small box around the pushed-off point hidden from the probe gets (almost) nothing
+      ivec3 sub = clamp(ivec3(floor((to / cellSize + 1.0) * 4.0)), ivec3(0), ivec3(7));
+      if (!VisMask(probeIndex, (sub.z * 8 + sub.y) * 8 + sub.x)) w *= 1e-3;
+      else if (dist > mean) {
+        float var = max(mom2 - mean * mean, 1e-4), dd = dist - mean, pr = var / (var + dd * dd);
+        pr = max((pr - 0.2) / 0.8, 0.0); // light-bleed reduction: the soft tail of the test counts as hidden
+        w *= max(pr * pr * pr, 1e-3);
+      }
+    }
     e += s * w;
     wsum += w;
   }
@@ -116,11 +163,62 @@ const char* kFaceDir = R"(vec3 FaceDir(int f, vec2 st) {
   return vec3(-c.x, -c.y, -1.0);
 }
 )";
+const char* kSsrFn = R"(// Screen-space reflection (round 6): march the reflected ray in world space, projecting each step onto this frame's
+// depth (the prepass); a hit is a step just behind the visible surface (within a thickness growing with distance),
+// refined by bisection. Its colour comes from the previous frame's picture, reprojected with that frame's camera.
+// Weight fades with roughness, at the picture's edges, with distance and for rays towards the camera; what is left
+// is the probe / sky reflection (fallback).
+vec4 TraceSSR(vec3 P, vec3 N, vec3 R, float rough) {
+  if (uSsr.x < 0.5 || rough > 0.6) return vec4(0.0);
+  int steps = int(uSsr.w);
+  float maxD = uSsr.y, stride = maxD / float(steps);
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  vec3 start = P + N * 0.03;
+  float prev = 0.0, hitT = -1.0;
+  for (int i = 1; i <= steps; ++i) {
+    float t = stride * (float(i) - 0.5 + noise * 0.5);
+    vec3 p = start + R * t;
+    vec4 c = uViewProj * vec4(p, 1.0);
+    if (c.w <= 0.0) break;
+    vec2 uv = c.xy / c.w * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
+    float behind = dot(p - uCamPos.xyz, uCamFwd.xyz) - textureLod(uGeoSSR, uv, 0.0).w;
+    if (behind > 0.0 && behind < uSsr.z + t * 0.02) { hitT = t; break; }
+    prev = t;
+  }
+  if (hitT < 0.0) return vec4(0.0);
+  float lo = prev, hi = hitT; // bisection between the last step in front and the hit
+  for (int k = 0; k < 5; ++k) {
+    float mid = 0.5 * (lo + hi);
+    vec3 p = start + R * mid;
+    vec4 c = uViewProj * vec4(p, 1.0);
+    float behind = dot(p - uCamPos.xyz, uCamFwd.xyz) - textureLod(uGeoSSR, c.xy / c.w * 0.5 + 0.5, 0.0).w;
+    if (behind > 0.0) hi = mid; else lo = mid;
+  }
+  vec3 hit = start + R * hi;
+  vec4 pc = uPrevViewProj * vec4(hit, 1.0);
+  if (pc.w <= 0.0) return vec4(0.0);
+  vec2 puv = pc.xy / pc.w * 0.5 + 0.5;
+  vec2 edge = min(puv, 1.0 - puv);
+  float fade = smoothstep(0.0, 0.08, min(edge.x, edge.y));
+  fade *= 1.0 - smoothstep(0.6 * maxD, maxD, hi);
+  fade *= 1.0 - smoothstep(0.25, 0.6, rough);
+  fade *= smoothstep(-0.6, -0.1, -dot(R, -uCamFwd.xyz)); // rays coming back to the camera find little
+  return vec4(textureLod(uPrevColor, puv, 0.0).rgb, clamp(fade, 0.0, 1.0));
+}
+)";
+const char* kFogCommon = R"(
+float SliceDepth(float z) { return uFogA.x * pow(uFogA.y / uFogA.x, z / uGrid.z); }
+vec3 RayAt(vec2 uv) {
+  vec4 p = uFogInvVP * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+  return normalize(p.xyz / p.w - uCamPos.xyz);
+}
+)";
 std::string Src(const char* text) { // expands #FRAME_UBO, #SKY_FN, #OBJECTS_VS, #OBJECTS_FS, #PROBES_FN, #FACE_DIR
   std::string s = text;
   const std::string vsObjects = std::string(kObjectsCommon) + kObjectsVS, fsObjects = std::string(kObjectsCommon) + kObjectsFS;
   for (auto [token, body] : {std::pair{"#FRAME_UBO", kFrameUBO}, std::pair{"#SKY_FN", kSkyFn}, std::pair{"#OBJECTS_VS", vsObjects.c_str()},
-                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}})
+                             std::pair{"#OBJECTS_FS", fsObjects.c_str()}, std::pair{"#PROBES_FN", kProbesFn}, std::pair{"#FACE_DIR", kFaceDir}, std::pair{"#SSR_FN", kSsrFn}, std::pair{"#FOG_COMMON", kFogCommon}})
     for (size_t at; (at = s.find(token)) != std::string::npos;) s.replace(at, std::strlen(token), body);
   return s;
 }
@@ -177,6 +275,9 @@ layout(binding = 3) uniform sampler2D uOcclusionMap;
 layout(binding = 4) uniform sampler2D uEmissiveMap;
 layout(binding = 7) uniform sampler2D uLightmap;
 layout(binding = 8) uniform sampler2D uSSAO; // screen-space ambient occlusion, half resolution (3-5b)
+layout(binding = 10) uniform sampler2D uGeoSSR;   // SSR (round 6): this frame's prepass (normal, view depth)
+layout(binding = 11) uniform sampler2D uPrevColor; // SSR: the previous frame's resolved HDR picture
+#SSR_FN
 layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; }; // per light: pos + range, colour, dir + cos outer, cos inner + spot
 layout(std430, binding = 3) readonly buffer Clusters3D { uint uCl[]; };  // per cluster: first, count; then light indices
 in vec3 vWorld; in vec3 vNormal; in vec2 vUV; in vec4 vTangent; in vec3 vLit; in vec2 vLightUV;
@@ -402,6 +503,10 @@ void main() {
     for (uint k = 0u; k < lightCount; ++k) color += LocalLight(int(k), vWorld, ng, N, V, diffuse, f0, a);
   vec3 R = reflect(-V, N);
   vec3 env = ProbeSpecular(probe, R, vWorld, rough);   // and what the surface mirrors, blurred by roughness
+  if (uSsr.x > 0.5 && view == 0) { // screen-space reflection where the ray finds the picture; the probe elsewhere
+    vec4 ssr = TraceSSR(vWorld, ng, R, rough);
+    env = mix(env, ssr.rgb, ssr.a);
+  }
   vec2 ab = EnvBRDFApprox(NoV, rough);
   float ao = (uMaps.w > 0.5 ? 1.0 + uExtra.y * (occ.r - 1.0) : 1.0) * ssao; // occlusion dims indirect light only
   color += (diffuse * ambient + env * (f0 * ab.x + ab.y)) * ao;
@@ -795,6 +900,200 @@ void main() {
 }
 )";
 // Bloom (Jimenez, Call of Duty 2014): 13-tap downsample, 3x3 tent upsample added into the next larger level.
+// ---- Volumetric fog (round 6) ----
+// A froxel grid: uGrid.x by uGrid.y screen tiles, uGrid.z depth slices spaced exponentially from uFogA.x to uFogA.y
+// metres of view depth. uFogA = (near, far, density, fog height), uFogB = (height falloff, anisotropy, local light
+// scale, slice jitter 0..1), uFogC = (albedo rgb, -), uGrid.w = local lights; uFogInvVP = unjittered inverse view-proj.
+#define FOG_UBO "layout(std140, binding = 10) uniform Fog3D { vec4 uGrid; vec4 uFogA; vec4 uFogB; vec4 uFogC; mat4 uFogInvVP; };\n"
+// 1. Each froxel: density (height fog) and the light it scatters toward the camera: the sun through its shadow map
+// (Henyey-Greenstein phase), the sky, and point / spot lights (even phase, no shadows).
+const char* kFogLightCS = "#version 450 core\nlayout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(binding = 5) uniform sampler2DShadow uShadowMap;
+layout(std430, binding = 2) readonly buffer LightList3D { vec4 uLL[]; };
+layout(std430, binding = 12) writeonly buffer FogMedia { vec4 uMedia[]; };
+const float PI = 3.14159265;
+float SunShadow(vec3 w) {
+  if (uShadow.x < 0.5) return 1.0;
+  float z = dot(w - uCamPos.xyz, uCamFwd.xyz);
+  int count = int(uShadow2.x + 0.5), c = 0;
+  for (int i = 0; i < 3; ++i)
+    if (i < count - 1 && z > (i == 0 ? uCascadeSplit.x : i == 1 ? uCascadeSplit.y : uCascadeSplit.z)) c = i + 1;
+  vec4 p = uCascadeVP[c] * vec4(w, 1.0);
+  vec3 s = p.xyz / p.w * 0.5 + 0.5;
+  if (s.z >= 1.0 || any(lessThan(s.xy, vec2(0.0))) || any(greaterThan(s.xy, vec2(1.0)))) return 1.0;
+  return textureLod(uShadowMap, vec3((float(c) + s.x) / uShadow2.x, s.y, s.z - uCascadeInfo[c].x), 0.0);
+}
+float Phase(float cosT, float g) { float g2 = g * g; return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * cosT, 1e-4), 1.5)); }
+void main() {
+  uvec3 id = gl_GlobalInvocationID;
+  if (any(greaterThanEqual(id, uvec3(uGrid.xyz)))) return;
+  vec2 uv = (vec2(id.xy) + 0.5) / uGrid.xy;
+  vec3 ray = RayAt(uv);
+  vec3 w = uCamPos.xyz + ray * (SliceDepth(float(id.z) + uFogB.w) / dot(ray, uCamFwd.xyz));
+  float dens = uFogA.z * (uFogB.x > 0.0 ? exp(-uFogB.x * clamp(w.y - uFogA.w, -20.0, 200.0)) : 1.0);
+  vec3 L = normalize(uToLight.xyz);
+  vec3 light = uLight.rgb * SunShadow(w) * Phase(dot(ray, L), uFogB.y);
+  light += mix(uHorizon.rgb, uZenith.rgb, 0.5) * (1.0 / (4.0 * PI)) * 0.5; // the sky, all around
+  for (int i = 0; i < int(uGrid.w); ++i) {
+    vec4 lp = uLL[i * 4], lc = uLL[i * 4 + 1], ld = uLL[i * 4 + 2], lk = uLL[i * 4 + 3];
+    vec3 toL = lp.xyz - w;
+    float d2 = max(dot(toL, toL), 1e-4), range = max(lp.w, 1e-3);
+    if (d2 >= range * range) continue;
+    float win = clamp(1.0 - pow(d2 / (range * range), 2.0), 0.0, 1.0);
+    float atten = win * win / (d2 + 1.0);
+    if (lk.y > 0.5) atten *= smoothstep(ld.w, lk.x, dot(-toL * inversesqrt(d2), ld.xyz));
+    light += lc.rgb * lc.w * atten * uFogB.z / (4.0 * PI);
+  }
+  uMedia[(id.z * uint(uGrid.y) + id.y) * uint(uGrid.x) + id.x] = vec4(uFogC.rgb * dens * light, dens);
+}
+)";
+// 2. Front to back along each column: light gathered so far and what still gets through (transmittance), at the far
+// edge of each slice.
+const char* kFogIntegrateCS = "#version 450 core\nlayout(local_size_x = 8, local_size_y = 8) in;\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(std430, binding = 12) readonly buffer FogMedia { vec4 uMedia[]; };
+layout(std430, binding = 13) writeonly buffer FogAccum { vec4 uAccum[]; };
+void main() {
+  uvec2 id = gl_GlobalInvocationID.xy;
+  if (any(greaterThanEqual(id, uvec2(uGrid.xy)))) return;
+  float stretch = 1.0 / max(dot(RayAt((vec2(id) + 0.5) / uGrid.xy), uCamFwd.xyz), 0.05); // view depth -> distance
+  vec3 S = vec3(0.0);
+  float T = 1.0;
+  for (uint z = 0u; z < uint(uGrid.z); ++z) {
+    uint i = (z * uint(uGrid.y) + id.y) * uint(uGrid.x) + id.x;
+    vec4 m = uMedia[i];
+    float ds = (SliceDepth(float(z) + 1.0) - SliceDepth(float(z))) * stretch;
+    float ext = max(m.a, 1e-6), tr = exp(-ext * ds);
+    S += T * m.rgb * (1.0 - tr) / ext;
+    T *= tr;
+    uAccum[i] = vec4(S, T);
+  }
+}
+)";
+// 3. Each pixel: the fog between the camera and its surface (sky: the whole simulated distance), trilinear.
+const char* kFogApplyFS = "#version 450 core\n#FRAME_UBO\n" FOG_UBO R"(
+#FOG_COMMON
+layout(binding = 0) uniform sampler2D uHdr;
+layout(binding = 1) uniform sampler2D uGeo;
+layout(std430, binding = 13) readonly buffer FogAccum { vec4 uAccum[]; };
+in vec2 vUV;
+out vec4 oColor;
+vec4 At(int x, int y, int z) {
+  if (z < 0) return vec4(0.0, 0.0, 0.0, 1.0);
+  ivec3 g = ivec3(uGrid.xyz);
+  x = clamp(x, 0, g.x - 1); y = clamp(y, 0, g.y - 1); z = min(z, g.z - 1);
+  return uAccum[(z * g.y + y) * g.x + x];
+}
+void main() {
+  vec3 c = textureLod(uHdr, vUV, 0.0).rgb;
+  float d = min(textureLod(uGeo, vUV, 0.0).w, uFogA.y);
+  float s = log(max(d, uFogA.x) / uFogA.x) / log(uFogA.y / uFogA.x) * uGrid.z - 1.0; // slice coordinate (far edges)
+  vec2 xy = vUV * uGrid.xy - 0.5;
+  ivec2 b = ivec2(floor(xy));
+  vec2 f = xy - vec2(b);
+  int z0 = int(floor(s));
+  float fz = s - float(z0);
+  vec4 r = vec4(0.0);
+  for (int k = 0; k < 2; ++k) {
+    vec4 a = mix(mix(At(b.x, b.y, z0 + k), At(b.x + 1, b.y, z0 + k), f.x), mix(At(b.x, b.y + 1, z0 + k), At(b.x + 1, b.y + 1, z0 + k), f.x), f.y);
+    r += a * (k == 0 ? 1.0 - fz : fz);
+  }
+  oColor = vec4(c * r.a + r.rgb, 1.0);
+}
+)";
+// ---- Temporal anti-aliasing (round 6) ----
+// uCurVP / uInvCurVP: this frame without jitter; uPrevVP: the previous frame's (no jitter); uJitVP: what the scene
+// pass used. uTaa = (-, -, feedback, history valid), uTaa2 = (sharpen, -, -, -)
+#define TEMPORAL_UBO "layout(std140, binding = 9) uniform Temporal3D { mat4 uCurVP; mat4 uPrevVP; mat4 uJitVP; mat4 uInvCurVP; vec4 uTaa; vec4 uTaa2; };\n"
+// Motion vectors: where each opaque surface point was on the previous frame's picture (its object's previous
+// placement, the previous camera), as a UV offset; alpha 1 marks surfaces (0: background, the camera alone).
+const char* kVelocityVS = "#version 450 core\n#OBJECTS_VS\n" TEMPORAL_UBO R"(
+layout(location = 0) in vec3 aPos;
+layout(std430, binding = 6) readonly buffer PrevModels { mat4 uPrevModel[]; };
+out vec4 vCur; out vec4 vPrev;
+void main() {
+  vObject = int(aObject + 0.5);
+  vec4 w = uModel * vec4(aPos, 1.0);
+  vCur = uCurVP * w;
+  vPrev = uPrevVP * (uPrevModel[vObject] * vec4(aPos, 1.0));
+  gl_Position = uJitVP * w;
+}
+)";
+const char* kVelocityFS = R"(#version 450 core
+in vec4 vCur; in vec4 vPrev;
+out vec4 oColor;
+void main() { oColor = vec4((vCur.xy / vCur.w - vPrev.xy / vPrev.w) * 0.5, 0.0, 1.0); }
+)";
+// Resolve: this frame's pixel mixed with the history found through the motion vector; the history is clamped to the
+// colour range of the pixel's 3x3 neighbourhood (YCoCg, in a tone-mapped space so bright pixels do not dominate),
+// which removes ghosts of things that moved or appeared. No history (first frame, camera cut, off screen): this frame.
+const char* kTaaFS = "#version 450 core\n" TEMPORAL_UBO R"(
+layout(binding = 0) uniform sampler2D uCur;
+layout(binding = 1) uniform sampler2D uHist;
+layout(binding = 2) uniform sampler2D uVel;
+in vec2 vUV;
+out vec4 oColor;
+vec3 ToYCoCg(vec3 c) { return vec3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b); }
+vec3 FromYCoCg(vec3 c) { return vec3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+vec3 Squash(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 Unsquash(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4); }
+vec3 Fetch(vec2 uv) { return ToYCoCg(Squash(max(textureLod(uCur, uv, 0.0).rgb, vec3(0.0)))); }
+void main() {
+  vec2 texel = 1.0 / vec2(textureSize(uCur, 0));
+  vec3 cur = Fetch(vUV), lo = cur, hi = cur;
+  // velocity of the nearest surface in the neighbourhood (edges keep their object's motion)
+  vec4 vel = textureLod(uVel, vUV, 0.0);
+  for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x) {
+      if (x == 0 && y == 0) continue;
+      vec3 c = Fetch(vUV + vec2(x, y) * texel);
+      lo = min(lo, c);
+      hi = max(hi, c);
+      vec4 v = textureLod(uVel, vUV + vec2(x, y) * texel, 0.0);
+      if (v.a > vel.a || (v.a > 0.5 && dot(v.xy, v.xy) > dot(vel.xy, vel.xy))) vel = v;
+    }
+  vec2 motion = vel.xy;
+  if (vel.a < 0.5) { // background: the camera's motion at the far plane
+    vec4 wp = uInvCurVP * vec4(vUV * 2.0 - 1.0, 1.0, 1.0);
+    vec4 pp = uPrevVP * vec4(wp.xyz / wp.w, 1.0);
+    motion = vUV - (pp.xy / pp.w * 0.5 + 0.5);
+  }
+  vec2 huv = vUV - motion;
+  if (uTaa.w < 0.5 || any(lessThan(huv, vec2(0.0))) || any(greaterThan(huv, vec2(1.0)))) {
+    oColor = vec4(max(textureLod(uCur, vUV, 0.0).rgb, vec3(0.0)), 1.0);
+    return;
+  }
+  vec3 hist = clamp(ToYCoCg(Squash(max(textureLod(uHist, huv, 0.0).rgb, vec3(0.0)))), lo, hi);
+  // faster motion keeps less history (less blur), still enough to smooth edges
+  float speed = length(motion / texel);
+  float fb = mix(uTaa.z, uTaa.z * 0.8, clamp(speed / 8.0, 0.0, 1.0));
+  oColor = vec4(Unsquash(FromYCoCg(mix(cur, hist, fb))), 1.0);
+}
+)";
+// A plain copy (SSR without TAA keeps the previous frame's picture this way).
+const char* kCopyFS = R"(#version 450 core
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+void main() { oColor = vec4(textureLod(uSrc, vUV, 0.0).rgb, 1.0); }
+)";
+// Sharpen after the resolve (the blend softens a little): unsharp mask on the 4 neighbours, in the squashed space.
+const char* kSharpenFS = "#version 450 core\n" TEMPORAL_UBO R"(
+layout(binding = 0) uniform sampler2D uSrc;
+in vec2 vUV;
+out vec4 oColor;
+vec3 Squash(vec3 c) { return c / (1.0 + max(c.r, max(c.g, c.b))); }
+vec3 Unsquash(vec3 c) { return c / max(1.0 - max(c.r, max(c.g, c.b)), 1e-4); }
+void main() {
+  vec2 t = 1.0 / vec2(textureSize(uSrc, 0));
+  vec3 c = Squash(textureLod(uSrc, vUV, 0.0).rgb);
+  vec3 n = Squash(textureLod(uSrc, vUV + vec2(0, t.y), 0.0).rgb) + Squash(textureLod(uSrc, vUV - vec2(0, t.y), 0.0).rgb) +
+           Squash(textureLod(uSrc, vUV + vec2(t.x, 0), 0.0).rgb) + Squash(textureLod(uSrc, vUV - vec2(t.x, 0), 0.0).rgb);
+  vec3 s = clamp(c + (c * 4.0 - n) * uTaa2.x * 0.25, vec3(0.0), vec3(0.999));
+  oColor = vec4(Unsquash(s), 1.0);
+}
+)";
 const char* kBloomDownFS = R"(#version 450 core
 layout(binding = 0) uniform sampler2D uSrc;
 in vec2 vUV;
@@ -861,6 +1160,8 @@ struct FrameData {
   float cluster[4], cluster2[4];
   float fog[4], fog2[4];
   float localShadow[4];
+  float prevViewProj[16];
+  float ssr[4];
 };
 struct SsaoData { float ao[4], ao2[4]; };
 struct LightsData { float pos[16][4], color[16][4], dir[16][4], cone[16][4]; };
@@ -902,6 +1203,16 @@ glm::mat4 FitShadow(const Camera3D& cam, float aspect, const glm::vec3& toLight,
   return glm::ortho(-radius, radius, -radius, radius, 0.f, depthRange) * view;
 }
 struct ObjectData { float model[16]; float baseColor[4], params[4], emissive[4], maps[4], extra[4], lightmap[4]; };
+struct TemporalData { float curVP[16], prevVP[16], jitVP[16], invCurVP[16], taa[4], taa2[4]; };
+struct FogData { float grid[4], a[4], b[4], c[4], invVP[16]; };
+float Halton(uint32_t i, uint32_t base) {
+  float f = 1, r = 0;
+  for (; i > 0; i /= base) {
+    f /= (float)base;
+    r += f * (float)(i % base);
+  }
+  return r;
+}
 }
 
 glm::mat4 Camera3D::View() const { return glm::lookAt(position, target, up); }
@@ -1080,6 +1391,38 @@ bool Renderer3D::Init(RHI& rhi) {
   aoBlur_ = rhi.CreatePipeline(pp);
   if (!ssao_.Valid() || !aoBlur_.Valid()) return false;
   ssaoUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(SsaoData), true);
+  { // temporal anti-aliasing (round 6)
+    const std::string velVS = Src(kVelocityVS);
+    PipelineDesc vd = pd; // the scene's vertex layout
+    vd.vertexSource = velVS.c_str();
+    vd.fragmentSource = kVelocityFS;
+    vd.alphaBlend = vd.additive = vd.wireframe = false;
+    vd.depthTest = true;
+    vd.depthWrite = true;
+    vd.cull = CullMode::None;
+    vd.depthBiasConstant = vd.depthBiasSlope = 0;
+    vd.debugName = "taa.velocity";
+    velocity_ = rhi.CreatePipeline(vd);
+    pp.fragmentSource = kTaaFS;
+    pp.debugName = "taa.resolve";
+    taa_ = rhi.CreatePipeline(pp);
+    pp.fragmentSource = kSharpenFS;
+    pp.debugName = "taa.sharpen";
+    sharpen_ = rhi.CreatePipeline(pp);
+    pp.fragmentSource = kCopyFS;
+    pp.debugName = "post.copy";
+    copy_ = rhi.CreatePipeline(pp);
+    const std::string fogLight = Src(kFogLightCS), fogIntegrate = Src(kFogIntegrateCS), fogApply = Src(kFogApplyFS);
+    fogLight_ = rhi.CreateComputePipeline(fogLight.c_str(), "fog.light");
+    fogIntegrate_ = rhi.CreateComputePipeline(fogIntegrate.c_str(), "fog.integrate");
+    pp.fragmentSource = fogApply.c_str();
+    pp.debugName = "fog.apply";
+    fogApply_ = rhi.CreatePipeline(pp);
+    if (!fogLight_.Valid() || !fogIntegrate_.Valid() || !fogApply_.Valid()) return false;
+    fogUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(FogData), true);
+    if (!velocity_.Valid() || !taa_.Valid() || !sharpen_.Valid() || !copy_.Valid()) return false;
+    temporalUbo_ = rhi.CreateBuffer(BufferUsage::Uniform, nullptr, sizeof(TemporalData), true);
+  }
   pp.fragmentSource = kBloomUpFS;
   pp.additive = true;
   pp.debugName = "post.bloom.up";
@@ -1123,8 +1466,31 @@ bool Renderer3D::Init(RHI& rhi) {
   return true;
 }
 
+void Renderer3D::ReleaseTemporal(Temporal& t) {
+  for (RenderTargetHandle& r : t.hist) { rhi_->DestroyRenderTarget(r); r = {}; }
+  rhi_->DestroyRenderTarget(t.out);
+  rhi_->DestroyRenderTarget(t.velocity);
+  rhi_->DestroyRenderTarget(t.prevColor);
+  t.out = t.velocity = t.prevColor = {};
+  t.w = t.h = 0;
+  t.valid = false;
+}
+
 void Renderer3D::Shutdown() {
   if (!rhi_) return;
+  for (auto& [id, t] : temporal_) ReleaseTemporal(t);
+  temporal_.clear();
+  rhi_->DestroyBuffer(temporalUbo_);
+  rhi_->DestroyBuffer(prevModelBuffer_);
+  rhi_->DestroyBuffer(visBuffer_);
+  rhi_->DestroyBuffer(fogUbo_);
+  rhi_->DestroyBuffer(fogMedia_);
+  rhi_->DestroyBuffer(fogAccum_);
+  rhi_->DestroyRenderTarget(fogRT_);
+  for (PipelineHandle p : {fogLight_, fogIntegrate_, fogApply_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
+  for (PipelineHandle p : {velocity_, taa_, sharpen_, copy_})
+    if (p.Valid()) rhi_->DestroyPipeline(p);
   rhi_->DestroyBuffer(frameUbo_);
   rhi_->DestroyBuffer(objectBuffer_);
   rhi_->DestroyBuffer(instanceIds_);
@@ -1420,6 +1786,18 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     q.toneMap = q.bloom = q.fxaa = false;
     q.exposure = 1;
   }
+  // Temporal anti-aliasing (round 6): on the lit view of a camera only (not captures or debug views); it replaces
+  // MSAA and FXAA. The state (history, previous camera and placements) belongs to the output target.
+  const bool taaOn = q.taa && view == DebugView::Lit && !(extras && extras->linearOutput);
+  // Screen-space reflections (round 6): per-pixel lighting on a camera's lit view; they read the previous frame.
+  const bool ssrOn = q.ssr && q.lighting == LightingMode::Pixel && view == DebugView::Lit && !(extras && extras->linearOutput);
+  // Volumetric fog (round 6): where the post volumes ask for it, per-pixel tiers, not on captures or debug views.
+  const bool volFogOn = q.volumetricFog && light.post.fogDensity > 0.f && q.lighting == LightingMode::Pixel && view == DebugView::Lit &&
+                        !(extras && extras->linearOutput);
+  if (taaOn) {
+    q.msaa = 1;
+    q.fxaa = false;
+  }
   lastQuality_ = q;
   CollectTimers();
   stats_.shadowCasters = 0;
@@ -1431,7 +1809,41 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   cam.farZ *= q.viewDistance;
   FrameData f{};
   const float aspect = (float)w / (float)h;
-  glm::mat4 vp = cam.Projection(aspect) * cam.View(), ivp = glm::inverse(vp);
+  const glm::mat4 vp0 = cam.Projection(aspect) * cam.View(); // without jitter (motion vectors, reprojection)
+  glm::mat4 vp = vp0;
+  Temporal* temporal = nullptr;
+  glm::vec2 jitter(0.f);
+  if (taaOn || ssrOn) {
+    Temporal& t = temporal_[rt.id];
+    temporal = &t;
+    const glm::vec3 fwd = glm::normalize(cam.target - cam.position);
+    // a camera cut (a jump, a sharp turn, another size) starts again without history
+    if (t.w != w || t.h != h || glm::distance(t.prevPos, cam.position) > 2.f || glm::dot(t.prevFwd, fwd) < 0.85f) {
+      t.valid = false;
+      t.jitterIndex = 0;
+    }
+    if (taaOn) {
+      jitter = {Halton(t.jitterIndex % 8 + 1, 2) - 0.5f, Halton(t.jitterIndex % 8 + 1, 3) - 0.5f}; // pixels
+      glm::mat4 proj = cam.Projection(aspect);
+      proj[2][0] -= jitter.x * 2.f / (float)w; // NDC offset = -proj[2][xy] (clip w = -view z)
+      proj[2][1] -= jitter.y * 2.f / (float)h;
+      vp = proj * cam.View();
+    }
+    if (t.w != w || t.h != h || t.taaTargets != taaOn) { // targets for this size and mode
+      ReleaseTemporal(t);
+      if (taaOn) {
+        for (RenderTargetHandle& r : t.hist) r = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+        t.out = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+        t.velocity = rhi_->CreateRenderTargetEx(w, h, 1, true, true);
+      } else {
+        t.prevColor = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      }
+      t.taaTargets = taaOn;
+      t.w = w;
+      t.h = h;
+    }
+  }
+  const glm::mat4 ivp = glm::inverse(vp);
   std::memcpy(f.viewProj, glm::value_ptr(vp), sizeof(f.viewProj));
   std::memcpy(f.invViewProj, glm::value_ptr(ivp), sizeof(f.invViewProj));
   Put(f.camPos, cam.position);
@@ -1622,6 +2034,11 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->UpdateBuffer(clusterBuffer_, cl.data(), cl.size() * 4);
   }
   Put(f.camFwd, glm::normalize(cam.target - cam.position));
+  std::memcpy(f.prevViewProj, glm::value_ptr(temporal && temporal->valid ? temporal->prevVP : vp0), sizeof(f.prevViewProj));
+  f.ssr[0] = ssrOn && temporal && temporal->valid ? 1.f : 0.f;
+  f.ssr[1] = std::max(q.ssrDistance, 1.f);
+  f.ssr[2] = 0.35f; // thickness of what the depth buffer shows (m)
+  f.ssr[3] = (float)std::clamp(q.ssrSteps, 8, 128);
   f.screen[0] = (float)w;
   f.screen[1] = (float)h;
   f.screen[2] = 1.f / w;
@@ -1673,6 +2090,65 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     f.shadow2[0] = (float)cascades;
     f.shadow2[1] = q.shadowSoftness;
     f.shadow2[2] = band;
+  }
+  { // GI Tier 1 (round 6): the probe volume traced again, a share of probes per frame, with visibility
+    const bool want = q.dynamicGI && hasVolume_ && q.lighting == LightingMode::Pixel && !(extras && extras->linearOutput);
+    if (want) {
+      if (!dynGI_) dynGI_ = std::make_shared<DynamicGI>();
+      dynGI_->Configure(volume_);
+      // the traced scene follows changes at once, moving objects at most every 30 frames (a rebuild also retraces the
+      // visibility masks)
+      auto textureMean = [this](TextureHandle t) { // a texture's mean linear colour, read once from its smallest mip
+        auto it = textureMean_.find(t.id);
+        if (it != textureMean_.end()) return it->second;
+        float m[4] = {};
+        bool srgb = false;
+        glm::vec3 c(0.5f);
+        if (rhi_->ReadTextureMean(t, m, &srgb)) {
+          c = glm::clamp(glm::vec3(m[0], m[1], m[2]), glm::vec3(0.f), glm::vec3(1.f));
+          if (srgb) c = glm::pow(c, glm::vec3(2.2f));
+        }
+        return textureMean_[t.id] = c;
+      };
+      if (++giSceneAge_ >= 30 && dynGI_->SetScene(itemsIn, textureMean)) {
+        ++giRebuilds_;
+        giSceneAge_ = 0;
+      }
+      DynamicGI::Settings gs;
+      gs.raysPerProbe = q.giRays;
+      gs.probesPerUpdate = q.giProbesPerFrame;
+      gs.hysteresis = q.giHysteresis;
+      if (!dynGI_->Seeded()) { // a new grid starts settled: every probe traced a few times now (light bouncing in), as
+        DynamicGI::Settings all = gs; // a bake would, instead of fading in over many frames
+        all.probesPerUpdate = (int)dynGI_->Probes();
+        for (int i = 0; i < 4; ++i) dynGI_->Update(light, all);
+      } else {
+        dynGI_->Update(light, gs);
+      }
+      const std::vector<float>& sh = dynGI_->SH();
+      const size_t n = dynGI_->Probes();
+      if (n * 9 > volumeCapacity_) {
+        rhi_->DestroyBuffer(volumeBuffer_);
+        volumeCapacity_ = n * 9;
+        volumeBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, volumeCapacity_ * 16, true);
+      }
+      rhi_->UpdateBuffer(volumeBuffer_, sh.data(), sh.size() * sizeof(float));
+      volumeSH_ = sh; // the CPU lookups (AmbientAt, tests) see the same values
+      const std::vector<float>& vis = dynGI_->Visibility();
+      if (vis.size() * sizeof(float) > visCapacity_) {
+        rhi_->DestroyBuffer(visBuffer_);
+        visCapacity_ = vis.size() * sizeof(float);
+        visBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, visCapacity_, true);
+      }
+      rhi_->UpdateBuffer(visBuffer_, vis.data(), vis.size() * sizeof(float));
+      volumeBaked_ = true;
+      dynamicGIOn_ = q.giVisibility; // the shader's visibility test (off: a comparison for tests)
+      UploadProbes();
+    } else if (dynamicGIOn_) {
+      dynamicGIOn_ = false;
+      UploadProbes();
+    }
+    dynamicGIFrame_ = want;
   }
   rhi_->UpdateBuffer(frameUbo_, &f, sizeof(f));
 
@@ -1799,6 +2275,41 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     rhi_->DrawIndexedInstanced(p, mesh.vertices, mesh.indices, mesh.indexCount, r.count, r.first, instanceIds_);
     ++draws_;
   };
+  // TAA: each item's placement on the previous frame (found by mesh and occurrence: the same object keeps its place in
+  // the list from frame to frame), for the motion vectors; this frame's placements are kept for the next one.
+  std::vector<glm::mat4> prevModels;
+  std::unordered_map<uint64_t, glm::mat4> nextModels;
+  if (temporal && taaOn) {
+    prevModels.resize(std::max<size_t>(items.size(), 1), glm::mat4(1.f));
+    std::unordered_map<const Mesh3D*, uint32_t> seen;
+    for (size_t i = 0; i < items.size(); ++i) {
+      const uint64_t key = ((uint64_t)(uintptr_t)items[i].mesh * 1099511628211ull) ^ ((uint64_t)seen[items[i].mesh]++ * 0x9E3779B97F4A7C15ull);
+      auto it = temporal->prevModels.find(key);
+      prevModels[i] = it != temporal->prevModels.end() ? it->second : items[i].model;
+      nextModels[key] = items[i].model;
+    }
+    if (prevModels.size() * sizeof(glm::mat4) > prevModelCapacity_) {
+      rhi_->DestroyBuffer(prevModelBuffer_);
+      prevModelCapacity_ = prevModels.size() * sizeof(glm::mat4) * 2;
+      prevModelBuffer_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, prevModelCapacity_, true);
+    }
+    rhi_->UpdateBuffer(prevModelBuffer_, prevModels.data(), prevModels.size() * sizeof(glm::mat4));
+    TemporalData td{};
+    std::memcpy(td.curVP, glm::value_ptr(vp0), sizeof(td.curVP));
+    std::memcpy(td.prevVP, glm::value_ptr(temporal->valid ? temporal->prevVP : vp0), sizeof(td.prevVP));
+    std::memcpy(td.jitVP, glm::value_ptr(vp), sizeof(td.jitVP));
+    const glm::mat4 inv0 = glm::inverse(vp0);
+    std::memcpy(td.invCurVP, glm::value_ptr(inv0), sizeof(td.invCurVP));
+    td.taa[2] = std::clamp(q.taaFeedback, 0.f, 0.98f);
+    td.taa[3] = temporal->valid ? 1.f : 0.f;
+    td.taa2[0] = std::clamp(q.taaSharpen, 0.f, 1.f);
+    rhi_->UpdateBuffer(temporalUbo_, &td, sizeof(td));
+    rhi_->BindUniformBuffer(9, temporalUbo_);
+    rhi_->BindStorageBuffer(6, prevModelBuffer_);
+    rhi_->BeginRenderTarget(temporal->velocity, {0, 0, 0, 0}); // motion vectors of the opaque surfaces
+    for (size_t r = 0; r < opaqueRuns; ++r) drawRun(velocity_, runs[r]);
+    rhi_->EndRenderTarget();
+  }
   const float aniso = std::min((float)std::max(q.anisotropy, 1), rhi_->MaxAnisotropy());
   auto bindMaps = [&](const Material3D& m) {
     const TextureHandle maps[5] = {m.baseMap, m.metalRoughMap, m.normalMap, m.occlusionMap, m.emissiveMap};
@@ -1822,6 +2333,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   rhi_->BindUniformBuffer(5, probesUbo_);
   rhi_->BindTexture(6, envArray_);
   rhi_->BindStorageBuffer(1, volumeBuffer_);
+  rhi_->BindStorageBuffer(7, visBuffer_.Valid() ? visBuffer_ : volumeBuffer_);
   rhi_->BindStorageBuffer(2, lightBuffer_);
   rhi_->BindStorageBuffer(3, clusterBuffer_);
   rhi_->BindTexture(7, lightmapTex_.Valid() ? lightmapTex_ : white_);
@@ -1921,7 +2433,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     hdrH_ = h;
     hdrSamples_ = samples;
   }
-  if (ssaoOn || dofOn || shaftsOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
+  if (ssaoOn || dofOn || shaftsOn || ssrOn || volFogOn) { // SSAO (3-5b): normals and depth of the opaque objects, occlusion at half size, blurred twice
     const int aw = std::max(w / 2, 1), ah = std::max(h / 2, 1);
     if (!geoRT_.Valid() || geoW_ != w || geoH_ != h) {
       for (RenderTargetHandle t : {geoRT_, aoRT_[0], aoRT_[1]}) rhi_->DestroyRenderTarget(t);
@@ -1961,6 +2473,13 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
     if (timing) Mark(timer, "ssao");
   }
   rhi_->BindTexture(8, ssaoOn ? rhi_->RenderTargetColor(aoRT_[0]) : white_);
+  if (ssrOn) { // SSR: this frame's depth / normals, the previous frame's picture
+    rhi_->BindTexture(10, rhi_->RenderTargetColor(geoRT_));
+    rhi_->BindTexture(11, rhi_->RenderTargetColor(taaOn ? temporal->hist[temporal->cur] : temporal->prevColor));
+  } else {
+    rhi_->BindTexture(10, white_);
+    rhi_->BindTexture(11, white_);
+  }
   stats_.ssao = ssaoOn;
   Color linearClear = SrgbToLinear((uint8_t)std::lround(std::clamp(clear.r, 0.f, 1.f) * 255),
                                    (uint8_t)std::lround(std::clamp(clear.g, 0.f, 1.f) * 255),
@@ -1991,6 +2510,101 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
 
   // Bloom: blur the bright parts over a chain of half-size targets.
   TextureHandle hdr = rhi_->RenderTargetColor(hdrRT_);
+  stats_.taa = taaOn;
+  stats_.taaHistory = temporal && temporal->valid;
+  stats_.jitterX = jitter.x;
+  stats_.jitterY = jitter.y;
+  stats_.ssr = ssrOn && f.ssr[0] > 0.5f;
+  stats_.volumetricFog = volFogOn;
+  stats_.dynamicGI = dynamicGIFrame_;
+  if (volFogOn) { // froxels: light them, integrate front to back, then fog each pixel by its depth
+    const PostEffects3D& fx = light.post;
+    const int gx = std::clamp(q.fogGridX, 8, 256), gy = std::clamp(q.fogGridY, 8, 256), gz = std::clamp(q.fogSlices, 8, 128);
+    const size_t bytes = (size_t)gx * gy * gz * 16;
+    if (bytes > fogCapacity_) {
+      rhi_->DestroyBuffer(fogMedia_);
+      rhi_->DestroyBuffer(fogAccum_);
+      fogMedia_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, bytes, false);
+      fogAccum_ = rhi_->CreateBuffer(BufferUsage::Storage, nullptr, bytes, false);
+      fogCapacity_ = bytes;
+    }
+    FogData fd{};
+    fd.grid[0] = (float)gx;
+    fd.grid[1] = (float)gy;
+    fd.grid[2] = (float)gz;
+    fd.grid[3] = (float)vertexLights;
+    fd.a[0] = std::max(cam.nearZ, 0.1f);
+    fd.a[1] = std::clamp(fx.fogDistance, fd.a[0] * 4.f, std::max(cam.farZ, fd.a[0] * 4.f));
+    fd.a[2] = fx.fogDensity;
+    fd.a[3] = fx.fogHeight;
+    fd.b[0] = fx.fogFalloff;
+    fd.b[1] = std::clamp(fx.fogAnisotropy, -0.95f, 0.95f);
+    fd.b[2] = fx.fogLight;
+    fd.b[3] = temporal && taaOn ? Halton(temporal->jitterIndex % 16 + 1, 5) : 0.5f; // slice jitter, smoothed by TAA
+    fd.c[0] = fx.fogAlbedo.r;
+    fd.c[1] = fx.fogAlbedo.g;
+    fd.c[2] = fx.fogAlbedo.b;
+    const glm::mat4 inv0 = glm::inverse(vp0);
+    std::memcpy(fd.invVP, glm::value_ptr(inv0), sizeof(fd.invVP));
+    rhi_->UpdateBuffer(fogUbo_, &fd, sizeof(fd));
+    rhi_->BindUniformBuffer(10, fogUbo_);
+    rhi_->BindUniformBuffer(1, frameUbo_);
+    rhi_->BindStorageBuffer(2, lightBuffer_);
+    rhi_->BindStorageBuffer(12, fogMedia_);
+    rhi_->BindStorageBuffer(13, fogAccum_);
+    rhi_->BindTexture(5, rhi_->RenderTargetDepth(f.shadow[0] > 0.5f ? shadowRT_ : noShadowRT_));
+    rhi_->Dispatch(fogLight_, (uint32_t)(gx + 3) / 4, (uint32_t)(gy + 3) / 4, (uint32_t)(gz + 3) / 4);
+    rhi_->ComputeBarrier();
+    rhi_->Dispatch(fogIntegrate_, (uint32_t)(gx + 7) / 8, (uint32_t)(gy + 7) / 8, 1);
+    rhi_->ComputeBarrier();
+    if (!fogRT_.Valid() || fogW_ != w || fogH_ != h) {
+      rhi_->DestroyRenderTarget(fogRT_);
+      fogRT_ = rhi_->CreateRenderTargetEx(w, h, 1, true, false);
+      fogW_ = w;
+      fogH_ = h;
+    }
+    rhi_->BeginRenderTarget(fogRT_, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(geoRT_));
+    rhi_->Draw(fogApply_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+    hdr = rhi_->RenderTargetColor(fogRT_);
+    if (timing) Mark(timer, "fog");
+  }
+  if (taaOn) { // TAA resolve into the next history, then sharpen into the picture the post passes read
+    Temporal& t = *temporal;
+    const int next = 1 - t.cur;
+    rhi_->BindUniformBuffer(9, temporalUbo_);
+    rhi_->BeginRenderTarget(t.hist[next], {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->BindTexture(1, rhi_->RenderTargetColor(t.hist[t.cur]));
+    rhi_->BindTexture(2, rhi_->RenderTargetColor(t.velocity));
+    rhi_->Draw(taa_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    rhi_->BeginRenderTarget(t.out, {0, 0, 0, 1});
+    rhi_->BindTexture(0, rhi_->RenderTargetColor(t.hist[next]));
+    rhi_->Draw(sharpen_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    draws_ += 2;
+    hdr = rhi_->RenderTargetColor(t.out);
+    t.cur = next;
+    t.prevModels = std::move(nextModels);
+    ++t.jitterIndex;
+    if (timing) Mark(timer, "taa");
+  } else if (ssrOn) { // keep this frame's picture for the next frame's reflections
+    rhi_->BeginRenderTarget(temporal->prevColor, {0, 0, 0, 1});
+    rhi_->BindTexture(0, hdr);
+    rhi_->Draw(copy_, fullscreen_, 3);
+    rhi_->EndRenderTarget();
+    ++draws_;
+  }
+  if (temporal) {
+    temporal->valid = true;
+    temporal->prevVP = vp0;
+    temporal->prevPos = cam.position;
+    temporal->prevFwd = glm::normalize(cam.target - cam.position);
+  }
   if (q.bloom) {
     int bw = std::max(w / 2, 1), bh = std::max(h / 2, 1);
     if (!bloom_[0].Valid() || bloomW_ != bw || bloomH_ != bh) {
@@ -2202,7 +2816,7 @@ void Renderer3D::UploadProbes() {
   d.info[0] = (float)(kEnvLevels - 1);
   if (hasVolume_ && volumeBaked_) {
     Put(d.volMin, volume_.boxMin, 1);
-    Put(d.volMax, volume_.boxMax);
+    Put(d.volMax, volume_.boxMax, dynamicGIOn_ ? 1.f : 0.f); // w: Tier 1 visibility data bound
     Put(d.volCount, glm::vec3(volume_.count), volume_.intensity);
   }
   rhi_->UpdateBuffer(probesUbo_, &d, sizeof(d));

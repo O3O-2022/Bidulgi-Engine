@@ -399,6 +399,13 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
         v.fx.aberration = pv.chromaticAberration;
         v.fx.grain = pv.filmGrain;
         v.fx.lensFlare = pv.lensFlare;
+        v.fx.fogDensity = std::max(pv.fogDensity, 0.f); // volumetric fog (round 6)
+        v.fx.fogHeight = pv.fogHeight;
+        v.fx.fogFalloff = std::max(pv.fogHeightFalloff, 0.f);
+        v.fx.fogAlbedo = {pv.fogAlbedo.r, pv.fogAlbedo.g, pv.fogAlbedo.b};
+        v.fx.fogAnisotropy = std::clamp(pv.fogAnisotropy, -0.95f, 0.95f);
+        v.fx.fogDistance = std::max(pv.fogDistance, 4.f);
+        v.fx.fogLight = std::max(pv.fogLightScattering, 0.f);
         v.fx.dofBlur = pv.dofBlur;
         v.fx.dofFocus = pv.dofFocusDistance;
         v.fx.dofRange = pv.dofFocusRange;

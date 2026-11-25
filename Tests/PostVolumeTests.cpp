@@ -35,6 +35,13 @@ TEST_CASE("post volumes: influence, weight and priority (queue E-6)") {
   CHECK(std::abs(in.vignette - 1.f) < 1e-6f && std::abs(in.exposureEV - 2.f) < 1e-6f && in.autoExposure);
   PostEffects3D edge = BlendPostVolumes(vols, {15, 0, 0}); // half way: 0.4 -> 1 by 0.5
   CHECK(std::abs(edge.vignette - 0.7f) < 1e-5f && std::abs(edge.exposureEV - 1.f) < 1e-5f && edge.autoExposure);
+  // volumetric fog (round 6) blends like the rest: a foggy box over a clear scene, half way out
+  std::vector<PostVolume3D> foggy = {box, global};
+  foggy[0].fx.fogDensity = 0.1f;
+  foggy[0].fx.fogHeight = 4.f;
+  CHECK(BlendPostVolumes(foggy, {100, 0, 0}).fogDensity == 0.f);
+  const PostEffects3D half = BlendPostVolumes(foggy, {15, 0, 0});
+  CHECK(std::abs(half.fogDensity - 0.05f) < 1e-5f && std::abs(half.fogHeight - 2.f) < 1e-5f);
 
   std::vector<PostVolume3D> weighted = {global};
   weighted[0].weight = 0.25f;

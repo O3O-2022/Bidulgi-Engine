@@ -98,7 +98,8 @@ budget      Tier 1  1.42ms / 1.5ms  ✓
 | 시기 | 내용 |
 |---|---|
 | **1.0** | Tier 0 (라이트맵 + 프로브 볼륨 + 반사 프로브), 디버그 뷰, `bdg gi diagnose` 기본형 — 반사 프로브·IBL, SH 프로브 볼륨(삼선형, Indirect 보기), 라이트맵(xatlas + CPU 레이 트레이싱, 간접광만), 굽기 저장(`.cache/gi`)·`bdg gi diagnose` 기본형까지 2026-11-24 완료(코넬 박스 자동 판정) |
-| **L1 이후** (SDL_GPU 렌더러) | 씬 SDF 생성, Tier 1 가시성 인식 프로브 GI, Delta GI |
+| **6라운드** (2026-11-25) | Tier 1 첫 부분: 프로브 볼륨을 실행 중에 다시 추적(CPU 삼각형 BVH, 프레임당 프로브 일부, 다중 반사), 가시성(팔면체 깊이 지도 + 주변 칸 마스크), 품질 설정 `dynamicGI`(고사양·초고사양), 반응 시간·빛 샘 테스트(`GITier1Tests`, `BDG_GI1_TEST`) — `Render3D/DynamicGI` |
+| **L1 이후** (SDL_GPU 렌더러) | 씬 SDF 생성과 GPU 추적(Tier 1의 나머지), 반사 프로브 실시간 갱신, Delta GI |
 | **L3** (대형 게임 트랙) | Tier 2 래디언스 캐스케이드, 기준 경로 추적기, 자동 이미지 비교 CI |
 | **L3 이후** | Tier 3 하드웨어 레이 트레이싱 보강 |
 

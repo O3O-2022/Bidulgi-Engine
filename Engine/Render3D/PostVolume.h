@@ -19,6 +19,14 @@ struct PostEffects3D {
   float dofBlur = 0;           // depth of field (E-6b): 0 = off, 1 = the widest blur
   float dofFocus = 10, dofRange = 2; // metres in focus: from focus - range/2 to focus + range/2
   float lensFlare = 0;         // ghosts and a halo from the brightest parts (needs bloom)
+  // Volumetric fog (round 6): light scattered in the air, lit by the sun (with its shadows) and point / spot lights.
+  float fogDensity = 0;        // extinction per metre at fogHeight (0 = no volumetric fog)
+  float fogHeight = 0;         // world height (m) where the density is fogDensity
+  float fogFalloff = 0.2f;     // density halves every ln2 / falloff metres above fogHeight (0 = the same everywhere)
+  glm::vec3 fogAlbedo{1.f};    // colour of the scattered light (linear)
+  float fogAnisotropy = 0.6f;  // -1 back .. 0 even .. 1 forward scattering (Henyey-Greenstein): glow around the sun
+  float fogDistance = 64;      // metres of fog simulated in front of the camera
+  float fogLight = 1;          // scattering of local lights, times their intensity
 };
 
 struct PostVolume3D {

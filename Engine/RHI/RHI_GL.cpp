@@ -279,6 +279,26 @@ bool RHI::ReadTextureLevel(TextureHandle t, int32_t level, std::vector<float>& r
   return true;
 }
 
+bool RHI::ReadTextureMean(TextureHandle t, float rgba[4], bool* srgb) {
+  if (!t.Valid() || texInfo_.count(t.id)) return false; // cubemaps keep their own sizes
+  GLint levels = 0, w = 0, h = 0, internal = 0;
+  glGetTextureParameteriv(t.id, GL_TEXTURE_IMMUTABLE_LEVELS, &levels);
+  const GLint level = std::max(levels, 1) - 1;
+  glGetTextureLevelParameteriv(t.id, level, GL_TEXTURE_WIDTH, &w);
+  glGetTextureLevelParameteriv(t.id, level, GL_TEXTURE_HEIGHT, &h);
+  glGetTextureLevelParameteriv(t.id, level, GL_TEXTURE_INTERNAL_FORMAT, &internal);
+  if (w <= 0 || h <= 0 || (size_t)w * h > 65536) return false;
+  std::vector<float> px((size_t)w * h * 4);
+  glPixelStorei(GL_PACK_ALIGNMENT, 4);
+  glGetTextureImage(t.id, level, GL_RGBA, GL_FLOAT, (GLsizei)(px.size() * sizeof(float)), px.data());
+  double sum[4] = {};
+  for (size_t i = 0; i < px.size(); i += 4)
+    for (int c = 0; c < 4; ++c) sum[c] += px[i + c];
+  for (int c = 0; c < 4; ++c) rgba[c] = (float)(sum[c] / ((double)w * h));
+  if (srgb) *srgb = internal == GL_SRGB8_ALPHA8 || internal == GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+  return true;
+}
+
 void RHI::UploadCubeFaces(TextureHandle t, int32_t level, int32_t firstFace, int32_t faces, const float* rgba) {
   auto it = texInfo_.find(t.id);
   if (!t.Valid() || it == texInfo_.end() || faces <= 0) return;

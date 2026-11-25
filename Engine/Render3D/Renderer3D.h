@@ -184,8 +184,15 @@ struct RenderStats {
   int localShadows = 0;     // point / spot lights drawn with a shadow map (3-4b)
   int localShadowTiles = 0, localShadowTile = 0; // atlas tiles used (spot 1, point 6) and their size in pixels
   int localShadowSkipped = 0; // shadow-casting lights over the tier's limit (or off screen): lit without shadows
+  bool taa = false;         // temporal anti-aliasing ran (round 6)
+  bool taaHistory = false;  // ... and blended with an earlier frame (false right after a camera cut)
+  bool ssr = false;         // screen-space reflections were traced (round 6; not on the first frame after a cut)
+  bool volumetricFog = false; // the froxel fog ran (round 6)
+  bool dynamicGI = false;     // GI Tier 1 updated the probe volume this frame (round 6)
+  float jitterX = 0, jitterY = 0; // this frame's sub-pixel offset (pixels)
 };
 
+class DynamicGI;
 class Renderer3D {
 public:
   bool Init(RHI& rhi);
@@ -226,6 +233,8 @@ public:
   // Colour grading (3-5b): nullptr or neutral settings remove it. Rebuilds the table only when the settings change.
   void SetColorGrading(const ColorGrading3D* grading);
   int VolumeProbes() const { return volumeBaked_ ? volume_.count.x * volume_.count.y * volume_.count.z : 0; }
+  // GI Tier 1 (round 6): the traced probe grid, or null before a high / ultra render with a probe volume.
+  const DynamicGI* TracedGI() const { return dynGI_.get(); }
   // Test hook: the volume's diffuse light (ambient / pi) at a point for a normal, from the baked coefficients (CPU).
   glm::vec3 VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const;
   // Lightmaps (GI Tier 0-C): bakes the items marked `lightmapped` (CPU rays, see Render3D/Lightmap.h). Bake them
@@ -283,6 +292,36 @@ private:
   int32_t dofW_ = 0, dofH_ = 0;
   struct Adapt { RenderTargetHandle rt[2]; int cur = 0; double last = 0; bool primed = false; };
   std::unordered_map<uint32_t, Adapt> adapt_s;
+  // Temporal state per output target (round 6, TAA / SSR): the previous frame's resolved colour, its camera, the
+  // objects' previous placements (by mesh and occurrence), and the jitter sequence.
+  struct Temporal {
+    RenderTargetHandle hist[2], out, velocity, prevColor; // prevColor: SSR without TAA
+    bool taaTargets = false;
+    int cur = 0, w = 0, h = 0;
+    glm::mat4 prevVP{1.f};
+    glm::vec3 prevPos{0}, prevFwd{0, 0, -1};
+    bool valid = false;
+    uint32_t jitterIndex = 0;
+    std::unordered_map<uint64_t, glm::mat4> prevModels;
+  };
+  std::unordered_map<uint32_t, Temporal> temporal_;
+  PipelineHandle velocity_, taa_, sharpen_, copy_;
+  // GI Tier 1 (round 6): the traced probe grid and its visibility buffer
+  std::shared_ptr<DynamicGI> dynGI_;
+  BufferHandle visBuffer_;
+  size_t visCapacity_ = 0;
+  bool dynamicGIOn_ = false, dynamicGIFrame_ = false;
+  uint64_t giRebuilds_ = 0, giSceneAge_ = 30; // frames since the traced scene was rebuilt
+  std::unordered_map<uint32_t, glm::vec3> textureMean_; // GI Tier 1: base / emissive maps' mean colours (tint)
+  // Volumetric fog (round 6): froxel media and accumulation buffers, the fogged picture
+  PipelineHandle fogLight_, fogIntegrate_, fogApply_;
+  BufferHandle fogUbo_, fogMedia_, fogAccum_;
+  size_t fogCapacity_ = 0;
+  RenderTargetHandle fogRT_;
+  int32_t fogW_ = 0, fogH_ = 0;
+  BufferHandle temporalUbo_, prevModelBuffer_;
+  size_t prevModelCapacity_ = 0;
+  void ReleaseTemporal(Temporal& t);
   uint32_t postFrame_ = 0; // grain seed
   // SSAO (3-5b): normals + view depth of opaque objects (full size), occlusion and its blur (half size).
   PipelineHandle prepass_, prepassTwo_, ssao_, aoBlur_;

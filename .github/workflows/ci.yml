@@ -257,6 +257,18 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_QUALITY_TEST = '1' } 27
           if ($log -notmatch 'quality test: potato=flat,noshadow low=lit,noshadow medium=lit,shadow high=lit,shadow,msaa4 fxaa=1 bloom=1 badge=1') { $errors += 'quality tier test failed' }
+          # Round 6 TAA: thin bars against the sky; edge error against a 4x4 supersampled picture: no AA, FXAA, TAA (after 24
+          # still frames, must be under 0.6 x no AA); jitter and history, the sharpen pass, a camera cut resets, a small move keeps
+          $log = Invoke-Editor 'Release' @{ BDG_TAA_TEST = '1' } 50
+          if ($log -notmatch 'taa test: .* better=1 history=1 sharpen=1 cut=1 move=1') { $errors += 'TAA test failed' }
+          # Round 6 volumetric fog: froxels lit by the sun through its shadow map (a roof shades half the air), a red point
+          # light glowing in the fog, height falloff (thinner high up), off on medium
+          $log = Invoke-Editor 'Release' @{ BDG_FOG_TEST = '1' } 20
+          if ($log -notmatch 'fog test: ran=1 shafts=1 glow=1 height=1 tiers=1') { $errors += 'volumetric fog test failed' }
+          # Round 6 realtime GI (Halo Tier 1): a closed room of thin walls in a traced probe volume; visibility keeps the
+          # sunlit probes outside from lighting the inside, a lamp's bounce light arrives within a few sweeps, off on medium
+          $log = Invoke-Editor 'Release' @{ BDG_GI1_TEST = '1' } 66
+          if ($log -notmatch 'gi1 test: ran=1 leak=1 react=1 tiers=1') { $errors += 'realtime GI (Tier 1) test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 24) Render reference scene (queue 3-8): bookmarks, Albedo/Normal/Depth/Shadow views, wireframe, stored bookmark, GPU timers
@@ -267,6 +279,10 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_REFSCENE_TEST = '1'; BDG_RENDER_STATS = '1' } 24
           if ($log -notmatch 'refscene test: objects=290 jump=1 albedo=1 normal=1 depth=1 shadow=1 wire=1 store=1 undo=1 tier=potato timers=1') { $errors += 'render reference scene test failed' }
           if ($log -notmatch 'render passes: .*scene \d') { $errors += 'no GPU pass timings' }
+          # Round 6 SSR on the reference scene: a mirror floor and a red box at bookmark 1; the box's mirror image with SSR,
+          # the probe / sky where rays leave the picture, nothing on a rough floor
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/RenderReference/Assets"; BDG_SCENE_FILE = "$PWD/Tests/RenderReference/Assets/Scenes/RenderReference.scene"; BDG_SSR_TEST = '1' } 24
+          if ($log -notmatch 'ssr test: ran=1 mirror=1 fallback=1 rough=1') { $errors += 'SSR test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 25) Stress (queue 3-9): 10,000 instanced cubes + 16 4K BC7 textures; the same picture without instancing

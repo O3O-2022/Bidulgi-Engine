@@ -8,7 +8,7 @@
 //   low      per vertex     4       none (blob later)   1/4       none                      1x    0.5
 //   medium   per pixel      8       1 map, 1024         1/2       ACES tone map, FXAA       1x    0.75
 //   high     per pixel      16      1 map, 2048         full      + bloom                   4x    1.0
-//   ultra    per pixel      16      1 map, 2048         full      + bloom                   4x    1.25
+//   ultra    per pixel      16      1 map, 2048         full      + bloom                   TAA   1.25
 // Point / spot shadows (3-4b): potato and low none, medium 1 light (512 tiles), high 4 (512), ultra 8 (1024).
 // high and ultra get their own features later (CSM, SSAO, Forward+, GI tiers); until then they differ in
 // view distance only. Tiers are keyed potato / low / medium / high / ultra in files and on the command line.
@@ -50,6 +50,28 @@ struct QualitySettings {
   bool toneMap = true;         // ACES; false = clamp (the reference board keeps exact colours)
   float exposure = 1;
   bool fxaa = true;
+  // Temporal anti-aliasing (round 6): the projection moves by a sub-pixel each frame (Halton 2, 3), each pixel blends
+  // with its reprojected history (motion vectors of objects and camera; the history clamped to the pixel's
+  // neighbourhood so moving things do not smear), then a light sharpen. Replaces MSAA and FXAA where it is on.
+  bool taa = false;
+  float taaSharpen = 0.2f;     // 0 = off .. 1 = strong
+  float taaFeedback = 0.9f;    // share of the history kept each frame
+  // Screen-space reflections (round 6): smooth surfaces mirror what is on screen (traced against the depth prepass,
+  // coloured from the previous frame), fading with roughness, at the edges and with distance into the probe / sky
+  // reflection. High and ultra.
+  bool ssr = false;
+  float ssrDistance = 20.f;    // metres a reflected ray travels
+  int ssrSteps = 48;
+  // Volumetric fog (round 6): a froxel grid (screen tiles x depth slices) lit by the sun with shadows and by point /
+  // spot lights, integrated front to back; where a post volume sets fog density. High and ultra.
+  bool volumetricFog = false;
+  int fogGridX = 64, fogGridY = 36, fogSlices = 48;
+  // GI Tier 1 (round 6, Render3D/DynamicGI.h): a light probe volume is traced again while running, a share of probes
+  // per frame (rays against the scene's triangles), with per-probe visibility against light leaks. High and ultra.
+  bool dynamicGI = false;
+  bool giVisibility = true;
+  int giRays = 64, giProbesPerFrame = 24;
+  float giHysteresis = 0.5f;
   bool bloom = false;
   float bloomIntensity = 0.2f;    // share of the blurred image added back (glow around bright light)
   int msaa = 1;
