@@ -357,37 +357,88 @@ void InjectPostFx2Test(bdg_engine* e, int frame) {
 // 1-9 of the open scene, compares each picture with <folder>/bookmark_<n>.png (FLIP-style error, Core/ImageCompare)
 // and writes <out>/<n>.png plus <out>/<n>_diff.png (heat map); a missing baseline is created from this run.
 // <out> = BDG_COMPARE_OUT or .cache/compare. Threshold: BDG_COMPARE_THRESHOLD (mean error, default 0.03).
+//
+// Regression mode (queue 3-9b): BDG_RENDER_COMPARE=repo (or repo:<root>) compares against the baselines committed in
+// <root>/<renderer>/<scene>/ (root Tests/RenderBaselines): one set per renderer family, because a software renderer
+// and each GPU vendor rasterise a little differently ("software" = Mesa llvmpipe in CI, "gpu-nvidia" the reference
+// GPU, "gpu-amd", "gpu-intel"). Each bookmark is rendered at a fixed 480 x 270 (the same on every machine, whatever
+// the panel size or display scale). The threshold comes from <set>/meta.json ("threshold"), else 0.02.
+// A missing baseline is not a failure: the picture goes to <out>/bookmark_<n>.png (copy it in to accept it) and the
+// summary counts it as missing; BDG_COMPARE_BLESS=1 writes the pictures (and meta.json) into the set instead.
+std::string RendererFamily(const std::string& gpuName) {
+  std::string g;
+  for (char c : gpuName) g += (char)std::tolower((unsigned char)c);
+  if (g.find("llvmpipe") != std::string::npos || g.find("softpipe") != std::string::npos || g.find("swiftshader") != std::string::npos ||
+      g.find("basic render") != std::string::npos)
+    return "software";
+  if (g.find("nvidia") != std::string::npos || g.find("geforce") != std::string::npos) return "gpu-nvidia";
+  if (g.find("amd") != std::string::npos || g.find("radeon") != std::string::npos) return "gpu-amd";
+  if (g.find("intel") != std::string::npos) return "gpu-intel";
+  return "gpu-other";
+}
+
 void RenderCompareStep(bdg_engine* e, int frame, const char* baseDir) {
   namespace fs = std::filesystem;
-  static int created = 0, failed = 0, compared = 0;
+  static int created = 0, failed = 0, compared = 0, missing = 0;
   static double worst = 0;
   const int slot = (frame - 4) / 4 + 1, phase = (frame - 4) % 4;
   if (frame < 4 || slot > 9) return;
   bdg::SceneView* sv = e->sceneView.get();
+  const std::string arg = baseDir;
+  const bool repo = arg == "repo" || arg.starts_with("repo:");
+  const bool bless = repo && std::getenv("BDG_COMPARE_BLESS") != nullptr;
+  const std::string family = RendererFamily(e->rhi.gpuName);
+  const fs::path scenePath = fs::path(std::u8string((const char8_t*)e->model->scenePath.c_str()));
+  fs::path base = repo ? fs::path(arg.size() > 5 ? arg.substr(5) : std::string("Tests/RenderBaselines")) / family / scenePath.stem() : fs::path(arg);
   if (phase == 0) { // move to the bookmark; the picture is read three frames later (shadow map and timers settle)
+    if (slot == 1 && repo) bdg::LogInfo("compare: renderer {} ({}) baselines {}{}", family, e->rhi.gpuName, base.string(), bless ? " (bless)" : "");
     if (!sv->JumpToBookmark(*e->model, slot)) bdg::LogInfo("compare: bookmark {} -", slot);
     return;
   }
   if (phase != 3 || sv->BookmarkName(*e->model, slot).empty()) return;
   int32_t w, h;
   std::vector<uint8_t> px;
+  if (repo) { // a fixed size, independent of the panel and the display scale
+    bdg::Widget fixed;
+    fixed.x = fixed.y = 0;
+    fixed.w = 480;
+    fixed.h = 270;
+    sv->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, fixed, 1.f);
+  }
   sv->ReadPixels(w, h, px);
   std::vector<uint8_t> top((size_t)w * h * 4); // render target rows are bottom-up
   for (int y = 0; y < h; ++y) std::memcpy(&top[(size_t)y * w * 4], &px[(size_t)(h - 1 - y) * w * 4], (size_t)w * 4);
   const char* outEnv = std::getenv("BDG_COMPARE_OUT");
-  fs::path out = outEnv ? fs::path(outEnv) : fs::current_path() / ".cache" / "compare", base = fs::path(baseDir);
+  fs::path out = outEnv ? fs::path(outEnv) : fs::current_path() / ".cache" / "compare";
   std::error_code ec;
   fs::create_directories(out, ec);
-  fs::create_directories(base, ec);
-  double threshold = 0.03;
+  if (!repo || bless) fs::create_directories(base, ec);
+  double threshold = repo ? 0.02 : 0.03;
+  if (repo) { // the set's own threshold
+    std::vector<uint8_t> meta;
+    if (bdg::ReadFileBytes(base.parent_path() / "meta.json", meta)) {
+      const std::string text(meta.begin(), meta.end());
+      if (size_t at = text.find("\"threshold\":"); at != std::string::npos) threshold = std::atof(text.c_str() + at + 12);
+    }
+  }
   if (const char* t = std::getenv("BDG_COMPARE_THRESHOLD")) threshold = std::atof(t);
   bdg::WritePNG((out / std::format("{}.png", slot)).string().c_str(), w, h, top.data(), false);
   fs::path basePng = base / std::format("bookmark_{}.png", slot);
   std::string name = sv->BookmarkName(*e->model, slot), result;
   int32_t bw = 0, bh = 0;
   std::vector<uint8_t> baseline;
-  if (!fs::exists(basePng)) {
+  if (repo && !bless && !fs::exists(basePng)) { // regression mode: report it, hand the picture over for review
+    bdg::WritePNG((out / std::format("bookmark_{}.png", slot)).string().c_str(), w, h, top.data(), false);
+    ++missing;
+    bdg::LogInfo("compare: bookmark {} {:<24} no baseline for {} (picture in {})", slot, name, family, out.string());
+  } else if (!fs::exists(basePng) || bless) {
     bdg::WritePNG(basePng.string().c_str(), w, h, top.data(), false);
+    if (bless && slot == 1 && !fs::exists(base.parent_path() / "meta.json"))
+      if (std::FILE* f = _wfopen((base.parent_path() / "meta.json").c_str(), L"wb")) {
+        const std::string meta = std::format("{{\"renderer\":\"{}\",\"threshold\":0.02}}\n", family);
+        std::fwrite(meta.data(), 1, meta.size(), f);
+        std::fclose(f);
+      }
     ++created;
     result = "created";
     bdg::LogInfo("compare: bookmark {} {:<24} baseline created ({}x{})", slot, name, w, h);
@@ -406,8 +457,8 @@ void RenderCompareStep(bdg_engine* e, int frame, const char* baseDir) {
                  d.over * 100, threshold, ok ? "ok" : "FAIL");
   }
   if (slot == 9 || sv->BookmarkName(*e->model, slot + 1).empty())
-    bdg::LogInfo("compare summary: compared={} created={} failed={} worst={:.4f} out={}", compared, created, failed, worst,
-                 out.string());
+    bdg::LogInfo("compare summary: compared={} created={} failed={} worst={:.4f} out={}{}", compared, created, failed, worst, out.string(),
+                 repo ? std::format(" missing={} renderer={}", missing, family) : std::string());
 }
 
 // Scripted render reference check (BDG_REFSCENE_TEST=1 with the Tests/RenderReference project, queue 3-8):

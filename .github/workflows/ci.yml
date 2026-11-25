@@ -587,9 +587,30 @@ jobs:
           if ($log -notmatch 'indoor test: objects=74 materials=10/10 textures=6,4,2 .* textures=ok lights=ok room=ok sun=ok') { $errors += 'indoor scene test failed' }
           if ($log -match '(indoor test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # 3-9b image regression: every bookmark of both test scenes at 480x270 against the committed baselines of this
+          # renderer (Tests/RenderBaselines/software here). Missing baselines are a notice, not a failure: the pictures are
+          # uploaded as the render-regression artifact; copy them into Tests/RenderBaselines/software/<scene>/ to accept them.
+          Remove-Item -Recurse -Force "$PWD/ci-regress" -ErrorAction SilentlyContinue
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          foreach ($s in @(@('RenderReference', 'RenderReference'), @('IndoorScene', 'Cloister'))) {
+            $a = "$PWD/Tests/$($s[0])/Assets"
+            $log = Invoke-Editor 'Release' @{ BDG_ASSETS = $a; BDG_SCENE_FILE = "$a/Scenes/$($s[1]).scene"; BDG_RENDER_COMPARE = 'repo'; BDG_COMPARE_OUT = "$PWD/ci-regress/$($s[1])" } 42
+            if ($log -notmatch 'compare summary: compared=\d+ created=0 failed=0 .* missing=\d+ renderer=\S+') { $errors += "image regression failed: $($s[1]) (see the render-regression artifact)" }
+            if ($log -match 'missing=([1-9]\d*) renderer=(\S+)') { Write-Host "::notice::$($s[1]): $($Matches[1]) bookmark(s) have no $($Matches[2]) baseline yet; pictures are in the render-regression artifact" }
+            if ($log -match '(compare summary: [^\r\n]*)') { Write-Host "::notice::$($s[1]) $($Matches[1])" }
+          }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
+
+      - name: Upload render regression pictures (3-9b)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-regression
+          path: ci-regress
+          if-no-files-found: ignore
 
       - name: Unit tests
         shell: pwsh
