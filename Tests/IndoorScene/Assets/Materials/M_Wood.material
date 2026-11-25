@@ -1,0 +1,5 @@
+{"material":"M_Wood","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#ffffff"}
+{"param":"BaseColorMap","type":"texture","value":"Textures/T_Wood_D.png"}
+{"param":"NormalMap","type":"texture","value":"Textures/T_Wood_N.png"}
+{"param":"Roughness","type":"float","value":0.6}

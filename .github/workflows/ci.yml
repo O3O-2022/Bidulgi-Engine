@@ -557,8 +557,9 @@ jobs:
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 28) 3-5b cascaded shadows: medium (one map) vs high (3 cascades): sharper near edge, shadows at 73 m, cascade view
+          #     3-4b point / spot shadows: a spot tile and point cube faces darken the ground behind boxes, tier light limits
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-shadows'; BDG_RENDER_TEST = '1' } 5
-          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok result=pass') { $errors += 'cascaded / blob shadow test failed' }
+          if ($log -notmatch 'shadow test: .*cascades=ok near=ok far=ok blob=ok local=ok local_tiers=ok result=pass') { $errors += 'cascaded / blob / point-spot shadow test failed' }
           if ($log -match '(shadow test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 29) 3-5b SSAO: open flat surfaces stay unoccluded, a box's foot and an inside corner darken, only on high
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-ao'; BDG_RENDER_TEST = '1' } 5
@@ -568,9 +569,48 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SCREEN = 'render-lights'; BDG_RENDER_TEST = '1' } 5
           if ($log -notmatch 'lights test: .*same=ok lights=ok lists=ok result=pass') { $errors += 'Forward+ test failed' }
           if ($log -match '(lights test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # 3-5c quality automation: device benchmark -> tier (cached per GPU), frame drop steps down, texture groups per tier
+          Remove-Item -Recurse -Force "$PWD/ci-autoq-assets" -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$PWD/ci-autoq-assets" | Out-Null
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_AUTOQ_TEST = '1'; BDG_ASSETS = "$PWD/ci-autoq-assets" } 8
+          if ($log -notmatch 'autoq test: bench=1 cached=1 tier=\w+ ms=[\d.]+ governor=1 groups=1') { $errors += 'quality automation test failed' }
+          if ($log -match '(autoq test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # 3-8b indoor composite scene (generated, CC0): every material / texture group loads, light and shadow limits,
+          # a point light shadow in the side room and the window piers' sun shadow
+          python tools/make_indoor_scene.py
+          git diff --exit-code -- Tests/IndoorScene
+          if ($LASTEXITCODE -ne 0) { $errors += 'Tests/IndoorScene is out of date: run tools/make_indoor_scene.py' }
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_ASSETS = "$PWD/Tests/IndoorScene/Assets"; BDG_SCENE_FILE = "$PWD/Tests/IndoorScene/Assets/Scenes/Cloister.scene"; BDG_INDOOR_TEST = '1' } 16
+          if ($log -notmatch 'indoor test: objects=74 materials=10/10 textures=6,4,2 .* textures=ok lights=ok room=ok sun=ok') { $errors += 'indoor scene test failed' }
+          if ($log -match '(indoor test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # 3-9b image regression: every bookmark of both test scenes at 480x270 against the committed baselines of this
+          # renderer (Tests/RenderBaselines/software here). Missing baselines are a notice, not a failure: the pictures are
+          # uploaded as the render-regression artifact; copy them into Tests/RenderBaselines/software/<scene>/ to accept them.
+          Remove-Item -Recurse -Force "$PWD/ci-regress" -ErrorAction SilentlyContinue
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          foreach ($s in @(@('RenderReference', 'RenderReference'), @('IndoorScene', 'Cloister'))) {
+            $a = "$PWD/Tests/$($s[0])/Assets"
+            $log = Invoke-Editor 'Release' @{ BDG_ASSETS = $a; BDG_SCENE_FILE = "$a/Scenes/$($s[1]).scene"; BDG_RENDER_COMPARE = 'repo'; BDG_COMPARE_OUT = "$PWD/ci-regress/$($s[1])" } 42
+            if ($log -notmatch 'compare summary: compared=\d+ created=0 failed=0 .* missing=\d+ renderer=\S+') { $errors += "image regression failed: $($s[1]) (see the render-regression artifact)" }
+            if ($log -match 'missing=([1-9]\d*) renderer=(\S+)') { Write-Host "::notice::$($s[1]): $($Matches[1]) bookmark(s) have no $($Matches[2]) baseline yet; pictures are in the render-regression artifact" }
+            if ($log -match '(compare summary: [^\r\n]*)') { Write-Host "::notice::$($s[1]) $($Matches[1])" }
+          }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           if ($errors) { $errors | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
           Write-Host 'All smoke tests passed.'
+
+      - name: Upload render regression pictures (3-9b)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-regression
+          path: ci-regress
+          if-no-files-found: ignore
 
       - name: Unit tests
         shell: pwsh

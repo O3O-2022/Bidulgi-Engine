@@ -60,6 +60,9 @@ struct LocalLight3D {
   float intensity = 1, range = 10;
   bool spot = false;
   float innerAngle = 30, outerAngle = 45;      // full cone angles in degrees
+  // Shadow map (3-4b): a spot light renders one atlas tile through its cone, a point light six (cube faces). Only
+  // the tier's localShadows nearest lights that are on screen get one; the others light without shadows.
+  bool castShadows = false;
 };
 
 // Procedural sky drawn behind everything; also the ambient light and the reflections (queue 3-4).
@@ -173,6 +176,9 @@ struct RenderStats {
   int anisotropy = 1;       // texture filtering used (3-5b)
   size_t blobs = 0;         // blob shadows drawn (low tier)
   bool grading = false;     // colour grading table applied
+  int localShadows = 0;     // point / spot lights drawn with a shadow map (3-4b)
+  int localShadowTiles = 0, localShadowTile = 0; // atlas tiles used (spot 1, point 6) and their size in pixels
+  int localShadowSkipped = 0; // shadow-casting lights over the tier's limit (or off screen): lit without shadows
 };
 
 class Renderer3D {
@@ -245,6 +251,11 @@ private:
   RenderTargetHandle shadowRT_, noShadowRT_; // shadow atlas (one tile per cascade, size by tier); 1x1 stand-in when off
   int32_t shadowSize_ = 0, shadowTiles_ = 0;
   glm::mat4 cascadeVP_[4]{};
+  // Point / spot shadows (3-4b): one depth atlas of square tiles, a light-space matrix per tile (storage buffer).
+  RenderTargetHandle localShadowRT_;
+  int32_t localShadowW_ = 0, localShadowH_ = 0;
+  BufferHandle localShadowBuffer_;
+  size_t localShadowCapacity_ = 0;
   BufferHandle shadowPassUbo_;
   // Post-processing: HDR scene, LDR copy for FXAA, bloom chain (half size down to 1/32).
   PipelineHandle toneMap_, fxaa_, bloomDown_, bloomUp_;
