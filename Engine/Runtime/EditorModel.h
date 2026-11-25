@@ -121,8 +121,7 @@ public:
   std::string scenePath, sceneName = "Main";
 
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
-public: // also used by the project settings panel
-  static std::string ToDisplay(const std::string& json, FieldType type);
+  static std::string ToDisplay(const std::string& json, FieldType type);   // also used by the project settings panel
   static std::string FromDisplay(const std::string& text, FieldType type);
   // BPROPERTY(ShowIf = ...): "flag", "!flag", "field == Value", "field != Value" (values as the Inspector shows them)
   static bool ShowIfPasses(const Component& c, const std::string& condition); // public: unit tests call it
