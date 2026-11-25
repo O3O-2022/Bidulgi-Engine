@@ -92,12 +92,12 @@ public static class Game {
 
   // ---- making and removing ----
   // A copy of `original` (with its children and C# behaviours, which wake up at the start of the next frame).
-  // Prefab assets come with queue 6-1; until then any object of the scene (hidden away, say) is the template.
+  // Any object of the scene can be the template; for a prefab asset use Spawn("Prefabs/Enemy.prefab") below (6-1).
   public static GameObject Spawn(GameObject original, Vector3? position = null, Vector3? rotation = null, GameObject? parent = null, string? name = null) {
     if (original.Id.Length == 0) { Debug.LogWarning("Spawn: the original is not a valid object"); return GameObject.None; }
     return SpawnRequest(original.Id, name, position, rotation, parent);
   }
-  // A new empty object with a Transform.
+  // A new empty object with a Transform, or with a .prefab path ("Prefabs/Enemy.prefab", "guid:...") an instance of it.
   public static GameObject Spawn(string name, Vector3? position = null, Vector3? rotation = null, GameObject? parent = null) =>
     SpawnRequest("", name, position, rotation, parent);
   static GameObject SpawnRequest(string source, string? name, Vector3? position, Vector3? rotation, GameObject? parent) {

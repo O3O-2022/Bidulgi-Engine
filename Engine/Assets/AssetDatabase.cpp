@@ -1,4 +1,5 @@
 #include "Assets/AssetDatabase.h"
+#include "Scene/Prefab.h"
 #include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include <yyjson.h>
@@ -174,6 +175,8 @@ bool AssetDatabase::SaveCache() const {
   return true;
 }
 
+AssetDatabase::~AssetDatabase() { ForgetPrefabAssets(this); }
+
 bool AssetDatabase::Open(const std::string& root, std::string* error, const std::string& cachePath) {
   std::error_code ec;
   if (!fs::is_directory(root, ec)) {
@@ -195,6 +198,7 @@ bool AssetDatabase::Open(const std::string& root, std::string* error, const std:
   LogInfo("assets: {} ({} assets, {} new, {} removed since last run, {} orphaned .meta) scan {:.0f} ms: {} files, {} .meta read, {} hashed{}",
           root_, Count(), c.added.size(), c.removed.size(), orphans_.size(), stats_.ms, stats_.files, stats_.metasRead,
           stats_.hashed, cached ? " (index cache)" : "");
+  SetPrefabAssets(this); // prefab instances in scenes read their .prefab through this project (6-1)
   return true;
 }
 

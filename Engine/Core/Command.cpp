@@ -1,4 +1,5 @@
 #include "Core/Command.h"
+#include "Scene/Prefab.h"
 #include "Core/Utf8Path.h"
 #include "Scene/Components.h"
 #define GLM_ENABLE_EXPERIMENTAL
@@ -101,6 +102,28 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     }
     inv.name = "del";
     inv.target = cmd.target;
+    return true;
+  }
+
+  if (n == "addprefab") { // a prefab instance (6-1); logged with its id and the prefab's canonical reference
+    std::string ref = a.Str("prefab"), canonical;
+    if (ref.empty()) return Fail(error, "addprefab: needs {\"prefab\": \"Prefabs/Enemy.prefab\"}");
+    std::string err;
+    if (!ResolvePrefab(ref, canonical, nullptr, nullptr, &err)) return Fail(error, "addprefab: " + err);
+    std::string id = a.Str("id", cmd.target), parent = a.Str("parent");
+    if (id.empty()) id = scene_.NewId();
+    if (!InstantiatePrefab(scene_, canonical, id, parent, a.Int("index", -1), &err)) return Fail(error, "addprefab: " + err);
+    SceneObject* o = scene_.Find(id);
+    const std::string name = a.Str("name");
+    if (!name.empty()) o->name = name;
+    std::string pos = a.Raw("pos");
+    if (!pos.empty())
+      if (Component* tc = o->Find("Transform")) Registry::FromJson(&static_cast<Transform*>(tc->data)->position, reflect::ValueTypeOf<Vec3>(), pos, nullptr);
+    cmd.target = id;
+    cmd.args = std::format("{{\"prefab\":{},\"id\":{},\"parent\":{},\"index\":{}{}{}}}", Q(canonical), Q(id), Q(parent),
+                           scene_.IndexInParent(id), name.empty() ? "" : ",\"name\":" + Q(name), pos.empty() ? "" : ",\"pos\":" + pos);
+    inv.name = "del";
+    inv.target = id;
     return true;
   }
 
@@ -235,7 +258,7 @@ bool CommandBus::Apply(Command& cmd, Command& inv, std::string* error) {
     scene_.RemoveComponent(o->id, typeName);
     return true;
   }
-  return Fail(error, std::format("unknown command \"{}\" (set, rename, add, del, mv, addcomp, rmcomp, call, setcomp)", n));
+  return Fail(error, std::format("unknown command \"{}\" (set, rename, add, addprefab, del, mv, addcomp, rmcomp, call, setcomp)", n));
 }
 
 // ---- History ---------------------------------------------------------------------------------
@@ -261,6 +284,7 @@ std::string CommandBus::Label(const Command& cmd) const {
   }
   if (n == "rename") return std::format("Rename {} to {}", who, a.Str("name"));
   if (n == "add") return a.Get("snapshot") ? "Restore object" : "Add " + a.Str("name", "GameObject");
+  if (n == "addprefab") return "Add " + (o ? o->name : a.Str("prefab"));
   if (n == "del") return "Delete " + who;
   if (n == "mv") return "Move " + who;
   if (n == "addcomp") return std::format("Add {} to {}", a.Str("type"), who);

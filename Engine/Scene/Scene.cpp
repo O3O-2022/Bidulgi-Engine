@@ -147,8 +147,12 @@ bool Scene::RemoveComponent(std::string_view id, std::string_view typeName) {
 std::string Scene::Snapshot(std::string_view id) const {
   const SceneObject* o = Find(id);
   if (!o) return "null";
-  std::string s = std::format("{{\"id\":{},\"name\":{},\"parent\":{},\"index\":{},\"prefab\":{},\"components\":[", Q(o->id),
-                              Q(o->name), Q(o->parent), IndexInParent(id), o->prefab ? "true" : "false");
+  std::string s = std::format("{{\"id\":{},\"name\":{},\"parent\":{},\"index\":{},\"prefab\":{},", Q(o->id), Q(o->name), Q(o->parent),
+                              IndexInParent(id), o->prefab ? "true" : "false");
+  if (!o->prefabRef.empty()) s += "\"prefabRef\":" + Q(o->prefabRef) + ",";
+  if (!o->prefabRoot.empty()) s += "\"prefabRoot\":" + Q(o->prefabRoot) + ",";
+  if (!o->prefabUnresolved.empty()) s += "\"prefabUnresolved\":" + Q(o->prefabUnresolved) + ",";
+  s += "\"components\":[";
   for (size_t i = 0; i < o->components.size(); ++i)
     s += std::format("{}{{\"type\":{},\"value\":{}}}", i ? "," : "", Q(o->components[i].type->name),
                      Registry::ToJson(o->components[i].data, StructOf(*o->components[i].type)));
@@ -167,6 +171,9 @@ bool RestoreVal(Scene& scene, yyjson_val* v, std::string* error) {
   SceneObject* o = scene.Create(id, name, parent ? parent : "", idx ? (int)yyjson_get_int(idx) : -1);
   if (!o) return Fail(error, std::format("cannot create \"{}\" (id taken or parent missing)", id));
   o->prefab = yyjson_get_bool(yyjson_obj_get(v, "prefab"));
+  if (const char* r = yyjson_get_str(yyjson_obj_get(v, "prefabRef"))) o->prefabRef = r;
+  if (const char* r = yyjson_get_str(yyjson_obj_get(v, "prefabRoot"))) o->prefabRoot = r;
+  if (const char* r = yyjson_get_str(yyjson_obj_get(v, "prefabUnresolved"))) o->prefabUnresolved = r;
   size_t i, n;
   yyjson_val* c;
   yyjson_arr_foreach(yyjson_obj_get(v, "components"), i, n, c) {

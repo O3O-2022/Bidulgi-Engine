@@ -116,6 +116,16 @@ public:
   const std::string& ProjectFolder() const { return projectFolder_; }
   ProjectView projectView = ProjectView::Files; // what the Project panel lists under its tools
   void ShowProjectView(ProjectView v) { projectView = v; needProject_ = true; }
+  // Prefabs (6-1, Scene/Prefab.h). CreatePrefab writes <folder>/<name>.prefab from the object and makes the object an
+  // instance of it (one undo step); returns the asset path or "". AddPrefabInstance places one (addprefab command).
+  // ApplyPrefab writes the instance's overrides into its prefab and rebuilds every instance; RevertPrefab puts the
+  // prefab's value back (path "Component.field", or "" for every override of the instance; one undo step).
+  std::string CreatePrefab(const std::string& id, const std::string& folder);
+  std::string AddPrefabInstance(const std::string& prefab, const std::string& parent = {}, const Vec3* position = nullptr);
+  bool ApplyPrefab(const std::string& id);
+  bool RevertPrefab(const std::string& id, const std::string& path);
+  void PrefabFilesChanged(const std::vector<std::string>& paths); // .prefab files changed on disk: instances follow
+  bool IsOverridden(const std::string& id, const std::string& path) const { return overridden_.count(id + "|" + path) > 0; }
   void SelectProjectItem(const std::string& path) { projectSelected_ = path; needProject_ = true; }
   bool DeleteWarningShown() const { return !deleteWarning_.empty(); }
   std::string scenePath, sceneName = "Main";
@@ -132,6 +142,8 @@ private:
   void Rebuild();
   void Refresh();
   struct Binding { Widget* field; std::vector<std::string> targets; std::string path; FieldType type; };
+  std::set<std::string> overridden_; // "id|Component.field" of the inspected instance that differ from the prefab (6-1)
+  void UpdateOverrides();
   UIContext* ui_ = nullptr;
   Widget* hierarchy_ = nullptr;
   Widget* inspector_ = nullptr;

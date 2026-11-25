@@ -231,9 +231,15 @@ void EditorModel::RebuildProject() {
   for (const AssetRecord* r : files)
     items.push_back({"p.item." + r->path, FileName(r->path), TypeLabel(*r), IconFor(r, false, false), pick(r->path), 0, r->path == projectSelected_});
 
+  // 6-1: an object dragged here from the Hierarchy becomes a prefab in this folder
+  auto takeObject = [this](Widget& dropped) {
+    if (dropped.id.rfind("h.", 0) == 0) CreatePrefab(dropped.id.substr(2), projectFolder_);
+  };
+  right.onDrop = takeObject;
   if (!projectTiles) {
     for (Item& it : items) {
       auto& row = right.Add(MakeListRow(it.key, it.name, it.type, it.indent));
+      row.onDrop = takeObject;
       row.selected = it.selected;
       row.onClick = [click = it.click](Widget&) { click(); };
     }
@@ -249,6 +255,7 @@ void EditorModel::RebuildProject() {
         rowBox->width = Length::Fill(); // tiles from the left
         rowBox->padT = i == 0 ? 4.f : 0.f;
         rowBox->padB = kGap;
+        rowBox->onDrop = takeObject;
       }
       Item& it = items[i];
       const std::string path = it.key.substr(7), icon = it.icon;
@@ -278,9 +285,15 @@ void EditorModel::RebuildProject() {
       tile.width = Length::Px(kTileW);
       tile.height = Length::Px(kTileH);
       tile.onClick = [click = it.click](Widget&) { click(); };
-      tile.draggable = true; // onto an Inspector text field (E-4b) or the Hierarchy later
+      tile.draggable = true; // onto an Inspector text field (E-4b), a .prefab onto the Scene view (6-1)
+      tile.onDrop = it.type == "Folder" ? std::function<void(Widget&)>([this, path](Widget& dropped) { // into that folder
+        if (dropped.id.rfind("h.", 0) == 0) CreatePrefab(dropped.id.substr(2), path);
+      }) : std::function<void(Widget&)>(takeObject);
     }
   }
+  auto& below = right.Add(MakeBox(Axis::Column)); // empty space under the items takes drops too
+  below.height = Length::Fill();
+  below.onDrop = takeObject;
   if (ui_) ui_->ForgetRemovedWidgets();
 }
 
