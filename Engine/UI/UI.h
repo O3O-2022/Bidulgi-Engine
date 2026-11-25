@@ -74,6 +74,7 @@ struct Widget {
   // Field as a slider (BPROPERTY Range): drag inside the box sets the value; typing still works.
   bool slider = false, sliderInteger = false;
   bool marked = false; // Field: changed while playing (3-6b): accent label and a dot
+  bool overridden = false; // Field: differs from its prefab (6-1): a blue bar at the left edge (Unity's)
   double sliderMin = 0, sliderMax = 1;
   std::function<void(Widget&)> onChange;      // value changed while dragging (each step; edits merge into one undo)
   // Inspector conveniences (E-4b). axes: the value is "x, y, z" — drawn as one box per number with an X/Y/Z/W tag

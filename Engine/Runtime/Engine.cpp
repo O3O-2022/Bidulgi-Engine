@@ -36,6 +36,8 @@
 #include "Input/GameInput.h"
 #include "Input/InputActions.h"
 #include "Scene/SampleComponents.h"
+#include "Scene/Prefab.h"
+#include "Assets/AssetRefs.h"
 #include <algorithm>
 #include <set>
 #include <atomic>
@@ -1322,8 +1324,12 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
           e->sceneView->camera.distance = dist;
         }
       }
-      if (bdg::Widget* scene = e->editor->Find("scene"))
+      if (bdg::Widget* scene = e->editor->Find("scene")) { // a .prefab dragged from the Project panel: an instance there (6-1)
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
+        scene->onDrop = [e](bdg::Widget& dropped) {
+          if (e->model && dropped.id.starts_with("p.item.") && dropped.id.ends_with(".prefab")) e->sceneView->PlacePrefab(*e->model, dropped.id.substr(7));
+        };
+      }
       if (bdg::Widget* game = e->editor->Find("game")) // the scene from its camera (3-6)
         game->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->DrawGame(w, ui, e->play.Playing() ? e->play.Time() : -1.0); };
       if (bdg::Widget* b = e->editor->Find("tool.play")) b->onClick = [e](bdg::Widget&) { TogglePlay(e); };
@@ -1840,6 +1846,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       bdg::AssetDatabase::Changes ch = e->assets.Refresh();
       for (auto& [from, to] : ch.moved) if (e->model) e->model->RetargetAssetPath(from, to);
       if (e->model && !ch.Empty()) e->model->ProjectChanged();
+      if (e->model && !ch.modified.empty()) e->model->PrefabFilesChanged(ch.modified); // edited prefabs: instances follow (6-1)
       if (!ch.Empty()) e->materials.Invalidate();
       if (e->sceneView && !ch.Empty()) { // a model, or a buffer / image a .gltf uses, changed: import it again (2-5d)
         std::vector<std::string> changed = ch.modified;

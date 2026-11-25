@@ -223,6 +223,7 @@ void UIContext::DrawChoice(Widget& w) {
   FieldInputBox(w, ix, iy, iw, ih);
   const bool focus = focused_ == &w;
   const int cur = ChoiceIndex(w);
+  if (w.overridden) b.Rect(w.x, w.y + 2, 2, w.h - 4, t.C("prefab"), 1); // prefab override (6-1): the prefab colour
   if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
   Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked ? t.C("accent") : w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
   const float ty = iy + (ih - fs) * 0.5f - 1;
@@ -591,6 +592,7 @@ void UIContext::DrawWidget(Widget& w) {
       float fs = t.FontSize("label", 12), ix, iy, iw, ih;
       FieldInputBox(w, ix, iy, iw, ih);
       bool focus = focused_ == &w;
+      if (w.overridden) b.Rect(w.x, w.y + 2, 2, w.h - 4, t.C("prefab"), 1); // prefab override (6-1): the prefab colour
       if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
       Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked || scrub_ == &w ? t.C("accent") : w.scrub && w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
       const auto parts = w.axes > 0 ? FieldParts(w.text2, w.axes) : std::vector<std::pair<size_t, size_t>>{};

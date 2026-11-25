@@ -29,7 +29,11 @@ public:
     bool Empty() const { return added.empty() && removed.empty() && modified.empty() && moved.empty(); }
   };
 
-  // First scan (creates missing .meta files). With a cache file (<project>/.cache/assetdb.jsonl) only files whose
+  AssetDatabase() = default;
+  ~AssetDatabase(); // stops being the place prefab references resolve (Scene/Prefab.h)
+  AssetDatabase(const AssetDatabase&) = delete;
+  AssetDatabase& operator=(const AssetDatabase&) = delete;
+  // First scan (creates missing .meta files). The opened database becomes where prefab references resolve. With a cache file (<project>/.cache/assetdb.jsonl) only files whose
   // size or times changed since the last run are read again (queue 2-3b).
   bool Open(const std::string& root, std::string* error = nullptr, const std::string& cachePath = {});
   bool SaveCache() const;

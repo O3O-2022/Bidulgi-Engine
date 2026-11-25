@@ -19,7 +19,12 @@ struct SceneObject {
   std::string id, name, parent;  // parent "" = scene root
   std::vector<std::string> children;
   std::vector<Component> components;
-  bool prefab = false;           // shown as a prefab instance (prefabs: queue 6-1)
+  bool prefab = false;           // shown as a prefab instance (the Hierarchy badge): instance roots
+  // Prefab instances (queue 6-1, Scene/Prefab.h). An instance is expanded in the scene: its root has the instance's
+  // id and the prefab's objects below it get "<root id>/<id in the prefab>" ("g1/hpbar", nested: "g1/weapon/trail").
+  std::string prefabRef;  // a prefab root (the outer instance, or a nested one inside it): "guid:<guid>" of the .prefab
+  std::string prefabRoot; // the outermost instance root this object came from ("" = not from a prefab)
+  std::string prefabUnresolved; // an instance whose prefab could not be read: its line, written back unchanged
   Component* Find(std::string_view typeName);
 };
 

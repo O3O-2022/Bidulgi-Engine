@@ -790,6 +790,19 @@ int SceneView::Reimport(const std::vector<std::string>& changed) {
   return n;
 }
 
+std::string SceneView::PlacePrefab(EditorModel& model, const std::string& prefabPath) { return PlacePrefabAt(model, prefabPath, hoverX_, hoverY_); }
+
+std::string SceneView::PlacePrefabAt(EditorModel& model, const std::string& prefabPath, float x, float y) {
+  glm::vec3 at{0}, n;
+  if (!RaycastUI(model, x, y, {}, at, n) && !MeasurePoint(model, x, y, at)) at = glm::vec3(camera.pivot.x, 0, camera.pivot.z);
+  if (snap.always) {
+    at.x = SnapValue(at.x, snap.move);
+    at.z = SnapValue(at.z, snap.move);
+  }
+  const Vec3 p{at.x, at.y, at.z};
+  return model.AddPrefabInstance(prefabPath, "", &p);
+}
+
 std::string SceneView::PlaceModel(EditorModel& model, const std::string& meshPath, float x, float y) {
   glm::vec3 at{0}, n;
   if (!RaycastUI(model, x, y, {}, at, n) && !MeasurePoint(model, x, y, at)) at = glm::vec3(camera.pivot.x, 0, camera.pivot.z);
@@ -1032,6 +1045,8 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
   using T = InputEvent::Type;
   vx_ = v.x; vy_ = v.y; vw_ = std::max(v.w, 1.f); vh_ = std::max(v.h, 1.f);
   auto inside = [&](const InputEvent& e) { return e.x >= v.x && e.y >= v.y && e.x < v.x + v.w && e.y < v.y + v.h; };
+  for (const InputEvent& e : events)
+    if ((e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseUp) && inside(e)) { hoverX_ = e.x; hoverY_ = e.y; }
   const float deg = 0.3f; // degrees per UI unit of mouse travel
   for (size_t i = 0; i < events.size();) {
     InputEvent& e = events[i];

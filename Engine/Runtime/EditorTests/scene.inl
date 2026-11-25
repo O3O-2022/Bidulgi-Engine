@@ -1261,3 +1261,152 @@ void ReportInputTest(bdg_engine*) {
                click, context);
 }
 BDG_EDITOR_TEST("BDG_INPUT_TEST", InjectInputTest, ReportInputTest)
+
+// Scripted check of 6-1 prefabs (BDG_PREFAB_TEST=1, BDG_ASSETS = an empty project folder; with BDG_SCRIPT_ASSEMBLIES the
+// C# part runs too). An object with a child becomes Prefabs/Enemy.prefab (Inspector button), two more instances are
+// placed (command, and a drop on the Scene view), one is overridden (the Inspector marks the field), the prefab file is
+// edited (only the instance without the override follows), the override is reverted (and undone, redone), another one
+// is applied to the prefab (every instance follows), the scene is saved and opened again (links and overrides kept, the
+// build's reference index keeps the prefab), a Hierarchy object dropped on the Project panel becomes a second prefab,
+// and a C# PrefabSpawner places one with Spawn("Prefabs/Enemy.prefab").
+namespace prefabtest {
+std::string create = "-", place = "-", inspector = "-", propagate = "-", revert = "-", apply = "-", reopen = "-", build = "-", drop = "-", csharp = "-";
+std::string inst1, inst2;
+}
+void InjectPrefabTest(bdg_engine* e, int frame, float) {
+  namespace fs = std::filesystem;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->assetsOpen) return;
+  using namespace prefabtest;
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("prefab test: {} {}: {}", name, target, err);
+    return c.target;
+  };
+  auto maxHp = [&](const std::string& id) {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* h = o ? o->Find("Health") : nullptr;
+    return h ? static_cast<bdg::Health*>(h->data)->maxHealth : -1;
+  };
+  auto scaleX = [&](const std::string& id) {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* t = o ? o->Find("Transform") : nullptr;
+    return t ? static_cast<bdg::Transform*>(t->data)->scale.x : -1.f;
+  };
+  const fs::path root = bdg::PathU8(e->assets.Root());
+  const std::string prefabPath = "Prefabs/Enemy.prefab";
+  if (frame == 2) {
+    run("add", "", R"({"id":"pe","name":"Enemy"})");
+    run("addcomp", "pe", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    run("addcomp", "pe", R"({"type":"Health","value":{"maxHealth":50}})");
+    run("add", "", R"({"id":"peh","name":"HpBar","parent":"pe"})");
+    run("set", "peh", R"({"path":"Transform.position","value":[0,2,0]})");
+    m->Select("pe");
+  }
+  if (frame == 3) { // the Inspector's "+ 프리팹 만들기"
+    bdg::Widget* w = e->editor->Find("insp.prefab.create");
+    if (w && w->onClick) w->onClick(*w);
+    bdg::SceneObject* pe = m->scene.Find("pe");
+    create = fs::exists(root / "Prefabs" / "Enemy.prefab") && pe && bdg::IsInstanceRoot(*pe) && m->scene.Find("pe/peh") ? "1" : "0";
+    const bdg::Vec3 p{3, 0, 0};
+    inst1 = m->AddPrefabInstance(prefabPath, "", &p);
+    if (bdg::Widget* scene = e->editor->Find("scene"); scene && scene->onDrop) { // dropped from the Project panel
+      bdg::Widget tile;
+      tile.id = "p.item." + prefabPath;
+      const size_t before = m->scene.ObjectCount();
+      scene->onDrop(tile);
+      inst2 = m->Selection().empty() ? "" : m->Selection().back();
+      place = !inst1.empty() && !inst2.empty() && inst1 != inst2 && m->scene.ObjectCount() == before + 2 && m->scene.Find(inst2 + "/peh") ? "1" : "0";
+    }
+    run("set", inst1, R"({"path":"Health.maxHealth","value":5})");
+    m->Select(inst1);
+  }
+  if (frame == 5) {
+    bdg::Widget* f = e->editor->Find("f.Health.maxHealth");
+    const bool marked = f && f->overridden && m->IsOverridden(inst1, "Health.maxHealth");
+    bdg::Widget* rv = e->editor->Find("insp.prefab.revert");
+    inspector = marked && rv && rv->text.find("(1)") != std::string::npos && bdg::PrefabOverrides(m->scene, inst2).empty() ? "1" : "0";
+    // the prefab file edited elsewhere: maxHealth 50 -> 80
+    std::ifstream in(root / "Prefabs" / "Enemy.prefab", std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+    const size_t at = text.find("\"maxHealth\":50");
+    if (at != std::string::npos) text.replace(at, 14, "\"maxHealth\":80");
+    std::ofstream(root / "Prefabs" / "Enemy.prefab", std::ios::binary) << text;
+    m->PrefabFilesChanged({prefabPath});
+    propagate = maxHp(inst1) == 5 && maxHp(inst2) == 80 && maxHp("pe") == 80 ? "1" : std::format("0({},{},{})", maxHp(inst1), maxHp(inst2), maxHp("pe"));
+  }
+  if (frame == 6) {
+    std::string err;
+    m->RevertPrefab(inst1, "Health.maxHealth");
+    const int reverted = maxHp(inst1);
+    m->bus.Undo(&err);
+    const int undone = maxHp(inst1);
+    m->bus.Redo(&err);
+    revert = reverted == 80 && undone == 5 && maxHp(inst1) == 80 && bdg::PrefabOverrides(m->scene, inst1).empty() ? "1" : std::format("0({},{},{})", reverted, undone, maxHp(inst1));
+    run("set", inst1, R"({"path":"Transform.scale","value":[2,2,2]})");
+    m->Select(inst1);
+  }
+  if (frame == 8) {
+    bdg::Widget* w = e->editor->Find("insp.prefab.apply");
+    if (w && w->onClick) w->onClick(*w);
+    apply = scaleX(inst2) == 2.f && scaleX("pe") == 2.f && bdg::PrefabOverrides(m->scene, inst1).empty() ? "1" : std::format("0({},{})", scaleX(inst2), scaleX("pe"));
+    run("set", inst2, R"({"path":"Health.maxHealth","value":7})"); // an override that must survive saving
+  }
+  if (frame == 9) {
+    const std::u8string su = (bdg::PathU8(e->assets.Root()).parent_path() / "Scenes" / "Prefabs.scene").u8string();
+    m->scenePath.assign(su.begin(), su.end());
+    m->SaveScene();
+    std::ifstream in(bdg::PathU8(m->scenePath), std::ios::binary);
+    const std::string text((std::istreambuf_iterator<char>(in)), {});
+    in.close();
+    const bool oneLine = text.find("\"prefab\":\"guid:") != std::string::npos && text.find("\"id\":\"" + inst2 + "/peh\"") == std::string::npos;
+    m->OpenScene(m->scenePath);
+    bdg::SceneObject* ob = m->scene.Find(inst2);
+    reopen = oneLine && ob && bdg::IsInstanceRoot(*ob) && m->scene.Find(inst2 + "/peh") && maxHp(inst2) == 7 && scaleX(inst2) == 2.f ? "1" : "0";
+    bdg::AssetRefIndex index; // what the build packs: the scene names the prefab, so it is not "unused"
+    index.Build(e->assets, {{"Scenes/Prefabs.scene", text}});
+    const auto unused = index.Unused();
+    build = std::find(unused.begin(), unused.end(), prefabPath) == unused.end() ? "1" : "0";
+    // a Hierarchy object dropped on a Project folder becomes a prefab in it
+    run("add", "", R"({"id":"pd","name":"Crate"})");
+    m->ShowProjectView(bdg::EditorModel::ProjectView::Files);
+  }
+  if (frame == 11) {
+    bdg::Widget* folder = e->editor->Find("p.item.Prefabs");
+    if (folder && folder->onDrop) {
+      bdg::Widget row;
+      row.id = "h.pd";
+      folder->onDrop(row);
+    }
+    bdg::SceneObject* pd = m->scene.Find("pd");
+    drop = folder && fs::exists(root / "Prefabs" / "Crate.prefab") && pd && bdg::IsInstanceRoot(*pd) ? "1" : "0";
+    if (bdg::Registry::Instance().Find("PrefabSpawner")) {
+      run("add", "", R"({"id":"spw","name":"Spawner"})");
+      run("addcomp", "spw", R"({"type":"PrefabSpawner","value":{"prefab":"Prefabs/Enemy.prefab"}})");
+      TogglePlay(e);
+    }
+  }
+  if (frame == 15 && e->play.Playing()) {
+    bdg::SceneObject* o = m->scene.Find("spw");
+    bdg::Component* c = o ? o->Find("PrefabSpawner") : nullptr;
+    std::string id;
+    if (c)
+      for (const bdg::FieldInfo& fi : c->type->fields)
+        if (fi.name == "spawned") id = bdg::Registry::ToJson(static_cast<unsigned char*>(c->data) + fi.offset, fi.value);
+    if (id.size() >= 2) id = id.substr(1, id.size() - 2);
+    bdg::SceneObject* s = m->scene.Find(id);
+    csharp = s && bdg::IsInstanceRoot(*s) && m->scene.Find(id + "/peh") && maxHp(id) == 80 ? "1" : "0(" + id + ")";
+    TogglePlay(e);
+  }
+}
+void ReportPrefabTest(bdg_engine*) {
+  using namespace prefabtest;
+  bdg::LogInfo("prefab test: create={} place={} inspector={} propagate={} revert={} apply={} reopen={} build={} drop={} csharp={}", create, place,
+               inspector, propagate, revert, apply, reopen, build, drop, csharp);
+}
+BDG_EDITOR_TEST("BDG_PREFAB_TEST", InjectPrefabTest, ReportPrefabTest)
