@@ -1,6 +1,7 @@
 #include "Scripting/DotNetHost.h"
 #include "Core/Command.h"
 #include "Core/Log.h"
+#include "Core/Reflection.h"
 #include "Scripting/ScriptApi.h"
 #include <algorithm>
 #include <cstdlib>
@@ -9,6 +10,7 @@
 #include <format>
 #include <fstream>
 #include <vector>
+#include <yyjson.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -150,14 +152,23 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   if (rd < 0 || !fn) return fail(std::format("런타임 함수를 얻을 수 없음 (0x{:08x}) {}", (uint32_t)rd, g_hostError));
   auto load = (load_assembly_and_get_function_pointer_fn)fn;
   void* initialize = nullptr;
-  void* selfTest = nullptr;
+  void* entry[6] = {};
+  const wchar_t* names[6] = {L"SelfTest", L"LoadAssembly", L"CreateBehaviour", L"SetBehaviourEnabled", L"DestroyBehaviour", L"TickBehaviours"};
   int rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", L"Initialize", kUnmanagedCallersOnly, nullptr, &initialize);
-  if (rl >= 0) rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", L"SelfTest", kUnmanagedCallersOnly, nullptr, &selfTest);
-  if (rl < 0 || !initialize || !selfTest)
+  for (int i = 0; i < 6 && rl >= 0; ++i) {
+    rl = load(dll.c_str(), L"Bidulgi.Host, Bidulgi.Scripting", names[i], kUnmanagedCallersOnly, nullptr, &entry[i]);
+    if (rl >= 0 && !entry[i]) rl = -1;
+  }
+  if (rl < 0 || !initialize)
     return fail(std::format("Bidulgi.Scripting의 진입점을 찾을 수 없음 (0x{:08x}) {}", (uint32_t)rl, g_hostError));
   const int api = ((int(__stdcall*)(void*))initialize)((void*)&DotNetHost::Request);
   if (api != 1) return fail(std::format("스크립팅 API 버전이 다름 ({} != 1)", api));
-  selfTest_ = (int (*)(const char*))selfTest;
+  loadAssembly_ = (int (*)(const char*))entry[1];
+  create_ = (int (*)(const char*, const char*, int))entry[2];
+  setEnabled_ = (void (*)(int, int))entry[3];
+  destroy_ = (void (*)(int))entry[4];
+  tick_ = (void (*)(int, double, double, int))entry[5];
+  selfTest_ = (int (*)(const char*))entry[0];
   // the runtime version the host resolved (written next to the dll by the build: *.runtimeconfig.json names the
   // framework; the actual one may be newer with RollForward)
   version_.clear();
@@ -182,22 +193,82 @@ void DotNetHost::Attach(Scene* scene, CommandBus* bus) {
   lastAnswer_.clear();
 }
 
-int DotNetHost::SelfTest(const std::string& target) {
-  if (!selfTest_) return -2;
-#ifdef _WIN32
-  return ((int(__stdcall*)(const char*))selfTest_)(target.c_str());
-#else
-  return selfTest_(target.c_str());
-#endif
+int DotNetHost::SelfTest(const std::string& target) { return selfTest_ ? selfTest_(target.c_str()) : -2; }
+
+namespace {
+struct ScriptComponentData {
+  bool enabled = true;
+};
+} // namespace
+
+std::string DotNetHost::RegisterBehaviourType(const std::string& name) {
+  if (name.empty()) return "no name";
+  if (const TypeInfo* t = Registry::Instance().Find(name)) {
+    if (behaviourTypes_.count(t)) return {}; // loaded again (same class name): keep the type, the new class runs
+    return std::format("\"{}\" is already an engine type; rename the C# class", name);
+  }
+  TypeInfo& t = types_.emplace_back();
+  t.name = name;
+  t.size = sizeof(ScriptComponentData);
+  t.tags = {"Component", "Script", "CSharp"};
+  FieldInfo f;
+  f.name = "enabled";
+  f.value = reflect::ValueTypeOf<bool>();
+  f.offset = offsetof(ScriptComponentData, enabled);
+  f.flags = kEdit | kSave;
+  f.meta.tooltip = "Runs the behaviour's Update, FixedUpdate and LateUpdate (OnEnable / OnDisable when it changes)";
+  t.fields.push_back(f);
+  t.create = []() -> void* { return new ScriptComponentData(); };
+  t.destroy = [](void* p) { delete static_cast<ScriptComponentData*>(p); };
+  Registry::Instance().Add(t);
+  behaviourTypes_.insert(&t);
+  return {};
+}
+
+int DotNetHost::LoadScripts(const std::string& dllPath, std::string* error) {
+  if (!loadAssembly_) {
+    if (error) *error = "C# scripting is not running";
+    return -1;
+  }
+  const int n = loadAssembly_(dllPath.c_str());
+  if (n < 0 && error) *error = "cannot load " + dllPath + " (see the log)";
+  if (n >= 0) LogInfo("C# scripting: {} behaviour class(es) from {}", n, dllPath);
+  return n;
+}
+
+int DotNetHost::CreateBehaviour(const std::string& objectId, const std::string& type, bool enabled) {
+  return create_ ? create_(objectId.c_str(), type.c_str(), enabled ? 1 : 0) : 0;
+}
+void DotNetHost::SetBehaviourEnabled(int handle, bool enabled) {
+  if (setEnabled_) setEnabled_(handle, enabled ? 1 : 0);
+}
+void DotNetHost::DestroyBehaviour(int handle) {
+  if (destroy_) destroy_(handle);
+}
+void DotNetHost::TickBehaviours(Phase phase, double dt, double time, int frame) {
+  if (tick_) tick_((int)phase, dt, time, frame);
 }
 
 int DotNetHost::Request(const char* json, char* out, int capacity) {
   DotNetHost& h = Instance();
   if (!json) return -1;
   std::string answer;
-  if (!h.lastAnswer_.empty() && h.lastRequest_ == json) { // the retry of a request whose answer did not fit
+  if (std::strncmp(json, R"({"op":"register")", 16) == 0) { // a Behaviour class (no scene needed)
+    std::string name, why = "bad request";
+    if (yyjson_doc* d = yyjson_read(json, std::strlen(json), 0)) {
+      const char* n = yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(d), "name"));
+      name = n ? n : "";
+      yyjson_doc_free(d);
+      why = h.RegisterBehaviourType(name);
+    }
+    answer = why.empty() ? R"({"ok":true,"value":null})" : std::format(R"({{"ok":false,"error":"{}"}})", why);
+  } else if (!h.lastAnswer_.empty() && h.lastRequest_ == json) { // the retry of a request whose answer did not fit
     answer = std::move(h.lastAnswer_);
     h.lastAnswer_.clear();
+  } else if (!h.scene_ && std::strncmp(json, R"({"op":"log")", 11) == 0) { // logging needs no scene
+    static Scene none;
+    static CommandBus noBus(none);
+    answer = HandleScriptRequest(none, noBus, json);
   } else if (!h.scene_ || !h.bus_) {
     answer = R"({"ok":false,"error":"no scene is attached to scripting"})";
   } else {

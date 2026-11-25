@@ -6,7 +6,10 @@
 //
 // C# talks to the engine through one native function (JSON request -> JSON answer, ScriptApi.h). The runtime can be
 // loaded once per process and is never unloaded; scripts reload by unloading their own assembly context (4-4).
-// Object references are scene ids for now; runtime handles replace them when Behaviours get their lifecycle (4-2).
+// Object references are scene ids; a fast handle path for per-frame bulk access comes later (decisions 4-1).
+#include "Core/Reflection.h"
+#include <deque>
+#include <set>
 #include <string>
 
 namespace bdg {
@@ -34,6 +37,20 @@ public:
   // -1 = exception in C# (logged), -2 = not running.
   int SelfTest(const std::string& target);
 
+  // Script assemblies (4-2): loads a game's .dll; every Behaviour class in it becomes a component type of the same
+  // name (tags Component, Script, CSharp; one field "enabled"), so scenes attach it by class name. Returns the
+  // number of classes, or -1. Load before opening scenes that use them.
+  int LoadScripts(const std::string& dllPath, std::string* error = nullptr);
+  bool IsBehaviourType(const TypeInfo* type) const { return type && behaviourTypes_.count(type) != 0; }
+  size_t BehaviourTypeCount() const { return behaviourTypes_.size(); }
+
+  // Lifecycle (driven by BehaviourRunner): create = new instance + Awake (+ OnEnable when enabled); 0 = failed.
+  int CreateBehaviour(const std::string& objectId, const std::string& type, bool enabled);
+  void SetBehaviourEnabled(int handle, bool enabled); // OnEnable / OnDisable on a change
+  void DestroyBehaviour(int handle);                  // OnDisable (if enabled) + OnDestroy
+  enum class Phase { Update = 0, FixedUpdate = 1, LateUpdate = 2 }; // Update runs pending Starts first
+  void TickBehaviours(Phase phase, double dt, double time, int frame);
+
   // Engine side of the request channel (C# calls it through a function pointer).
   static int Request(const char* json, char* out, int capacity);
 
@@ -42,6 +59,14 @@ private:
   Scene* scene_ = nullptr;
   CommandBus* bus_ = nullptr;
   int (*selfTest_)(const char*) = nullptr;
+  int (*loadAssembly_)(const char*) = nullptr;
+  int (*create_)(const char*, const char*, int) = nullptr;
+  void (*setEnabled_)(int, int) = nullptr;
+  void (*destroy_)(int) = nullptr;
+  void (*tick_)(int, double, double, int) = nullptr;
+  std::string RegisterBehaviourType(const std::string& name); // "" = ok, else why not
+  std::deque<TypeInfo> types_;                                // stable addresses for the Registry
+  std::set<const TypeInfo*> behaviourTypes_;
   std::string version_;
   std::string lastRequest_, lastAnswer_; // an answer too long for the buffer waits for the same request again
 };

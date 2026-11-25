@@ -109,7 +109,7 @@ struct bdg_engine {
   bool playTest = false, budgetTest = false, refsTest = false, themeTest = false, importTest = false, newSceneTest = false;
   bool previewTestOn = false, treeTest = false, sceneIconTest = false, uiTest = false, inspectTest = false, fbxTest = false;
   std::string fbxTestValues[4];
-  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false;
+  bool postTest = false, post2Test = false, shaftTest = false, shakeTest = false, csharpTest = false, behaviourTest = false;
   std::string shakeTestValues[5];
   std::string shaftTestValues[4];
   std::string postTestValues[7], post2TestValues[4];
@@ -1283,6 +1283,32 @@ void InjectPostFxTest(bdg_engine* e, int frame) {
 }
 
 void TogglePlay(bdg_engine* e);
+// C# script assemblies (4-2): BDG_SCRIPT_ASSEMBLIES (paths separated by ';'), then .cache/Scripts/*.dll of the
+// project (the compiled game scripts: 4-4 builds them). .NET starts only when there is something to load, so
+// projects without C# do not pay for the runtime.
+void LoadScriptAssemblies() {
+  std::vector<std::string> dlls;
+  if (const char* env = std::getenv("BDG_SCRIPT_ASSEMBLIES"))
+    for (std::string_view rest = env; !rest.empty();) {
+      const size_t semi = rest.find(';');
+      const std::string one(rest.substr(0, semi));
+      if (!one.empty()) dlls.push_back(one);
+      rest = semi == std::string_view::npos ? std::string_view() : rest.substr(semi + 1);
+    }
+  std::error_code ec;
+  for (const auto& f : std::filesystem::directory_iterator(std::filesystem::current_path() / ".cache" / "Scripts", ec))
+    if (f.path().extension() == ".dll") {
+      const std::u8string u = f.path().u8string();
+      dlls.emplace_back(u.begin(), u.end());
+    }
+  if (dlls.empty()) return;
+  bdg::DotNetHost& host = bdg::DotNetHost::Instance();
+  std::string err;
+  if (!host.Start({}, &err)) return; // logged
+  for (const std::string& d : dlls)
+    if (host.LoadScripts(d, &err) < 0) bdg::LogError("C# scripting: {}", err);
+}
+
 // Scripted check of 4-1 (BDG_CSHARP_TEST=1): the editor starts .NET, C# finds an object of the open scene, calls
 // Health.Damage, reads Health.Ratio and writes fields; the edits are undo steps from "script" and Ctrl+Z takes
 // them back.
@@ -1322,6 +1348,51 @@ void InjectCSharpTest(bdg_engine* e, int frame) {
   host.Attach(nullptr, nullptr);
   bdg::LogInfo("csharp test: started={} self={} values={} steps={} script={} undo={}", started ? 1 : 0, self,
                current == "60" && max == "250" ? 1 : 0, steps, fromScript ? 1 : 0, undone == "70" ? 1 : 0);
+}
+
+// Scripted check of 4-2 (BDG_BEHAVIOUR_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): an object
+// with the C# Spinner and LifecycleProbe behaviours; Play runs them (the object turns), disabling the probe in the
+// Inspector's way (a set command) calls OnDisable / OnEnable, Stop calls OnDestroy and the edited world comes back.
+void InjectBehaviourTest(bdg_engine* e, int frame) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probeLine;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("behaviour test: {}", err);
+  };
+  auto rotY = [&] {
+    const bdg::SceneObject* o = m->scene.Find("bh1");
+    const bdg::Component* t = o ? const_cast<bdg::SceneObject*>(o)->Find("Transform") : nullptr;
+    return t ? static_cast<const bdg::Transform*>(t->data)->rotation.y : -1.f;
+  };
+  static int instances = 0;
+  static float spun = 0;
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("probe: bh1 ", 0) == 0) probeLine = l; });
+    run("add", "", R"({"id":"bh1","name":"Spinning"})");
+    run("addcomp", "bh1", R"({"type":"Spinner"})");
+    run("addcomp", "bh1", R"({"type":"LifecycleProbe"})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 14) std::this_thread::sleep_for(std::chrono::milliseconds(15)); // let game time pass
+  if (frame == 8) run("set", "bh1", R"({"path":"LifecycleProbe.enabled","value":false})");
+  if (frame == 10) run("set", "bh1", R"({"path":"LifecycleProbe.enabled","value":true})");
+  if (frame == 12) {
+    instances = (int)e->play.Scripts().Instances();
+    spun = rotY();
+  }
+  if (frame == 14) TogglePlay(e);
+  if (frame == 16) {
+    bdg::SetLogHook({});
+    const bool order = probeLine.find("events=Awake,OnEnable,Start,Update,OnDisable,OnEnable,Update,OnDisable,OnDestroy") != std::string::npos;
+    bdg::LogInfo("behaviour test: types={} instances={} spun={} order={} restored={} ended={}", bdg::DotNetHost::Instance().BehaviourTypeCount(),
+                 instances, spun > 0.01f ? 1 : 0, order ? 1 : 0, rotY() == 0.f ? 1 : 0, e->play.Scripts().Instances() == 0 ? 1 : 0);
+  }
 }
 
 // Scripted check of E-9 (BDG_SHAKE_TEST=1): a CameraShakeSource (bdg:Heavy, play on start) near the camera and
@@ -3531,6 +3602,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->shaftTest = std::getenv("BDG_SHAFTS_TEST") != nullptr;
   e->shakeTest = std::getenv("BDG_SHAKE_TEST") != nullptr;
   e->csharpTest = std::getenv("BDG_CSHARP_TEST") != nullptr;
+  e->behaviourTest = std::getenv("BDG_BEHAVIOUR_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -3783,6 +3855,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       const bool automatedRun = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST");
       model->foldsPath = folds ? folds : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl").string();
     }
+    LoadScriptAssemblies(); // C# Behaviour classes are component types: before the scene that uses them (4-2)
     if (std::filesystem::exists(model->scenePath)) model->OpenScene(model->scenePath);
     model->LoadFolds();
     if (desc->replay_path) {
@@ -3996,6 +4069,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->shaftTest && !e->showGallery) InjectShaftsTest(e, frames);
     if (e->shakeTest && !e->showGallery) InjectShakeTest(e, frames);
     if (e->csharpTest && !e->showGallery) InjectCSharpTest(e, frames);
+    if (e->behaviourTest && !e->showGallery) InjectBehaviourTest(e, frames);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);

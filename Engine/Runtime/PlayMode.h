@@ -8,6 +8,7 @@
 // (behaviours such as Rotator) is never kept.
 #include "Core/Command.h"
 #include "Scene/CameraShake.h"
+#include "Scripting/BehaviourRunner.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ public:
   // Camera.Shake calls, attenuated by distance; the Game view adds this offset to its camera.
   ShakeOffset Shake() const { return playing_ ? shaker_.Current() : ShakeOffset{}; }
   size_t ShakesPlaying() const { return shaker_.Active(); }
+  const BehaviourRunner& Scripts() const { return scripts_; }
   uint64_t Frames() const { return frames_; } // ticks since Start
 
   struct Change { Command cmd; std::string label; }; // "Crystal: Transform.position"
@@ -52,6 +54,7 @@ private:
   bool paused_ = false, step_ = false;
   float timeScale_ = 1.f;
   CameraShaker shaker_;
+  BehaviourRunner scripts_; // C# Behaviours (4-2)
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

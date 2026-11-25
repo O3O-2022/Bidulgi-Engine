@@ -523,6 +523,12 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1' } 8
           if ($log -notmatch 'csharp test: started=1 self=1 values=1 steps=3 script=1 undo=1') { $errors += 'C# scripting test failed' }
 
+          # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
+          $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
+          $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
+          if ($log -notmatch 'behaviour test: types=4 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          Remove-Item Env:BDG_SCRIPT_ASSEMBLIES -ErrorAction SilentlyContinue
+
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_SHAKE_TEST = '1' } 80

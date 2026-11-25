@@ -1,10 +1,15 @@
 // C# scripting (queue 4-1): bindings from reflection, the request channel and the hosted .NET runtime.
 #include "Scene/Components.h"
 #include "Scene/SampleComponents.h"
+#include "Core/Log.h"
+#include "Scene/SceneFile.h"
+#include "Scripting/BehaviourRunner.h"
 #include "Scripting/CSharpBindings.h"
 #include "Scripting/DotNetHost.h"
 #include "Scripting/ScriptApi.h"
 #include "bdg_test.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 using namespace bdg;
@@ -42,6 +47,13 @@ TEST_CASE("script requests: find, get, set, call through the command bus (queue 
   CHECK(s.WorldPosition("g1").y == 2.f && bus.UndoDepth() == 2);
   CHECK(bus.Undo() && bus.Undo());
   CHECK(static_cast<Health*>(s.Find("g1")->Find("Health")->data)->current == 100);
+  // in play mode (a layer) script changes are game state: applied, but no undo step and no log line (4-2)
+  bus.PushLayer();
+  const size_t logLines = bus.Log().size();
+  CHECK(req(R"({"op":"set","target":"g1","path":"Health.current","value":5})") == R"({"ok":true,"value":null})");
+  CHECK(req(R"({"op":"call","target":"g1","type":"Health","function":"Damage","args":[1]})") == R"({"ok":true,"value":4})");
+  CHECK(!bus.CanUndo() && bus.Log().size() == logLines);
+  CHECK(bus.PopLayer());
   // errors are answers, not crashes
   CHECK(req("not json").find(R"("ok":false)") != std::string::npos);
   CHECK(req(R"({"op":"get","target":"g9","path":"Health.current"})").find("no object") != std::string::npos);
@@ -73,5 +85,79 @@ TEST_CASE("C# scripting: the .NET runtime runs C# that reads, calls and edits co
   CHECK(h.current == 60 && h.maxHealth == 100);
   host.Attach(nullptr, nullptr);
   CHECK(host.SelfTest("Hero") == -1 || host.SelfTest("Hero") == 0); // no scene: C# gets an error, the engine lives
+#endif
+}
+
+TEST_CASE("C# behaviours: lifecycle order, enable/disable, destroy, fixed steps, errors (queue 4-2)") {
+#if !BDG_HAS_DOTNET
+  std::printf("  (skipped: built without the .NET SDK or with AddressSanitizer)\n");
+#else
+  DotNetHost& host = DotNetHost::Instance();
+  std::string err;
+  CHECK(host.Start({}, &err));
+  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == 4);
+  const TypeInfo* spinner = Registry::Instance().Find("Spinner");
+  CHECK(spinner && host.IsBehaviourType(spinner) && !host.IsBehaviourType(&Health::StaticType()));
+  CHECK(spinner && std::find(spinner->tags.begin(), spinner->tags.end(), "CSharp") != spinner->tags.end());
+  CHECK(host.LoadScripts(DotNetHost::DefaultManagedDir() + "/Bidulgi.Samples.dll", &err) == 4); // again: same types
+  CHECK(host.BehaviourTypeCount() == 4);
+
+  std::vector<std::string> lines;
+  SetLogHook([&](LogLevel, std::string_view m) { lines.emplace_back(m); });
+  Scene s;
+  s.Create("a", "Alpha", "");
+  s.AddComponent("a", Transform::StaticType());
+  Health& h = *static_cast<Health*>(s.AddComponent("a", Health::StaticType()));
+  h.current = 10;
+  for (const char* t : {"Spinner", "LifecycleProbe", "Medic"}) CHECK(s.AddComponent("a", *Registry::Instance().Find(t)) != nullptr);
+  s.Create("b", "Beta", "");
+  for (const char* t : {"Faulty", "LifecycleProbe"}) CHECK(s.AddComponent("b", *Registry::Instance().Find(t)) != nullptr);
+  // scenes keep them by class name, like any component
+  const std::string text = WriteSceneText(s, "T");
+  CHECK(text.find("\"Spinner\":{}") != std::string::npos);
+  Scene back;
+  CHECK(ReadSceneText(back, text, nullptr, nullptr, &err) && back.Find("a")->Find("LifecycleProbe") != nullptr);
+
+  CommandBus bus(s);
+  BehaviourRunner r;
+  r.Begin(s, bus);
+  CHECK(r.Active() && r.Instances() == 5);
+  for (int i = 0; i < 30; ++i) r.Frame(s, bus, 1.0 / 60.0);
+  const Transform& t = *static_cast<Transform*>(s.Find("a")->Find("Transform")->data);
+  CHECK(std::abs(t.rotation.y - 45.f) < 0.5f); // 90 degrees/s for half a second
+  CHECK(h.current == 100);                     // Medic.Start healed through the Health binding
+  size_t faultyErrors = 0;
+  for (const std::string& l : lines) faultyErrors += l.find("Faulty.Update") != std::string::npos;
+  CHECK(faultyErrors == 10); // 30 failing frames, 10 shown; the others kept running
+  CHECK(std::count(lines.begin(), lines.end(), std::string("medic: found the spinner")) == 1);
+  // enabled false -> OnDisable, no updates; true -> OnEnable again
+  Command off{"set", "a", R"({"path":"LifecycleProbe.enabled","value":false})"};
+  CHECK(bus.Execute(off, &err));
+  r.Frame(s, bus, 1.0 / 60.0);
+  Command on{"set", "a", R"({"path":"LifecycleProbe.enabled","value":true})"};
+  CHECK(bus.Execute(on, &err));
+  r.Frame(s, bus, 1.0 / 30.0);
+  CHECK(r.FixedStepsLastFrame() == 2);
+  r.Frame(s, bus, 1.0); // a very slow frame: at most 4 fixed steps
+  CHECK(r.FixedStepsLastFrame() == 4);
+  // removing the object destroys its behaviours on the next frame
+  Command del{"del", "b", "{}"};
+  CHECK(bus.Execute(del, &err));
+  r.Frame(s, bus, 1.0 / 60.0);
+  CHECK(r.Instances() == 3);
+  auto probe = [&](const char* id) {
+    for (const std::string& l : lines)
+      if (l.rfind(std::string("probe: ") + id + " ", 0) == 0) return l;
+    return std::string();
+  };
+  CHECK(probe("b").find("awake=1 enable=1 start=1") != std::string::npos && probe("b").find("order=ok") != std::string::npos);
+  r.End();
+  CHECK(r.Instances() == 0 && !r.Active());
+  const std::string a = probe("a");
+  CHECK(a.find("awake=1 enable=2 start=1") != std::string::npos);
+  CHECK(a.find("disable=2 destroy=1 order=ok") != std::string::npos);
+  CHECK(a.find("events=Awake,OnEnable,Start,Update,OnDisable,OnEnable,Update,OnDisable,OnDestroy") != std::string::npos);
+  SetLogHook({});
+  host.Attach(nullptr, nullptr);
 #endif
 }

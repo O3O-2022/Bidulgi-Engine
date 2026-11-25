@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Sample C# Behaviours (queue 4-2): what a game's script assembly looks like, and the fixtures of the lifecycle
+       tests. Built by CMake after Bidulgi.Scripting into the same Managed folder. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>Bidulgi.Samples</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <BdgManaged Condition="'$(BdgManaged)' == ''">$(MSBuildThisFileDirectory)../../build/Release/Managed</BdgManaged>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Bidulgi.Scripting">
+      <HintPath>$(BdgManaged)/Bidulgi.Scripting.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

@@ -36,12 +36,14 @@ bool PlayMode::Start(EditorModel& m) {
   frames_ = 0;
   playing_ = true;
   m.playing = true;
+  scripts_.Begin(m.scene, m.bus); // Awake / OnEnable of the C# Behaviours (no-op without C#)
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
 }
 
 bool PlayMode::Stop(EditorModel& m) {
   if (!playing_) return false;
+  scripts_.End(); // OnDisable / OnDestroy while the played world still exists
   shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
@@ -111,6 +113,10 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     Transform& t = *static_cast<Transform*>(tc->data);
     auto wrap = [](float a) { return a - 360.f * std::floor((a + 180.f) / 360.f); };
     t.rotation = {wrap(t.rotation.x + r.speed.x * (float)dt), wrap(t.rotation.y + r.speed.y * (float)dt), wrap(t.rotation.z + r.speed.z * (float)dt)};
+    changed = true;
+  }
+  if (scripts_.Active()) {
+    scripts_.Frame(m.scene, m.bus, dt);
     changed = true;
   }
   if (changed) m.ValuesChanged();

@@ -289,6 +289,13 @@ bool CommandBus::Execute(Command cmd, std::string* error) {
   std::string label = Label(cmd); // before applying: a deleted object still has its name
   Command inv;
   if (!Apply(cmd, inv, error)) return false;
+  // Play mode (a layer is open): what game scripts change is game state, not an edit. It is applied the same way
+  // but leaves no undo step or log line: the played world is thrown away at Stop, and a script writing every frame
+  // would otherwise grow both for as long as the game runs (4-2).
+  if (cmd.source == "script" && !layers_.empty()) {
+    if (onChanged) onChanged(cmd);
+    return true;
+  }
   if (yyjson_doc* d = yyjson_read(cmd.args.data(), cmd.args.size(), 0)) { // canonical (minified) args in the log
     if (char* s = yyjson_write(d, 0, nullptr)) { cmd.args = s; std::free(s); }
     yyjson_doc_free(d);

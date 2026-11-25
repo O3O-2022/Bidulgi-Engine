@@ -9,7 +9,14 @@ bool g_commandLine = false;
 
 void SetLogForCommandLine(bool on) { g_commandLine = on; }
 
+static std::function<void(LogLevel, std::string_view)>& LogHookSlot() {
+  static std::function<void(LogLevel, std::string_view)> h;
+  return h;
+}
+void SetLogHook(std::function<void(LogLevel, std::string_view)> hook) { LogHookSlot() = std::move(hook); }
+
 void LogWrite(LogLevel level, std::string_view msg) {
+  if (LogHookSlot()) LogHookSlot()(level, msg);
   // One text line per entry, "[level] message", easy for AI and CI to read.
   const char* tag = level == LogLevel::Info ? "info" : level == LogLevel::Warn ? "warn" : "error";
   if (g_commandLine) {

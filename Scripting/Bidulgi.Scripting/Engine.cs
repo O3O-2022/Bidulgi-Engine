@@ -86,9 +86,12 @@ public sealed class GameObject {
     set => Engine.Request(new JsonObject { ["op"] = "rename", ["target"] = Id, ["name"] = value });
   }
   public bool HasComponent(string type) => Engine.Request(new JsonObject { ["op"] = "has", ["target"] = Id, ["type"] = type })!.GetValue<bool>();
-  public T? GetComponent<T>() where T : Component {
-    T c = (T)Activator.CreateInstance(typeof(T), this)!;
-    return HasComponent(c.TypeName) ? c : null;
+  // An engine component (generated class) or a C# Behaviour on this object; null when it has none.
+  public T? GetComponent<T>() where T : class {
+    if (typeof(Behaviour).IsAssignableFrom(typeof(T))) return Behaviours.Find(Id, typeof(T)) as T;
+    if (!typeof(Component).IsAssignableFrom(typeof(T))) throw new EngineException(typeof(T).Name + " is not a component");
+    var c = (Component)Activator.CreateInstance(typeof(T), this)!;
+    return HasComponent(c.TypeName) ? c as T : null;
   }
   public override string ToString() => Id;
 }
@@ -113,7 +116,7 @@ public abstract class Component {
 }
 
 // Entry points the engine calls (UnmanagedCallersOnly: plain C function pointers).
-public static unsafe class Host {
+public static unsafe partial class Host {
   [UnmanagedCallersOnly]
   public static int Initialize(IntPtr request) {
     Engine.Attach(request);

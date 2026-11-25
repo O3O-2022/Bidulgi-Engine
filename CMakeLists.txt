@@ -134,7 +134,7 @@ add_library(BidulgiEngine STATIC
   Engine/Core/Command.h    Engine/Core/Command.cpp
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
-  Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp
+  Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp Engine/Assets/ModelImport.h Engine/Assets/ModelImport.cpp
@@ -216,7 +216,16 @@ if(BDG_DOTNET)
     COMMAND ${CMAKE_COMMAND} -E touch ${BDG_MANAGED_DLL}
     DEPENDS ${BDG_BINDINGS} ${BDG_SCRIPTING_SOURCES}
     COMMENT "Bidulgi.Scripting.dll (dotnet build)")
-  add_custom_target(BidulgiScripting ALL DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_MANAGED_DLL})
+  # Sample Behaviours (4-2): a game-style script assembly built against the one above (also the lifecycle tests)
+  set(BDG_SAMPLES_DLL ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed/Bidulgi.Samples.dll)
+  file(GLOB BDG_SAMPLES_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Samples/*.cs ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Samples/*.csproj)
+  add_custom_command(OUTPUT ${BDG_SAMPLES_DLL}
+    COMMAND ${BDG_DOTNET} build ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Samples/Bidulgi.Samples.csproj -c $<CONFIG> --nologo -v:q
+            -o ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed -p:BdgManaged=${CMAKE_BINARY_DIR}/$<CONFIG>/Managed
+    COMMAND ${CMAKE_COMMAND} -E touch ${BDG_SAMPLES_DLL}
+    DEPENDS ${BDG_MANAGED_DLL} ${BDG_SAMPLES_SOURCES}
+    COMMENT "Bidulgi.Samples.dll (dotnet build)")
+  add_custom_target(BidulgiScripting ALL DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_MANAGED_DLL} ${BDG_SAMPLES_DLL})
   add_dependencies(BidulgiEditor BidulgiScripting)
   add_custom_command(TARGET BidulgiEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed ${CMAKE_SOURCE_DIR}/Bin/Managed)
