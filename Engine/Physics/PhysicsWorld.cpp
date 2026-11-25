@@ -140,6 +140,7 @@ void PhysicsWorld::Begin(Scene& scene, const Settings& settings, const AssetData
     stack.insert(stack.end(), o->children.rbegin(), o->children.rend());
     if (o->Find("Rigidbody") || o->Find("Collider")) MakeBody(scene, o->id, false);
     if (o->Find("Rigidbody2D") || o->Find("Collider2D")) MakeBody(scene, o->id, true);
+    if (o->Find("Terrain")) MakeTerrainBody(scene, o->id); // round 6: height field
   }
   LogInfo("physics: {}", Describe());
 }

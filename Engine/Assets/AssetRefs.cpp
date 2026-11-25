@@ -28,7 +28,8 @@ std::string Stem(const std::string& p) {
   return dot == std::string::npos ? f : f.substr(0, dot);
 }
 bool IsJsonDoc(const std::string& e) {
-  return e == ".scene" || e == ".material" || e == ".matinst" || e == ".prefab" || e == ".json" || e == ".jsonl" || e == ".animgraph"; // 7-1: a graph names its skeleton
+  return e == ".scene" || e == ".material" || e == ".matinst" || e == ".prefab" || e == ".json" || e == ".jsonl" || e == ".animgraph" || // 7-1: a graph names its skeleton
+         e == ".terrain"; // round 6: a terrain names its height, splat and foliage maps and layer textures
 }
 bool IsScript(const std::string& e) { return e == ".cs" || e == ".lua" || e == ".py" || e == ".h" || e == ".hpp" || e == ".cpp" || e == ".c"; }
 bool IsMaterial(const std::string& e) { return e == ".material" || e == ".matinst"; }

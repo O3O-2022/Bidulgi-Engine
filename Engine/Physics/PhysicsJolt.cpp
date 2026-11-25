@@ -19,6 +19,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -352,6 +353,10 @@ private:
         JPH::IndexedTriangleList tris;
         for (size_t i = 0; i + 2 < s.indices.size(); i += 3) tris.push_back(JPH::IndexedTriangle(s.indices[i], s.indices[i + 1], s.indices[i + 2], 0));
         return new JPH::MeshShapeSettings(verts, tris);
+      }
+      case ShapeKind::HeightField: { // terrain (round 6)
+        if (motion != Motion::Static || s.samples < 2 || s.heights.size() < (size_t)s.samples * s.samples) return nullptr;
+        return new JPH::HeightFieldShapeSettings(s.heights.data(), JPH::Vec3::sZero(), J(s.fieldScale), s.samples);
       }
       default: return nullptr; // 2D shapes belong to the 2D backend
     }

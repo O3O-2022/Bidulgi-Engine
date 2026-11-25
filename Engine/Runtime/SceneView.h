@@ -39,6 +39,8 @@
 namespace bdg {
 class AssetDatabase;
 class EditorModel;
+class TerrainView;
+class TerrainTool;
 class UIContext;
 struct Widget;
 
@@ -159,6 +161,9 @@ public:
   // 7-1 test hooks: objects drawn skinned (GPU) in the last BuildItems, and skinning passes run since Init.
   size_t SkinnedObjects() const { return skinnedLast_; }
   uint64_t SkinPasses() const { return skinPasses_; }
+  // Terrains and foliage (round 6, Terrain/): drawn in both renders; the Terrain tool (T) sculpts and paints.
+  TerrainView& Terrains() const { return *terrain_; }
+  TerrainTool& TerrainBrushTool() const { return *terrainTool_; }
 
 private:
   struct MeshEntry {
@@ -194,6 +199,8 @@ private:
 
   RHI* rhi_ = nullptr;
   Renderer3D* r_ = nullptr;
+  std::shared_ptr<TerrainView> terrain_; // round 6
+  std::shared_ptr<TerrainTool> terrainTool_;
   MaterialLibrary* materials_ = nullptr;
   RenderTargetHandle rt_;
   int32_t pw_ = 0, ph_ = 0;

@@ -12,7 +12,7 @@
 
 namespace bdg::phys {
 enum class Motion { Static, Dynamic, Kinematic };
-enum class ShapeKind { Box, Sphere, Capsule, Cylinder, ConvexHull, Mesh, Circle2D, Box2D, Capsule2D };
+enum class ShapeKind { Box, Sphere, Capsule, Cylinder, ConvexHull, Mesh, Circle2D, Box2D, Capsule2D, HeightField };
 
 struct ShapeDesc {
   ShapeKind kind = ShapeKind::Box;
@@ -21,6 +21,11 @@ struct ShapeDesc {
   glm::vec3 offset{0};                  // from the body origin (body space)
   std::vector<glm::vec3> points;        // ConvexHull points, Mesh vertices (body space, scale applied)
   std::vector<uint32_t> indices;        // Mesh triangles
+  // HeightField (terrain, static only): samples x samples heights (row = z), body space point of sample (x, z) =
+  // (x * fieldScale.x, height * fieldScale.y, z * fieldScale.z)
+  std::vector<float> heights;
+  uint32_t samples = 0;
+  glm::vec3 fieldScale{1};
 };
 
 struct BodyDesc {
