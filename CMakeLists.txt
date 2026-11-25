@@ -135,6 +135,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scene/Scene.h     Engine/Scene/Scene.cpp
   Engine/Scene/SceneFile.h Engine/Scene/SceneFile.cpp Engine/Render3D/PostVolume.h Engine/Render3D/PostVolume.cpp Engine/Tools/Cli.h Engine/Tools/Cli.cpp Engine/Core/Expr.h Engine/Core/Expr.cpp Engine/Core/Utf8Path.h Engine/Core/Utf8Path.cpp Engine/Scene/DefaultScene.h Engine/Scene/DefaultScene.cpp Engine/Scene/GraphLibrary.h Engine/Scene/GraphLibrary.cpp Engine/Scene/CameraShake.h Engine/Scene/CameraShake.cpp
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp
+  Engine/Project/ProjectSettings.h Engine/Project/ProjectSettings.cpp Engine/Runtime/ProjectSettingsPanel.h Engine/Runtime/ProjectSettingsPanel.cpp
   Engine/Assets/AssetDatabase.h Engine/Assets/AssetDatabase.cpp
   Engine/Assets/Thumbnails.h Engine/Assets/Thumbnails.cpp
   Engine/Assets/GltfImport.h Engine/Assets/GltfImport.cpp Engine/Assets/ModelImport.h Engine/Assets/ModelImport.cpp
@@ -168,7 +169,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/MaterialLibrary.h Engine/Runtime/MaterialLibrary.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
-bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h)
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h)
 target_link_libraries(BidulgiEngine PRIVATE SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 

@@ -45,6 +45,9 @@ public:
   std::function<void(const Command&)> onChanged; // after every execute / undo / redo (UI refresh)
 
   const std::vector<std::string>& Log() const { return log_; }
+  // Counts changes to the edited world (execute / undo / redo outside play mode): compare with a saved value to
+  // know whether there are unsaved changes.
+  uint64_t Revision() const { return revision_; }
   // The JSON return value of the last "call" command ("" for void functions): what a Graph node outputs (E-8).
   const std::string& LastResult() const { return lastResult_; }
   bool SaveLog(const std::string& path) const;
@@ -90,6 +93,7 @@ private:
   Entry group_;
   struct Layer { std::vector<Entry> undo, redo; size_t log = 0; };
   std::vector<Layer> layers_;
+  uint64_t revision_ = 0;
   double start_ = -1;
 };
 }

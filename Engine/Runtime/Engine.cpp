@@ -19,6 +19,8 @@
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
 #include "Core/Utf8Path.h"
+#include "Project/ProjectSettings.h"
+#include "Runtime/ProjectSettingsPanel.h"
 #include "Scene/Components.h"
 #include "Assets/AssetDatabase.h"
 #include "Runtime/EditorModel.h"
@@ -119,6 +121,17 @@ struct bdg_engine {
   std::string uiTestValues[7];
   float uiZoom = 1;          // user's UI scale on top of the display's (E-4): 0.7 .. 2
   std::string prefsPath;     // .cache/EditorPrefs.json ("" = automated run: not saved)
+  bool confirmQuit = true;   // ask before quitting even with nothing unsaved (preference)
+  bdg::ProjectSettings project;  // ProjectSettings/Project.json (name, version, packaging, display, physics, ...)
+  std::string projectPath;       // BDG_PROJECT_SETTINGS or <folder>/ProjectSettings/Project.json
+  std::string projectSaved;      // the file's contents as last loaded / saved: different = unsaved changes
+  bool settingsTest = false;
+  std::string settingsTestValues[6];
+  int autosaveMinutes = 5;   // backup interval while there are unsaved changes (0 = off)
+  bool quitNow = false;      // a quit dialog button said so: the loop ends
+  bool quitTest = false;
+  std::string quitTestValues[6];
+  std::chrono::steady_clock::time_point lastBackup = std::chrono::steady_clock::now();
   std::string sceneIconTestValues[6];
   bool choiceTest = false;
   std::string choiceTestValues[4];
@@ -946,18 +959,26 @@ void InjectTreeTest(bdg_engine* e, int frame) {
 }
 
 // ---- UI zoom (queue E-4) ------------------------------------------------------------------------
+void SaveEditorPrefs(bdg_engine* e);
+void TogglePlay(bdg_engine* e);
 void SetUiZoom(bdg_engine* e, float zoom) {
   zoom = std::clamp(std::round(zoom * 10.f) / 10.f, 0.7f, 2.f);
   if (zoom == e->uiZoom) return;
   e->uiZoom = zoom;
   if (bdg::Widget* f = e->editor->Find("s.uizoom")) f->text2 = std::format("{}", (int)std::lround(zoom * 100));
   bdg::LogInfo("ui: zoom {}%", (int)std::lround(zoom * 100));
+  SaveEditorPrefs(e);
+}
+
+void SaveEditorPrefs(bdg_engine* e) {
   if (e->prefsPath.empty()) return;
   std::error_code ec;
   std::filesystem::create_directories(std::filesystem::path(e->prefsPath).parent_path(), ec);
-  std::ofstream(std::filesystem::path(e->prefsPath), std::ios::binary) << std::format("{{\"uiZoom\":{}}}\n", zoom);
+  std::ofstream(std::filesystem::path(e->prefsPath), std::ios::binary)
+      << std::format("{{\"uiZoom\":{},\"confirmQuit\":{},\"autosaveMinutes\":{}}}\n", e->uiZoom, e->confirmQuit ? "true" : "false", e->autosaveMinutes);
 }
 
+void SaveEditorPrefs(bdg_engine* e);
 void LoadEditorPrefs(bdg_engine* e, bool automated) {
   const char* custom = std::getenv("BDG_PREFS");
   e->prefsPath = custom ? custom : automated ? "" : (std::filesystem::current_path() / ".cache" / "EditorPrefs.json").string();
@@ -965,6 +986,21 @@ void LoadEditorPrefs(bdg_engine* e, bool automated) {
     f->onCommit = [e](bdg::Widget& w) { SetUiZoom(e, (float)std::strtod(w.text2.c_str(), nullptr) / 100.f); };
     f->onChange = f->onCommit;
   }
+  if (bdg::Widget* t = e->editor->Find("s.confirmquit"))
+    t->onChange = [e](bdg::Widget& w) { e->confirmQuit = w.text2 == "true"; SaveEditorPrefs(e); };
+  if (bdg::Widget* f = e->editor->Find("s.autosave")) {
+    f->onCommit = [e](bdg::Widget& w) {
+      e->autosaveMinutes = std::clamp(std::atoi(w.text2.c_str()), 0, 30);
+      w.text2 = std::to_string(e->autosaveMinutes);
+      SaveEditorPrefs(e);
+    };
+    f->onChange = f->onCommit;
+  }
+  auto show = [e] { // the settings panel shows the loaded values
+    if (bdg::Widget* t = e->editor->Find("s.confirmquit")) t->text2 = e->confirmQuit ? "true" : "false";
+    if (bdg::Widget* f = e->editor->Find("s.autosave")) f->text2 = std::to_string(e->autosaveMinutes);
+  };
+  show();
   if (e->prefsPath.empty()) return;
   std::ifstream in(std::filesystem::path(e->prefsPath), std::ios::binary);
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -973,8 +1009,265 @@ void LoadEditorPrefs(bdg_engine* e, bool automated) {
       e->uiZoom = std::clamp((float)yyjson_get_num(z), 0.7f, 2.f);
       if (bdg::Widget* f = e->editor->Find("s.uizoom")) f->text2 = std::format("{}", (int)std::lround(e->uiZoom * 100));
     }
+    yyjson_val* root = yyjson_doc_get_root(doc);
+    if (yyjson_val* q = yyjson_obj_get(root, "confirmQuit"); yyjson_is_bool(q)) e->confirmQuit = yyjson_get_bool(q);
+    if (yyjson_val* a = yyjson_obj_get(root, "autosaveMinutes"); yyjson_is_int(a)) e->autosaveMinutes = std::clamp((int)yyjson_get_int(a), 0, 30);
     yyjson_doc_free(doc);
   }
+  show();
+}
+
+// ---- Quitting and autosave ------------------------------------------------------------------
+// What has unsaved changes, for the save checklist (Unreal's "Save Content"): the open scene and the project settings.
+struct Unsaved { std::string key, label, detail; };
+bool ProjectSettingsDirty(bdg_engine* e) { return bdg::ProjectSettingsDiffJson(e->project) != e->projectSaved; }
+void ProjectChanged(bdg_engine* e) {
+  bdg::ProjectSettingsPanel::Refresh(*e->editor, e->project, ProjectSettingsDirty(e));
+  e->play.Scripts().fixedStep = std::clamp((double)e->project.physics.fixedTimestep, 0.001, 0.1);
+  e->play.Scripts().maxFixedSteps = std::clamp(e->project.physics.maxFixedSteps, 1, 16);
+}
+bool SaveProjectSettings(bdg_engine* e) {
+  std::string err;
+  if (!bdg::SaveProjectSettings(e->projectPath, e->project, &err)) { bdg::LogError("project settings: {}", err); return false; }
+  e->projectSaved = bdg::ProjectSettingsDiffJson(e->project);
+  bdg::LogInfo("project settings: saved {}", e->projectPath);
+  ProjectChanged(e);
+  return true;
+}
+void LoadProjectSettingsInto(bdg_engine* e) {
+  const char* custom = std::getenv("BDG_PROJECT_SETTINGS");
+  if (custom) e->projectPath = custom;
+  else {
+    const std::u8string u = (std::filesystem::current_path() / "ProjectSettings" / "Project.json").u8string();
+    e->projectPath.assign(u.begin(), u.end());
+  }
+  std::string err;
+  if (!bdg::LoadProjectSettings(e->projectPath, e->project, &err)) bdg::LogWarn("project settings: {}", err);
+  e->projectSaved = bdg::ProjectSettingsDiffJson(e->project);
+  if (bdg::Widget* panel = e->editor->Find("ps.root"))
+    bdg::ProjectSettingsPanel::Build(*panel, *e->editor, e->project, [e] { ProjectChanged(e); }, [e] { SaveProjectSettings(e); });
+  ProjectChanged(e);
+}
+std::vector<Unsaved> UnsavedItems(bdg_engine* e) {
+  std::vector<Unsaved> out;
+  if (e->model && e->model->Dirty()) {
+    const std::u8string u = bdg::PathU8(e->model->scenePath).filename().u8string();
+    out.push_back({"scene", "장면  " + (u.empty() ? std::string("Untitled") : std::string(u.begin(), u.end())), e->model->scenePath});
+  }
+  if (ProjectSettingsDirty(e)) out.push_back({"project", "프로젝트 설정", "ProjectSettings/Project.json"});
+  return out;
+}
+// Saves the ticked items of a closed checklist dialog (items in UnsavedItems order). false = a save failed.
+bool SaveTicked(bdg_engine* e, const bdg::UIContext::Dialog& d) {
+  const std::vector<Unsaved> list = UnsavedItems(e);
+  bool ok = true;
+  for (size_t i = 0; i < list.size() && i < d.items.size(); ++i) {
+    if (!d.items[i].checked) continue;
+    if (list[i].key == "scene") ok = e->model->SaveScene() && ok;
+    else if (list[i].key == "project") ok = SaveProjectSettings(e) && ok;
+  }
+  return ok;
+}
+// File > Save All (Ctrl+Shift+S): the same checklist without quitting.
+void SaveAllDialog(bdg_engine* e) {
+  if (e->editor->DialogOpen()) return;
+  const std::vector<Unsaved> list = UnsavedItems(e);
+  if (list.empty()) { bdg::LogInfo("save all: nothing to save"); return; }
+  bdg::UIContext::Dialog d;
+  d.title = "모두 저장";
+  d.message = "저장할 항목을 고르세요.";
+  for (const Unsaved& u : list) d.items.push_back({u.label, u.detail, true});
+  d.buttons.push_back({"선택 항목 저장", [e](const bdg::UIContext::Dialog& closed) { SaveTicked(e, closed); }, true});
+  d.buttons.push_back({"취소", nullptr, false, true});
+  e->editor->OpenDialog(std::move(d));
+}
+// Closing the window (or Ctrl+Q): with unsaved changes "저장하고 종료 / 저장하지 않고 종료 / 취소"; without, "종료 /
+// 취소" unless turned off in the settings. true = quit now (automated runs never ask).
+bool RequestQuit(bdg_engine* e, bool force = false) {
+  if ((e->maxFrames > 0 && !force) || !e->model) return true;
+  if (e->editor->DialogOpen()) return false; // already asking
+  bdg::EditorModel* m = e->model.get();
+  if (e->play.Playing()) TogglePlay(e); // the edited world comes back first
+  const std::string file = bdg::PathU8(m->scenePath).filename().u8string().empty() ? std::string("장면")
+      : [&] { const std::u8string u = bdg::PathU8(m->scenePath).filename().u8string(); return std::string(u.begin(), u.end()); }();
+  (void)file;
+  bdg::UIContext::Dialog d;
+  if (!UnsavedItems(e).empty()) { // Unreal's "Save Content": tick what to save
+    d.title = "저장하지 않은 변경 사항";
+    d.message = "끄기 전에 저장할 항목을 고르세요. 체크를 끈 항목의 변경은 버려집니다.";
+    for (const Unsaved& u : UnsavedItems(e)) d.items.push_back({u.label, u.detail, true});
+    d.buttons.push_back({"선택 항목 저장 후 종료", [e](const bdg::UIContext::Dialog& closed) {
+                           if (SaveTicked(e, closed)) { if (e->model) e->model->DeleteBackup(); e->quitNow = true; }
+                           else bdg::LogError("quit: something could not be saved, so the editor stays open");
+                         }, true});
+    d.buttons.push_back({"저장 안 함", [e, m](const bdg::UIContext::Dialog&) { m->DeleteBackup(); e->quitNow = true; }});
+    d.buttons.push_back({"취소", nullptr, false, true});
+  } else if (e->confirmQuit) {
+    d.title = "비둘기 엔진 종료";
+    d.message = "에디터를 끌까요?";
+    d.buttons.push_back({"종료", [e](const bdg::UIContext::Dialog&) { e->quitNow = true; }, true});
+    d.buttons.push_back({"취소", nullptr, false, true});
+    d.check = "다시 묻지 않기";
+    d.onCheck = [e](bool on) {
+      e->confirmQuit = !on;
+      if (bdg::Widget* t = e->editor->Find("s.confirmquit")) t->text2 = e->confirmQuit ? "true" : "false";
+      SaveEditorPrefs(e);
+    };
+  } else {
+    return true;
+  }
+  e->showGallery = false;
+  e->editor->OpenDialog(std::move(d));
+  return false;
+}
+
+// Every few minutes while there are unsaved changes (not while playing): a backup of the scene, never the real file.
+bool AutosaveTick(bdg_engine* e, bool force = false) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || e->play.Playing()) return false;
+  const auto now = std::chrono::steady_clock::now();
+  if (!force && (e->autosaveMinutes <= 0 || now - e->lastBackup < std::chrono::minutes(e->autosaveMinutes))) return false;
+  e->lastBackup = now;
+  if (!m->Dirty()) return false;
+  if (!m->WriteBackup()) return false;
+  if (bdg::Widget* perf = e->editor->Find("status.perf")) perf->text = std::format("자동 저장됨  ·  {}", perf->text);
+  return true;
+}
+
+// A backup newer than the scene file (the editor did not close normally): offer it back.
+void OfferRecovery(bdg_engine* e) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !m->BackupNewerThanScene()) return;
+  bdg::UIContext::Dialog d;
+  d.title = "자동 저장본이 있습니다";
+  d.message = "지난번에 저장하지 않고 꺼진 변경 사항의 자동 저장본이 있습니다. 복구할까요? (복구해도 저장하기 전까지 원래 파일은 그대로입니다)";
+  d.buttons.push_back({"복구", [m](const bdg::UIContext::Dialog&) { m->RecoverBackup(); }, true});
+  d.buttons.push_back({"버리기", [m](const bdg::UIContext::Dialog&) { m->DeleteBackup(); }, false, true});
+  e->editor->OpenDialog(std::move(d));
+}
+
+// Scripted check (BDG_QUIT_TEST=1): an edit makes the scene dirty (title marker), quitting asks with three buttons,
+// Cancel keeps the editor open, an autosave writes the backup and the recovery offer appears for it, and "저장하지
+// 않고 종료" ends the loop and removes the backup (the scene file is not touched).
+void InjectQuitTest(bdg_engine* e, int frame, float scale) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto* v = e->quitTestValues;
+  using T = bdg::InputEvent::Type;
+  auto clickButton = [&](const char* label) {
+    const auto* d = e->editor->CurrentDialog();
+    for (size_t i = 0; d && i < d->buttons.size(); ++i)
+      if (d->buttons[i].label == label) {
+        float x, y, w, h;
+        e->editor->DialogButtonRect(i, x, y, w, h);
+        x = (x + w * 0.5f) * scale;
+        y = (y + h * 0.5f) * scale;
+        e->window.InjectEvent({T::MouseMove, x, y});
+        e->window.InjectEvent({T::MouseDown, x, y, 1});
+        e->window.InjectEvent({T::MouseUp, x, y, 1});
+        return;
+      }
+    bdg::LogError("quit test: no button {}", label);
+  };
+  static std::filesystem::file_time_type sceneTime;
+  if (frame == 2) {
+    std::error_code ec;
+    sceneTime = std::filesystem::last_write_time(bdg::PathU8(m->scenePath), ec);
+    v[0] = m->Dirty() ? "0" : "1";
+    bdg::Command c;
+    c.name = "set";
+    c.target = "g2";
+    c.args = R"({"path":"Light.intensity","value":2.5})";
+    m->bus.Execute(c);
+  }
+  if (frame == 3) {
+    const bdg::Widget* title = e->editor->Find("title.scene");
+    v[0] = v[0] == "1" && m->Dirty() && title && title->text.find("●") != std::string::npos ? "1" : "0";
+    RequestQuit(e, true);
+    const auto* d = e->editor->CurrentDialog();
+    v[1] = d && d->buttons.size() == 3 && d->title == "저장하지 않은 변경 사항" && d->items.size() == 1 && d->items[0].checked ? "1" : "0";
+  }
+  if (frame == 4) clickButton("취소");
+  if (frame == 5) {
+    v[2] = !e->editor->DialogOpen() && !e->quitNow ? "1" : "0";
+    AutosaveTick(e, true);
+    std::error_code ec;
+    v[3] = std::filesystem::exists(bdg::PathU8(m->BackupPath()), ec) ? "1" : "0";
+    OfferRecovery(e);
+    v[3] = v[3] == "1" && e->editor->DialogOpen() && e->editor->CurrentDialog()->title == "자동 저장본이 있습니다" ? "1" : "0";
+    e->editor->CloseDialog();
+  }
+  if (frame == 6) RequestQuit(e, true);
+  if (frame == 7) clickButton("저장 안 함");
+}
+
+// Scripted check (BDG_SETTINGS_TEST=1, BDG_PROJECT_SETTINGS = a scratch file that does not exist yet): defaults load,
+// the panel has a field per setting, typing a game name changes the setting, the title and the unsaved badge, a bad
+// version shows a problem, Save All lists only the project settings and its save writes just the changed values,
+// which load back the same; the physics step reaches play mode.
+void InjectProjectSettingsTest(bdg_engine* e, int frame, float scale) {
+  auto* v = e->settingsTestValues;
+  auto setField = [&](const char* id, const char* text) {
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w) { bdg::LogError("project test: no {}", id); return; }
+    w->text2 = text;
+    if (w->onCommit) w->onCommit(*w);
+  };
+  if (frame == 2) {
+    int fields = 0, shown = 0;
+    for (const bdg::FieldInfo& cat : bdg::ProjectSettings::StaticType().fields)
+      if (cat.value.structType)
+        for (const bdg::FieldInfo& f : cat.value.structType->fields) {
+          ++fields;
+          shown += e->editor->Find("ps." + cat.name + "." + f.name) ? 1 : 0;
+        }
+    v[0] = e->project.description.name == "My Game" && !ProjectSettingsDirty(e) && fields >= 50 && shown == fields ? "1" : std::format("0({}/{})", shown, fields);
+    setField("ps.description.name", "Pigeon Quest");
+    setField("ps.description.version", "abc");
+    setField("ps.physics.fixedTimestep", "0.02");
+  }
+  if (frame == 4) {
+    const bdg::Widget* title = e->editor->Find("title.scene");
+    const bdg::Widget* badge = e->editor->Find("ps.dirty");
+    const bdg::Widget* issues = e->editor->Find("ps.issues");
+    v[1] = e->project.description.name == "Pigeon Quest" && title && title->text.rfind("Pigeon Quest", 0) == 0 && badge && !badge->hidden ? "1" : "0";
+    v[2] = issues && issues->children.size() == 1 && issues->children[0]->text.find("버전") != std::string::npos ? "1" : "0";
+    setField("ps.description.version", "1.2.0");
+    v[3] = std::abs(e->play.Scripts().fixedStep - 0.02) < 1e-6 ? "1" : "0";
+    SaveAllDialog(e);
+    const auto* d = e->editor->CurrentDialog();
+    if (!d || d->items.size() != 1) bdg::LogError("project test: save list has {} item(s)", d ? d->items.size() : 0);
+  }
+  if (frame == 5) { // press the dialog's save button
+    float x, y, w, h;
+    if (e->editor->DialogButtonRect(0, x, y, w, h)) {
+      using T = bdg::InputEvent::Type;
+      x = (x + w * 0.5f) * scale;
+      y = (y + h * 0.5f) * scale;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  }
+  if (frame == 7) {
+    std::string text;
+    bdg::ReadTextU8(e->projectPath, text);
+    bdg::ProjectSettings back;
+    bdg::LoadProjectSettings(e->projectPath, back);
+    v[4] = !ProjectSettingsDirty(e) && text.find("Pigeon Quest") != std::string::npos && text.find("company") == std::string::npos &&
+                   back.description.name == "Pigeon Quest" && back.description.version == "1.2.0" && std::abs(back.physics.fixedTimestep - 0.02f) < 1e-6f
+               ? "1" : "0";
+    bdg::LogInfo("project test: defaults={} name={} problems={} physics={} saved={}", v[0], v[1], v[2], v[3], v[4]);
+  }
+}
+
+void LogQuitTest(bdg_engine* e) {
+  bdg::EditorModel* m = e->model.get();
+  auto* v = e->quitTestValues;
+  std::error_code ec;
+  v[4] = e->quitNow ? "1" : "0";
+  v[5] = !std::filesystem::exists(bdg::PathU8(m->BackupPath()), ec) ? "1" : "0";
+  bdg::LogInfo("quit test: dirty={} ask={} cancel={} autosave={} quit={} cleaned={}", v[0], v[1], v[2], v[3], v[4], v[5]);
 }
 
 // Scripted check of E-4a (BDG_UIEDIT_TEST=1, BDG_PREFS = a scratch file): arithmetic in a number field and in a
@@ -2330,6 +2623,8 @@ void SetupShortcuts(bdg_engine* e) {
     }
   });
   s.Register("file.save", "Save Scene", [m] { m->SaveScene(); });
+  s.Register("file.quit", "Quit", [e] { if (RequestQuit(e)) e->quitNow = true; });
+  s.Register("file.saveAll", "Save All", [e] { SaveAllDialog(e); });
   s.Register("file.new", "New Scene", [m] { m->NewScene(bdg::SceneTemplate::Basic3D); }); // 2-6
   s.Register("view.zoomIn", "UI Zoom In", [e] { SetUiZoom(e, e->uiZoom + 0.1f); });  // E-4
   s.Register("view.zoomOut", "UI Zoom Out", [e] { SetUiZoom(e, e->uiZoom - 0.1f); });
@@ -2392,6 +2687,8 @@ void InjectShortcutTest(bdg_engine* e, int frame, float scale) {
     e->shortcutTestValues[0] = e->model->playing ? 1 : 0;
     if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings");
   }
+  if (frame == 7) // the preset buttons sit below the project settings: scroll them into view
+    if (bdg::Widget* b = e->editor->Find("shortcut.preset.unreal")) e->editor->ScrollIntoView(*b);
   if (frame == 8) click("shortcut.preset.unreal");
   if (frame == 10) { key(bdg::Key::P, false, true); key(bdg::Key::P, true, false); key(bdg::Key::W, true, false); }
   if (frame == 12) e->shortcutTestValues[1] = e->model->playing ? 1 : 0;
@@ -3816,6 +4113,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->behaviourTest = std::getenv("BDG_BEHAVIOUR_TEST") != nullptr;
   e->editFieldTest = std::getenv("BDG_EDITFIELD_TEST") != nullptr;
   e->hotReloadTest = std::getenv("BDG_HOTRELOAD_TEST") != nullptr;
+  e->quitTest = std::getenv("BDG_QUIT_TEST") != nullptr;
+  e->settingsTest = std::getenv("BDG_SETTINGS_TEST") != nullptr;
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
@@ -4061,6 +4360,12 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   mark("ui");
   SetupTheme(e);
   LoadEditorPrefs(e, desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST") != nullptr); // UI zoom (E-4)
+  if (bdg::Widget* settings = e->editor->Find("settings")) { // Project settings above the editor preferences
+    auto box = bdg::MakeBox(bdg::Axis::Column, 2);
+    box->id = "ps.root";
+    settings->children.insert(settings->children.begin(), std::move(box));
+  }
+  LoadProjectSettingsInto(e);
   bdg_reflect_register_BidulgiEngine();
   if (bdg::Widget* h = e->editor->Find("hierarchy"), *i = e->editor->Find("inspector"); h && i) {
     e->model = std::make_unique<bdg::EditorModel>();
@@ -4068,7 +4373,10 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     bdg::EditorModel* model = e->model.get();
     if (const char* sel = std::getenv("BDG_SELECT")) model->Select(sel); // screenshots of one object's Inspector
     SetupShortcuts(e);
-    bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { model->Autosave(); }); // keep the work
+    bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { // keep the work
+      model->Autosave();
+      if (model->Dirty()) model->WriteBackup(); // offered back on the next start
+    });
     // Scene file: BDG_SCENE_FILE, else Scenes/Main.scene in the working folder; the sample scene when there is none.
     const char* sceneEnv = std::getenv("BDG_SCENE_FILE");
     model->scenePath = sceneEnv ? sceneEnv : (std::filesystem::current_path() / "Scenes" / "Main.scene").string();
@@ -4090,6 +4398,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     LoadScriptAssemblies(); // C# Behaviour classes are component types: before the scene that uses them (4-2)
     if (std::filesystem::exists(model->scenePath)) model->OpenScene(model->scenePath);
     model->LoadFolds();
+    if (e->maxFrames == 0) OfferRecovery(e); // a backup left by a crash or power cut
     if (desc->replay_path) {
       std::string err;
       size_t n = 0;
@@ -4138,7 +4447,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     bdg::LogInfo("dock: {}", dock->dock->Describe());
     if (const char* tab = std::getenv("BDG_DOCK_TAB")) { // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
       const char* names[] = {"project", "console", "buildlog", "profiler"};
-      dock->dock->SelectPanel(names[std::clamp(std::atoi(tab), 0, 3)]);
+      if (std::isdigit((unsigned char)tab[0])) dock->dock->SelectPanel(names[std::clamp(std::atoi(tab), 0, 3)]);
+      else dock->dock->SelectPanel(tab); // or a panel name: settings, inspector, history ...
     }
   }
   mark("assets");
@@ -4193,7 +4503,9 @@ bdg_result bdg_engine_run(bdg_engine* e) {
 
   int32_t frames = 0;
   auto t0 = clock::now();
-  if (idleTestSec > 0) idleEnd = t0 + std::chrono::microseconds((long long)(idleTestSec * 1e6));
+  // the idle window starts at the first sleep (below); until then a generous cap, so a slow start (CI's software
+  // OpenGL takes seconds for the first frames) cannot use up the window before anything is measured
+  if (idleTestSec > 0) idleEnd = t0 + std::chrono::seconds(60);
   for (;;) {
     bdg::UIContext& active = e->showGallery ? *e->gallery : *e->editor;
     int32_t waitMs = 0;
@@ -4220,6 +4532,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (idleTestSec > 0 && !idleMeasuring) { // first sleep: start measuring, schedule a wake-up halfway
         idleMeasuring = true;
         idleStart = now;
+        idleEnd = now + std::chrono::microseconds((long long)(idleTestSec * 1e6));
         idleCpu0 = ProcessCpuMs();
         double half = msd(idleEnd - now).count() * 0.5;
         waker = std::thread([e, half, &wakeSentNs] {
@@ -4229,7 +4542,14 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         });
       }
     }
-    if (!e->window.PumpEvents(waitMs)) break;
+    if (!e->window.PumpEvents(waitMs)) { // the window's close button / Alt+F4: ask first (unsaved changes)
+      if (RequestQuit(e)) break;
+      pending = std::max(pending, 2);
+    }
+    if (e->quitNow) {
+      if (e->quitTest) LogQuitTest(e);
+      break;
+    }
     auto now = clock::now();
     if (long long sent = wakeSentNs.load(); sent && wakeLatencyMs < 0)
       wakeLatencyMs = msd(now.time_since_epoch() - clock::duration(sent)).count();
@@ -4250,6 +4570,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       nextThemePoll = now + std::chrono::milliseconds(500);
       if (e->theme.ReloadIfChanged()) pending = std::max(pending, 2); // live token edits
       if (PollScriptReload(e)) pending = std::max(pending, 2);         // a rebuilt script .dll (4-4)
+      if (AutosaveTick(e)) pending = std::max(pending, 2);             // backup of unsaved changes
     }
     if (caretDue != clock::time_point{} && now >= caretDue) pending = std::max(pending, 1);
     if (onDemand && pending == 0) continue; // timer wake-up with nothing to redraw
@@ -4310,6 +4631,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->behaviourTest && !e->showGallery) InjectBehaviourTest(e, frames);
     if (e->editFieldTest && !e->showGallery) InjectEditFieldTest(e, frames);
     if (e->hotReloadTest && !e->showGallery) InjectHotReloadTest(e, frames);
+    if (e->quitTest && !e->showGallery) InjectQuitTest(e, frames, scale);
+    if (e->settingsTest && !e->showGallery) InjectProjectSettingsTest(e, frames, scale);
     if (e->themeRebuild) RebuildThemeList(e);
     if (e->blockoutTest && !e->showGallery) InjectBlockoutTest(e, frames, scale);
     if (e->materialTest && !e->showGallery) InjectMaterialTest(e, frames);
@@ -4515,6 +4838,12 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       ui.SetScale(scale);
       ui.HandleEvents(events);
       if (&ui == e->editor.get() && e->model) e->model->Update(); // panels follow the scene (after edits/undo)
+      if (&ui == e->editor.get() && e->model)
+        if (bdg::Widget* title = e->editor->Find("title.scene")) { // "SampleProject  ·  Main.scene ●" while unsaved
+          const std::u8string u = bdg::PathU8(e->model->scenePath).filename().u8string();
+          const std::string want = e->project.description.name + "  ·  " + (u.empty() ? std::string("Untitled") : std::string(u.begin(), u.end())) + (e->model->Dirty() ? "  ●" : "");
+          if (title->text != want) title->text = want;
+        }
       ui.Layout(lw, lh);
       if (e->board && &ui == e->editor.get())
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);

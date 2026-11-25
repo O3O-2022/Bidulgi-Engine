@@ -143,6 +143,28 @@ public:
   void CloseMenu() { menu_.clear(); menuAll_.clear(); menuFilter_.clear(); }
   bool MenuOpen() const { return !menu_.empty(); }
   bool MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
+  // Modal dialog: a box in the middle over a dimmed window; nothing else takes input until a button closes it.
+  // Enter = the primary button, Esc = the cancel button. check: an optional checkbox ("다시 묻지 않기").
+  // A dialog may list items with checkboxes (Unreal's "Save Content": what to save). A button's run gets the
+  // dialog as it was closed, so it can read which items were ticked.
+  struct Dialog;
+  struct DialogButton { std::string label; std::function<void(const Dialog&)> run; bool primary = false, cancel = false; };
+  struct DialogItem { std::string label, detail; bool checked = true; };
+  struct Dialog {
+    std::string title, message;
+    std::vector<DialogItem> items;
+    std::vector<DialogButton> buttons;
+    std::string check; // checkbox label ("" = none)
+    bool checked = false;
+    std::function<void(bool)> onCheck;
+  };
+  void OpenDialog(Dialog d);
+  void CloseDialog() { dialog_.reset(); }
+  bool DialogOpen() const { return dialog_ != nullptr; }
+  const Dialog* CurrentDialog() const { return dialog_.get(); }
+  bool DialogButtonRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
+  bool DialogItemRect(size_t i, float& x, float& y, float& w, float& h) const;   // checkbox row i (test hook)
+  bool ModalOpen() const { return DialogOpen() || MenuOpen(); } // panels outside the UI tree should leave input alone
   // Byte ranges of the numbers in "x, y, z" (spaces trimmed); empty when the text has another shape.
   static std::vector<std::pair<size_t, size_t>> FieldParts(const std::string& v, int count);
   bool AxisBox(const Widget& f, int k, float& x, float& w) const; // a vector field's box k (UI units)
@@ -231,6 +253,12 @@ private:
   bool MenuEvent(const InputEvent& e); // true: the open menu used it
   void DrawMenu();
   void FilterMenu();
+  std::unique_ptr<Dialog> dialog_;
+  int dialogHot_ = -1, dialogPressed_ = -1;
+  bool DialogEvent(const InputEvent& e);
+  void DrawDialog();
+  void DialogBox(float& x, float& y, float& w, float& h, std::vector<std::string>* lines = nullptr) const;
+  std::vector<std::string> Wrap(const std::string& text, float size, float maxW) const;
   void OpenChoice(Widget& w);
   void DrawChoice(Widget& w);
   void DrawTooltip();

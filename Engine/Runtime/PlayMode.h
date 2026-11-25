@@ -37,6 +37,7 @@ public:
   ShakeOffset Shake() const { return playing_ ? shaker_.Current() : ShakeOffset{}; }
   size_t ShakesPlaying() const { return shaker_.Active(); }
   const BehaviourRunner& Scripts() const { return scripts_; }
+  BehaviourRunner& Scripts() { return scripts_; } // fixed step from the project settings
   uint64_t Frames() const { return frames_; } // ticks since Start
 
   struct Change { Command cmd; std::string label; }; // "Crystal: Transform.position"

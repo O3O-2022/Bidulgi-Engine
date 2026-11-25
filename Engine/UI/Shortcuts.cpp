@@ -21,6 +21,8 @@ const PresetRow kTable[] = {
     {"edit.rename", "F2", "F2"},
     {"file.save", "Ctrl+S", "Ctrl+S"},
     {"file.new", "Ctrl+N", "Ctrl+N"},
+    {"file.quit", "Ctrl+Q", "Ctrl+Q"},
+    {"file.saveAll", "Ctrl+Shift+S", "Ctrl+Shift+S"},
     {"view.zoomIn", "Ctrl+=", "Ctrl+="},
     {"view.zoomOut", "Ctrl+-", "Ctrl+-"},
     {"view.zoomReset", "Ctrl+0", "Ctrl+0"},

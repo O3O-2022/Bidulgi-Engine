@@ -981,6 +981,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     InputEvent& e = events[i];
     bool used = false;
     const bool mouseEvent = e.type == T::MouseDown || e.type == T::MouseUp || e.type == T::MouseMove || e.type == T::Wheel;
+    if (ui_ && ui_->DialogOpen()) { ++i; continue; }                                    // a modal dialog owns all input
     if (mouseEvent && ui_ && ui_->MenuOpen() && drag_ == Drag::None) { ++i; continue; } // an open list owns the mouse
     switch (e.type) {
       case T::MouseDown:

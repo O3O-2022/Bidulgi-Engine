@@ -435,6 +435,14 @@ jobs:
           if ($log -notmatch 'scene icon test: icons=1 drawn=1 frustum=1 range=1 chip=1 pick=1') { $errors += 'scene icon test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # Quit: unsaved changes ask with a save checklist, Cancel stays, autosave backup + recovery offer, Don't Save quits
+          $log = Invoke-Editor 'Release' @{ BDG_QUIT_TEST = '1' } 20
+          if ($log -notmatch 'quit test: dirty=1 ask=1 cancel=1 autosave=1 quit=1 cleaned=1') { $errors += 'quit / autosave test failed' }
+          # Project settings: defaults, panel fields, edits, problems list, Save All writes only changed values
+          Remove-Item "$PWD/ci-project-settings.json" -ErrorAction SilentlyContinue
+          $log = Invoke-Editor 'Release' @{ BDG_SETTINGS_TEST = '1'; BDG_PROJECT_SETTINGS = "$PWD/ci-project-settings.json" } 9
+          if ($log -notmatch 'project test: defaults=1 name=1 problems=1 physics=1 saved=1') { $errors += 'project settings test failed' }
+
           # UI choices: bool switch, enum combo / segmented pick, undo, tooltip on hover
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_CHOICE_TEST = '1' } 14

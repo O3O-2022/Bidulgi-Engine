@@ -262,7 +262,7 @@ void UIContext::DrawChoice(Widget& w) {
 }
 
 void UIContext::DrawTooltip() {
-  if (!hovered_ || hovered_->tooltip.empty() || !menu_.empty() || dragging_ || pressed_) return;
+  if (!hovered_ || hovered_->tooltip.empty() || !menu_.empty() || dialog_ || dragging_ || pressed_) return;
   if (SteadyMs() - hoverSince_ < kTooltipDelayMs) return;
   const Theme& t = theme_;
   Batch2D& b = batch_;
@@ -868,6 +868,199 @@ void UIContext::Draw() {
   DrawDragOverlay();
   DrawTooltip();
   DrawMenu();
+  DrawDialog();
+}
+
+// ---- Modal dialog ---------------------------------------------------------------------------
+namespace {
+constexpr float kDialogW = 460, kDialogPad = 20, kDialogBtnH = 30, kDialogTitle = 15, kDialogItemH = 30;
+}
+
+std::vector<std::string> UIContext::Wrap(const std::string& text, float size, float maxW) const {
+  std::vector<std::string> lines; // word wrap at maxW, '\n' forces a break; Korean words wrap at spaces too
+  std::string line, word;
+  auto flushWord = [&] {
+    if (word.empty()) return;
+    const std::string tryLine = line.empty() ? word : line + " " + word;
+    if (!line.empty() && Measure(size, tryLine) > maxW) { lines.push_back(line); line = word; }
+    else line = tryLine;
+    word.clear();
+  };
+  for (char c : text) {
+    if (c == ' ') flushWord();
+    else if (c == '\n') { flushWord(); lines.push_back(line); line.clear(); }
+    else word += c;
+  }
+  flushWord();
+  if (!line.empty()) lines.push_back(line);
+  return lines;
+}
+
+void UIContext::OpenDialog(Dialog d) {
+  CloseMenu();
+  dialog_ = std::make_unique<Dialog>(std::move(d));
+  dialogHot_ = dialogPressed_ = -1;
+  for (size_t i = 0; i < dialog_->buttons.size(); ++i) if (dialog_->buttons[i].primary) dialogHot_ = (int)i;
+}
+
+void UIContext::DialogBox(float& x, float& y, float& w, float& h, std::vector<std::string>* lines) const {
+  const float fs = theme_.FontSize("control", 12.5f);
+  const std::vector<std::string> l = dialog_ ? Wrap(dialog_->message, fs, kDialogW - kDialogPad * 2) : std::vector<std::string>{};
+  w = kDialogW;
+  const size_t items = dialog_ ? dialog_->items.size() : 0;
+  h = kDialogPad + kDialogTitle + 14 + l.size() * fs * 1.55f + (items ? items * kDialogItemH + 12 : 0) + 18 +
+      (dialog_ && !dialog_->check.empty() ? 30 : 0) + kDialogBtnH + kDialogPad;
+  x = root_ ? (root_->w - w) * 0.5f : 100;
+  y = root_ ? std::max(20.f, (root_->h - h) * 0.42f) : 100;
+  if (lines) *lines = l;
+}
+
+bool UIContext::DialogItemRect(size_t i, float& x, float& y, float& w, float& h) const {
+  if (!dialog_ || i >= dialog_->items.size()) return false;
+  float dx, dy, dw, dh;
+  std::vector<std::string> lines;
+  DialogBox(dx, dy, dw, dh, &lines);
+  x = dx + kDialogPad;
+  w = dw - kDialogPad * 2;
+  y = dy + kDialogPad + kDialogTitle + 14 + lines.size() * theme_.FontSize("control", 12.5f) * 1.55f + 6 + i * kDialogItemH;
+  h = kDialogItemH;
+  return true;
+}
+
+bool UIContext::DialogButtonRect(size_t i, float& x, float& y, float& w, float& h) const {
+  if (!dialog_ || i >= dialog_->buttons.size()) return false;
+  float dx, dy, dw, dh;
+  DialogBox(dx, dy, dw, dh);
+  const float fs = theme_.FontSize("label", 12);
+  float right = dx + dw - kDialogPad; // buttons from the right edge, in reverse order (the first ends up leftmost)
+  for (size_t k = dialog_->buttons.size(); k-- > 0;) {
+    const float bw = std::max(84.f, Measure(fs, dialog_->buttons[k].label) + 28);
+    if (k == i) { x = right - bw; y = dy + dh - kDialogPad - kDialogBtnH; w = bw; h = kDialogBtnH; return true; }
+    right -= bw + 8;
+  }
+  return false;
+}
+
+bool UIContext::DialogEvent(const InputEvent& e) {
+  if (!dialog_) return false;
+  auto buttonAt = [&](float x, float y) {
+    for (size_t i = 0; i < dialog_->buttons.size(); ++i) {
+      float bx, by, bw, bh;
+      if (DialogButtonRect(i, bx, by, bw, bh) && x >= bx && y >= by && x < bx + bw && y < by + bh) return (int)i;
+    }
+    return -1;
+  };
+  auto press = [&](int i) {
+    if (i < 0 || i >= (int)dialog_->buttons.size()) return;
+    const Dialog closed = *dialog_;
+    std::function<void(const Dialog&)> fn = dialog_->buttons[(size_t)i].run;
+    dialog_.reset(); // the action may open another dialog
+    if (fn) fn(closed);
+  };
+  auto itemAt = [&](float x, float y) {
+    for (size_t i = 0; i < dialog_->items.size(); ++i) {
+      float ix, iy, iw, ih;
+      if (DialogItemRect(i, ix, iy, iw, ih) && x >= ix && y >= iy && x < ix + iw && y < iy + ih) return (int)i;
+    }
+    return -1;
+  };
+  auto onCheck = [&](float x, float y) {
+    if (dialog_->check.empty()) return false;
+    float dx, dy, dw, dh;
+    DialogBox(dx, dy, dw, dh);
+    const float cy = dy + dh - kDialogPad - kDialogBtnH - 30;
+    return x >= dx + kDialogPad && x < dx + dw * 0.6f && y >= cy && y < cy + 24;
+  };
+  switch (e.type) {
+    case InputEvent::Type::MouseMove: dialogHot_ = buttonAt(e.x, e.y) >= 0 ? buttonAt(e.x, e.y) : dialogHot_; return true;
+    case InputEvent::Type::MouseDown: dialogPressed_ = buttonAt(e.x, e.y); return true;
+    case InputEvent::Type::MouseUp: {
+      const int i = buttonAt(e.x, e.y);
+      if (i >= 0 && i == dialogPressed_) press(i);
+      else if (const int it = itemAt(e.x, e.y); dialogPressed_ < 0 && it >= 0) dialog_->items[(size_t)it].checked = !dialog_->items[(size_t)it].checked;
+      else if (dialogPressed_ < 0 && onCheck(e.x, e.y)) {
+        dialog_->checked = !dialog_->checked;
+        if (dialog_->onCheck) dialog_->onCheck(dialog_->checked);
+      }
+      dialogPressed_ = -1;
+      return true;
+    }
+    case InputEvent::Type::KeyDown: {
+      const int n = (int)dialog_->buttons.size();
+      if (e.key == Key::Escape) {
+        for (int i = 0; i < n; ++i) if (dialog_->buttons[(size_t)i].cancel) { press(i); return true; }
+        dialog_.reset();
+        return true;
+      }
+      if (e.key == Key::Enter || e.key == Key::Space) { press(dialogHot_); return true; }
+      if ((e.key == Key::Left || (e.key == Key::Tab && e.shift)) && n) dialogHot_ = (dialogHot_ + n - 1) % n;
+      else if ((e.key == Key::Right || e.key == Key::Tab) && n) dialogHot_ = (dialogHot_ + 1) % n;
+      return true;
+    }
+    default: return true; // text, wheel: nothing behind the dialog gets them
+  }
+}
+
+void UIContext::DrawDialog() {
+  if (!dialog_ || !root_) return;
+  const Theme& t = theme_;
+  Batch2D& b = batch_;
+  b.Rect(0, 0, root_->w, root_->h, {0, 0, 0, 0.45f}); // dim everything behind
+  float x, y, w, h;
+  std::vector<std::string> lines;
+  DialogBox(x, y, w, h, &lines);
+  b.Shadow(x, y + 8, w, h, {0, 0, 0, 0.5f}, 10, 28);
+  b.Rect(x, y, w, h, t.C("raise"), 10, 1, t.C("line-strong"));
+  b.Rect(x, y, 4, h, t.C("accent"), 2); // brand edge
+  const float fs = t.FontSize("control", 12.5f);
+  Text(x + kDialogPad, y + kDialogPad - 2, kDialogTitle, t.C("fg"), dialog_->title);
+  float ly = y + kDialogPad + kDialogTitle + 14;
+  for (const std::string& l : lines) { Text(x + kDialogPad, ly - 1, fs, t.C("fg-dim"), l); ly += fs * 1.55f; }
+  if (!dialog_->items.empty()) { // the checklist: one row per item, a box, the name and where it is saved
+    float lx, ly0, lw, lh;
+    DialogItemRect(0, lx, ly0, lw, lh);
+    b.Rect(lx - 6, ly0 - 4, lw + 12, dialog_->items.size() * kDialogItemH + 8, t.C("sunk"), 6, 1, t.C("line"));
+    auto box = [&](float bx, float by, bool on) {
+      b.Rect(bx, by, 16, 16, on ? t.C("accent") : t.C("sunk"), 3, 1, on ? t.C("accent") : t.C("line-strong"));
+      if (on) {
+        b.Line(bx + 4, by + 8, bx + 7, by + 11.5f, 2, t.C("on-accent"));
+        b.Line(bx + 7, by + 11.5f, bx + 12.5f, by + 4.5f, 2, t.C("on-accent"));
+      }
+    };
+    for (size_t i = 0; i < dialog_->items.size(); ++i) {
+      float ix, iy, iw, ih;
+      DialogItemRect(i, ix, iy, iw, ih);
+      const DialogItem& it = dialog_->items[i];
+      box(ix + 4, iy + (ih - 16) * 0.5f, it.checked);
+      Text(ix + 30, iy + (ih - fs) * 0.5f - 1, fs, it.checked ? t.C("fg") : t.C("fg-faint"), it.label);
+      if (!it.detail.empty()) {
+        const float dfs = t.FontSize("caption", 11);
+        b.PushClip(ix + 30 + Measure(fs, it.label) + 12, iy, iw - 40 - Measure(fs, it.label), ih);
+        Text(ix + 30 + Measure(fs, it.label) + 12, iy + (ih - dfs) * 0.5f - 1, dfs, t.C("fg-faint"), it.detail, true);
+        b.PopClip();
+      }
+    }
+  }
+  if (!dialog_->check.empty()) {
+    const float cy = y + h - kDialogPad - kDialogBtnH - 30 + 4;
+    b.Rect(x + kDialogPad, cy, 16, 16, dialog_->checked ? t.C("accent") : t.C("sunk"), 3, 1, dialog_->checked ? t.C("accent") : t.C("line-strong"));
+    if (dialog_->checked) { // tick drawn with two lines (no glyph needed)
+      b.Line(x + kDialogPad + 4, cy + 8, x + kDialogPad + 7, cy + 11.5f, 2, t.C("on-accent"));
+      b.Line(x + kDialogPad + 7, cy + 11.5f, x + kDialogPad + 12.5f, cy + 4.5f, 2, t.C("on-accent"));
+    }
+    Text(x + kDialogPad + 24, cy + 1, fs, t.C("fg-dim"), dialog_->check);
+  }
+  const float lfs = t.FontSize("label", 12);
+  for (size_t i = 0; i < dialog_->buttons.size(); ++i) {
+    float bx, by, bw, bh;
+    DialogButtonRect(i, bx, by, bw, bh);
+    const DialogButton& btn = dialog_->buttons[i];
+    const bool hot = (int)i == dialogHot_;
+    Color fill = btn.primary ? t.C("accent") : t.C("win");
+    if ((int)i == dialogPressed_) fill.a *= 0.8f;
+    b.Rect(bx, by, bw, bh, fill, 5, hot ? 2.f : 1.f, hot ? (btn.primary ? t.C("fg") : t.C("accent")) : btn.primary ? t.C("accent") : t.C("line-strong"));
+    Text(bx + (bw - Measure(lfs, btn.label)) * 0.5f, by + (bh - lfs) * 0.5f - 1, lfs, btn.primary ? t.C("on-accent") : t.C("fg"), btn.label);
+  }
 }
 
 // ---- Popup menu (E-4) ------------------------------------------------------------------------
@@ -1060,6 +1253,7 @@ void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
 void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
   if (!root_) return;
   for (const InputEvent& e : events) {
+    if (DialogEvent(e)) continue; // a modal dialog takes everything
     if (MenuEvent(e)) continue; // an open popup menu takes the mouse (and Esc)
     bool mouse = e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseDown || e.type == InputEvent::Type::MouseUp;
     if (e.type == InputEvent::Type::MouseDown && e.button == 3) { // right-click: the widget's menu (E-4)

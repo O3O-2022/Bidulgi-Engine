@@ -81,6 +81,16 @@ public:
   void SelectProjectFolder(const std::string& f) { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }
   AssetDatabase* assets = nullptr;
   bool SaveScene();                    // to scenePath
+  // Unsaved changes: edits since the scene was opened or last saved (undoing back to the save still counts).
+  bool Dirty() const { return bus.Revision() != savedRevision_; }
+  void MarkDirty() { savedRevision_ = bus.Revision() - 1; } // a recovered backup is not the file on disk
+  // Autosave (backup): the open scene to .cache/autosave/<file>.scene; the real file is only written by Save.
+  // A backup left behind (crash, power cut) is offered back the next time that scene opens.
+  std::string BackupPath() const;
+  bool WriteBackup();
+  void DeleteBackup();
+  bool BackupNewerThanScene() const; // there is a backup, written after the scene file
+  bool RecoverBackup();              // opens the backup in place of the file (still unsaved)
   // File > New Scene (2-6): replaces the open scene by a template (history starts over); the file is
   // Scenes/New Scene.scene next to the current one (numbered when taken) until saved.
   void NewScene(SceneTemplate t);
@@ -111,12 +121,15 @@ public:
   std::string scenePath, sceneName = "Main";
 
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
+public: // also used by the project settings panel
   static std::string ToDisplay(const std::string& json, FieldType type);
   static std::string FromDisplay(const std::string& text, FieldType type);
+private:
   // BPROPERTY(ShowIf = ...): "flag", "!flag", "field == Value", "field != Value" (values as the Inspector shows them)
   static bool ShowIfPasses(const Component& c, const std::string& condition);
 
 private:
+  uint64_t savedRevision_ = 0;
   void BuildSampleScene();
   void Rebuild();
   void Refresh();

@@ -256,7 +256,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   mark.width = Length::Px(20); mark.height = Length::Px(28);
   for (const char* m : {"File", "Edit", "Assets", "GameObject", "Component", "Build", "Window", "Help"}) menu.Add(DimLabel(m));
   menu.Add(Spacer());
-  menu.Add(DimLabel("SampleProject  ·  Main.scene", 12));
+  menu.Add(DimLabel("SampleProject  ·  Main.scene", 12)).id = "title.scene"; // " ●" while there are unsaved changes
 
   // Toolbar: workspaces, play controls, quality/platform
   auto& ws = root->Add(MakeBox(Axis::Row, 8));
@@ -364,6 +364,13 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   zoom.slider = zoom.sliderInteger = true;
   zoom.sliderMin = 70;
   zoom.sliderMax = 200;
+  auto& confirmQuit = settings.Add(MakeToggle("s.confirmquit", "종료할 때 확인", true));
+  confirmQuit.tooltip = "변경 사항이 없어도 끄기 전에 한 번 묻습니다 (저장하지 않은 변경이 있으면 항상 물음)";
+  auto& autosave = settings.Add(MakeField("s.autosave", "자동 저장 (분)", "5"));
+  autosave.slider = autosave.sliderInteger = true;
+  autosave.sliderMin = 0;
+  autosave.sliderMax = 30;
+  autosave.tooltip = "저장하지 않은 변경이 있으면 이 간격마다 .cache/autosave에 백업합니다. 0 = 끄기";
   settings.Add(MakeLabel("Rendering")).variant = 2;
   settings.Add(MakeField("s.quality", "Quality", "Medium"));
   settings.Add(MakeField("s.vsync", "VSync", "Adaptive"));

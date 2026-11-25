@@ -301,6 +301,7 @@ bool CommandBus::Execute(Command cmd, std::string* error) {
     yyjson_doc_free(d);
   }
   log_.push_back(cmd.ToJson());
+  if (layers_.empty()) ++revision_;
   Entry e;
   e.forward = {cmd};
   e.inverse = {inv};
@@ -337,6 +338,7 @@ bool CommandBus::Undo(std::string* error) {
     if (onChanged) onChanged(c);
   }
   log_.push_back("{\"cmd\":\"undo\"}");
+  if (layers_.empty()) ++revision_;
   redo_.push_back(std::move(e));
   return true;
 }
@@ -351,6 +353,7 @@ bool CommandBus::Redo(std::string* error) {
     if (onChanged) onChanged(c);
   }
   log_.push_back("{\"cmd\":\"redo\"}");
+  if (layers_.empty()) ++revision_;
   undo_.push_back(std::move(e));
   return true;
 }

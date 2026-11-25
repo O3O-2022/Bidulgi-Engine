@@ -142,6 +142,7 @@ bool EditorModel::OpenScene(const std::string& path) {
   selected_ = scene.Roots().empty() ? "" : scene.Roots().front();
   selection_ = selected_.empty() ? std::vector<std::string>{} : std::vector<std::string>{selected_};
   needRebuild_ = true;
+  savedRevision_ = bus.Revision();
   LogInfo("scene: opened {} ({} objects)", path, scene.ObjectCount());
   LoadFolds();
   return true;
@@ -179,6 +180,8 @@ bool EditorModel::SaveScene() {
   if (scenePath.empty()) { LogWarn("save: no scene file path"); return false; }
   if (!SaveSceneFile(scene, sceneName, scenePath, &err)) { LogError("save: {}", err); return false; }
   LogInfo("scene: saved {} ({} objects)", scenePath, scene.ObjectCount());
+  savedRevision_ = bus.Revision();
+  DeleteBackup(); // the file has everything now
   if (assets) { // asset rules (2-5d): warn, never block the save
     const std::vector<AssetIssue> issues = CheckAssetRules();
     lastRuleIssues = issues.size();
@@ -194,6 +197,7 @@ void EditorModel::NewScene(SceneTemplate t) {
   namespace fs = std::filesystem;
   BuildDefaultScene(scene, t);
   bus.Reset();
+  savedRevision_ = bus.Revision() - 1; // a new scene is not on disk yet
   const fs::path dir = scenePath.empty() ? fs::current_path() / "Scenes" : fs::path(std::u8string((const char8_t*)scenePath.c_str())).parent_path();
   std::error_code ec;
   std::string file = "New Scene.scene";
@@ -298,6 +302,47 @@ bool EditorModel::HierarchyKey(Key k) {
       else if (o && !o->children.empty()) Select(o->children.front());
       break;
   }
+  return true;
+}
+
+std::string EditorModel::BackupPath() const {
+  namespace fs = std::filesystem;
+  const std::string file = scenePath.empty() ? std::string("Untitled.scene") : [&] {
+    const std::u8string u = PathU8(scenePath).filename().u8string();
+    return std::string(u.begin(), u.end());
+  }();
+  const std::u8string dir = (fs::current_path() / ".cache" / "autosave").u8string();
+  return std::string(dir.begin(), dir.end()) + "/" + file;
+}
+
+bool EditorModel::WriteBackup() {
+  std::error_code ec;
+  std::filesystem::create_directories(PathU8(BackupPath()).parent_path(), ec);
+  std::string err;
+  if (!SaveSceneFile(scene, sceneName, BackupPath(), &err)) { LogWarn("autosave: {}", err); return false; }
+  LogInfo("autosave: {} ({} objects)", BackupPath(), scene.ObjectCount());
+  return true;
+}
+
+void EditorModel::DeleteBackup() {
+  std::error_code ec;
+  std::filesystem::remove(PathU8(BackupPath()), ec);
+}
+
+bool EditorModel::BackupNewerThanScene() const {
+  std::error_code e1, e2;
+  const auto backup = std::filesystem::last_write_time(PathU8(BackupPath()), e1);
+  if (e1) return false;
+  const auto file = std::filesystem::last_write_time(PathU8(scenePath), e2);
+  return e2 || backup > file; // no scene file: any backup is newer
+}
+
+bool EditorModel::RecoverBackup() {
+  const std::string original = scenePath;
+  if (!OpenScene(BackupPath())) return false;
+  scenePath = original; // Save writes the real file
+  MarkDirty();
+  LogInfo("autosave: recovered {} from {}", original, BackupPath());
   return true;
 }
 
