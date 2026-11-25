@@ -201,3 +201,155 @@ void InjectHotReloadTest(bdg_engine* e, int frame) {
                  bdg::DotNetHost::Instance().LastReloadMs());
   }
 }
+
+// Scripted check of 4-4c (BDG_EASYAPI_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): the C#
+// EasyProbe runs in play mode and uses [Auto], Get / GetInChildren, Find / FindAll / FindNearest, Spawn, Destroy (now
+// and later), After, Every (+ Cancel), await NextFrame / Wait, an awaited Transform tween and seeded Random, then logs
+// one line. Stop must take every spawned object away again and leave no timer behind.
+void InjectEasyApiTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probe;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("easy api test: {}", err);
+  };
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("easy probe: ", 0) == 0) probe = l; });
+    run("add", "", R"({"id":"ez1","name":"Prober"})");
+    run("add", "", R"({"id":"ez2","name":"Kid","parent":"ez1"})");
+    run("addcomp", "ez2", R"({"type":"Health"})");
+    run("add", "", R"({"id":"ez3","name":"Coin"})");
+    run("set", "ez3", R"({"path":"Transform.position","value":[10,0,0]})");
+    run("addcomp", "ez1", R"({"type":"EasyProbe"})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 70 && probe.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(15)); // game time passes
+  if (frame == 72) TogglePlay(e);
+}
+void ReportEasyApiTest(bdg_engine* e) {
+  bdg::SetLogHook({});
+  bdg::EditorModel* m = e->model.get();
+  size_t coins = 0;
+  if (m)
+    for (const std::string& id : m->scene.Roots())
+      if (const bdg::SceneObject* o = m->scene.Find(id); o && (o->name == "Coin" || o->name == "Marker")) ++coins;
+  bdg::LogInfo("easy api test: restored={} instances={}", coins == 1 ? 1 : 0, e->play.Scripts().Instances());
+}
+BDG_EDITOR_TEST("BDG_EASYAPI_TEST", InjectEasyApiTest, ReportEasyApiTest)
+
+// Scripted check of 4-6b (BDG_AWAIT_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): C# AwaitProbes
+// wait in async methods. While the game is paused their game-time waits do not advance; deleting an object (the
+// editor's way) and disabling a behaviour cancel the waits — catch / finally run, nothing resumes, no crash; an
+// async Task Start waits 0.5 s of game time, WaitUntil, NextFrame and comes back to the game thread after Task.Run;
+// a behaviour that destroys its own object cannot wait any more.
+void InjectAwaitTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::vector<std::string> lines;
+  static int errors = 0, pausedTicks[2] = {-1, -1};
+  static bool timedWhilePaused = false;
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("await test: {}", err);
+  };
+  auto ticks = [&] {
+    std::string json;
+    bdg::SceneObject* o = m->scene.Find("aw1");
+    bdg::Component* c = o ? o->Find("AwaitProbe") : nullptr;
+    if (c) bdg::Registry::Get(c->data, *c->type, "ticks", json);
+    return std::atoi(json.c_str());
+  };
+  auto has = [&](std::string_view s) {
+    return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(s) != std::string::npos; });
+  };
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel level, std::string_view l) {
+      if (l.rfind("await probe: ", 0) == 0) lines.emplace_back(l);
+      if (level == bdg::LogLevel::Error) ++errors;
+    });
+    run("add", "", R"({"id":"aw1","name":"Deleted"})");
+    run("addcomp", "aw1", R"({"type":"AwaitProbe"})");
+    run("add", "", R"({"id":"aw2","name":"Disabled"})");
+    run("addcomp", "aw2", R"({"type":"AwaitProbe"})");
+    run("add", "", R"({"id":"aw3","name":"Timed"})");
+    run("addcomp", "aw3", R"({"type":"AwaitProbe","value":{"mode":"timed"}})");
+    run("add", "", R"({"id":"aw4","name":"Self"})");
+    run("addcomp", "aw4", R"({"type":"AwaitProbe","value":{"mode":"self"}})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame > 3 && frame < 66) std::this_thread::sleep_for(std::chrono::milliseconds(20)); // real time passes
+  if (frame == 8) e->play.SetPaused(true);
+  if (frame == 9) pausedTicks[0] = ticks();
+  if (frame == 22) {
+    pausedTicks[1] = ticks();
+    timedWhilePaused = has("await probe: timed");
+    e->play.SetPaused(false);
+  }
+  if (frame == 40) {
+    run("del", "aw1", "{}");
+    run("set", "aw2", R"({"path":"AwaitProbe.enabled","value":false})");
+  }
+  if (frame == 66) TogglePlay(e);
+  if (frame == 68) {
+    bdg::SetLogHook({});
+    const bool pause = pausedTicks[0] > 0 && pausedTicks[0] == pausedTicks[1] && !timedWhilePaused;
+    bdg::LogInfo("await test: pause={} deleted={} disabled={} timed={} self={} errors={} (ticks {} {})", pause ? 1 : 0,
+                 has("await probe: aw1 mode=loop cancelled=1 finally=1") ? 1 : 0, has("await probe: aw2 mode=loop cancelled=1 finally=1") ? 1 : 0,
+                 has("await probe: timed waited=1 until=1 thread=1") ? 1 : 0, has("await probe: self cancelled=1") ? 1 : 0, errors,
+                 pausedTicks[0], pausedTicks[1]);
+  }
+}
+BDG_EDITOR_TEST("BDG_AWAIT_TEST", InjectAwaitTest, nullptr)
+
+#include "Scripting/DataTable.h"
+
+// Scripted check of 4-4d (BDG_DATATABLE_TEST=1 with BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll): a
+// Weapons.table.jsonl (header line, typed columns) and an Enemies.csv (quoted cells, an empty cell) in a data
+// folder under .cache; the C# DataProbe reads them with Data.Get / All / TryGet / Row in play mode.
+void InjectDataTableTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  static std::string probe;
+  const std::filesystem::path dir = std::filesystem::current_path() / ".cache" / "datatable-test" / "Data";
+  auto run = [&](const char* name, const char* target, const char* args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogError("data table test: {}", err);
+  };
+  if (frame == 2) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(dir / "Weapons.table.jsonl", std::ios::binary)
+        << R"({"$table":{"key":"id","columns":[{"name":"id","type":"string"},{"name":"damage","type":"int"},{"name":"range","type":"float"},{"name":"name","type":"string"},{"name":"automatic","type":"bool"}]}})" "\n"
+        << R"({"id":"rifle","damage":12,"range":50.5,"name":"Rifle, long","automatic":true})" "\n"
+        << R"({"id":"pistol","damage":5,"name":"Pistol"})" "\n";
+    std::ofstream(dir / "Enemies.csv", std::ios::binary) << "id,hp,speed,title\r\ngoblin,30,1.5,\"Goblin \"\"Boss\"\"\"\r\nghost,,2,Ghost\r\n";
+    const std::u8string u8 = dir.u8string();
+    bdg::SetDataFolders({std::string(u8.begin(), u8.end())});
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("data probe: ", 0) == 0) probe = l; });
+    run("add", "", R"({"id":"dt1","name":"Reader"})");
+    run("addcomp", "dt1", R"({"type":"DataProbe"})");
+  }
+  if (frame == 3) TogglePlay(e);
+  if (frame == 8) TogglePlay(e);
+  if (frame == 10) {
+    bdg::SetLogHook({});
+    bdg::SetDataFolders({});
+    std::error_code ec;
+    std::filesystem::remove_all(dir.parent_path(), ec);
+    bdg::LogInfo("data table test: probe={}", probe.empty() ? "none" : "seen");
+  }
+}
+BDG_EDITOR_TEST("BDG_DATATABLE_TEST", InjectDataTableTest, nullptr)

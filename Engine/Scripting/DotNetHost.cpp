@@ -165,7 +165,7 @@ bool DotNetHost::Start(const std::string& managedDir, std::string* error) {
   if (rl < 0 || !initialize)
     return fail(std::format("Bidulgi.Scripting의 진입점을 찾을 수 없음 (0x{:08x}) {}", (uint32_t)rl, g_hostError));
   const int api = ((int(__stdcall*)(void*))initialize)((void*)&DotNetHost::Request);
-  if (api != 3) return fail(std::format("스크립팅 API 버전이 다름 ({} != 3)", api));
+  if (api != 4) return fail(std::format("스크립팅 API 버전이 다름 ({} != 4)", api));
   loadAssembly_ = (int (*)(const char*))entry[1];
   create_ = (int (*)(const char*, const char*, int, const char*))entry[2];
   setEnabled_ = (void (*)(int, int))entry[3];
@@ -458,7 +458,8 @@ int DotNetHost::Request(const char* json, char* out, int capacity) {
   } else if (!h.lastAnswer_.empty() && h.lastRequest_ == json) { // the retry of a request whose answer did not fit
     answer = std::move(h.lastAnswer_);
     h.lastAnswer_.clear();
-  } else if (!h.scene_ && std::strncmp(json, R"({"op":"log")", 11) == 0) { // logging needs no scene
+  } else if (!h.scene_ && (std::strncmp(json, R"({"op":"log")", 11) == 0 || std::strncmp(json, R"({"op":"table")", 13) == 0)) {
+    // logging and data tables need no scene
     static Scene none;
     static CommandBus noBus(none);
     answer = HandleScriptRequest(none, noBus, json);

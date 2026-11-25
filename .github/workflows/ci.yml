@@ -536,14 +536,27 @@ jobs:
           # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)
           $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1' } 8
           if ($log -notmatch 'csharp test: started=1 self=1 values=1 steps=3 script=1 undo=1') { $errors += 'C# scripting test failed' }
+          # 4-5 debugging: BDG_CSHARP_DEBUG_WAIT holds scripting for a debugger, then goes on when none attaches
+          $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1'; BDG_CSHARP_DEBUG_WAIT = '0.3' } 8
+          if ($log -notmatch 'C#: no debugger attached; going on' -or $log -notmatch 'csharp test: started=1 self=1') { $errors += 'C# debugger wait failed' }
 
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=4 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=7 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
+          # 4-4c easy API: [Auto], Get / Find / FindNearest, Spawn / Destroy, After / Every, await Wait / NextFrame, Tween, Random
+          $log = Invoke-Editor 'Release' @{ BDG_EASYAPI_TEST = '1' } 75
+          if ($log -notmatch 'easy probe: get=1 find=1 spawn=1 nearest=1 destroy=1 after=1 every=1 wait=1 tween=1 random=1') { $errors += 'C# easy API test failed' }
+          if ($log -notmatch 'easy api test: restored=1 instances=0') { $errors += 'C# easy API test: play mode did not clean up' }
+          # 4-6b async waits: game time (paused = no progress), cancelled on delete / disable / self-destroy, back on the game thread
+          $log = Invoke-Editor 'Release' @{ BDG_AWAIT_TEST = '1' } 70
+          if ($log -notmatch 'await test: pause=1 deleted=1 disabled=1 timed=1 self=1 errors=0') { $errors += 'C# await test failed' }
+          # 4-4d data tables: a .table.jsonl with a header and a .csv read from C# with Data.Get / All / TryGet / Row
+          $log = Invoke-Editor 'Release' @{ BDG_DATATABLE_TEST = '1' } 12
+          if ($log -notmatch 'data probe: get=1 defaults=1 all=1 csv=1 missing=1 untyped=1') { $errors += 'C# data table test failed' }
           Remove-Item Env:BDG_SCRIPT_ASSEMBLIES -ErrorAction SilentlyContinue
 
           # 4-4 hot reload: v2 of the samples written over the loaded copy while playing; values, state and new code kept

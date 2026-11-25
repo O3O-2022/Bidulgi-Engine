@@ -35,10 +35,33 @@
 | 씬 이동 | `await Scene.Load(Scenes.Forest, fade: 0.5f);` | `Scene::Load(...)` | `Scene.Load(Scenes.Forest)` | Load Scene |
 | 이벤트 보내기·받기 | `Events.Send(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |
 | 저장·불러오기 | `SaveGame.Save("slot1")`, `SaveGame.Load("slot1")` | 같음 | 같음 | Save / Load Game |
-| 데이터 테이블 | `Data.Get<Weapon>("rifle").damage` | `Data::Get<FWeapon>("rifle")` | `Data.get("Weapons", "rifle").damage` | Get Data Row |
+| 데이터 테이블 ([4-4d](data-tables.md)) | `Data.Get<Weapon>("rifle").damage` | `Data::Get<FWeapon>("rifle")` | `Data.get("Weapons", "rifle").damage` | Get Data Row |
 | 무작위 | `Random.Range(1, 6)`, `Random.Chance(0.2f)`, `list.PickRandom()` | 같음 | `random.range(1,6)`, `random.chance(0.2)` | Random |
 | 화면 글자·디버그 | `Debug.Log("hp", hp)`, `Debug.DrawSphere(pos, 1, Color.red, 2)` | 같음 | `print("hp", hp)`, `Debug.DrawSphere(...)` | Print / Draw Debug |
 | 시간 | `Time.delta`, `Time.scale = 0.2f`(슬로모션) | 같음 | `Time.delta` | Get Delta Time |
+
+## C# 구현 현황 (4-4c, 2026-11-25)
+
+`Behaviour` 안에서는 그냥 부르고(`Get<Health>()`, `Find("Player")`), Behaviour 밖의 코드는 `Game.Find`·`Game.Spawn`처럼 `Game` 클래스로 부릅니다. 코드: `Scripting/Bidulgi.Scripting/Easy.cs`(함수), `Scheduler.cs`(타이머·트윈·기다리기). 스크립팅 API 버전 4.
+
+| 함수 | 동작 |
+|---|---|
+| `Get<T>()`, `GetInChildren<T>()` | 엔진 컴포넌트(생성된 클래스)와 C# Behaviour 모두. 자식 찾기는 자기 자신 → 자식(깊이 우선) 순서 |
+| `[Auto]`, `[Auto(InChildren = true)]` | Awake **전에** 필드를 채움(핫 리로드 뒤에도 다시). 없으면 경고 로그. 같은 오브젝트의 C# Behaviour는 컴포넌트 목록에서 **앞에 있는 것만** 보임(생성 순서) |
+| `Find(이름 또는 id)` | 없으면 경고 + `GameObject.None`(`if (!target)`이 참). `GameObject`는 `bool`로 바로 검사(`IsValid` = 아직 장면에 있음), `==`는 id 비교 |
+| `FindAll(이름)`, `FindNearest(이름, radius)` | 계층 순서. `FindNearest`는 월드 위치 기준, 자기 오브젝트 제외, 없으면 `GameObject.None` |
+| `Spawn(원본, 위치, 회전, 부모)`, `Spawn("이름", 위치)` | 원본(자식·C# Behaviour 포함)을 **새 id로 복사**하거나 빈 오브젝트를 만듦. 명령 버스의 `add` 한 번(플레이 중엔 Undo 없음). 복사본의 Behaviour는 **다음 프레임 시작**에 Awake. 프리팹 에셋은 6-1에서 — 지금은 장면의 아무 오브젝트나 원본으로 |
+| `Destroy(go)`, `Destroy(go, after: 3)` | 오브젝트와 자식을 지움(`del`). 그 오브젝트들의 Behaviour는 **바로** OnDisable·OnDestroy, 타이머·트윈·기다리기 취소. `after`는 게임 시간 뒤(부른 Behaviour가 먼저 사라져도 실행) |
+| `After(초, 함수)`, `Every(초, 함수, first:)` → `Timer` | 게임 시간. `Every`의 첫 실행은 한 간격 뒤(`first`로 바꿈), 느린 프레임은 최대 4번 따라잡음. `timer.Cancel()` |
+| `await Wait(초)`, `await NextFrame()`, `await WaitUntil(조건)` | 게임 시간(일시정지·시간 배율 반영), 같은 프레임 안에서는 끝나지 않음. 자세한 규칙은 4-6b |
+| `transform.Tween(position:, rotation:, scale:, seconds:, ease:, pingPong:)` → `Tween` | 지금 값에서 목표로(로컬 값). `scale: 1.2f`처럼 숫자 하나 = 균일. `await`하면 끝날 때까지, `Cancel()`. 숫자 트윈 `Game.Tween(from, to, seconds, v => ...)`. `Ease` 15가지(Linear, In/Out/InOut Quad·Cubic·Sine·Back, OutElastic, OutBounce) |
+| `Random.Range(1, 6)`(정수는 **양 끝 포함**), `Range(0f, 1f)`, `Value`, `Chance(p)`, `Sign`, `InsideUnitCircle/Sphere`, `OnUnitSphere`, `Seed(n)`, `list.PickRandom()`, `list.Shuffle()` | 스크립트 전체가 한 생성기(xorshift). `Seed`로 같은 결과 재현. `using System;`과 함께 쓰면 `System.Random`과 이름이 겹치므로 `using Random = Bidulgi.Random;` |
+
+타이머·트윈·기다리기는 **시작한 Behaviour에 묶입니다**: 그 Behaviour가 꺼지거나(disable) 지워지면 취소되고, 플레이를 멈추면 남은 것이 모두 취소됩니다. 매 프레임 순서: Start·Update → (스크립트가 보낸 비동기 이어하기) → 타이머·기다리기·트윈(시작한 순서) → FixedUpdate → LateUpdate.
+
+엔진 쪽 새 요청(`ScriptApi`): `children`, `findall`, `spawn`, `destroy`. 자동 검사: `BDG_EASYAPI_TEST=1` + `BDG_SCRIPT_ASSEMBLIES=<Managed>/Bidulgi.Samples.dll`(샘플 `EasyProbe`) → `easy probe: get=1 find=1 spawn=1 nearest=1 destroy=1 after=1 every=1 wait=1 tween=1 random=1`, `easy api test: restored=1 instances=0`.
+
+**아직 남은 것**: 태그·레이어·입력 액션·씬 상수 자동 생성(`Tags.Enemy` …) — 엔진에 태그·입력 액션 목록이 아직 없음(태그가 생기면 `FindAll(Tags.Enemy)`도), `Time.scale` 쓰기(지금은 Play 도구 막대의 배율), `Debug.Draw*`는 4-4b.
 
 ## 컴포넌트를 짧게 쓰는 장치
 

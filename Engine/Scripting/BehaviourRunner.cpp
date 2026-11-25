@@ -116,6 +116,7 @@ void BehaviourRunner::Pull(Scene& scene, CommandBus& bus) {
 void BehaviourRunner::End() {
   DotNetHost& host = DotNetHost::Instance();
   for (const Inst& i : insts_) host.DestroyBehaviour(i.handle);
+  if (active_) host.TickBehaviours(DotNetHost::Phase::End, 0, time_, frame_); // timers / waits not tied to a behaviour
   insts_.clear();
   active_ = false;
 }

@@ -64,7 +64,8 @@ public:
   static std::string FieldsJson(const void* data, const TypeInfo& type); // {"enabled":true,"speed":5}
   void SetBehaviourEnabled(int handle, bool enabled); // OnEnable / OnDisable on a change
   void DestroyBehaviour(int handle);                  // OnDisable (if enabled) + OnDestroy
-  enum class Phase { Update = 0, FixedUpdate = 1, LateUpdate = 2 }; // Update runs pending Starts first
+  enum class Phase { Update = 0, FixedUpdate = 1, LateUpdate = 2, End = 3 }; // Update runs pending Starts first, then
+  // timers / tweens / waits (4-4c); End = play stopped: what is left of them is cancelled
   void TickBehaviours(Phase phase, double dt, double time, int frame);
 
   // Engine side of the request channel (C# calls it through a function pointer).

@@ -152,13 +152,36 @@ print(bd.diagnose.budget("forest_01", platform="Android"))
 - 프로젝트의 `tools/` 폴더 스크립트는 메뉴에 자동 등록
 - 외부 패키지(pip)는 프로젝트별 가상 환경에 설치
 
+## 기다리기 — C# `async` (4-6b, 2026-11-25)
+
+Behaviour의 메서드는 `async`로 쓸 수 있습니다. 이벤트 메서드도 됩니다(`async void Start()` 또는 `async Task Start()` — `Task`를 돌려주면 실패가 로그에 남음).
+
+```csharp
+public class Door : Behaviour {
+  async Task Start() {
+    await WaitUntil(() => Find("Player").position.Z > 3); // 매 프레임 Update 뒤에 검사
+    await transform.Tween(position: new Vector3(0, 3, 0), seconds: 1);
+    await Wait(2);                                       // 게임 시간 2초
+    await transform.Tween(position: Vector3.Zero, seconds: 1);
+  }
+}
+```
+
+규칙 (코드: `Scripting/Bidulgi.Scripting/Scheduler.cs`):
+- **게임 시간**: `Wait(초)`는 `Time.time`으로 잽니다 — 일시정지 동안 멈추고, 시간 배율이 반영되고, 한 프레임씩 진행도 그대로 따릅니다. `NextFrame()`은 다음 프레임의 Update 뒤, `WaitUntil(조건)`은 매 프레임 Update 뒤에 검사. 어떤 기다림도 시작한 그 프레임 안에서는 끝나지 않습니다.
+- **주인 = 시작한 Behaviour**: 이벤트 메서드나 그 이어하기 안에서 시작한 기다림·타이머·트윈은 그 Behaviour에 묶입니다(AsyncLocal로 `await` 너머까지 따라감). 그 Behaviour가 **꺼지거나(disable) 지워지면**(에디터에서 오브젝트 삭제, `Destroy`, 핫 리로드 전 OnDisable) 즉시 취소되고, `await`는 그 자리에서 `OperationCanceledException`을 던집니다 → `catch`·`finally`가 실행되고, 그 예외는 오류로 보고하지 않습니다. 꺼진 Behaviour가 새로 기다리면 바로 취소(무한 반복 방지). 플레이를 멈추면 남은 것은 모두 취소.
+- **게임 스레드로 돌아옴**: 스크립팅 `SynchronizationContext`가 이어하기를 모았다가 다음 프레임(Update 직후)에 실행합니다. `await Task.Run(...)` 뒤의 코드도 게임 스레드에서 돌아 엔진 API를 그대로 쓸 수 있습니다. `async void`에서 빠져나온 예외는 프로세스를 끝내지 않고 로그에 남습니다.
+- 프레임 순서: 동기화(Awake·OnEnable / OnDisable·OnDestroy) → Start·Update → 이어하기 → 타이머·기다리기·트윈(시작한 순서) → FixedUpdate → LateUpdate.
+- 자동 검사 `BDG_AWAIT_TEST=1`(샘플 `AwaitProbe`) → `await test: pause=1 deleted=1 disabled=1 timed=1 self=1 errors=0`.
+- 남은 것: C++20 `BTask`·Lua `wait`(같은 규칙), `WaitForEvent`(이벤트 시스템과 함께), `RunOnWorker`(4-6c).
+
 ## 언어 사이 상호작용
 
 그래프·애니메이션 그래프를 포함해 언어끼리 부르는 규칙(노출 표시, 타입 매핑, 핸들, 프레임 순서)은 [interop](interop.md)에 정리했습니다.
 
 ## 주의할 점
 
-- **디버깅:** 모든 언어를 **DAP**로 연결해 VS Code 하나에서 함께 디버깅. 에디터 안 그래프 디버거도 같은 프로토콜
+- **디버깅:** 모든 언어를 **DAP**로 연결해 VS Code 하나에서 함께 디버깅. 에디터 안 그래프 디버거도 같은 프로토콜 — C#은 [csharp-debugging](../features/csharp-debugging.md)(4-5, 실행 중인 에디터에 attach)
 - **문서:** 리플렉션 정의에서 언어별 API 문서와 예제를 자동 생성
 - **AI 혼란 방지:** `scripting.primary`(기본 C#)를 두고, 에이전트는 그 언어로 새 스크립트를 만듦. 새 프로젝트는 C#과 그래프만 켜진 상태로 시작
 

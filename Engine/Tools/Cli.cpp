@@ -7,13 +7,16 @@
 #include "Core/Command.h"
 #include "Core/Log.h"
 #include "Core/Reflection.h"
+#include "Core/Utf8Path.h"
 #include "Scene/DefaultScene.h"
 #include "Scene/GraphLibrary.h"
 #include "Scene/SceneFile.h"
 #include "Scripting/CSharpBindings.h"
+#include "Scripting/DataTable.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <fstream>
 #include <functional>
@@ -570,6 +573,43 @@ int CmdCSharpBindings(Ctx& c) {
   return 0;
 }
 
+// bdg table import <file.csv> [out.table.jsonl] | export <table> [out.csv] | check <table> (data tables, 4-4d)
+int CmdTable(Ctx& c) {
+  if (c.pos.size() < 2 || (c.pos[0] != "import" && c.pos[0] != "export" && c.pos[0] != "check")) {
+    c.err += "사용법: bdg table import <파일.csv> [출력.table.jsonl] | export <파일.table.jsonl> [출력.csv] | check <파일>\n";
+    return 2;
+  }
+  const fs::path in = U8(c.pos[1]).is_absolute() ? U8(c.pos[1]) : c.cwd / U8(c.pos[1]);
+  std::string text;
+  if (!ReadTextU8(Utf8(in), text)) { c.err += std::format("오류: 읽을 수 없음: {}\n", Utf8(in)); return 1; }
+  DataTable t;
+  std::string stem = Utf8(in.filename());
+  for (const char* ext : {".table.jsonl", ".csv"})
+    if (stem.size() > std::strlen(ext) && stem.ends_with(ext)) stem.resize(stem.size() - std::strlen(ext));
+  t.name = stem;
+  std::vector<std::string> problems;
+  std::string why;
+  const bool csv = Utf8(in).ends_with(".csv");
+  if (!(csv ? ImportCsv(text, t, &why, &problems) : ParseDataTable(text, t, &problems))) {
+    c.err += std::format("오류: {}: {}\n", Utf8(in), why.empty() ? "표가 아님" : why);
+    return 1;
+  }
+  for (const std::string& p : problems) c.err += std::format("경고: {}\n", p);
+  if (c.pos[0] == "check") {
+    c.out += std::format("{}: 행 {}개, 열 {}개 (키 {}), 문제 {}개\n", t.name, t.rows.size(), t.columns.size(), t.key, problems.size());
+    return problems.empty() ? 0 : 1;
+  }
+  const std::string result = c.pos[0] == "import" ? WriteDataTable(t) : ExportCsv(t);
+  fs::path out = c.pos.size() > 2 ? (U8(c.pos[2]).is_absolute() ? U8(c.pos[2]) : c.cwd / U8(c.pos[2]))
+                                  : in.parent_path() / U8(t.name + (c.pos[0] == "import" ? ".table.jsonl" : ".csv"));
+  std::error_code ec;
+  if (out.has_parent_path()) fs::create_directories(out.parent_path(), ec);
+  std::ofstream f(out, std::ios::binary);
+  if (!(f << result)) { c.err += std::format("오류: 쓸 수 없음: {}\n", Utf8(out)); return 1; }
+  c.out += std::format("{} -> {} (행 {}개)\n", Utf8(in), Utf8(out), t.rows.size());
+  return 0;
+}
+
 int CmdNew(Ctx& c) {
   if (c.pos.empty()) { c.err += "사용법: bdg new <dir> [--template basic3d|empty]\n"; return 2; }
   SceneTemplate t = SceneTemplate::Basic3D;
@@ -593,6 +633,7 @@ const char* kHelp =
     "  del <id>... | addcomp <id> <Type> | rmcomp <id> <Type>\n"
     "  validate [scene] | refs <asset> | unused\n"
     "  csharp-bindings [file]  (C# 클래스 생성)\n"
+    "  table import <csv> [out] | export <table.jsonl> [out] | check <file>  (데이터 테이블)\n"
     "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
     "공통: --project <dir> --scene <이름 또는 경로>\n";
 
@@ -625,6 +666,7 @@ int RunCli(const std::vector<std::string>& args, std::string& out, std::string& 
   if (cmd == "nodes") return CmdNodes(c);
   if (cmd == "call") return CmdCall(c);
   if (cmd == "csharp-bindings") return CmdCSharpBindings(c);
+  if (cmd == "table") return CmdTable(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;
