@@ -5,6 +5,8 @@
 #include "Scene/SceneFile.h"
 #include "Assets/AssetDatabase.h"
 #include "Core/Utf8Path.h"
+#include "VFX/VfxWorld.h"
+#include <cstdlib>
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -43,6 +45,15 @@ bool PlayMode::Start(EditorModel& m) {
   scripts_.Begin(m.scene, m.bus); // Awake / OnEnable of the C# Behaviours (no-op without C#)
   audio_.Begin(m.scene);          // AudioSource playOnStart (6-3)
   anim_.Begin(m.assets);          // Animators (7-1)
+  { // particles (6-VFX P-1): effects are looked for in the project's Assets
+    std::vector<std::string> folders;
+    if (m.assets) folders.push_back(m.assets->Root());
+    std::error_code ec;
+    const std::u8string cwd = (std::filesystem::current_path(ec) / "Assets").generic_u8string();
+    folders.emplace_back(cwd.begin(), cwd.end());
+    if (const char* extra = std::getenv("BDG_ASSETS")) folders.push_back(extra);
+    VfxWorld::Instance().Begin(folders);
+  }
   audio_.SetPaused(paused_);
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
@@ -56,6 +67,7 @@ bool PlayMode::Stop(EditorModel& m) {
   physics_.End();
   audio_.End();
   anim_.End();
+  VfxWorld::Instance().End();
   shaker_.StopAll(true);
   // What the user changed while playing (done steps only): the last value per object field.
   std::map<std::pair<std::string, std::string>, size_t> latest;
@@ -158,6 +170,8 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     }
   }
   audio_.Frame(m.scene, dt); // after the scripts: sounds they started or moved this frame
+  VfxWorld::Instance().Sync(m.scene); // particles (6-VFX P-1): ParticleSystem components, then the simulation
+  VfxWorld::Instance().Tick((float)dt);
   if (changed) m.ValuesChanged();
   TickShakes(m, (float)dt);
 }

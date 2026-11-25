@@ -200,6 +200,7 @@ internal static class Scheduler {
 
   // The behaviour was disabled or destroyed: its jobs end now (awaits resume with OperationCanceledException).
   internal static void CancelOwner(Behaviour b) {
+    Events.RemoveOwner(b); // its event handlers stop with it (6-5b)
     foreach (Job j in s_jobs.ToArray()) if (j.Owner == b) j.Cancel();
     foreach (Job j in s_added.ToArray()) if (j.Owner == b) j.Cancel();
   }

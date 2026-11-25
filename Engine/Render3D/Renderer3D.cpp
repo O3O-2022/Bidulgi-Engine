@@ -2398,6 +2398,7 @@ void Renderer3D::Render(RenderTargetHandle rt, int32_t w, int32_t h, const Camer
   stats_.shadowCulled = shadowCulled;
   stats_.lightmapped = 0;
   for (size_t i : opaqueList) stats_.lightmapped += usesLightmap.empty() ? 0 : usesLightmap[i];
+  if (extras && extras->transparent) extras->transparent(cam.View(), cam.Projection(aspect)); // particles (6-VFX)
   rhi_->EndRenderTarget(); // resolves MSAA
   if (timing) Mark(timer, "scene");
 

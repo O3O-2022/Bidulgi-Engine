@@ -12,8 +12,9 @@ Assets/Player/FPSController.cs    walk / sprint / jump / mouse look        이�
 Assets/Weapons/Weapon.cs          fire, magazine, reload, spread, recoil   발사·탄창·재장전·퍼짐·반동
 Assets/Weapons/Projectile.cs      one pooled bullet (physics)              총알 하나 (물리)
 Assets/Game/Target.cs             reacts to hits: impulse, sound, score, disappears
-Assets/Game/ScoreKeeper.cs        the rules (GameMode): score, end of round (HUD + log)
-HUD (Scenes/Main.scene)           UICanvas "HUD" with elements score, ammo, weapon, crosshair, message (UI.Text("score") in C#)
+Assets/Game/ScoreKeeper.cs        the rules (GameMode): score, best score (saved: Save.Get / Set), end of round (HUD + log)
+HUD (Scenes/Main.scene)           UICanvas "HUD" with elements score, best, ammo, weapon, crosshair, message (UI.Text("score") in C#)
+Assets/Effects/Spark.vfx          hit sparks (particles: one module per line) 피격 불꽃 (파티클, 한 줄 = 모듈 하나)
 Assets/Audio/*.wav                generated sounds (CC0)                   생성한 소리
 Assets/Materials/*.material       Gold (targets), Steel, Concrete, Wood, Glow (bullets): colour, metal, roughness
 Data/Weapons.table.jsonl          weapon numbers (one row per weapon)      무기 수치 (한 줄에 무기 하나)
@@ -38,6 +39,8 @@ Targets are objects named `Target` (Rigidbody Dynamic + `Target`).
 | More targets 표적 추가 | copy a `Target` line in `Scenes/Main.scene` with a new `id` and `pos`; `points` sets its score |
 | More bullets in the air 총알 더 | copy a `Bullet` line (new id, another x at y = -60) |
 | Change the map 맵 바꾸기 | greybox objects in `Scenes/Main.scene` (`Wall`, `Ramp`, `Platform`, `Crate`): `pos`, `rot`, `scale`; a `Collider` makes them solid |
+| Bigger / more sparks 불꽃 크게·많이 | `Assets/Effects/Spark.vfx`: `SpawnBurst` `count`, `Size` `value`, `Sprite` `intensity`; play another effect with `Vfx.Play("Name", position)` |
+| Reset the best score 최고 점수 지우기 | delete `main.save.json` in the save folder (Project Settings `saves.saveFolder`), or `Save.Delete("main")` in C# |
 | HUD text / place 화면 글자·위치 | the `UIElement` lines under `HUD` in the scene (`anchor`, `position`, `size`, `fontSize`); from C# `UI.Text("score").text = ...` |
 
 Rules: game code reads **actions**, not keys; numbers that designers tune live in **data files**; one behaviour per
@@ -52,4 +55,4 @@ See LICENSE-TEMPLATE.txt. The Bidulgi Engine itself is MIT (THIRD-PARTY-NOTICES.
 ## Left for later (다음 단계)
 
 Prefabs (queue 6-1): the player, targets and bullets become prefabs. Crouch, aim down sights, health and damage,
-hit effects (VFX), hitscan with physics raycasts, arms mesh.
+hitscan with physics raycasts (`Raycast` is there now), muzzle flash, arms mesh.

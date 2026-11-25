@@ -11,6 +11,8 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyLockMulti.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
@@ -246,30 +248,51 @@ public:
     return l.Succeeded() ? l.GetBody().GetShape()->GetVolume() : 0.f;
   }
 
-  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, RayHit& hit,
+  // Scene queries skip triggers (sensors) unless asked, and bodies whose user value is in `ignore`.
+  class QueryFilter final : public JPH::BodyFilter {
+  public:
+    QueryFilter(bool triggers, const std::vector<uint64_t>& ignore) : triggers_(triggers), ignore_(ignore) {}
+    bool ShouldCollideLocked(const JPH::Body& b) const override {
+      return (triggers_ || !b.IsSensor()) && std::find(ignore_.begin(), ignore_.end(), b.GetUserData()) == ignore_.end();
+    }
+  private:
+    bool triggers_;
+    const std::vector<uint64_t>& ignore_;
+  };
+  bool Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, bool hitTriggers, RayHit& hit,
                const std::vector<uint64_t>& ignore) const override {
     const float len = glm::length(direction);
     if (len < 1e-9f || maxDistance <= 0) return false;
     const glm::vec3 dir = direction / len;
     const JPH::RRayCast ray(JPH::RVec3(J(origin)), J(dir * maxDistance));
-    class Skip final : public JPH::BodyFilter {
-    public:
-      explicit Skip(const std::vector<uint64_t>& i) : ignore(i) {}
-      bool ShouldCollideLocked(const JPH::Body& b) const override {
-        return !b.IsSensor() && std::find(ignore.begin(), ignore.end(), b.GetUserData()) == ignore.end();
-      }
-      const std::vector<uint64_t>& ignore;
-    } skip(ignore);
+    const QueryFilter filter(hitTriggers, ignore);
     JPH::RayCastResult r;
-    if (!system_.GetNarrowPhaseQuery().CastRay(ray, r, {}, {}, skip)) return false;
+    if (!system_.GetNarrowPhaseQuery().CastRay(ray, r, {}, {}, filter)) return false;
     hit.distance = r.mFraction * maxDistance;
     hit.point = origin + dir * hit.distance;
+    hit.normal = -dir;
+    hit.user = 0;
     JPH::BodyLockRead lock(system_.GetBodyLockInterface(), r.mBodyID);
     if (lock.Succeeded()) {
       hit.user = lock.GetBody().GetUserData();
       hit.normal = G(lock.GetBody().GetWorldSpaceSurfaceNormal(r.mSubShapeID2, ray.GetPointOnRay(r.mFraction)));
     }
     return true;
+  }
+  void OverlapSphere(const glm::vec3& center, float radius, bool hitTriggers, std::vector<uint64_t>& users) const override {
+    if (radius <= 0) return;
+    JPH::SphereShape sphere(radius);
+    sphere.SetEmbedded();
+    JPH::CollideShapeSettings settings;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> hits;
+    const std::vector<uint64_t> none;
+    const QueryFilter filter(hitTriggers, none);
+    system_.GetNarrowPhaseQuery().CollideShape(&sphere, JPH::Vec3::sReplicate(1), JPH::RMat44::sTranslation(JPH::RVec3(J(center))), settings,
+                                               JPH::RVec3::sZero(), hits, {}, {}, filter);
+    for (const JPH::CollideShapeResult& h : hits.mHits) {
+      JPH::BodyLockRead lock(system_.GetBodyLockInterface(), h.mBodyID2);
+      if (lock.Succeeded()) users.push_back(lock.GetBody().GetUserData());
+    }
   }
   JointId AddJoint(const JointDesc& d) override {
     if (!Valid(d.a) || !Valid(d.b)) return 0xFFFFFFFFu;

@@ -343,7 +343,7 @@ internal static class Behaviours {
   // phase 0 = Start + Update (then timers, tweens, waits), 1 = FixedUpdate, 2 = LateUpdate, 3 = end of play
   public static void Tick(int phase, double dt, double time, int frame) {
     ScriptSyncContext.EnsureInstalled();
-    if (phase == 3) { Scheduler.Reset(); Data.Reload(); Input.Reset(); UI.Reset(); return; }
+    if (phase == 3) { Save.EndOfPlay(); Scheduler.Reset(); Bidulgi.Events.Reset(); Data.Reload(); Input.Reset(); UI.Reset(); return; }
     Time.time = (float)time;
     Time.frameCount = frame;
     if (phase == 1) Time.fixedDeltaTime = (float)dt; else Time.deltaTime = (float)dt;
@@ -357,7 +357,7 @@ internal static class Behaviours {
         if (i.Started) Run(i, i.E.FixedUpdate, "FixedUpdate");
       } else if (i.Started) Run(i, i.E.LateUpdate, "LateUpdate");
     }
-    if (phase == 0) Scheduler.Update();
+    if (phase == 0) { Scheduler.Update(); Save.EndOfFrame(); }
     if (phase == 1) Input.EndFixed();
   }
 

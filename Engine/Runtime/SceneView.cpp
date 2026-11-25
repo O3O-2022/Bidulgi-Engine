@@ -22,6 +22,8 @@
 #include <fstream>
 #include <format>
 #include <glm/gtc/matrix_transform.hpp>
+#include "VFX/VfxRender.h"
+#include "VFX/VfxWorld.h"
 
 namespace bdg {
 namespace fs = std::filesystem;
@@ -117,6 +119,7 @@ bool SceneView::Init(RHI& rhi, Renderer3D& r) {
 
 void SceneView::Shutdown() {
   if (!r_) return;
+  if (rhi_) ShutdownParticleRenderer(*rhi_);
   for (auto& [name, e] : builtins_) r_->DestroyMesh(e.mesh);
   for (auto& [name, e] : meshes_) DestroyEntry(e);
   for (auto& [id, s] : skinInsts_) DestroySkinInst(s);
@@ -666,6 +669,10 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     firstBake_ = bakeRequested_ = false;
   }
   light_.post = PostAt(camera.ToCamera().position);
+  extras_.transparent = [this](const glm::mat4& view, const glm::mat4& proj) { // particles (6-VFX P-1) while playing
+    VfxWorld::Instance().SetTier(quality.tier);
+    DrawParticles(*rhi_, VfxWorld::Instance(), view, proj);
+  };
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   lastShafts_ = r_->Stats().shafts;
   lastStats_ = r_->Stats();
@@ -1743,7 +1750,12 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
     c.fovY = std::clamp(c.fovY + gameShake.fov, 1.f, 179.f);
   }
   light_.post = PostAt(c.position);
-  r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, nullptr, &quality);
+  RenderExtras gameExtras;
+  gameExtras.transparent = [this](const glm::mat4& view, const glm::mat4& proj) { // particles (6-VFX P-1)
+    VfxWorld::Instance().SetTier(quality.tier);
+    DrawParticles(*rhi_, VfxWorld::Instance(), view, proj);
+  };
+  r_->Render(gameRT_, pw, ph, c, light_, items_, {0.17f, 0.19f, 0.22f, 1}, &gameExtras, &quality);
   ++gameFrames_;
 }
 

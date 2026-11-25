@@ -10,6 +10,7 @@
 #include "Render3D/Quality.h"
 #include "RHI/RHI.h"
 #include <glm/glm.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -152,6 +153,9 @@ struct RenderExtras {
   DebugView view = DebugView::Lit;
   bool wireframe = false;        // triangle edges over the picture
   bool linearOutput = false;     // write linear light into an RGBA16F target (probe captures), no display curve
+  // Drawn inside the scene pass after the scene (particles, 6-VFX): the HDR target with its depth, linear light,
+  // before bloom and tone mapping. Draws with depth test and no depth writes.
+  std::function<void(const glm::mat4& view, const glm::mat4& proj)> transparent;
 };
 
 // What the last Render() did (stats overlay, `bdg render stats`).
