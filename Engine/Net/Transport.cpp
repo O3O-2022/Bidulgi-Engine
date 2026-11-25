@@ -122,7 +122,7 @@ bool Transport::Connect(const std::string& host, uint16_t port, std::string* err
 void Transport::Disconnect(uint32_t peer) {
   if (!host_) return;
   for (auto& [id, p] : peers_)
-    if (peer == 0 || id == peer) enet_peer_disconnect(p, 1); // 1 = a polite goodbye (a timeout reports 0)
+    if (peer == 0 || id == peer) enet_peer_disconnect_later(p, 1); // after what is queued; 1 = a polite goodbye (a timeout reports 0)
   enet_host_flush(host_);
 }
 
