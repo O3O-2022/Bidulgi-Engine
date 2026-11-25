@@ -41,7 +41,7 @@ public:
   BPROPERTY(Edit, Range = "1,179", ShowIf = "type == Spot", Tooltip = "Full cone angle in degrees") float spotAngle = 45.f;
   BPROPERTY(Edit, Range = "0,179", ShowIf = "type == Spot", Tooltip = "Full-brightness cone in degrees (soft edge out to spotAngle)")
   float innerSpotAngle = 30.f;
-  BPROPERTY(Edit, ShowIf = "type == Directional", Tooltip = "Shadow map (directional lights; point and spot shadows come later)")
+  BPROPERTY(Edit, Tooltip = "Shadow map. Point and spot lights: the quality tier's nearest few on screen (medium 1, high 4, ultra 8)")
   bool castShadows = true;
   BPROPERTY(Edit, ShowIf = "type == Directional", Tooltip = "God rays: the sky around the sun streaks past objects toward the camera (E-7)")
   bool lightShafts = false;

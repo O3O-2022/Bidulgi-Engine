@@ -1,0 +1,4 @@
+{"material":"M_Painting","shading":"lit","blend":"opaque","twoSided":false,"cutoff":0.5}
+{"param":"BaseColor","type":"color","value":"#ffffff"}
+{"param":"BaseColorMap","type":"texture","value":"Textures/T_Painting_D.png"}
+{"param":"Roughness","type":"float","value":0.45}

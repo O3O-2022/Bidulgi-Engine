@@ -6,7 +6,9 @@
 #include "Core/Command.h"
 #include "Core/Log.h"
 #include "Core/Space.h"
+#include "Core/Image.h"
 #include "Render2D/Batch2D.h"
+#include "Render3D/Benchmark.h"
 #include "Runtime/EditorModel.h"
 #include "Scene/Components.h"
 #include "UI/Theme.h"
@@ -257,6 +259,7 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
           local.spot = l.type == LightType::Spot;
           local.outerAngle = l.spotAngle;
           local.innerAngle = l.innerSpotAngle;
+          local.castShadows = l.castShadows; // point / spot shadows (3-4b), limited per quality tier
           light_.locals.push_back(local);
         }
         if (icons_.empty() || icons_.back().id != id) {
@@ -422,6 +425,52 @@ void SceneView::BuildItems(EditorModel& model, const AssetDatabase* assets) {
                       });
 }
 
+QualityTier SceneView::DetectQuality(const ProjectQuality& range, const std::string& cachePath) {
+  AutoQuality& a = autoQuality;
+  a = {};
+  a.on = true;
+  a.min = range.min;
+  const std::string device = rhi_->gpuName + " | " + rhi_->glVersion;
+  std::vector<uint8_t> text;
+  if (!cachePath.empty() && ReadFileBytes(std::filesystem::path(std::u8string((const char8_t*)cachePath.c_str())), text) &&
+      ParseBenchmarkCache(std::string(text.begin(), text.end()), device, a.highMs, a.measured)) {
+    a.cached = true;
+  } else {
+    BenchmarkResult b;
+    const auto t0 = std::chrono::steady_clock::now();
+    if (RunQualityBenchmark(*rhi_, *r_, b)) a.highMs = b.highMs;
+    a.measured = TierFromBenchmark(a.highMs);
+    LogInfo("quality: benchmark {:.2f} ms per frame at high 1920x1080 ({} frames, {:.0f} ms) -> {}", a.highMs, b.frames,
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(), TierKey(a.measured));
+    if (!cachePath.empty() && a.highMs > 0) {
+      const std::filesystem::path p(std::u8string((const char8_t*)cachePath.c_str()));
+      std::error_code ec;
+      std::filesystem::create_directories(p.parent_path(), ec);
+      const std::string json = BenchmarkCacheJson(device, a.highMs, a.measured);
+      if (std::FILE* f = _wfopen(p.c_str(), L"wb")) {
+        std::fwrite(json.data(), 1, json.size(), f);
+        std::fclose(f);
+      }
+    }
+  }
+  a.chosen = range.Clamp(a.measured);
+  governor.Reset();
+  LogInfo("quality: auto {} (device {}, {:.2f} ms at high{}, project range {}..{})", TierKey(a.chosen), TierKey(a.measured), a.highMs,
+          a.cached ? ", cached" : "", TierKey(range.min), TierKey(range.max));
+  return a.chosen;
+}
+
+bool SceneView::FeedFrameTime(double now, double frameMs) {
+  if (!autoQuality.on || !governor.Feed(now, frameMs) || quality.tier <= autoQuality.min) return false;
+  const QualityTier from = quality.tier, to = (QualityTier)((int)from - 1);
+  LogInfo("quality: frame time {:.1f} ms over the {:.1f} ms budget -> {} to {}", governor.lastStepAverageMs, governor.budgetMs, TierKey(from),
+          TierKey(to));
+  quality = QualityPreset(to);
+  ++autoQuality.stepsDown;
+  if (onAutoTier) onAutoTier(to);
+  return true;
+}
+
 void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Widget& v, float scale) {
   vx_ = v.x; vy_ = v.y; vw_ = std::max(v.w, 1.f); vh_ = std::max(v.h, 1.f);
   int32_t pw = std::max(1, (int32_t)std::lround(v.w * scale)), ph = std::max(1, (int32_t)std::lround(v.h * scale));
@@ -432,6 +481,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     ph_ = ph;
   }
   auto t0 = std::chrono::steady_clock::now();
+  if (materials_) materials_->SetTextureLimits(quality); // texture groups of the tier (3-5c)
   BuildItems(model, assets);
   r_->SetColorGrading(hasGrading_ ? &grading_ : nullptr);
   { // GI Tier 0: probes or the volume changed (added, moved, resized) -> bake again, two bounces; the chip adds one more
@@ -525,6 +575,12 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
   light_.post = PostAt(camera.ToCamera().position);
   r_->Render(rt_, pw_, ph_, camera.ToCamera(), light_, items_, {0.17f, 0.19f, 0.22f, 1}, &extras_, &quality);
   lastShafts_ = r_->Stats().shafts;
+  lastStats_ = r_->Stats();
+  if (autoQuality.on && !r_->Stats().passes.empty()) { // frame drop guard (3-5c): the GPU time of a finished frame
+    double gpu = 0;
+    for (const RenderStats::Pass& p : r_->Stats().passes) gpu += p.ms;
+    FeedFrameTime(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(), gpu);
+  }
   { // platform budget (3-7): what this view drew, and its heaviest objects
     const RenderStats& st = r_->Stats();
     budgetUse_.draws = st.sceneDraws;
@@ -541,7 +597,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
     }
     budgetUse_.textureMB = rhi_->Memory().textures / (1024.0 * 1024.0);
     budgetUse_.lights = st.localLights + (light_.intensity > 0 ? 1 : 0);
-    budgetUse_.shadowLights = st.shadowMap > 0 ? 1 : 0;
+    budgetUse_.shadowLights = (st.shadowMap > 0 ? 1 : 0) + st.localShadows;
     culprits_.clear();
     for (auto& [id, c] : by) {
       const SceneObject* o = model.scene.Find(id);
@@ -1543,6 +1599,7 @@ void SceneView::RenderGame(EditorModel& model, const AssetDatabase* assets, cons
     gameW_ = pw;
     gameH_ = ph;
   }
+  if (materials_) materials_->SetTextureLimits(quality); // texture groups of the tier (3-5c)
   BuildItems(model, assets); // the Scene view may be hidden behind the Game tab
   const glm::mat4 w = model.scene.WorldMatrix(camId);
   Camera3D c;

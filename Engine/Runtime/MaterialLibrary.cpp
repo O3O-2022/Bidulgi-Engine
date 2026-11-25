@@ -2,6 +2,7 @@
 #include "Assets/AssetDatabase.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
+#include <algorithm>
 #include <filesystem>
 
 namespace bdg {
@@ -12,6 +13,17 @@ fs::path U8Path(const std::string& s) { return fs::path(std::u8string((const cha
 std::string ReadText(const fs::path& p) {
   std::vector<uint8_t> b;
   return ReadFileBytes(p, b) ? std::string(b.begin(), b.end()) : std::string();
+}
+
+TextureGroup GroupOf(TexturePreset p) {
+  switch (p) {
+    case TexturePreset::Default: return TextureGroup::World;
+    case TexturePreset::Normal: return TextureGroup::Normal;
+    case TexturePreset::Masks: return TextureGroup::Masks;
+    case TexturePreset::Grayscale: return TextureGroup::Grayscale;
+    case TexturePreset::UI: return TextureGroup::UI;
+  }
+  return TextureGroup::World;
 }
 
 TextureFormat ToRhi(CookedFormat f) {
@@ -42,6 +54,24 @@ void MaterialLibrary::SetAssets(const AssetDatabase* db) {
 }
 
 void MaterialLibrary::Invalidate() { resolved_.clear(); } // definitions and textures re-check their hash on use
+
+void MaterialLibrary::SetTextureLimits(const QualitySettings& q) {
+  if (std::equal(q.textureMax, q.textureMax + kTextureGroups, limits_)) return;
+  std::copy(q.textureMax, q.textureMax + kTextureGroups, limits_);
+  resolved_.clear(); // materials pick up the re-uploaded textures (Texture() compares each entry's limit)
+}
+
+MaterialLibrary::GroupUse MaterialLibrary::TextureGroupUse(TextureGroup g) const {
+  GroupUse u;
+  for (const auto& [guid, t] : textures_) {
+    if (!t.handle.Valid() || GroupOf(t.preset) != g) continue;
+    ++u.textures;
+    u.largest = std::max(u.largest, t.side);
+    u.cookedLargest = std::max(u.cookedLargest, t.cookedSide);
+    u.bytes += t.bytes;
+  }
+  return u;
+}
 
 const AssetRecord* MaterialLibrary::Locate(const std::string& ref, bool materialsOnly) const {
   if (!db_ || ref.empty()) return nullptr;
@@ -75,7 +105,7 @@ TextureHandle MaterialLibrary::Texture(const std::string& ref, TexturePreset* pr
     return {};
   }
   TexEntry& e = textures_[r->guid];
-  if (e.handle.Valid() && e.hash == r->hash) {
+  if (e.handle.Valid() && e.hash == r->hash && e.limit == limits_[(int)GroupOf(e.preset)]) {
     if (preset) *preset = e.preset;
     return e.handle;
   }
@@ -85,17 +115,27 @@ TextureHandle MaterialLibrary::Texture(const std::string& ref, TexturePreset* pr
   CookedTexture cooked;
   TextureSettings s;
   if (!cooker_.Get(*r, file, ReadText(fs::path(file.wstring() + L".meta")), cooked, &s)) return {};
+  // Texture group limit (3-5c): start at the first cooked mip that fits the tier's largest side for the group.
+  const int limit = limits_[(int)GroupOf(s.preset)];
+  const int first = FirstMipWithin(cooked.w, cooked.h, (int)cooked.mips.size(), limit);
   TextureDesc d;
-  d.w = cooked.w;
-  d.h = cooked.h;
+  d.w = std::max(cooked.w >> first, 1);
+  d.h = std::max(cooked.h >> first, 1);
   d.format = ToRhi(cooked.format);
   d.repeat = s.repeat;
   std::vector<const void*> levels;
   std::vector<size_t> sizes;
-  for (const auto& m : cooked.mips) { levels.push_back(m.data()); sizes.push_back(m.size()); }
+  for (size_t k = (size_t)first; k < cooked.mips.size(); ++k) {
+    levels.push_back(cooked.mips[k].data());
+    sizes.push_back(cooked.mips[k].size());
+    e.bytes += cooked.mips[k].size();
+  }
   e.handle = rhi_->CreateTextureMips(d, levels, sizes);
   e.hash = r->hash;
   e.preset = s.preset;
+  e.limit = limit;
+  e.side = std::max(d.w, d.h);
+  e.cookedSide = std::max(cooked.w, cooked.h);
   if (preset) *preset = e.preset;
   return e.handle;
 }

@@ -29,6 +29,7 @@
 #include "Runtime/Budget.h"
 #include "Runtime/Snapping.h"
 #include "Runtime/MaterialLibrary.h"
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -69,6 +70,19 @@ public:
   bool ObjectCenter(const EditorModel& model, const std::string& id, glm::vec3& center, float& radius) const;
   EditorCamera camera;
   QualitySettings quality = QualityPreset(QualityTier::Medium); // tier shown in the editor (queue 3-5)
+  // Automatic tier (3-5c): measures this device once (cached per GPU in `cachePath`, empty = no cache), picks the tier
+  // and clamps it to the project's range; from then on a sustained frame drop steps down one tier (never below min).
+  QualityTier DetectQuality(const ProjectQuality& range, const std::string& cachePath);
+  struct AutoQuality {
+    bool on = false, cached = false;
+    double highMs = 0;               // benchmark: ms per frame at high, 1920 x 1080
+    QualityTier measured = QualityTier::Medium, chosen = QualityTier::Medium, min = QualityTier::Potato;
+    int stepsDown = 0;
+  } autoQuality;
+  QualityGovernor governor;
+  std::function<void(QualityTier)> onAutoTier; // the tier changed by itself (badge text)
+  // Feeds one frame's time to the frame drop guard (Render does it with the GPU time of each frame); true = stepped down.
+  bool FeedFrameTime(double nowSeconds, double frameMs);
   DebugView debugView = DebugView::Lit;
   bool wireframe = false, bounds = false, statsPanel = false;
   void RequestGIBake() { bakeRequested_ = true; } // one more bounce on the next render
@@ -82,6 +96,7 @@ public:
   ShakeOffset gameShake;  // camera shake added to the Game view camera this frame (E-9, from play mode)
   // Test hook (E-7): whether the Scene view's last render drew light shafts
   bool RenderStatsSun(const Renderer3D*) const { return lastShafts_; }
+  const RenderStats& LastStats() const { return lastStats_; } // of this view's last render (not the previews')
   static float IconPixels(int size) { return size <= 0 ? 0.f : size == 1 ? 16.f : size == 2 ? 22.f : 30.f; }
   std::vector<std::pair<std::string, std::string>> IconList() const; // test hook: (object id, icon name)
   int GizmoLines() const { return gizmoLines_; }
@@ -208,6 +223,7 @@ private:
   uint64_t lightmapKey_ = 0, bakedLightmapKey_ = 0; // their meshes and placements now / at the last bake
   int reimports_ = 0;
   bool lastShafts_ = false;
+  RenderStats lastStats_;
   std::vector<PostVolume3D> postVolumes_; // post-process volumes of the scene (E-6), blended at each view's camera
 public:
   PostEffects3D PostAt(const glm::vec3& viewPos) const { return BlendPostVolumes(postVolumes_, viewPos); }

@@ -477,6 +477,76 @@ std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
   const float withBlob = foot(QualityTier::Low, true, lowBlobs), without = foot(QualityTier::Low, false, noBlobs);
   foot(QualityTier::Medium, true, medBlobs);
   const float lowFoot = without > 0 ? withBlob / without : -1.f, medFoot = (float)medBlobs;
+  // Point / spot shadows (3-4b): a room of their own (no sun). A spot light aimed past a floating box, a
+  // point light with boxes on its +x and -z sides. The ground behind each box against ground at the same distance
+  // in the open; the tiers' limits (medium 1 light, high 4, low none); lit ground keeps its light (no acne).
+  struct LocalScene { Camera3D cam; Light3D light; std::vector<DrawItem3D> items; } ls;
+  {
+    Material3D g;
+    g.baseColor = {0.7f, 0.7f, 0.7f, 1};
+    g.roughness = 0.9f;
+    Material3D b = g;
+    b.baseColor = {0.5f, 0.3f, 0.2f, 1};
+    ls.items.push_back({&plane_, At({3, 0, 0}, 20, 1, 14), g});
+    ls.items.push_back({&box_, At({-1.5f, 2, 0}, 0.6f, 0.6f, 0.6f), b}); // halfway along the spot light's axis
+    ls.items.push_back({&box_, At({7.2f, 0.5f, 0}, 1, 1, 1), b});       // +x of the point light
+    ls.items.push_back({&box_, At({6, 0.5f, -1.2f}, 1, 1, 1), b});      // -z of the point light
+    ls.cam.position = {3, 40, 0}; // high and straight down: no box hides the ground behind it
+    ls.cam.target = {3, 0, 0};
+    ls.cam.up = {0, 0, -1};
+    ls.cam.fovY = 20.f;
+    ls.light.intensity = 0; // no sun
+    ls.light.sky = {0.02f, 0.02f, 0.02f, 1};
+    ls.light.ground = {0.01f, 0.01f, 0.01f, 1};
+    LocalLight3D spot;
+    spot.position = {-3, 4, 0}; // aimed at the origin from the side, so the camera above sees the shadow
+    spot.direction = glm::normalize(glm::vec3(3, -4, 0));
+    spot.spot = true;
+    spot.outerAngle = 70;
+    spot.innerAngle = 50;
+    spot.range = 10;
+    spot.intensity = 30;
+    spot.castShadows = true;
+    LocalLight3D point;
+    point.position = {6, 1, 0};
+    point.range = 8;
+    point.intensity = 20;
+    point.castShadows = true;
+    ls.light.locals = {spot, point};
+  }
+  struct LocalResult { float spotDark = -1, spotLit = -1, pxDark = -1, pzDark = -1, pLit = -1; int shadowed = 0, tiles = 0, skipped = 0; };
+  auto local = [&](QualityTier tier, int limit) {
+    QualitySettings q = QualityPreset(tier);
+    if (limit >= 0) q.localShadows = limit;
+    q.msaa = 1;
+    q.fxaa = q.bloom = q.toneMap = q.ssao = false;
+    std::vector<uint8_t> px;
+    r.Render(rt, w, h, ls.cam, ls.light, ls.items, clear, nullptr, &q);
+    int32_t rw = 0, rh = 0;
+    rhi_->ReadRenderTarget(rt, rw, rh, px);
+    auto at = [&](const glm::vec3& p) {
+      float x, y;
+      if (!ProjectToPixel(ls.cam, w, h, p, x, y) || x < 0 || y < 0 || x >= w || y >= h) return -1.f;
+      const uint8_t* c = &px[((size_t)y * w + (size_t)x) * 4];
+      return c[0] * 0.2126f + c[1] * 0.7152f + c[2] * 0.0722f;
+    };
+    LocalResult res;
+    res.spotDark = at({0, 0, 0});                                // in the floating box's shadow
+    res.spotLit = at({0, 0, 1.5f});                              // in the cone, open
+    res.pxDark = at({8.0f, 0, 0});                               // +x face: behind the box
+    res.pzDark = at({6, 0, -2.0f});                              // -z face: behind the box
+    res.pLit = (at({6, 0, 2.0f}) + at({4.0f, 0, 0})) * 0.5f;     // +z and -x faces: open, same distance
+    res.shadowed = r.Stats().localShadows;
+    res.tiles = r.Stats().localShadowTiles;
+    res.skipped = r.Stats().localShadowSkipped;
+    return res;
+  };
+  const LocalResult lHigh = local(QualityTier::High, -1), lOff = local(QualityTier::High, 0), lMed = local(QualityTier::Medium, -1),
+                    lLow = local(QualityTier::Low, -1);
+  auto ratio = [](float d, float l) { return l > 0 ? d / l : -1.f; };
+  const float spotR = ratio(lHigh.spotDark, lHigh.spotLit), pxR = ratio(lHigh.pxDark, lHigh.pLit), pzR = ratio(lHigh.pzDark, lHigh.pLit);
+  const float spotOffR = ratio(lOff.spotDark, lOff.spotLit), pxOffR = ratio(lOff.pxDark, lOff.pLit), pzOffR = ratio(lOff.pzDark, lOff.pLit);
+  const float keep = std::min(ratio(lHigh.spotLit, lOff.spotLit), ratio(lHigh.pLit, lOff.pLit)); // open ground keeps its light
   rhi_->DestroyRenderTarget(rt);
   std::string failed;
   auto fail = [&](const char* k) { failed += failed.empty() ? k : std::string(",") + k; };
@@ -488,11 +558,18 @@ std::string ReferenceBoard::CheckShadows(Renderer3D& r, int32_t w, int32_t h) {
   if (!farOk) fail("far");
   bool blobOk = lowBlobs == 5 && noBlobs == 0 && medBlobs == 0 && lowFoot > 0 && lowFoot < 0.85f;
   if (!blobOk) fail("blob");
+  bool localOk = spotR >= 0 && spotR < 0.5f && pxR >= 0 && pxR < 0.5f && pzR >= 0 && pzR < 0.5f && spotOffR > 0.8f && pxOffR > 0.8f &&
+                 pzOffR > 0.8f && keep > 0.92f && lHigh.shadowed == 2 && lHigh.tiles == 7;
+  if (!localOk) fail("local");
+  bool localTiersOk = lMed.shadowed == 1 && lMed.skipped == 1 && lLow.shadowed == 0 && lOff.shadowed == 0;
+  if (!localTiersOk) fail("local_tiers");
   return std::format("medium cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} penumbra={:.3f}m | high cascades={} ratios={:.2f},{:.2f},{:.2f},{:.2f} "
-                     "penumbra={:.3f}m | cascade_view={},{},{} | blob low foot with/without={:.2f} ({} blobs) medium blobs={:.0f} ({}) | cascades={} near={} far={} blob={} result={}",
+                     "penumbra={:.3f}m | cascade_view={},{},{} | blob low foot with/without={:.2f} ({} blobs) medium blobs={:.0f} ({}) | local spot={:.2f}/{:.2f} point+x={:.2f}/{:.2f} point-z={:.2f}/{:.2f} keep={:.2f} lights high={} tiles={} medium={} skipped={} low={} | cascades={} near={} far={} blob={} local={} local_tiers={} result={}",
                      med.cascades, med.ratio[0], med.ratio[1], med.ratio[2], med.ratio[3], med.penumbra, high.cascades, high.ratio[0],
                      high.ratio[1], high.ratio[2], high.ratio[3], high.penumbra, c0, c1, c2, lowFoot, lowBlobs, medFoot, medBlobs,
-                     cascadesOk ? "ok" : "bad", nearOk ? "ok" : "bad", farOk ? "ok" : "bad", blobOk ? "ok" : "bad",
+                     spotR, spotOffR, pxR, pxOffR, pzR, pzOffR, keep, lHigh.shadowed, lHigh.tiles, lMed.shadowed, lMed.skipped, lLow.shadowed,
+                     cascadesOk ? "ok" : "bad", nearOk ? "ok" : "bad", farOk ? "ok" : "bad", blobOk ? "ok" : "bad", localOk ? "ok" : "bad",
+                     localTiersOk ? "ok" : "bad",
                      failed.empty() ? "pass" : "FAIL(" + failed + ")");
 }
 
