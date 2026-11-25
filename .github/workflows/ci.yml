@@ -592,6 +592,7 @@ jobs:
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build --scripts "$env:GITHUB_WORKSPACE/build/Release/Managed/Bidulgi.Samples.dll" | Out-String | Write-Host
           $animBuild = $LASTEXITCODE
           Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$anim/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-anim-cache'; $env:BDG_PLAYER_QUIET = '1'
           $p = Start-Process "$anim/Builds/Windows-Development/My Game.exe" -ArgumentList '--frames', 120 -PassThru -Wait
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET
