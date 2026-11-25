@@ -12,7 +12,8 @@ Assets/Player/PlatformerController.cs   run, jump (coyote time, jump buffer, sho
 Assets/Player/CameraFollow.cs           side-scrolling camera with a dead zone              따라가는 카메라
 Assets/Game/Coin.cs                     trigger: sound, +coins, disappears                  동전
 Assets/Game/Goal.cs                     the goal flag, or a checkpoint (isCheckpoint)       골·체크포인트
-Assets/Game/GameRules.cs                the rules (GameMode): coins, the goal (log / Console)
+Assets/Game/GameRules.cs                the rules (GameMode): coins, time, the goal, the help button (HUD + log)
+HUD (Scenes/Main.scene)                 UICanvas "HUD": coins, time, help (button), helpPanel, message — C# UI.Text("coins")
 Assets/Audio/*.wav                      generated sounds (CC0)
 Assets/Materials/*.material             Hero, Grass, Wood, Concrete, Gold, Glow
 Input/Actions.jsonl, Input/Contexts/Play.jsonl   Move, Jump, Run (keyboard, gamepad)
@@ -33,6 +34,7 @@ and flags have `"isTrigger":true` colliders. The camera is a perspective camera 
 | New coin 동전 | copy a `Coin` line; `"Coin":{"value":5}` for a big one |
 | Move the goal 골 위치 | the `goal` line's `pos` |
 | Other keys 키 | `Input/Contexts/Play.jsonl` |
+| HUD 화면 글자·버튼 | the `UIElement` lines under `HUD` in the scene; C# `UI.Text("coins").text = ...`, `UI.Button("help").OnClick(...)` |
 
 After changing a script: `dotnet build Game.csproj` (the editor reloads it). Check: `bdg build --check`, then
 `bdg build` and run `Builds/Windows-Development/<name>.exe`.
@@ -44,4 +46,4 @@ Template code: 0BSD. Template assets (scene, sounds, data): CC0. See LICENSE-TEM
 ## Left for later (다음 단계)
 
 Orthographic 2D camera and sprites (the level is drawn with 3D boxes for now), tilemaps, sprite animation, enemies,
-moving platforms, HUD (7-3), prefabs (6-1: hero, coin, flag).
+moving platforms, prefabs (6-1: hero, coin, flag), a UI designer for the HUD (7-3).
