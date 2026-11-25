@@ -63,6 +63,7 @@ long ControlType(const Widget& w) {
     case WidgetKind::Button: return UIA_ButtonControlTypeId;
     case WidgetKind::Tabs: return UIA_TabItemControlTypeId;
     case WidgetKind::Field: return UIA_EditControlTypeId;
+    case WidgetKind::Choice: return w.variant == 2 ? UIA_CheckBoxControlTypeId : UIA_ComboBoxControlTypeId; // Invoke = open / toggle
     case WidgetKind::ListRow: return UIA_ListItemControlTypeId;
     case WidgetKind::Card: case WidgetKind::Node: return UIA_GroupControlTypeId;
     default: return UIA_TextControlTypeId;

@@ -15,7 +15,7 @@ class Theme;
 // ---- Retained widget tree ------------------------------------------------------------------
 // Widgets persist between frames; only layout/draw run each frame. Components follow the
 // design system (design-system/project/components) and read every size and color from tokens.
-enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom, Card, Dock };
+enum class WidgetKind { Box, Label, Panel, Tabs, Button, Field, ListRow, Badge, Node, Cover, Custom, Card, Dock, Choice };
 struct DockState; // UI/Dock.h
 class UIContext;
 enum class Axis { Row, Column };
@@ -85,6 +85,11 @@ struct Widget {
   Color swatchColor{0, 0, 0, 0};
   std::function<void(Widget&)> onSwatch;
   bool edited = false;
+  // Hover help: shown in a small box after the mouse rests on the widget (BPROPERTY Tooltip, button hints).
+  std::string tooltip;
+  // Choice (picking instead of typing): text = label, text2 = current value (kMixed-style "—" = several values),
+  // items = the options. variant 0 combo box (popup list, search box when long), 1 segmented buttons (2-4 short
+  // options side by side), 2 toggle switch (items {"false","true"}). onChange runs after the value changed.
 
   // Computed each frame.
   float x = 0, y = 0, w = 0, h = 0, prefW = 0, prefH = 0;
@@ -111,6 +116,12 @@ std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> t
 std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw);
 // Collapsible component card (Inspector). badge: language tag such as "C#", "C++", "Lua"; empty = built-in.
 std::unique_ptr<Widget> MakeCard(std::string id, std::string title, std::string badge = {});
+// Choices: pick a value with the mouse or the arrow keys instead of typing it.
+std::unique_ptr<Widget> MakeCombo(std::string id, std::string label, std::vector<std::string> options, std::string value);
+std::unique_ptr<Widget> MakeSegmented(std::string id, std::string label, std::vector<std::string> options, std::string value);
+std::unique_ptr<Widget> MakeToggle(std::string id, std::string label, bool on);
+// Chooses combo or segmented by option count and length (short sets of up to 4 become segmented buttons).
+std::unique_ptr<Widget> MakeChoice(std::string id, std::string label, std::vector<std::string> options, std::string value);
 
 // ---- Context: layout, drawing, input, focus ----------------------------------------------
 class UIContext {
@@ -126,9 +137,10 @@ public:
   float ClickX() const { return clickX_; }               // UI units, of the click being handled
   bool OnTreeArrow(const Widget& row, float x) const;    // x is on a tree row's fold arrow (E-2)
   // Popup menu (E-4): drawn above everything at (x, y); a click on an item runs it, a click elsewhere or Esc closes.
-  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; };
-  void OpenMenu(float x, float y, std::vector<MenuItem> items);
-  void CloseMenu() { menu_.clear(); }
+  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; bool checked = false; };
+  // search: a filter box on top (type to narrow the list; Up/Down/Enter pick). Long combo lists use it.
+  void OpenMenu(float x, float y, std::vector<MenuItem> items, bool search = false);
+  void CloseMenu() { menu_.clear(); menuAll_.clear(); menuFilter_.clear(); }
   bool MenuOpen() const { return !menu_.empty(); }
   bool MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
   // Byte ranges of the numbers in "x, y, z" (spaces trimmed); empty when the text has another shape.
@@ -154,6 +166,10 @@ public:
   float Scale() const { return scale_; }            // UI units -> drawable pixels
   static const char* AccessibleRole(const Widget& w); // "button", "tab", "textbox", "listitem", ...
   static std::string AccessibleName(const Widget& w); // what a screen reader says
+  int NextTooltipMs() const; // ms until a pending tooltip appears (-1 = none): idle wake-up timer
+  void ChoiceSet(Widget& w, int index); // pick option index (runs onChange)
+  bool ChoiceSegment(const Widget& w, int k, float& x, float& w2) const; // segmented button k (UI units)
+  int ChoiceStyle(const Widget& w) const; // how it draws now: 0 combo, 1 segmented (names fit), 2 toggle
   int NextBlinkMs() const; // ms until the text caret toggles (-1 = no focused text field): idle wake-up timer
 
   void Layout(float width, float height);
@@ -214,6 +230,15 @@ private:
   int menuHot_ = -1, menuPressed_ = -1;
   bool MenuEvent(const InputEvent& e); // true: the open menu used it
   void DrawMenu();
+  void FilterMenu();
+  void OpenChoice(Widget& w);
+  void DrawChoice(Widget& w);
+  void DrawTooltip();
+  bool ChoiceKey(Widget& w, const InputEvent& e);
+  std::vector<MenuItem> menuAll_;  // unfiltered items of a search menu
+  std::string menuFilter_;
+  bool menuSearch_ = false;
+  long long hoverSince_ = 0;       // steady ms when hovered_ last changed
   float clickX_ = 0;
   Widget* sliderDrag_ = nullptr;
   void SliderSet(Widget& f, float mouseX);

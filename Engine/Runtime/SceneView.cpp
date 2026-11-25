@@ -980,16 +980,23 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
   for (size_t i = 0; i < events.size();) {
     InputEvent& e = events[i];
     bool used = false;
+    const bool mouseEvent = e.type == T::MouseDown || e.type == T::MouseUp || e.type == T::MouseMove || e.type == T::Wheel;
+    if (mouseEvent && ui_ && ui_->MenuOpen() && drag_ == Drag::None) { ++i; continue; } // an open list owns the mouse
     switch (e.type) {
       case T::MouseDown:
+        if (drag_ == Drag::None && inside(e) && e.button == 3) { // right-click on a stepping chip: its whole list
+          const Chip* hit = nullptr;
+          for (const Chip& c : chips_)
+            if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
+          if (hit && hit->name == "snap") { OpenChipMenu(*hit, model); used = true; break; }
+        }
         if (drag_ == Drag::None && inside(e) && e.button == 1) { // chips first
           const Chip* hit = nullptr;
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
           if (hit) {
-            if (hit->name == "view") debugView = (DebugView)(((int)debugView + 1) % 11);
+            if (hit->name == "view" || hit->name == "icons" || hit->name == "tool" || hit->name == "tier") OpenChipMenu(*hit, model);
             else if (hit->name == "wire") wireframe = !wireframe;
-            else if (hit->name == "icons") iconSize = (iconSize + 1) % 4; // off -> small -> medium -> large (E-3)
             else if (hit->name == "bounds") bounds = !bounds;
             else if (hit->name == "stats") statsPanel = !statsPanel;
             else if (hit->name == "gi") bakeRequested_ = true;
@@ -1473,6 +1480,37 @@ void SceneView::DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorMode
   }
 }
 
+// Chips with several values open their list under the chip (the current value marked) instead of stepping
+// through the values one click at a time.
+void SceneView::OpenChipMenu(const Chip& chip, EditorModel& model) {
+  if (!ui_) return;
+  std::vector<UIContext::MenuItem> items;
+  if (chip.name == "view") {
+    for (int k = 0; k < 11; ++k)
+      items.push_back({DebugViewName((DebugView)k), [this, k] { debugView = (DebugView)k; }, true, (int)debugView == k});
+  } else if (chip.name == "icons") {
+    static const char* names[] = {"Off", "S", "M", "L"};
+    for (int k = 0; k < 4; ++k) items.push_back({std::string("Icons: ") + names[k], [this, k] { iconSize = k; }, true, iconSize == k});
+  } else if (chip.name == "tool") {
+    static const struct { const char* id; const char* label; } tools[] = {
+        {"select", "Select (Q)"}, {"move", "Move (W)"}, {"rotate", "Rotate (E)"}, {"scale", "Scale (R)"},
+        {"measure", "Measure (M)"}, {"blockout", "Blockout (B)"}, {"view", "View (pan)"}};
+    EditorModel* m = &model;
+    for (auto& tl : tools)
+      items.push_back({tl.label, [m, id = std::string(tl.id)] { m->tool = id; LogInfo("tool: {}", id); }, true, model.tool == tl.id});
+  } else if (chip.name == "tier") {
+    for (int k = (int)QualityTier::Potato; k <= (int)QualityTier::Ultra; ++k)
+      items.push_back({TierLabel((QualityTier)k), [this, k] { quality = QualityPreset((QualityTier)k); }, true, (int)quality.tier == k});
+  } else if (chip.name == "snap") {
+    for (float step : kSnapSteps)
+      items.push_back({step > 0 ? std::format("Snap {} m", step) : std::string("Snap: Ctrl (끄기)"), [this, step] {
+                         snap.always = step > 0;
+                         if (step > 0) snap.move = step;
+                       }, true, step > 0 ? snap.always && snap.move == step : !snap.always});
+  }
+  if (!items.empty()) ui_->OpenMenu(chip.x, chip.y + chip.h + 3, std::move(items));
+}
+
 bool SceneView::ChipCenter(const std::string& name, float& x, float& y) const {
   for (const Chip& c : chips_)
     if (c.name == name) { x = c.x + c.w * 0.5f; y = c.y + c.h * 0.5f; return true; }
@@ -1548,6 +1586,7 @@ void SceneView::DrawGame(Widget& w, UIContext& ui, double playTime) {
 }
 
 void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
+  ui_ = &ui;
   const Theme& t = ui.Tokens();
   Batch2D& b = ui.Batch();
   if (!rt_.Valid()) { b.Rect(w.x, w.y, w.w, w.h, t.C("sunk")); return; }
@@ -1603,7 +1642,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
                            probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
                                : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0) + lightmapItems_),
                            lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_},
-                          {"", toolChip, false}, {"", spaceChip, false}, {"snap", snapChip, snap.always},
+                          {"tool", toolChip, false}, {"", spaceChip, false}, {"snap", snapChip, snap.always},
                           {several ? "align" : "", several ? "Align" : "", alignOpen_}};
   const std::string toolIcon = !model ? "" : model->tool == "move" ? "tool-move" : model->tool == "rotate" ? "tool-rotate"
                              : model->tool == "scale" ? "tool-scale" : model->tool == "measure" ? "tool-measure"
@@ -1612,7 +1651,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     if (chip.text.empty()) continue;
     const std::string icon = chip.text == toolChip ? toolIcon : chip.name == "snap" ? "tool-snap" : ""; // Assets/Icons
     const float iw = !icon.empty() && ui.HasIcon(icon) ? 17.f : 0.f;
-    float cw = ui.Measure(11, chip.text) + 18 + iw;
+    const bool dropdown = chip.name == "view" || chip.name == "icons" || chip.name == "tool" || chip.name == "tier";
+    float cw = ui.Measure(11, chip.text) + 18 + iw + (dropdown ? 10 : 0);
     const bool warn = chip.name == "budget" && BudgetOver();
     if (px + cw > w.x + w.w - 10 && px > w.x + 10) {
       px = w.x + 10;
@@ -1622,7 +1662,12 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
            t.C("line"));
     if (iw > 0) ui.Icon(icon, px + 7, rowY + 3.5f, 15);
     ui.Text(px + 9 + iw, rowY + 4, 11, chip.on || warn ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
-    if (!chip.name.empty() && chip.name != "tier") chips_.push_back({chip.name, px, rowY, cw, 22});
+    if (dropdown) { // a small down chevron: this chip opens a list
+      const float cx = px + cw - 10, cy = rowY + 11;
+      const float tri[4][2] = {{cx - 3, cy - 1.5f}, {cx + 3, cy - 1.5f}, {cx, cy + 2.5f}, {cx, cy + 2.5f}};
+      b.Quad(tri, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"));
+    }
+    if (!chip.name.empty()) chips_.push_back({chip.name, px, rowY, cw, 22});
     px += cw + 6;
   }
   if (model && model->tool == "blockout") { // greybox (3-3c): add blocks; handles on the selected block's faces

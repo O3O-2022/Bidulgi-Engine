@@ -435,6 +435,12 @@ jobs:
           if ($log -notmatch 'scene icon test: icons=1 drawn=1 frustum=1 range=1 chip=1 pick=1') { $errors += 'scene icon test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
+          # UI choices: bool switch, enum combo / segmented pick, undo, tooltip on hover
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_CHOICE_TEST = '1' } 14
+          if ($log -notmatch 'choice test: toggle=1 pick=1 undo=1 tooltip=1') { $errors += 'Inspector choice test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+
           # E-4a inspector and UI: field arithmetic, right-click menu (default / copy / paste), UI zoom saved
           Remove-Item -Recurse -Force "$PWD/ci-uiedit" -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force "$PWD/ci-uiedit" | Out-Null

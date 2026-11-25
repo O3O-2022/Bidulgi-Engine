@@ -119,6 +119,8 @@ struct bdg_engine {
   float uiZoom = 1;          // user's UI scale on top of the display's (E-4): 0.7 .. 2
   std::string prefsPath;     // .cache/EditorPrefs.json ("" = automated run: not saved)
   std::string sceneIconTestValues[6];
+  bool choiceTest = false;
+  std::string choiceTestValues[4];
   std::string treeTestValues[7];
   std::string newSceneTestValues[6];
   std::string importTestValues[8];
@@ -738,6 +740,54 @@ void InjectNewSceneTest(bdg_engine* e, int frame) {
 // Scripted check of E-3 (BDG_SCENEICON_TEST=1): the sample scene's camera, sun and lantern get their component
 // icons, the icon is really drawn (pixels change when icons are turned off), a selected camera draws its frustum
 // and a selected point light its range, the Icons chip steps the size, and a click on the sun's icon selects it.
+// Scripted check of the Inspector choices (BDG_CHOICE_TEST=1): the Sun's Light Shafts switch turns on with a click,
+// Type opens its list (or segmented buttons) and Spot is picked, one undo brings Directional back, and resting the
+// mouse on a field with a Tooltip schedules its hover help.
+void InjectChoiceTest(bdg_engine* e, int frame) {
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  auto* v = e->choiceTestValues;
+  const float s = e->editor->Scale();
+  auto clickAt = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * s, y * s});
+    e->window.InjectEvent({T::MouseDown, x * s, y * s, 1});
+    e->window.InjectEvent({T::MouseUp, x * s, y * s, 1});
+  };
+  auto light = [&]() -> bdg::Light* {
+    bdg::SceneObject* o = m->scene.Find("g2");
+    const bdg::Component* c = o ? o->Find("Light") : nullptr;
+    return c ? static_cast<bdg::Light*>(c->data) : nullptr;
+  };
+  auto box = [&](const char* id, float frac) { // a point inside a field's value box
+    bdg::Widget* w = e->editor->Find(id);
+    if (!w) { bdg::LogError("choice test: no {}", id); return false; }
+    clickAt(w->x + w->w * frac, w->y + w->h * 0.5f);
+    return true;
+  };
+  if (frame == 2) m->Select("g2");
+  if (frame == 4) box("f.Light.lightShafts", 0.66f); // the switch sits at the start of the value column
+  if (frame == 6) {
+    v[0] = light() && light()->lightShafts ? "1" : "0";
+    box("f.Light.type", 0.97f); // right end: the combo arrow, or the last segment (Spot)
+  }
+  if (frame == 7 && e->editor->MenuOpen()) {
+    float x, y, w, h;
+    if (e->editor->MenuItemRect(2, x, y, w, h)) clickAt(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == 9) {
+    v[1] = light() && light()->type == bdg::LightType::Spot ? "1" : std::format("0({})", light() ? (int)light()->type : -1);
+    m->bus.Undo();
+  }
+  if (frame == 11) {
+    v[2] = light() && light()->type == bdg::LightType::Directional && light()->lightShafts ? "1" : "0";
+    if (bdg::Widget* w = e->editor->Find("f.Light.castShadows")) { // has a Tooltip
+      e->window.InjectEvent({T::MouseMove, (w->x + 20) * s, (w->y + w->h * 0.5f) * s});
+    }
+  }
+  if (frame == 12) v[3] = e->editor->NextTooltipMs() >= 0 ? "1" : "0";
+}
+
 void InjectSceneIconTest(bdg_engine* e, int frame) {
   using T = bdg::InputEvent::Type;
   bdg::EditorModel* m = e->model.get();
@@ -800,7 +850,12 @@ void InjectSceneIconTest(bdg_engine* e, int frame) {
     v[3] = std::format("{}", sv->GizmoLines() >= 60 ? 1 : 0); // three circles of 32 segments
     if (v[3] != "1") bdg::LogError("scene icon test: range lines {}", sv->GizmoLines());
     float x, y;
-    if (sv->ChipCenter("icons", x, y)) clickAt(x, y);
+    if (sv->ChipCenter("icons", x, y)) clickAt(x, y); // opens the Icons list
+  }
+  if (frame == 9) { // pick "Icons: L" from the list
+    float x, y, w, h;
+    if (e->editor->MenuItemRect(3, x, y, w, h)) clickAt(x + w * 0.5f, y + h * 0.5f);
+    else bdg::LogError("scene icon test: the Icons list did not open");
   }
   if (frame == 10) {
     v[4] = std::format("{}", sv->iconSize == 3 ? 1 : 0);
@@ -2673,13 +2728,25 @@ void InjectQualityTest(bdg_engine* e, int frame, float scale) {
   if (frame == 23) {
     int b = lum(grab(), beside);
     v[5] = b > besideMedium + 6 ? "1" : std::format("0({}->{})", besideMedium, b);
-    if (bdg::Widget* badge = e->editor->Find("tool.quality")) { // click: high -> ultra
+    if (bdg::Widget* badge = e->editor->Find("tool.quality")) { // click: the tier list opens
       using T = bdg::InputEvent::Type;
       float x = (badge->x + badge->w * 0.5f) * scale, y = (badge->y + badge->h * 0.5f) * scale;
       e->window.InjectEvent({T::MouseMove, x, y});
       e->window.InjectEvent({T::MouseDown, x, y, 1});
       e->window.InjectEvent({T::MouseUp, x, y, 1});
     }
+  }
+  if (frame == 24) { // pick 초고사양 (the last item) from the list
+    using T = bdg::InputEvent::Type;
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    if (!items.empty() && e->editor->MenuItemRect(items.size() - 1, x, y, w, h)) {
+      x = (x + w * 0.5f) * scale;
+      y = (y + h * 0.5f) * scale;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    } else bdg::LogError("quality test: the tier list did not open");
   }
   if (frame == 25) {
     bdg::Widget* badge = e->editor->Find("tool.quality");
@@ -3594,6 +3661,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->previewTestOn = std::getenv("BDG_PREVIEW_TEST") != nullptr;
   e->treeTest = std::getenv("BDG_TREE_TEST") != nullptr;
   e->sceneIconTest = std::getenv("BDG_SCENEICON_TEST") != nullptr;
+  e->choiceTest = std::getenv("BDG_CHOICE_TEST") != nullptr;
   e->uiTest = std::getenv("BDG_UIEDIT_TEST") != nullptr;
   e->inspectTest = std::getenv("BDG_INSPECT2_TEST") != nullptr;
   e->fbxTest = std::getenv("BDG_FBX_TEST") != nullptr;
@@ -3695,11 +3763,19 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
           bdg::LogWarn("quality: {}", err);
         if (bdg::Widget* badge = e->editor->Find("tool.quality")) {
           badge->text = bdg::TierLabel(tier);
-          badge->onClick = [e](bdg::Widget& w) {
-            bdg::QualityTier next = e->projectQuality.Next(e->sceneView->quality.tier);
-            e->sceneView->quality = bdg::QualityPreset(next);
-            w.text = bdg::TierLabel(next);
-            bdg::LogInfo("quality: {}", bdg::TierKey(next));
+          badge->tooltip = "씬 뷰 품질 단계 (프로젝트에서 허용한 범위)";
+          badge->onClick = [e](bdg::Widget& w) { // a list of the allowed tiers, the current one marked
+            std::vector<bdg::UIContext::MenuItem> items;
+            for (int k = (int)e->projectQuality.min; k <= (int)e->projectQuality.max; ++k) {
+              const auto tier = (bdg::QualityTier)k;
+              bdg::Widget* wp = &w;
+              items.push_back({bdg::TierLabel(tier), [e, wp, tier] {
+                                 e->sceneView->quality = bdg::QualityPreset(tier);
+                                 wp->text = bdg::TierLabel(tier);
+                                 bdg::LogInfo("quality: {}", bdg::TierKey(tier));
+                               }, true, tier == e->sceneView->quality.tier});
+            }
+            e->editor->OpenMenu(w.x, w.y + w.h + 2, std::move(items));
           };
         }
       }
@@ -3845,6 +3921,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     e->model = std::make_unique<bdg::EditorModel>();
     e->model->Attach(*e->editor, *h, *i, e->editor->Find("history"));
     bdg::EditorModel* model = e->model.get();
+    if (const char* sel = std::getenv("BDG_SELECT")) model->Select(sel); // screenshots of one object's Inspector
     SetupShortcuts(e);
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { model->Autosave(); }); // keep the work
     // Scene file: BDG_SCENE_FILE, else Scenes/Main.scene in the working folder; the sample scene when there is none.
@@ -3979,6 +4056,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         wait = blink;
         caretDue = now + std::chrono::milliseconds(blink);
       }
+      if (int tip = active.NextTooltipMs(); tip >= 0 && tip + 1 < wait) { // hover help is due: draw once more then
+        wait = tip + 1;
+        caretDue = now + std::chrono::milliseconds(tip + 1);
+      }
       if (idleTestSec > 0) wait = std::min(wait, msd(idleEnd - now).count());
       waitMs = (int32_t)std::clamp(std::ceil(wait), 1.0, 500.0);
       if (idleTestSec > 0 && !idleMeasuring) { // first sleep: start measuring, schedule a wake-up halfway
@@ -4061,6 +4142,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     if (e->previewTestOn && !e->showGallery) InjectPreviewTest(e, frames);
     if (e->treeTest && !e->showGallery) InjectTreeTest(e, frames);
     if (e->sceneIconTest && !e->showGallery) InjectSceneIconTest(e, frames);
+    if (e->choiceTest && !e->showGallery) InjectChoiceTest(e, frames);
     if (e->uiTest && !e->showGallery) InjectUiEditTest(e, frames);
     if (e->inspectTest && !e->showGallery) InjectInspect2Test(e, frames);
     if (e->fbxTest && !e->showGallery) InjectFbxTest(e, frames);
@@ -4479,6 +4561,10 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       if (e->uiTest) {
         auto* v = e->uiTestValues;
         bdg::LogInfo("ui edit test: expr={} vector={} menu={} copy={} paste+default={} close={} zoom={}", v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+      }
+      if (e->choiceTest) {
+        auto* v = e->choiceTestValues;
+        bdg::LogInfo("choice test: toggle={} pick={} undo={} tooltip={}", v[0], v[1], v[2], v[3]);
       }
       if (e->sceneIconTest) {
         auto* v = e->sceneIconTestValues;

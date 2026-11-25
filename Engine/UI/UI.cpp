@@ -17,6 +17,14 @@ namespace {
 Color WithAlphaUI(Color c, float a) { c.a = a; return c; }
 }
 constexpr long long kCaretBlinkMs = 530; // text caret on/off period
+constexpr long long kTooltipDelayMs = 550; // mouse rest before hover help shows
+long long SteadyMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+int ChoiceIndex(const Widget& w) { // -1: the value is not one of the options (several values, unknown name)
+  for (size_t i = 0; i < w.items.size(); ++i) if (w.items[i] == w.text2) return (int)i;
+  return -1;
+}
 // ---- Builders ------------------------------------------------------------------------------
 namespace {
 std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text = {}) {
@@ -25,7 +33,7 @@ std::unique_ptr<Widget> Make(WidgetKind k, std::string id = {}, std::string text
   return w;
 }
 const char* KindName(WidgetKind k) {
-  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom", "Card", "Dock"};
+  static const char* names[] = {"Box", "Label", "Panel", "Tabs", "Button", "Field", "ListRow", "Badge", "Node", "Cover", "Custom", "Card", "Dock", "Choice"};
   return names[(int)k];
 }
 Color Alpha(Color c, float a) { c.a = a; return c; }
@@ -72,6 +80,31 @@ std::unique_ptr<Widget> MakePanelTabs(std::string id, std::vector<std::string> t
 }
 std::unique_ptr<Widget> MakeCard(std::string id, std::string title, std::string badge) {
   auto w = Make(WidgetKind::Card, std::move(id), std::move(title)); w->text2 = std::move(badge); w->gap = 1; return w;
+}
+std::unique_ptr<Widget> MakeCombo(std::string id, std::string label, std::vector<std::string> options, std::string value) {
+  auto w = Make(WidgetKind::Choice, std::move(id), std::move(label));
+  w->items = std::move(options);
+  w->text2 = std::move(value);
+  w->selectedIndex = ChoiceIndex(*w);
+  w->focusable = true;
+  return w;
+}
+std::unique_ptr<Widget> MakeSegmented(std::string id, std::string label, std::vector<std::string> options, std::string value) {
+  auto w = MakeCombo(std::move(id), std::move(label), std::move(options), std::move(value));
+  w->variant = 1;
+  return w;
+}
+std::unique_ptr<Widget> MakeToggle(std::string id, std::string label, bool on) {
+  auto w = MakeCombo(std::move(id), std::move(label), {"false", "true"}, on ? "true" : "false");
+  w->variant = 2;
+  return w;
+}
+std::unique_ptr<Widget> MakeChoice(std::string id, std::string label, std::vector<std::string> options, std::string value) {
+  size_t chars = 0;
+  for (auto& o : options) chars += o.size();
+  const bool segmented = options.size() >= 2 && options.size() <= 4 && chars <= 28; // fits the value column
+  return segmented ? MakeSegmented(std::move(id), std::move(label), std::move(options), std::move(value))
+                   : MakeCombo(std::move(id), std::move(label), std::move(options), std::move(value));
 }
 std::unique_ptr<Widget> MakeCustom(std::string id, std::function<void(Widget&, UIContext&)> draw) {
   auto w = Make(WidgetKind::Custom, std::move(id)); w->onDraw = std::move(draw); return w;
@@ -128,6 +161,142 @@ int UIContext::NextBlinkMs() const {
   return (int)(kCaretBlinkMs - ms % kCaretBlinkMs);
 }
 
+int UIContext::NextTooltipMs() const {
+  if (!hovered_ || hovered_->tooltip.empty() || !menu_.empty()) return -1;
+  const long long left = kTooltipDelayMs - (SteadyMs() - hoverSince_);
+  return left > 0 ? (int)left : -1;
+}
+
+// ---- Choices: combo box, segmented buttons, toggle switch ---------------------------------
+void UIContext::ChoiceSet(Widget& w, int index) {
+  if (index < 0 || index >= (int)w.items.size()) return;
+  const bool changed = w.text2 != w.items[(size_t)index];
+  w.text2 = w.items[(size_t)index];
+  w.selectedIndex = index;
+  if (changed && w.onChange) w.onChange(w);
+}
+
+int UIContext::ChoiceStyle(const Widget& w) const { // segmented buttons whose names do not fit act as a combo box
+  if (w.variant != 1 || w.items.empty()) return w.variant;
+  float ix, iy, iw, ih;
+  FieldInputBox(w, ix, iy, iw, ih);
+  const float sw = iw / (float)w.items.size(), fs = theme_.FontSize("label", 12);
+  for (const std::string& o : w.items) if (Measure(fs, o) + 10 > sw) return 0;
+  return 1;
+}
+
+bool UIContext::ChoiceSegment(const Widget& w, int k, float& x, float& w2) const {
+  if (w.kind != WidgetKind::Choice || w.variant != 1 || k < 0 || k >= (int)w.items.size()) return false;
+  float ix, iy, iw, ih;
+  FieldInputBox(w, ix, iy, iw, ih);
+  w2 = iw / (float)w.items.size();
+  x = ix + w2 * (float)k;
+  return true;
+}
+
+void UIContext::OpenChoice(Widget& w) {
+  float ix, iy, iw, ih;
+  FieldInputBox(w, ix, iy, iw, ih);
+  std::vector<MenuItem> items;
+  Widget* wp = &w;
+  for (size_t i = 0; i < w.items.size(); ++i)
+    items.push_back({w.items[i], [this, wp, i] { ChoiceSet(*wp, (int)i); }, true, w.items[i] == w.text2});
+  OpenMenu(ix, iy + ih + 2, std::move(items), w.items.size() > 8);
+  menuW_ = std::max(menuW_, iw); // at least as wide as the box it drops from
+  if (root_) menuX_ = std::min(menuX_, root_->w - menuW_ - 2);
+}
+
+bool UIContext::ChoiceKey(Widget& w, const InputEvent& e) {
+  const int n = (int)w.items.size(), cur = ChoiceIndex(w);
+  if (!n) return false;
+  if (e.key == Key::Left || e.key == Key::Up) { ChoiceSet(w, cur <= 0 ? (w.variant == 2 ? 0 : n - 1) : cur - 1); return true; }
+  if (e.key == Key::Right || e.key == Key::Down) { ChoiceSet(w, cur < 0 ? 0 : w.variant == 2 ? 1 : (cur + 1) % n); return true; }
+  if (e.key == Key::Enter || e.key == Key::Space) { Activate(w, -1, -1); return true; }
+  return false;
+}
+
+void UIContext::DrawChoice(Widget& w) {
+  const Theme& t = theme_;
+  Batch2D& b = batch_;
+  const float fs = t.FontSize("label", 12), rsm = t.N("radius-sm", 3), s6 = t.N("space-6", 12);
+  float ix, iy, iw, ih;
+  FieldInputBox(w, ix, iy, iw, ih);
+  const bool focus = focused_ == &w;
+  const int cur = ChoiceIndex(w);
+  if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
+  Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked ? t.C("accent") : w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
+  const float ty = iy + (ih - fs) * 0.5f - 1;
+  const int style = ChoiceStyle(w);
+  if (style == 2) { // toggle switch: pill track + knob, then the state in words
+    const float tw = 30, th = 16, tx = ix, tyy = iy + (ih - th) * 0.5f;
+    const bool on = cur == 1, mixed = cur < 0;
+    b.Rect(tx, tyy, tw, th, on ? t.C("accent") : t.C("sunk"), th * 0.5f, 1, on || focus ? t.C("accent") : t.C("line-strong"));
+    const float knob = th - 4, kx = mixed ? tx + (tw - knob) * 0.5f : on ? tx + tw - knob - 2 : tx + 2;
+    b.Rect(kx, tyy + 2, knob, knob, on ? t.C("on-accent") : t.C("fg-dim"), knob * 0.5f);
+    Text(tx + tw + 8, ty, fs, on ? t.C("fg") : t.C("fg-faint"), mixed ? "—" : on ? "켜짐" : "꺼짐");
+    return;
+  }
+  if (style == 1) { // segmented: one button per option, the current one filled
+    b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
+    for (int k = 0; k < (int)w.items.size(); ++k) {
+      float sx, sw;
+      ChoiceSegment(w, k, sx, sw);
+      const bool sel = k == cur;
+      if (sel) b.Rect(sx + 2, iy + 2, sw - 4, ih - 4, t.C("accent-soft"), rsm, 1, t.C("accent"));
+      else if (k > 0 && k - 1 != cur) b.Rect(sx, iy + 5, 1, ih - 10, t.C("line"));
+      const std::string& label = w.items[(size_t)k];
+      b.PushClip(sx + 2, iy, sw - 4, ih);
+      Text(sx + std::max(4.f, (sw - Measure(fs, label)) * 0.5f), ty, fs, sel ? t.C("fg") : t.C("fg-dim"), label);
+      b.PopClip();
+    }
+    return;
+  }
+  // combo box: value + a down chevron; the list opens below on click / Enter / Space
+  b.Rect(ix, iy, iw, ih, w.hovered ? t.C("raise") : t.C("sunk"), rsm, 1, focus ? t.C("accent") : w.hovered ? t.C("fg-faint") : t.C("line"));
+  b.PushClip(ix + 1, iy, iw - 22, ih);
+  Text(ix + t.N("space-3", 6), ty, fs, cur < 0 ? t.C("fg-faint") : t.C("fg"), w.text2.empty() ? "—" : w.text2);
+  b.PopClip();
+  const float cx = ix + iw - 13, cy = iy + ih * 0.5f;
+  const float tri[4][2] = {{cx - 4, cy - 2}, {cx + 4, cy - 2}, {cx, cy + 3}, {cx, cy + 3}};
+  b.Quad(tri, w.hovered || focus ? t.C("fg") : t.C("fg-dim"));
+}
+
+void UIContext::DrawTooltip() {
+  if (!hovered_ || hovered_->tooltip.empty() || !menu_.empty() || dragging_ || pressed_) return;
+  if (SteadyMs() - hoverSince_ < kTooltipDelayMs) return;
+  const Theme& t = theme_;
+  Batch2D& b = batch_;
+  const float fs = t.FontSize("caption", 11), pad = 7, maxW = 320;
+  std::vector<std::string> lines; // word wrap at maxW, '\n' forces a break
+  std::string line, word;
+  auto flushWord = [&] {
+    if (word.empty()) return;
+    const std::string tryLine = line.empty() ? word : line + " " + word;
+    if (!line.empty() && Measure(fs, tryLine) > maxW - pad * 2) { lines.push_back(line); line = word; }
+    else line = tryLine;
+    word.clear();
+  };
+  for (char c : hovered_->tooltip) {
+    if (c == ' ') flushWord();
+    else if (c == '\n') { flushWord(); lines.push_back(line); line.clear(); }
+    else word += c;
+  }
+  flushWord();
+  if (!line.empty()) lines.push_back(line);
+  float w = 0;
+  for (auto& l : lines) w = std::max(w, Measure(fs, l));
+  w += pad * 2;
+  const float lh = fs * 1.45f, h = lines.size() * lh + pad * 2 - (lh - fs);
+  float x = hovered_->x + 12, y = hovered_->y + hovered_->h + 4;
+  if (root_) {
+    x = std::min(x, root_->w - w - 4);
+    if (y + h > root_->h - 4) y = hovered_->y - h - 4;
+  }
+  b.Shadow(x, y + 3, w, h, {0, 0, 0, 0.4f}, 5, 10);
+  b.Rect(x, y, w, h, t.C("raise"), 5, 1, t.C("line-strong"));
+  for (size_t i = 0; i < lines.size(); ++i) Text(x + pad, y + pad + i * lh - 1, fs, t.C("fg"), lines[i]);
+}
+
 Widget* UIContext::Find(const std::string& id) {
   std::vector<Widget*> stack{root_.get()};
   while (!stack.empty()) {
@@ -164,6 +333,7 @@ void UIContext::Measure(Widget& w) {
     case WidgetKind::Dock: w.prefW = 0; w.prefH = 0; break;
     case WidgetKind::Button:
       w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2 + (w.variant == 1 ? 8 + s3 : 0); w.prefH = 24; break;
+    case WidgetKind::Choice:
     case WidgetKind::Field:   w.prefW = 240; w.prefH = std::max(26.f, t.N("size-row", 22) + 4); break;
     case WidgetKind::Badge:
       if (w.variant >= 10) w.prefW = MeasureSpaced(10, w.text, 0.04f) + s3 * 2 + 2; // origin badge (.bdg-src)
@@ -416,6 +586,7 @@ void UIContext::DrawWidget(Widget& w) {
       Text(tx, w.y + (w.h - fs) * 0.5f - 1, fs, w.primary ? t.C("on-accent") : t.C("fg"), w.text);
       break;
     }
+    case WidgetKind::Choice: DrawChoice(w); break;
     case WidgetKind::Field: {
       float fs = t.FontSize("label", 12), ix, iy, iw, ih;
       FieldInputBox(w, ix, iy, iw, ih);
@@ -695,6 +866,7 @@ void UIContext::Draw() {
   DrawWidget(*root_);
   for (Widget* d : docks_) DrawDockOverlay(*d); // drag previews above everything
   DrawDragOverlay();
+  DrawTooltip();
   DrawMenu();
 }
 
@@ -703,13 +875,17 @@ namespace {
 constexpr float kMenuRow = 26, kMenuPad = 4;
 }
 
-void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items) {
+void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items, bool search) {
+  menuSearch_ = search;
+  menuFilter_.clear();
+  menuAll_ = search ? items : std::vector<MenuItem>{};
   menu_ = std::move(items);
   menuHot_ = menuPressed_ = -1;
+  for (size_t i = 0; i < menu_.size(); ++i) if (menu_[i].checked) menuHot_ = (int)i; // keyboard starts on the current value
   const float fs = theme_.FontSize("control", 12.5f);
   menuW_ = 160;
   for (const MenuItem& it : menu_) menuW_ = std::max(menuW_, Measure(fs, it.label) + 32);
-  const float h = menu_.size() * kMenuRow + kMenuPad * 2;
+  const float h = (menu_.size() + (search ? 1 : 0)) * kMenuRow + kMenuPad * 2;
   menuX_ = root_ ? std::min(x, root_->w - menuW_ - 2) : x; // keep it on screen
   menuY_ = root_ ? std::min(y, root_->h - h - 2) : y;
 }
@@ -717,7 +893,7 @@ void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items) {
 bool UIContext::MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const {
   if (i >= menu_.size()) return false;
   x = menuX_;
-  y = menuY_ + kMenuPad + i * kMenuRow;
+  y = menuY_ + kMenuPad + (i + (menuSearch_ ? 1 : 0)) * kMenuRow;
   w = menuW_;
   h = kMenuRow;
   return true;
@@ -725,49 +901,89 @@ bool UIContext::MenuItemRect(size_t i, float& x, float& y, float& w, float& h) c
 
 bool UIContext::MenuEvent(const InputEvent& e) {
   if (menu_.empty()) return false;
+  const float top = menuY_ + kMenuPad + (menuSearch_ ? kMenuRow : 0);
   auto itemAt = [&](float x, float y) {
-    if (x < menuX_ || x >= menuX_ + menuW_ || y < menuY_ + kMenuPad) return -1;
-    const int i = (int)((y - menuY_ - kMenuPad) / kMenuRow);
+    if (x < menuX_ || x >= menuX_ + menuW_ || y < top) return -1;
+    const int i = (int)((y - top) / kMenuRow);
     return i < (int)menu_.size() ? i : -1;
+  };
+  auto insideSearch = [&](float x, float y) { return menuSearch_ && x >= menuX_ && x < menuX_ + menuW_ && y >= menuY_ && y < top; };
+  auto run = [&](int i) {
+    if (i < 0 || i >= (int)menu_.size() || !menu_[(size_t)i].enabled) return;
+    std::function<void()> fn = menu_[(size_t)i].run; // the item may open another menu
+    CloseMenu();
+    if (fn) fn();
   };
   switch (e.type) {
     case InputEvent::Type::MouseMove: menuHot_ = itemAt(e.x, e.y); return true;
     case InputEvent::Type::MouseDown:
       menuPressed_ = itemAt(e.x, e.y);
-      if (menuPressed_ < 0) menu_.clear(); // outside: close (the click does nothing else)
+      if (menuPressed_ < 0 && !insideSearch(e.x, e.y)) CloseMenu(); // outside: close (the click does nothing else)
       return true;
     case InputEvent::Type::MouseUp: {
       const int i = itemAt(e.x, e.y);
-      if (i >= 0 && i == menuPressed_ && menu_[(size_t)i].enabled) {
-        std::function<void()> run = menu_[(size_t)i].run; // the item may open another menu
-        menu_.clear();
-        if (run) run();
-      }
+      if (i >= 0 && i == menuPressed_) run(i);
       menuPressed_ = -1;
       return true;
     }
-    case InputEvent::Type::KeyDown:
-      if (e.key == Key::Escape) { menu_.clear(); return true; }
-      return false;
+    case InputEvent::Type::KeyDown: {
+      const int n = (int)menu_.size();
+      if (e.key == Key::Escape) { CloseMenu(); return true; }
+      if (e.key == Key::Down && n) { menuHot_ = (menuHot_ + 1) % n; return true; }
+      if (e.key == Key::Up && n) { menuHot_ = menuHot_ <= 0 ? n - 1 : menuHot_ - 1; return true; }
+      if (e.key == Key::Enter || (e.key == Key::Space && !menuSearch_)) { run(menuHot_ >= 0 ? menuHot_ : (n == 1 ? 0 : -1)); return true; }
+      if (menuSearch_ && e.key == Key::Backspace) {
+        while (!menuFilter_.empty() && ((unsigned char)menuFilter_.back() & 0xC0) == 0x80) menuFilter_.pop_back();
+        if (!menuFilter_.empty()) menuFilter_.pop_back();
+        FilterMenu();
+        return true;
+      }
+      return menuSearch_; // a search menu keeps the keyboard (letters arrive as Text)
+    }
+    case InputEvent::Type::Text:
+      if (!menuSearch_) return false;
+      menuFilter_ += e.text;
+      FilterMenu();
+      return true;
+    case InputEvent::Type::TextEditing: return menuSearch_;
     case InputEvent::Type::Wheel: return true;
     default: return false;
   }
+}
+
+void UIContext::FilterMenu() {
+  auto lower = [](std::string v) { for (char& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+  const std::string f = lower(menuFilter_);
+  menu_.clear();
+  for (const MenuItem& it : menuAll_)
+    if (f.empty() || lower(it.label).find(f) != std::string::npos) menu_.push_back(it);
+  menuHot_ = menu_.empty() ? -1 : 0;
+  if (menu_.empty()) menu_.push_back({"(맞는 항목 없음)", nullptr, false}); // keeps the popup open while typing
 }
 
 void UIContext::DrawMenu() {
   if (menu_.empty()) return;
   const Theme& t = theme_;
   Batch2D& b = batch_;
-  const float h = menu_.size() * kMenuRow + kMenuPad * 2;
+  const float h = (menu_.size() + (menuSearch_ ? 1 : 0)) * kMenuRow + kMenuPad * 2;
   const Theme::Shadow sh = t.S("shadow-pop");
   if (sh.color.a > 0) b.Shadow(menuX_ + sh.x, menuY_ + sh.y, menuW_, h, sh.color, 6, sh.blur);
   else b.Shadow(menuX_, menuY_ + 4, menuW_, h, {0, 0, 0, 0.45f}, 6, 14);
   b.Rect(menuX_, menuY_, menuW_, h, t.C("raise"), 6, 1, t.C("line-strong"));
   const float fs = t.FontSize("control", 12.5f);
+  if (menuSearch_) { // filter box: what was typed, or a hint
+    const float y = menuY_ + kMenuPad;
+    b.Rect(menuX_ + 4, y + 2, menuW_ - 8, kMenuRow - 4, t.C("sunk"), 4, 1, t.C("accent"));
+    const bool empty = menuFilter_.empty();
+    const float tw = Text(menuX_ + 12, y + (kMenuRow - fs) * 0.5f - 1, fs, empty ? t.C("fg-faint") : t.C("fg"), empty ? "검색..." : menuFilter_);
+    if (!empty && (SteadyMs() / kCaretBlinkMs) % 2 == 0) b.Rect(menuX_ + 12 + tw + 1, y + 6, 1, kMenuRow - 12, t.C("fg"));
+  }
   for (size_t i = 0; i < menu_.size(); ++i) {
-    const float y = menuY_ + kMenuPad + i * kMenuRow;
+    float x, y, w, rh;
+    MenuItemRect(i, x, y, w, rh);
     if ((int)i == menuHot_ && menu_[i].enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
-    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, menu_[i].enabled ? t.C("fg") : t.C("fg-faint"), menu_[i].label);
+    if (menu_[i].checked) b.Rect(menuX_ + 6, y + 7, 3, kMenuRow - 14, t.C("accent"), 1.5f); // the current value
+    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !menu_[i].enabled ? t.C("fg-faint") : menu_[i].checked ? t.C("accent") : t.C("fg"), menu_[i].label);
   }
 }
 
@@ -804,6 +1020,22 @@ void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
 void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
   (void)mouseY;
   if (w.kind == WidgetKind::Card) { w.collapsed = !w.collapsed; return; }
+  if (w.kind == WidgetKind::Choice) {
+    const int cur = ChoiceIndex(w), n = (int)w.items.size();
+    const int style = ChoiceStyle(w);
+    if (style == 2) { ChoiceSet(w, cur == 1 ? 0 : 1); return; } // toggle (a mixed value turns on)
+    if (style == 1 && n) {                                      // segmented: the one clicked, or the next one
+      int pick = (cur + 1) % n;
+      for (int k = 0; mouseX >= 0 && k < n; ++k) {
+        float sx, sw;
+        if (ChoiceSegment(w, k, sx, sw) && mouseX >= sx && mouseX < sx + sw) pick = k;
+      }
+      ChoiceSet(w, pick);
+      return;
+    }
+    OpenChoice(w);
+    return;
+  }
   if ((w.kind == WidgetKind::Tabs || w.kind == WidgetKind::Panel) && mouseX >= 0 && !w.itemX.empty()) {
     for (size_t i = 0; i < w.itemX.size(); ++i)
       if (mouseX < w.itemX[i]) { w.selectedIndex = (int)i; break; }
@@ -849,6 +1081,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         }
         Widget* hit = HitTest(*root_, e.x, e.y);
         if (hovered_ && hovered_ != hit) hovered_->hovered = false;
+        if (hovered_ != hit) hoverSince_ = SteadyMs();
         hovered_ = hit;
         if (hit) hit->hovered = true;
         break;
@@ -927,6 +1160,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
       }
       case InputEvent::Type::KeyDown: {
         if (focused_ && focused_->kind == WidgetKind::Field && FieldKey(*focused_, e)) break;
+        if (focused_ && focused_->kind == WidgetKind::Choice && ChoiceKey(*focused_, e)) break;
         { // global shortcuts; while typing in a field only Ctrl/Alt combos and F-keys reach them (W stays a letter)
           bool typing = focused_ && focused_->kind == WidgetKind::Field;
           bool chord = e.ctrl || e.alt || (e.key >= Key::F1 && e.key <= Key::F12);
@@ -1005,6 +1239,7 @@ const char* UIContext::AccessibleRole(const Widget& w) {
     case WidgetKind::Button: return "button";
     case WidgetKind::Tabs: return "tab";
     case WidgetKind::Field: return "textbox";
+    case WidgetKind::Choice: return w.variant == 2 ? "checkbox" : w.variant == 1 ? "radiogroup" : "combobox";
     case WidgetKind::ListRow: return "listitem";
     case WidgetKind::Node: return "group";
     case WidgetKind::Card: return "group";
@@ -1016,6 +1251,7 @@ std::string UIContext::AccessibleName(const Widget& w) {
   switch (w.kind) {
     case WidgetKind::Tabs: return w.items.empty() ? w.id : w.items[std::clamp(w.selectedIndex, 0, (int)w.items.size() - 1)] + " tab";
     case WidgetKind::Field: return w.text;  // label; the value is reported separately
+    case WidgetKind::Choice: return w.text + ", " + (w.variant == 2 ? (w.text2 == "true" ? "on" : "off") : w.text2);
     case WidgetKind::ListRow: return w.text2.empty() ? w.text : w.text + ", " + w.text2;
     case WidgetKind::Node: return w.text + (w.text2.empty() ? "" : " " + w.text2) + " node";
     default: {

@@ -197,6 +197,8 @@ private:
   void DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorModel& model);
   struct Chip { std::string name; float x, y, w, h; };
   std::vector<Chip> chips_; // clickable chips of the last Draw
+  UIContext* ui_ = nullptr;  // set by Draw: chips open their option lists as popup menus
+  void OpenChipMenu(const Chip& chip, EditorModel& model);
   std::string bookmarkNote_; // "2 Lights" after a jump, shown for a moment
   std::vector<ReflectionProbe3D> probes_; // from the scene (GI Tier 0)
   uint64_t probeKey_ = 0;

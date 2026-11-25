@@ -214,7 +214,8 @@ if(BDG_DOTNET)
     COMMAND ${BDG_DOTNET} build ${CMAKE_SOURCE_DIR}/Scripting/Bidulgi.Scripting/Bidulgi.Scripting.csproj -c $<CONFIG> --nologo -v:q
             -o ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed -p:BdgBindings=${BDG_BINDINGS}
     COMMAND ${CMAKE_COMMAND} -E touch ${BDG_MANAGED_DLL}
-    DEPENDS ${BDG_BINDINGS} ${BDG_SCRIPTING_SOURCES}
+    # the stamp (a real OUTPUT) orders this after bdg in a clean build; Visual Studio does not order rules by BYPRODUCTS
+    DEPENDS ${CMAKE_BINARY_DIR}/Generated/Bindings.stamp ${BDG_BINDINGS} ${BDG_SCRIPTING_SOURCES}
     COMMENT "Bidulgi.Scripting.dll (dotnet build)")
   # Sample Behaviours (4-2): a game-style script assembly built against the one above (also the lifecycle tests)
   set(BDG_SAMPLES_DLL ${CMAKE_BINARY_DIR}/$<CONFIG>/Managed/Bidulgi.Samples.dll)

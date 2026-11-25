@@ -749,7 +749,21 @@ void EditorModel::Rebuild() {
           if (!ShowIfPasses(c, f.meta.showIf)) continue;                                // hidden until its condition holds
           std::string path = t.name + "." + f.name;
           FieldType type = f.value.type;
-          auto& field = card.Add(MakeField("f." + path, Pretty(f.name), DisplayFor(targets, path, type)));
+          // Pick instead of type: an enum becomes segmented buttons (few short names) or a combo box, a bool a switch
+          const std::string shown = DisplayFor(targets, path, type);
+          std::unique_ptr<Widget> made;
+          if (type == FieldType::Enum && f.value.enumType) {
+            std::vector<std::string> names;
+            for (auto& [n, v] : f.value.enumType->values) names.push_back(n);
+            made = MakeChoice("f." + path, Pretty(f.name), std::move(names), shown);
+          } else if (type == FieldType::Bool) {
+            made = MakeToggle("f." + path, Pretty(f.name), shown == "true");
+            if (shown != "true" && shown != "false") made->text2 = shown; // several objects disagree: "—"
+          } else {
+            made = MakeField("f." + path, Pretty(f.name), shown);
+          }
+          auto& field = card.Add(std::move(made));
+          field.tooltip = f.meta.tooltip;
           bool numeric = type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double;
           // E-4b: drag the label to change a number; vectors get one box per axis (drag the X / Y / Z tag)
           field.scrub = (numeric || (IsVectorLike(type) && type != FieldType::Color)) && !multi;
