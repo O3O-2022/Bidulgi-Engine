@@ -619,7 +619,8 @@ int CmdBuild(Ctx& c) {
   o.config = c.Opt("config");
   o.playerExe = c.Opt("player");
   if (c.Has("zip")) o.zip = 1;
-  for (std::string_view rest = c.Opt("scripts"); !rest.empty();) {
+  const std::string scripts = c.Opt("scripts"); // kept alive: the view below reads it (a temporary dangled)
+  for (std::string_view rest = scripts; !rest.empty();) {
     const size_t semi = rest.find(';');
     if (semi != 0) o.scriptDlls.emplace_back(rest.substr(0, semi));
     rest = semi == std::string_view::npos ? std::string_view() : rest.substr(semi + 1);

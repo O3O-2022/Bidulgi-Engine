@@ -197,6 +197,25 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
   if (op == "spawn") { // a copy of `source` (with its children) or a new empty object, as one "add" command
     const std::string source = Str(r, "source"), parent = Str(r, "parent"), name = Str(r, "name");
     if (!parent.empty() && !scene.Find(parent)) return Fail(std::format("spawn: no parent object \"{}\"", parent));
+    if (source.empty() && (name.ends_with(".prefab") || name.starts_with("guid:"))) { // Spawn("Prefabs/Enemy.prefab"): an instance (6-1)
+      const std::string id = scene.NewId();
+      Command c;
+      c.name = "addprefab";
+      c.args = std::format(R"({{"prefab":{},"id":{},"parent":{}}})", Q(name), Q(id), Q(parent));
+      c.source = "script";
+      std::string err;
+      if (!bus.Execute(c, &err)) return Fail("spawn: " + err);
+      for (const char* f : {"position", "rotation", "scale"})
+        if (yyjson_val* v = yyjson_obj_get(r, f); yyjson_is_arr(v)) {
+          Command s;
+          s.name = "set";
+          s.target = id;
+          s.source = "script";
+          s.args = std::format(R"({{"path":"Transform.{}","value":{}}})", f, Json(v));
+          bus.Execute(s, nullptr);
+        }
+      return Ok(Q(id));
+    }
     std::string snap;
     if (!source.empty()) {
       if (!scene.Find(source)) return Fail(std::format("spawn: no object \"{}\" to copy", source));

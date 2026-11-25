@@ -6,6 +6,7 @@
 //   {"cmd":"set","target":"g7","args":{"path":"Transform.position","value":[1,2,3]},"source":"ui","t":1.25}
 //   set     {path: "Component.field[.sub]", value}     rename  {name}
 //   add     {name, parent?, index?, id?} | {snapshot}  del     {}
+//   addprefab {prefab, id?, parent?, index?, name?, pos?}   (6-1: an instance of a .prefab, "guid:..." or a path)
 //   mv      {parent, index?}                            addcomp {type, value?, index?}   rmcomp {type}
 //   undo / redo / begin {label} / end                   (log only)
 #include "Scene/Scene.h"

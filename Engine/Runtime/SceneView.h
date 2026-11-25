@@ -142,6 +142,9 @@ public:
   // A model dropped on the view: a new object with a MeshRenderer at the surface (or ground) under the UI point,
   // one undo step. Returns its id.
   std::string PlaceModel(EditorModel& model, const std::string& meshPath, float x, float y);
+  // 6-1: a .prefab from the Project panel dropped on the view: an instance where the mouse is (surface, else ground).
+  std::string PlacePrefab(EditorModel& model, const std::string& prefabPath);
+  std::string PlacePrefabAt(EditorModel& model, const std::string& prefabPath, float x, float y);
   // Face handle of the selected block: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z (test hook; false: none there).
   bool FaceHandlePoint(const EditorModel& model, int face, float& x, float& y) const;
   // Gizmo of the current tool and selection in the last view (false: no gizmo).
@@ -253,6 +256,7 @@ private:
   void ApplyGizmo(EditorModel& model, const GizmoDelta& d);
   int dragButton_ = 0;
   float lastX_ = 0, lastY_ = 0, downX_ = 0, downY_ = 0;
+  float hoverX_ = 0, hoverY_ = 0; // the mouse over the view (where a dragged prefab lands)
   bool clickCtrl_ = false, hover_ = false;
   std::set<Key> held_;
   float flySpeed_ = 5.f;

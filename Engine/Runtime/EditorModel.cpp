@@ -8,6 +8,7 @@
 #include "Scene/SampleComponents.h"
 #include "Scene/SceneFile.h"
 #include "Physics/PhysicsWorld.h"
+#include "Scene/Prefab.h"
 #include <yyjson.h>
 #include <cctype>
 #include <format>
@@ -570,9 +571,14 @@ void EditorModel::Update() {
   if (needRebuild_) Rebuild();
   else if (needRefresh_) Refresh();
   if (historyChanged) {
-    for (Binding& b : bindings_) { // changed while playing (3-6b)
+    UpdateOverrides();
+    for (Binding& b : bindings_) { // changed while playing (3-6b), differs from the prefab (6-1)
       b.field->marked = false;
-      for (const std::string& id : b.targets) b.field->marked = b.field->marked || playChanged_.count(id + "|" + b.path) > 0;
+      b.field->overridden = false;
+      for (const std::string& id : b.targets) {
+        b.field->marked = b.field->marked || playChanged_.count(id + "|" + b.path) > 0;
+        b.field->overridden = b.field->overridden || overridden_.count(id + "|" + b.path) > 0;
+      }
     }
     RebuildHistory();
   }
@@ -766,6 +772,20 @@ void EditorModel::Rebuild() {
         if (!bus.Execute(cmd, &err)) LogWarn("rename: {}", err);
       };
       if (o->prefab) nameRow.Add(MakeBadge("Prefab"));
+      // Prefab instance (6-1): which prefab, revert every override, apply them to the prefab
+      if (const std::string root = InstanceRootOf(scene, o->id); !root.empty()) {
+        std::string canonical, path;
+        ResolvePrefab(scene.Find(root)->prefabRef, canonical, nullptr, &path);
+        auto& pr = inspector_->Add(MakeBox(Axis::Row, 6));
+        pr.padL = 10; pr.padR = 10; pr.padB = 4;
+        pr.crossAlign = Align::Center;
+        auto& label = pr.Add(MakeLabel("프리팹  " + (path.empty() ? canonical : path) + (root != o->id ? "  (" + scene.Find(root)->name + ")" : "")));
+        label.variant = 1;
+        label.width = Length::Fill();
+        const size_t count = PrefabOverrides(scene, root).size();
+        pr.Add(MakeButton("insp.prefab.revert", std::format("되돌리기 ({})", count))).onClick = [this, root](Widget&) { RevertPrefab(root, ""); };
+        pr.Add(MakeButton("insp.prefab.apply", "프리팹에 적용")).onClick = [this, root](Widget&) { ApplyPrefab(root); };
+      }
     }
     // Runs one command per target; several targets = one undo group.
     auto runAll = [this, targets](const std::string& label, const std::function<Command(const std::string&)>& make) {
@@ -866,6 +886,12 @@ void EditorModel::Rebuild() {
                                set(*wp);
                              }, !def.empty()});
             items.push_back({"값 복사", [this, wp] { ui_->SetClipboard(wp->text2); }, wp->text2 != kMixed});
+            if (wp->overridden) // 6-1: this field differs from the prefab
+              items.push_back({"프리팹 값으로 되돌리기", [this, path, targets = selection_] {
+                                 bus.BeginGroup("Revert " + path, "ui");
+                                 for (const std::string& id : targets) RevertPrefab(id, path);
+                                 bus.EndGroup();
+                               }, true});
             items.push_back({"값 붙여넣기", [this, wp, set] {
                                const std::string clip = ui_->Clipboard();
                                if (clip.empty()) return;
@@ -947,6 +973,10 @@ void EditorModel::Rebuild() {
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
     addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    if (!multi && assets && InstanceRootOf(scene, o->id).empty()) // 6-1: this object becomes a prefab (also: drag it to the Project panel)
+      addRow2.Add(MakeButton("insp.prefab.create", "+  프리팹 만들기")).onClick = [this, id = o->id](Widget&) {
+        CreatePrefab(id, projectFolder_.empty() ? std::string("Prefabs") : projectFolder_); // the open Project folder, else Prefabs/
+      };
     bool needPhysics = false; // 6-2: Rigidbody + Auto Collider in one click (one undo step)
     for (auto& id : targets) needPhysics = needPhysics || !PhysicsWorld::AddPhysicsCommands(scene, id).empty();
     if (needPhysics)
@@ -978,6 +1008,105 @@ void EditorModel::Rebuild() {
   showIfState_ = ShowIfState();
   if (ui_) ui_->ForgetRemovedWidgets();
   RebuildHistory();
+}
+
+// ---- Prefabs (6-1) ----------------------------------------------------------------------------------------------
+void EditorModel::UpdateOverrides() {
+  overridden_.clear();
+  std::set<std::string> roots;
+  for (const std::string& id : selection_)
+    if (std::string r = InstanceRootOf(scene, id); !r.empty()) roots.insert(r);
+  for (const std::string& r : roots)
+    for (const PrefabOverride& ov : PrefabOverrides(scene, r)) overridden_.insert(ov.object + "|" + ov.path);
+}
+
+std::string EditorModel::CreatePrefab(const std::string& id, const std::string& folder) {
+  SceneObject* o = scene.Find(id);
+  if (!o || !assets) { LogWarn("prefab: {}", !o ? "no object " + id : std::string("no project is open")); return ""; }
+  if (!InstanceRootOf(scene, id).empty()) { LogWarn("prefab: {} is already part of a prefab instance", o->name); return ""; }
+  std::string base;
+  for (char ch : o->name) base += (std::isalnum((unsigned char)ch) || ch == ' ' || ch == '_' || ch == '-' || (unsigned char)ch >= 0x80) ? ch : '_';
+  if (base.empty()) base = "Prefab";
+  const std::string dir = folder.empty() ? "" : folder + "/";
+  std::string path = dir + base + ".prefab";
+  for (int k = 1; assets->ByPath(path); ++k) path = std::format("{}{} {}.prefab", dir, base, k);
+  const std::filesystem::path full = PathU8(assets->Root()) / PathU8(path);
+  const std::u8string fu = full.u8string();
+  std::string err;
+  if (!SaveTextFile(std::string(fu.begin(), fu.end()), WritePrefabText(scene, id), &err)) { LogWarn("prefab: {}", err); return ""; }
+  assets->Refresh();
+  const AssetRecord* rec = assets->ByPath(path);
+  if (!rec) { LogWarn("prefab: {} was written but is not in the project", path); return ""; }
+  // the object becomes an instance of it, where it stood: one undo step (the file stays)
+  const std::string parent = o->parent;
+  const int index = scene.IndexInParent(id);
+  std::string pos = "[0,0,0]", rot = "[0,0,0]";
+  if (const Component* tc = o->Find("Transform")) {
+    Registry::Get(tc->data, *tc->type, "position", pos);
+    Registry::Get(tc->data, *tc->type, "rotation", rot);
+  }
+  bus.BeginGroup("Create prefab " + base, "ui");
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    if (!bus.Execute(c, &err)) LogWarn("prefab: {}", err);
+  };
+  run("del", id, "{}");
+  run("addprefab", "", std::format(R"({{"prefab":"guid:{}","id":{},"parent":{},"index":{}}})", rec->guid, Q(id), Q(parent), index));
+  run("set", id, std::format(R"({{"path":"Transform.position","value":{}}})", pos));
+  run("set", id, std::format(R"({{"path":"Transform.rotation","value":{}}})", rot));
+  bus.EndGroup();
+  LogInfo("prefab: created {} from {}", path, id);
+  Select(id);
+  ProjectChanged();
+  return path;
+}
+
+std::string EditorModel::AddPrefabInstance(const std::string& prefab, const std::string& parent, const Vec3* position) {
+  const std::string id = scene.NewId();
+  Command c;
+  c.name = "addprefab";
+  c.args = std::format(R"({{"prefab":{},"id":{},"parent":{}{}}})", Q(prefab), Q(id), Q(parent),
+                       position ? std::format(R"(,"pos":[{},{},{}])", position->x, position->y, position->z) : std::string());
+  std::string err;
+  if (!bus.Execute(c, &err)) { LogWarn("prefab: {}", err); return ""; }
+  Select(id);
+  return id;
+}
+
+bool EditorModel::ApplyPrefab(const std::string& id) {
+  const std::string root = InstanceRootOf(scene, id);
+  if (root.empty()) return false;
+  const std::string ref = scene.Find(root)->prefabRef, text = WritePrefabText(scene, root);
+  std::string err;
+  if (!SavePrefabFile(ref, text, &err)) { LogWarn("prefab: apply: {}", err); return false; }
+  const int n = ReloadPrefab(scene, ref, &text);
+  LogInfo("prefab: applied {} to its prefab ({} instance(s) follow)", root, n);
+  needRebuild_ = true;
+  return true;
+}
+
+bool EditorModel::RevertPrefab(const std::string& id, const std::string& path) {
+  const std::vector<Command> cmds = RevertPrefabCommands(scene, path.empty() ? InstanceRootOf(scene, id) : id, path);
+  if (cmds.empty()) return false;
+  bus.BeginGroup(path.empty() ? "Revert prefab overrides" : "Revert " + path, "ui");
+  for (const Command& c : cmds) {
+    std::string err;
+    if (!bus.Execute(c, &err)) LogWarn("prefab: revert: {}", err);
+  }
+  bus.EndGroup();
+  return true;
+}
+
+void EditorModel::PrefabFilesChanged(const std::vector<std::string>& paths) {
+  if (!assets) return;
+  int rebuilt = 0;
+  for (const std::string& p : paths)
+    if (p.ends_with(".prefab"))
+      if (const AssetRecord* r = assets->ByPath(p)) rebuilt += ReloadPrefab(scene, "guid:" + r->guid);
+  if (rebuilt > 0) needRebuild_ = true;
 }
 
 void EditorModel::Refresh() {
