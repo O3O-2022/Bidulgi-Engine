@@ -1,5 +1,6 @@
-// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1).
+// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures.
 // Included by Engine.cpp after the other EditorTests files. New checks: register with BDG_EDITOR_TEST.
+#include "Core/DDS.h"
 #include "Render3D/DynamicGI.h"
 
 namespace gfxtest {
@@ -429,3 +430,59 @@ void ReportGI1Test(bdg_engine*) {
   bdg::LogInfo("gi1 test: ran={} leak={} react={} tiers={}", ran, leak, react, tiers);
 }
 BDG_EDITOR_TEST("BDG_GI1_TEST", InjectGI1Test, ReportGI1Test)
+
+// BDG_DDS_TEST=1: DDS textures on the GPU (Core/DDS.h, Renderer3D::UploadDDS). BC1, BC3, BC5 and BC7 files made
+// here (8 x 8, 4 mips, one block repeated) are uploaded and their smallest mip read back: each must match the CPU
+// decode of that level. The log says how many went up as blocks and how many were decoded first;
+// BDG_NO_BLOCK_TEXTURES=1 forces decoding (the path for drivers without the format).
+void InjectDDSTest(bdg_engine* e, int frame, float) {
+  if (frame != 2 || !e->r3d) return;
+  auto block = [](int fmt) -> std::vector<uint8_t> { // one 4 x 4 block per format
+    switch (fmt) {
+      case 1: return {0x00, 0xF8, 0x00, 0x00, 0, 0, 0, 0};                             // BC1: red
+      case 3: return {200, 200, 0, 0, 0, 0, 0, 0, 0xE0, 0x07, 0x00, 0x00, 0, 0, 0, 0}; // BC3: green, alpha 200
+      case 5: return {64, 64, 0, 0, 0, 0, 0, 0, 192, 192, 0, 0, 0, 0, 0, 0};           // BC5: X 64, Y 192
+      default: return {0x40, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // BC7 (mode 6)
+    }
+  };
+  auto make = [&](int fmt) {
+    uint32_t hd[31] = {};
+    hd[0] = 124;
+    hd[1] = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000;
+    hd[2] = hd[3] = 8;
+    hd[6] = 4;
+    hd[18] = 32;
+    hd[19] = 0x4;
+    hd[20] = fmt == 7 ? 0x30315844u : fmt == 1 ? 0x31545844u : fmt == 3 ? 0x35545844u : 0x32495441u; // DX10 DXT1 DXT5 ATI2
+    std::vector<uint8_t> f = {'D', 'D', 'S', ' '};
+    f.insert(f.end(), (const uint8_t*)hd, (const uint8_t*)hd + sizeof(hd));
+    if (fmt == 7) {
+      const uint32_t dx10[5] = {98, 3, 0, 1, 0};
+      f.insert(f.end(), (const uint8_t*)dx10, (const uint8_t*)dx10 + sizeof(dx10));
+    }
+    const std::vector<uint8_t> b = block(fmt);
+    for (int n : {4, 1, 1, 1}) // 8x8 = 4 blocks, then 4x4, 2x2, 1x1
+      for (int i = 0; i < n; ++i) f.insert(f.end(), b.begin(), b.end());
+    return f;
+  };
+  std::string results;
+  bool all = true;
+  for (int fmt : {1, 3, 5, 7}) {
+    const std::vector<uint8_t> file = make(fmt);
+    bdg::DdsImage img;
+    std::vector<uint8_t> want;
+    int32_t w = 0, h = 0;
+    bool ok = bdg::ParseDDS(file.data(), file.size(), img) && bdg::DecodeDDS(img, 3, want, w, h);
+    const bdg::TextureHandle t = ok ? e->r3d->UploadDDS(img, false) : bdg::TextureHandle{};
+    float mean[4] = {};
+    ok = ok && t.Valid() && e->rhi.ReadTextureMean(t, mean);
+    const int channels = fmt == 5 ? 2 : fmt == 3 ? 4 : 3;
+    for (int c = 0; ok && c < channels; ++c) ok = std::fabs(mean[c] * 255.f - (float)want[(size_t)c]) < 2.f;
+    if (t.Valid()) e->rhi.DestroyTexture(t);
+    all = all && ok;
+    results += std::format(" bc{}={}", fmt, ok ? 1 : 0);
+  }
+  bdg::LogInfo("dds test: uploaded={} decoded={}{} all={}", e->r3d->DdsUploaded(), e->r3d->DdsDecoded(), results, all ? 1 : 0);
+}
+void ReportDDSTest(bdg_engine*) {}
+BDG_EDITOR_TEST("BDG_DDS_TEST", InjectDDSTest, ReportDDSTest)

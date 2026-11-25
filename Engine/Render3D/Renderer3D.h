@@ -193,6 +193,7 @@ struct RenderStats {
 };
 
 class DynamicGI;
+struct DdsImage;
 class Renderer3D {
 public:
   bool Init(RHI& rhi);
@@ -235,6 +236,11 @@ public:
   int VolumeProbes() const { return volumeBaked_ ? volume_.count.x * volume_.count.y * volume_.count.z : 0; }
   // GI Tier 1 (round 6): the traced probe grid, or null before a high / ultra render with a probe volume.
   const DynamicGI* TracedGI() const { return dynGI_.get(); }
+  // A DDS texture (Core/DDS.h): its blocks uploaded as they are when the driver has the format, else decoded to
+  // RGBA8 level by level. srgb: colour data (base colour, emissive); normal and data maps are linear.
+  TextureHandle UploadDDS(const DdsImage& img, bool srgb, bool repeat = true, bool nearest = false);
+  uint64_t DdsUploaded() const { return ddsUploaded_; } // DDS textures uploaded as blocks / decoded first
+  uint64_t DdsDecoded() const { return ddsDecoded_; }
   // Test hook: the volume's diffuse light (ambient / pi) at a point for a normal, from the baked coefficients (CPU).
   glm::vec3 VolumeIrradiance(const glm::vec3& p, const glm::vec3& n) const;
   // Lightmaps (GI Tier 0-C): bakes the items marked `lightmapped` (CPU rays, see Render3D/Lightmap.h). Bake them
@@ -312,6 +318,7 @@ private:
   size_t visCapacity_ = 0;
   bool dynamicGIOn_ = false, dynamicGIFrame_ = false;
   uint64_t giRebuilds_ = 0, giSceneAge_ = 30; // frames since the traced scene was rebuilt
+  uint64_t ddsUploaded_ = 0, ddsDecoded_ = 0;
   std::unordered_map<uint32_t, glm::vec3> textureMean_; // GI Tier 1: base / emissive maps' mean colours (tint)
   // Volumetric fog (round 6): froxel media and accumulation buffers, the fogged picture
   PipelineHandle fogLight_, fogIntegrate_, fogApply_;

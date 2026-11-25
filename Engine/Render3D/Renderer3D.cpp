@@ -1,5 +1,6 @@
 #include "Render3D/Renderer3D.h"
 #include "Render3D/DynamicGI.h"
+#include "Core/DDS.h"
 #include "Assets/GltfImport.h"
 #include "Render3D/Culling.h"
 #include "Render3D/Lightmap.h"
@@ -1653,9 +1654,58 @@ void Renderer3D::DestroyMesh(Mesh3D& m) {
   m = {};
 }
 
+TextureHandle Renderer3D::UploadDDS(const DdsImage& img, bool srgb, bool repeat, bool nearest) {
+  if (img.mips.empty()) return {};
+  TextureDesc d;
+  d.w = img.w;
+  d.h = img.h;
+  d.repeat = repeat;
+  d.nearest = nearest;
+  // the blocks as they are when the driver samples the format; the colour space comes from the use (base colour and
+  // emissive sRGB, normal and data maps linear), not from the file
+  TextureFormat block = TextureFormat::RGBA8;
+  switch (img.format) {
+    case DdsFormat::BC1: block = srgb ? TextureFormat::BC1_SRGB : TextureFormat::BC1; break;
+    case DdsFormat::BC2: block = srgb ? TextureFormat::BC2_SRGB : TextureFormat::BC2; break;
+    case DdsFormat::BC3: block = srgb ? TextureFormat::BC3_SRGB : TextureFormat::BC3; break;
+    case DdsFormat::BC4: block = TextureFormat::BC4; break;
+    case DdsFormat::BC5: block = TextureFormat::BC5; break;
+    case DdsFormat::BC7: block = srgb ? TextureFormat::BC7_SRGB : TextureFormat::BC7; break;
+    default: break;
+  }
+  std::vector<const void*> levels;
+  std::vector<size_t> sizes;
+  if (block != TextureFormat::RGBA8 && rhi_->SupportsTextureFormat(block)) {
+    d.format = block;
+    for (const std::vector<uint8_t>& m : img.mips) {
+      levels.push_back(m.data());
+      sizes.push_back(m.size());
+    }
+    ++ddsUploaded_;
+    return rhi_->CreateTextureMips(d, levels, sizes);
+  }
+  // decoded on the CPU (no such block format on this driver, or uncompressed files): every level the file has
+  d.format = srgb ? TextureFormat::SRGBA8 : TextureFormat::RGBA8;
+  std::vector<std::vector<uint8_t>> decoded(img.mips.size());
+  for (size_t m = 0; m < img.mips.size(); ++m) {
+    int32_t w = 0, h = 0;
+    if (!DecodeDDS(img, (int)m, decoded[m], w, h)) break;
+    levels.push_back(decoded[m].data());
+    sizes.push_back(decoded[m].size());
+  }
+  if (levels.empty()) return {};
+  ++ddsDecoded_;
+  if (levels.size() == 1) { // one level: the driver makes the mips
+    d.mipmaps = true;
+    return rhi_->CreateTexture(d, levels[0]);
+  }
+  return rhi_->CreateTextureMips(d, levels, sizes);
+}
+
 Model3D Renderer3D::UploadModel(const ImportedModel& im) {
   Model3D m;
   for (const ImportedTexture& t : im.textures) {
+    if (t.dds) { m.textures.push_back(UploadDDS(*t.dds, t.srgb, !t.clamp, t.nearest)); continue; }
     if (t.rgba.empty()) { m.textures.push_back({}); continue; }
     TextureDesc d;
     d.w = t.w;

@@ -1,5 +1,6 @@
 #include "Assets/TextureCooker.h"
 #include "Assets/AssetDatabase.h"
+#include "Core/DDS.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
 #include <algorithm>
@@ -234,6 +235,22 @@ bool CookTexture(const uint8_t* rgba, int32_t w, int32_t h, const TextureSetting
   return true;
 }
 
+bool CookFromDDS(const DdsImage& dds, const TextureSettings& s, CookedTexture& out) {
+  const CookedFormat want = FormatFor(s);
+  const bool same = (dds.format == DdsFormat::BC7 && (want == CookedFormat::BC7 || want == CookedFormat::BC7_SRGB)) ||
+                    (dds.format == DdsFormat::BC5 && want == CookedFormat::BC5) || (dds.format == DdsFormat::BC4 && want == CookedFormat::BC4);
+  if (!same || std::max(dds.w, dds.h) > s.maxSize || dds.mips.empty()) return false;
+  size_t full = 1;
+  for (int32_t n = std::max(dds.w, dds.h); n > 1; n >>= 1) ++full;
+  if (s.mips && dds.mips.size() != full) return false; // the cooker's chain goes to 1 x 1
+  out = {};
+  out.w = dds.w;
+  out.h = dds.h;
+  out.format = want;
+  out.mips.assign(dds.mips.begin(), dds.mips.begin() + (s.mips ? (std::ptrdiff_t)full : 1));
+  return true;
+}
+
 bool DecodeCooked(const CookedTexture& t, int mip, std::vector<uint8_t>& rgba, int32_t& w, int32_t& h) {
   if (mip < 0 || mip >= (int)t.mips.size()) return false;
   w = std::max(1, t.w >> mip);
@@ -328,7 +345,24 @@ bool TextureCookCache::Get(const AssetRecord& r, const fs::path& source, std::st
   int32_t w = 0, h = 0;
   std::vector<uint8_t> rgba;
   auto t0 = std::chrono::steady_clock::now();
-  if (!LoadImageRGBA(source, w, h, rgba) || !CookTexture(rgba.data(), w, h, s, out)) {
+  DdsImage dds;
+  bool asIs = false;
+  if (std::vector<uint8_t> bytes; ReadFileBytes(source, bytes) && IsDDS(bytes.data(), bytes.size())) {
+    std::string why;
+    if (!ParseDDS(bytes.data(), bytes.size(), dds, &why)) {
+      ++stats_.failed;
+      LogWarn("texture: {}: {}", r.path, why);
+      return false;
+    }
+    asIs = CookFromDDS(dds, s, out);
+    if (!asIs && DecodeDDS(dds, 0, rgba, w, h) && CookTexture(rgba.data(), w, h, s, out)) asIs = true; // decoded and cooked
+    if (!asIs) {
+      ++stats_.failed;
+      LogWarn("texture: {} ({}) could not be decoded", r.path, DdsFormatName(dds.format));
+      return false;
+    }
+  }
+  if (!asIs && (!LoadImageRGBA(source, w, h, rgba) || !CookTexture(rgba.data(), w, h, s, out))) {
     ++stats_.failed;
     LogWarn("texture: {} could not be decoded", r.path);
     return false;
