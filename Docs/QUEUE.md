@@ -190,6 +190,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 | `tools/bht/bht.py` | 헤더 도구: `BCLASS`/`BPROPERTY`… → `<File>.gen.cpp` (CMake `bdg_reflect()`) |
 | `Tests/` | 단위 테스트 (`BidulgiTests.exe`, 자체 최소 매크로 `bdg_test.h`) |
 | `Editor/main.cpp` | 에디터 실행 파일 진입점 (C API만 사용) |
+| `Engine/Runtime/EditorTests/*.inl` | 자동 검사(`BDG_*_TEST`)를 분야별로: scene·editor_ui·assets·render·scripting. Engine.cpp가 C API 바로 앞에서 include(같은 번역 단위). **새 검사는 `BDG_EDITOR_TEST("BDG_X_TEST", Inject, Report)`로 등록** (`EditorTests/Registry.h`) — Engine.cpp를 고치지 않음 |
 | `ThirdParty/glad` | 생성된 GL 로더 (커밋됨) |
 
 ### 작업 규칙
@@ -203,6 +204,22 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - 사용자는 한국어로 소통합니다. 문서는 한국어, 코드 주석과 커밋은 영어.
 
 ---
+
+## 병렬 세션 규칙 (2026-11-25)
+
+여러 세션이 동시에 작업할 때 서로의 파일을 건드리지 않게 **분야(레인)**를 나눕니다. 각 세션은 자기 worktree·브랜치에서 작업하고, 합치기는 허브 세션이 합니다.
+
+| 레인 | 대기열 항목 | 주로 고치는 파일 | 검사 파일 |
+|---|---|---|---|
+| A. 3D 그래픽 | 3-4b, 3-5c, 3-8b, 3-9b | `Engine/Render3D/*`, `Engine/RHI/*`, `Engine/Runtime/SceneView.*`, 셰이더 | `EditorTests/render.inl` |
+| B. C# 스크립팅 | 4-4c, 4-4d, 4-6b(C# 부분), 4-5 | `Scripting/*`, `Engine/Scripting/*` | `EditorTests/scripting.inl` |
+| 허브 | 합치기, CI, 큰 결정, 그 밖의 항목 | 나머지 | 나머지 |
+
+- **새 자동 검사는 등록식**(`BDG_EDITOR_TEST`)으로 자기 레인의 `.inl`에 — `Engine.cpp`의 `bdg_engine` 구조체·검사 분기에 줄을 더하지 않습니다.
+- `Engine.cpp`·`EditorModel.cpp`·`UI.*`처럼 공용 파일은 꼭 필요할 때만, 작게 고치고 커밋 메시지에 적습니다.
+- CI(`ci.yml`)에는 자기 검사 줄을 **같은 분야 검사들 옆**에 넣습니다(서로 다른 곳에 넣어야 합칠 때 충돌이 적음).
+- 이 파일(`QUEUE.md`)은 **자기 항목의 `[ ]`→`[x]`와, 완료 표의 자기 행**만 고칩니다. 완료 표 행은 표 맨 끝이 아니라 **같은 분야 행 바로 아래**에 넣습니다.
+- 커밋은 자기 브랜치에. 푸시·main 합치기는 허브가 합니다.
 
 ## ★ 지금 우선순위 (2026-11-25, 사용자 요청) — 에디터 편의·미리보기·임포트·포스트 프로세스
 
