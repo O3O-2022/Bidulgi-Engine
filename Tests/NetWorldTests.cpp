@@ -159,7 +159,9 @@ TEST_CASE("net world: server + 2 clients in one process with loss: spawn, sync, 
   NetSettings cm = cs;
   cm.content = {{"game", "0123456789abcdef"}};
   CHECK(m.net.Start(m.scene, m.bus, cm, &err));
-  for (int i = 0; i < 200 && m.net.RejectReason().empty(); ++i) {
+  // up to 6 s: under 10 % loss the handshake and the reject may each need ENet retransmits (a fixed 200 frames,
+  // ~1.6 s, was sometimes too short on a busy machine)
+  for (const double end = now() + 6; now() < end && m.net.RejectReason().empty();) {
     frames(1);
     m.net.Receive(m.scene, m.bus, now());
     m.net.Send(m.scene, m.bus, now(), 1.0 / 60);
