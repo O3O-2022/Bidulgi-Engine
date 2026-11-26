@@ -135,7 +135,7 @@ void InjectUIDesignerTest(bdg_engine* e, int frame, float scale) {
     const auto& items = e->editor->Menu();
     float x, y, w, h;
     for (size_t k = 0; k < items.size(); ++k)
-      if (items[k].label.starts_with("Phone portrait") && e->editor->MenuItemRect(k, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+      if (items[k].label.starts_with("폰 세로") && e->editor->MenuItemRect(k, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
   }
   if (frame == 25) {
     bdg::GameUI::Rect b, p, s = d.Screen();

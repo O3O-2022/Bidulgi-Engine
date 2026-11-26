@@ -258,3 +258,123 @@ void ReportTopBarTest(bdg_engine*) {
   bdg::LogInfo("topbar test: tips={} size={} badge={} korean={} speed={} pause={}", tips, size, badge, korean, speed, pause);
 }
 BDG_EDITOR_TEST("BDG_TOPBAR_TEST", InjectTopBarTest, ReportTopBarTest)
+
+// BDG_UDPOLISH_TEST=1 (UI review B14): the UI Designer's toolbar and palette. Every control has a tooltip, chips are
+// 24 high, the Scene panel's tab says "UI 화면". Align (real clicks) puts two selected elements' left edges together:
+// the 24 x 24 left button when the eight fit, else the "정렬" chip's list, else "»" > 정렬 > 왼쪽 맞춤. A view under 700
+// wide (BDG_UI_SCALE=1.5 or more) has a 36-wide icon palette that scrolls with the wheel; 1280 x 720 at scale 1 keeps
+// the 112-wide palette. Hovering a control makes it the tooltip's; right-click on an element opens its menu and
+// 맨 뒤로 moves it first.
+namespace udpolishtest {
+std::string tips = "-", chips = "-", title = "-", align = "-", hover = "-", context = "-", narrow = "-";
+std::string a, b, c, way; // way: how align is reached ("al.left", "align", "more")
+bool isNarrow = false;
+}
+void InjectUdPolishTest(bdg_engine* e, int frame, float scale) {
+  using namespace udpolishtest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIDesigner& d = e->uiDesigner;
+  auto ev = [&](T type, float x, float y, int button = 0) { e->window.InjectEvent({type, x * scale, y * scale, button}); };
+  auto click = [&](float x, float y, int button = 1) {
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, button);
+    ev(T::MouseUp, x, y, button);
+  };
+  auto clickControl = [&](const char* name) {
+    float x, y;
+    if (d.ControlCenter(name, x, y)) click(x, y);
+    else bdg::LogError("udpolish test: no control {}", name);
+  };
+  auto pick = [&](const std::string& label) {
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == label && e->editor->MenuItemRect(k, x, y, w, h)) return click(x + w * 0.5f, y + h * 0.5f);
+    std::string all;
+    for (const auto& it : items) all += it.label + "|";
+    bdg::LogError("udpolish test: no item {} ({})", label, all);
+  };
+  auto leftOf = [&](const std::string& id) {
+    bdg::GameUI::Rect r;
+    return d.ElementRect(id, r) ? r.x : -1.f;
+  };
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) gfxtest::Run(m, "del", id, "{}");
+    m->SetSelection({});
+    if (bdg::Widget* ws = e->editor->Find("ws.tabs")) ws->selectedIndex = 3; // UI Designer
+  }
+  if (frame == 4) {
+    const bdg::GameUI::Rect s = d.Screen();
+    a = d.AddElement(*m, "Button", s.x + s.w * 0.3f, s.y + s.h * 0.3f);
+    b = d.AddElement(*m, "Text", s.x + s.w * 0.6f, s.y + s.h * 0.55f);
+    c = d.AddElement(*m, "Image", s.x + s.w * 0.75f, s.y + s.h * 0.75f);
+  }
+  if (frame == 5) m->SetSelection({a, b}); // after the adds' own Select (applied on the next Update)
+  if (frame == 6) {
+    bdg::Widget* scene = e->editor->Find("scene");
+    isNarrow = scene && scene->w < 700;
+    bdg::Widget* dw = e->editor->Find("dock");
+    title = dw && dw->dock && dw->dock->titles["scene"] == "UI 화면" ? "1" : "0";
+    float x, y;
+    way = d.ControlCenter("al.left", x, y) ? "al.left" : d.ControlCenter("align", x, y) ? "align" : "more";
+    std::vector<std::string> names = {"preset", way};
+    for (const std::string& k : bdg::UIDesigner::PaletteKinds()) names.push_back("pal." + k);
+    for (const char* n : {"zoom", "preview", "anchor", "al.center", "al.right", "al.top", "al.middle", "al.bottom", "al.dist.x", "al.dist.y"}) names.push_back(n);
+    bool ok = true, sized = true;
+    for (const std::string& n : names) {
+      if (bdg::UIDesigner::Tooltip(n).empty()) {
+        ok = false;
+        bdg::LogError("udpolish test: no tooltip for {}", n);
+      }
+      if (n == "preset" || n == way) // shown: 24 high
+        for (const char* id : {n.c_str()}) {
+          float cx, cy;
+          if (!d.ControlCenter(id, cx, cy)) { sized = false; bdg::LogError("udpolish test: no control {}", id); }
+        }
+    }
+    tips = ok ? "1" : "0";
+    chips = sized ? "1" : "0";
+    if (isNarrow) narrow = d.PaletteWidth() == 36 ? "" : std::format("0(palette {})", d.PaletteWidth());
+    else narrow = d.PaletteWidth() == 112 ? "wide" : "0";
+    if (d.ControlCenter(way.c_str(), x, y)) ev(T::MouseMove, x, y); // hover
+  }
+  if (frame == 8) {
+    hover = d.Hovered() == way ? "1" : "0(" + d.Hovered() + ")";
+    clickControl(way.c_str());
+  }
+  if (frame == 10 && way == "more") pick("정렬 ▸");
+  if (frame == 10 && way == "align") pick("왼쪽 맞춤");
+  if (frame == 12 && way == "more") pick("왼쪽 맞춤");
+  if (frame == 14) {
+    align = std::fabs(leftOf(a) - leftOf(b)) < 0.5f && leftOf(a) >= 0 ? "1" : std::format("0({} {})", leftOf(a), leftOf(b));
+    bdg::GameUI::Rect r;
+    if (d.ElementRect(c, r)) click(r.x + r.w * 0.5f, r.y + r.h * 0.5f, 3); // right-click on the image
+  }
+  if (frame == 16) {
+    const auto& items = e->editor->Menu();
+    int found = 0;
+    for (const auto& it : items) found += it.label == "복제" || it.label == "삭제" || it.label == "맨 앞으로" || it.label == "맨 뒤로" || it.label == "앵커 ▸";
+    context = found == 5 && m->Selected() == c ? "" : std::format("0(items {} sel {})", found, m->Selected());
+    pick("맨 뒤로");
+  }
+  if (frame == 18) {
+    if (context.empty()) context = m->scene.IndexInParent(c) == 0 ? "1" : std::format("0(index {})", m->scene.IndexInParent(c));
+    if (isNarrow) { // the wheel over the palette scrolls it
+      float x, y;
+      if (d.ControlCenter("pal.Panel", x, y) || d.ControlCenter("pal.Text", x, y)) {
+        bdg::InputEvent w{T::Wheel, x * scale, y * scale};
+        w.wheel = -3;
+        e->window.InjectEvent(w);
+      }
+    }
+  }
+  if (frame == 20 && isNarrow && narrow.empty()) narrow = d.PaletteScroll() > 0 || d.PaletteOverflow() == 0 ? "1" : "0(no scroll)";
+}
+void ReportUdPolishTest(bdg_engine*) {
+  using namespace udpolishtest;
+  bdg::LogInfo("udpolish test: tips={} chips={} title={} align={} hover={} context={} narrow={}", tips, chips, title, align, hover, context, narrow);
+}
+BDG_EDITOR_TEST("BDG_UDPOLISH_TEST", InjectUdPolishTest, ReportUdPolishTest)

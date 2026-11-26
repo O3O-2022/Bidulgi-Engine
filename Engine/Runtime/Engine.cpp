@@ -2216,8 +2216,11 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         bdg::Widget* focused = ui.Focused();
         if (&ui == e->editor.get()) { // entering the UI designer shows the Scene panel, where it draws (7-3)
           const int wsNow = Workspace(e);
-          if (wsNow != 0 && wsNow != e->lastWorkspace)
-            if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
+          if (wsNow != e->lastWorkspace)
+            if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) {
+              if (wsNow != 0) dw->dock->SelectPanel("scene");
+              dw->dock->titles["scene"] = wsNow == 3 ? "UI 화면" : "Scene"; // the panel's tab names what it shows (D8)
+            }
           e->lastWorkspace = wsNow;
         }
         if (sceneWidget && WorkspaceEmpty(e)) { // only the "레벨로 돌아가기" button is live (U5)
@@ -2300,6 +2303,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
     e->batch.End();
     e->rhi.EndFrame();
     if (e->sceneView && e->sceneView->Animating()) pending = std::max(pending, 2); // flying: keep drawing
+    if (UIDesignerActive(e) && e->uiDesigner.Animating()) pending = std::max(pending, 2); // a designer tooltip due
     if (e->play.Playing()) pending = std::max(pending, 2);                         // the game runs every frame
     ++frames;
     if (idleMeasuring) {
