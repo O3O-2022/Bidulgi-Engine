@@ -8,14 +8,30 @@
 #include "UI/Theme.h"
 #include "UI/UI.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cctype>
 #include <format>
 #include <set>
 
 namespace bdg {
 namespace {
-constexpr float kBarH = 32, kMargin = 28, kHandle = 7, kSnap = 6, kPaletteW = 112;
+// kHandle: the drawn size of a resize handle; kHandleHit: half the square a press finds it in (12 x 12, UI review D8)
+constexpr float kBarH = 34, kHandle = 8, kHandleHit = 6, kSnap = 6, kPaletteW = 112, kPaletteNarrow = 36, kChipH = 24;
 const char* kAnchorNames[] = {"TopLeft", "Top", "TopRight", "Left", "Center", "Right", "BottomLeft", "Bottom", "BottomRight", "Stretch"};
+const char* kAnchorKo[] = {"왼쪽 위", "위", "오른쪽 위", "왼쪽", "가운데", "오른쪽", "왼쪽 아래", "아래", "오른쪽 아래", "늘이기"};
+struct AlignOp { const char* name; const char* tip; };
+const AlignOp kAlign[] = {{"al.left", "왼쪽 맞춤"}, {"al.center", "가로 가운데"}, {"al.right", "오른쪽 맞춤"}, {"al.top", "위 맞춤"},
+                          {"al.middle", "세로 가운데"}, {"al.bottom", "아래 맞춤"}, {"al.dist.x", "가로로 고르게"}, {"al.dist.y", "세로로 고르게"}};
+std::string Spaced(const std::string& k) { // "ProgressBar" -> "Progress Bar"
+  std::string out;
+  for (size_t i = 0; i < k.size(); ++i) {
+    if (i && std::isupper((unsigned char)k[i]) && std::islower((unsigned char)k[i - 1])) out += ' ';
+    out += k[i];
+  }
+  return out;
+}
+double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 Color WithAlpha(Color c, float a) { return {c.r, c.g, c.b, a}; }
 bool Inside(const GameUI::Rect& r, float x, float y) { return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h; }
 UIElement* ElementOf(EditorModel& model, const std::string& id) {
@@ -34,7 +50,7 @@ std::string Num(float v) { // two decimals at most, no trailing zeros
 const std::vector<UIDesigner::Preset>& UIDesigner::Presets() {
   static const std::vector<Preset> p = {{"16:9 · 1920×1080", 1920, 1080},          {"16:10 · 1920×1200", 1920, 1200},
                                         {"21:9 · 2560×1080", 2560, 1080},          {"4:3 · 1600×1200", 1600, 1200},
-                                        {"Phone portrait · 1080×1920", 1080, 1920}, {"Phone landscape · 2340×1080", 2340, 1080}};
+                                        {"폰 세로 · 1080×1920", 1080, 1920}, {"폰 가로 · 2340×1080", 2340, 1080}};
   return p;
 }
 
@@ -120,6 +136,42 @@ std::string UIDesigner::AddElement(EditorModel& model, const std::string& kind, 
   return id;
 }
 
+void UIDesigner::DrawKindIcon(UIContext& ui, const std::string& kind, float x, float y, Color c) {
+  Batch2D& b = ui.Batch();
+  const Color clear{0, 0, 0, 0};
+  if (kind == "Panel") b.Rect(x, y + 1, 14, 12, clear, 2, 1.5f, c);
+  else if (kind == "Text") { b.Rect(x + 2, y + 1, 10, 2, c); b.Rect(x + 6, y + 1, 2, 12, c); }
+  else if (kind == "Image") {
+    b.Rect(x, y + 1, 14, 12, clear, 2, 1.5f, c);
+    const float q[4][2] = {{x + 3, y + 11}, {x + 7, y + 6}, {x + 11, y + 11}, {x + 11, y + 11}};
+    b.Quad(q, c);
+  } else if (kind == "Button") b.Rect(x, y + 3, 14, 8, c, 3);
+  else if (kind == "ProgressBar") { b.Rect(x, y + 4, 14, 6, clear, 3, 1.5f, c); b.Rect(x + 1, y + 5, 8, 4, c, 2); }
+  else if (kind == "Toggle") { b.Rect(x, y + 3, 14, 8, clear, 4, 1.5f, c); b.Rect(x + 7, y + 4, 6, 6, c, 3); }
+  else if (kind == "Slider") { b.Rect(x, y + 6, 14, 2, c, 1); b.Rect(x + 6, y + 3, 6, 8, c, 3); }
+  else if (kind == "InputField") { b.Rect(x, y + 2, 14, 10, clear, 2, 1.5f, c); b.Rect(x + 3, y + 4, 1.5f, 6, c); }
+  else if (kind == "ScrollView") { b.Rect(x, y + 1, 14, 12, clear, 2, 1.5f, c); b.Rect(x + 10, y + 3, 2, 5, c, 1); }
+  else if (kind == "Dropdown") {
+    b.Rect(x, y + 2, 14, 10, clear, 2, 1.5f, c);
+    const float q[4][2] = {{x + 8, y + 6}, {x + 12, y + 6}, {x + 10, y + 9}, {x + 10, y + 9}};
+    b.Quad(q, c);
+  }
+}
+
+void UIDesigner::DrawAlignIcon(Batch2D& b, int op, float x, float y, Color c) {
+  const float t = 1.5f;
+  switch (op) {
+    case 0: b.Rect(x, y, t, 14, c); b.Rect(x + 3, y + 3, 9, 3, c); b.Rect(x + 3, y + 8, 6, 3, c); break;            // left
+    case 1: b.Rect(x + 6.25f, y, t, 14, c); b.Rect(x + 2, y + 3, 10, 3, c); b.Rect(x + 3.5f, y + 8, 7, 3, c); break; // centre
+    case 2: b.Rect(x + 12.5f, y, t, 14, c); b.Rect(x + 2, y + 3, 9, 3, c); b.Rect(x + 5, y + 8, 6, 3, c); break;    // right
+    case 3: b.Rect(x, y, 14, t, c); b.Rect(x + 3, y + 3, 3, 9, c); b.Rect(x + 8, y + 3, 3, 6, c); break;            // top
+    case 4: b.Rect(x, y + 6.25f, 14, t, c); b.Rect(x + 3, y + 2, 3, 10, c); b.Rect(x + 8, y + 3.5f, 3, 7, c); break; // middle
+    case 5: b.Rect(x, y + 12.5f, 14, t, c); b.Rect(x + 3, y + 2, 3, 9, c); b.Rect(x + 8, y + 5, 3, 6, c); break;    // bottom
+    case 6: for (int k = 0; k < 3; ++k) b.Rect(x + 1 + k * 5, y + 2, 2, 10, c); break;                                 // across
+    default: for (int k = 0; k < 3; ++k) b.Rect(x + 2, y + 1 + k * 5, 10, 2, c); break;                                 // down
+  }
+}
+
 const GameUI::Placed* UIDesigner::Find(const std::string& id) const {
   for (const GameUI::Placed& p : placed_)
     if (p.object == id) return &p;
@@ -145,11 +197,13 @@ bool UIDesigner::ControlCenter(const std::string& name, float& x, float& y) cons
 void UIDesigner::Layout(const Widget& view, EditorModel& model) {
   view_ = {view.x, view.y, view.w, view.h};
   const Preset& p = Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)];
-  const float aw = std::max(view.w - kPaletteW - 2 * kMargin, 10.f), ah = std::max(view.h - kBarH - 2 * kMargin, 10.f);
+  paletteW_ = view.w < 700 ? kPaletteNarrow : kPaletteW; // a narrow view: the palette is a column of icons (D4)
+  const float margin = std::max(8.f, view.w * 0.02f);
+  const float aw = std::max(view.w - paletteW_ - 2 * margin, 10.f), ah = std::max(view.h - kBarH - 2 * margin, 10.f);
   const float fit = std::min(aw / (float)p.w, ah / (float)p.h), s = fit * zoom;
   screen_.w = p.w * s;
   screen_.h = p.h * s;
-  screen_.x = view.x + kPaletteW + (view.w - kPaletteW - screen_.w) * 0.5f + panX;
+  screen_.x = view.x + paletteW_ + (view.w - paletteW_ - screen_.w) * 0.5f + panX;
   screen_.y = view.y + kBarH + (view.h - kBarH - screen_.h) * 0.5f + panY;
   game_.Layout(model.scene, screen_);
   placed_ = game_.Placement();
@@ -304,10 +358,82 @@ void UIDesigner::OpenPresetMenu(float x, float y) {
 void UIDesigner::OpenZoomMenu(float x, float y) {
   if (!ui_) return;
   std::vector<UIContext::MenuItem> items;
-  items.push_back({"Fit", [this] { zoom = 1; panX = panY = 0; }, true, zoom == 1 && panX == 0 && panY == 0});
+  items.push_back({"맞춤", [this] { zoom = 1; panX = panY = 0; }, true, zoom == 1 && panX == 0 && panY == 0});
   for (float z : {0.5f, 1.5f, 2.f, 3.f})
     items.push_back({std::format("{}%", (int)std::lround(z * 100)), [this, z] { zoom = z; }, true, zoom == z});
   ui_->OpenMenu(x, y, std::move(items));
+}
+
+void UIDesigner::OpenAlignMenu(EditorModel& model, float x, float y) {
+  if (!ui_) return;
+  std::vector<UIContext::MenuItem> items;
+  for (const AlignOp& a : kAlign) items.push_back({a.tip, [this, &model, n = std::string(a.name)] { Align(model, n.substr(3)); }, selected_.size() >= 2});
+  ui_->OpenMenu(x, y, std::move(items));
+}
+
+void UIDesigner::OpenAnchorMenu(EditorModel& model, float x, float y) {
+  if (!ui_) return;
+  const UIElement* e = ElementOf(model, selected_.empty() ? std::string() : selected_.back());
+  std::vector<UIContext::MenuItem> items;
+  for (int k = 0; k < 10; ++k) items.push_back({kAnchorKo[k], [this, &model, k] { SetAnchor(model, k); }, e != nullptr, e && (int)e->anchor == k});
+  ui_->OpenMenu(x, y, std::move(items));
+}
+
+void UIDesigner::OpenMoreMenu(EditorModel& model, float x, float y) { // the toolbar controls that did not fit (D4)
+  if (!ui_) return;
+  std::vector<UIContext::MenuItem> items;
+  for (const std::string& n : folded_) {
+    if (n == "preset") items.push_back({"화면 크기 ▸", [this, x, y] { OpenPresetMenu(x, y); }});
+    else if (n == "zoom") items.push_back({"확대 ▸", [this, x, y] { OpenZoomMenu(x, y); }});
+    else if (n == "preview") items.push_back({"미리보기", [this] { preview = !preview; }, true, preview});
+    else if (n == "anchor") items.push_back({"앵커 ▸", [this, &model, x, y] { OpenAnchorMenu(model, x, y); }});
+    else if (n == "align") items.push_back({"정렬 ▸", [this, &model, x, y] { OpenAlignMenu(model, x, y); }});
+  }
+  ui_->OpenMenu(x, y, std::move(items));
+}
+
+void UIDesigner::OpenElementMenu(EditorModel& model, const std::string& id, float x, float y) { // right-click (D8)
+  if (!ui_) return;
+  SceneObject* o = model.scene.Find(id);
+  if (!o) return;
+  auto order = [&model, id](int index) { // first child = drawn first (at the back)
+    SceneObject* ob = model.scene.Find(id);
+    if (!ob) return;
+    Command c;
+    c.name = "mv";
+    c.target = id;
+    c.args = std::format(R"({{"parent":"{}","index":{}}})", ob->parent, index);
+    std::string err;
+    if (!model.bus.Execute(c, &err)) LogWarn("ui designer: {}", err);
+  };
+  std::vector<UIContext::MenuItem> items = {
+      {"복제", [&model] { model.Duplicate(); }},
+      {"삭제", [&model] { model.DeleteSelected(); }},
+      {"맨 앞으로", [order] { order(-1); }},
+      {"맨 뒤로", [order] { order(0); }},
+      {"앵커 ▸", [this, &model, x, y] { OpenAnchorMenu(model, x, y); }},
+  };
+  if (model.shortcuts) {
+    items[0].keys = model.shortcuts->KeysOf("edit.duplicate");
+    items[1].keys = model.shortcuts->KeysOf("edit.delete");
+  }
+  ui_->OpenMenu(x, y, std::move(items));
+}
+
+bool UIDesigner::Animating() const { return !tipName_.empty() && Now() - tipSince_ < 0.6; }
+
+std::string UIDesigner::Tooltip(const std::string& name) {
+  if (name == "preset") return "화면 크기 (기기 프리셋)";
+  if (name == "zoom") return "확대 (휠: 포인터 기준, 가운데 끌기: 이동)";
+  if (name == "preview") return "미리보기: 게임처럼 눌러 봅니다 (끝나면 값이 되돌아감)";
+  if (name == "anchor") return "앵커: 부모의 어느 점에 붙을지";
+  if (name == "align") return "정렬 (둘 이상 선택)";
+  if (name == "more") return "더 보기";
+  for (const AlignOp& a : kAlign)
+    if (name == a.name) return a.tip;
+  if (name.starts_with("anc.")) return kAnchorKo[std::clamp(std::atoi(name.c_str() + 4), 0, 9)];
+  if (name.starts_with("pal.")) return Spaced(name.substr(4)) + ": 끌어다 화면에 놓거나, 클릭하면 가운데에 추가";
+  return "";
 }
 
 void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& view, EditorModel& model, UIContext& ui) {
@@ -371,7 +497,11 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
         used = drag_ != Drag::None || over;
         break;
       }
-      case T::Wheel: { // zoom around the pointer
+      case T::Wheel: { // over the palette: scroll it (D4); else zoom around the pointer
+        if (e.x < view.x + paletteW_ && e.y > view.y + kBarH) {
+          paletteScroll_ = std::clamp(paletteScroll_ - e.wheel * 28.f, 0.f, paletteMax_);
+          break;
+        }
         const float u = (e.x - screen_.x) / std::max(screen_.w, 1.f), v = (e.y - screen_.y) / std::max(screen_.h, 1.f);
         zoom = std::clamp(zoom * std::pow(1.15f, e.wheel), 0.1f, 8.f);
         Layout(view, model);
@@ -384,6 +514,19 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
         mouseX_ = downX_ = e.x;
         mouseY_ = downY_ = e.y;
         if (e.button == 2 || (e.button == 1 && spaceHeld_)) { drag_ = Drag::Pan; break; }
+        if (e.button == 3 && !preview) { // right-click on an element: its menu (D8)
+          const GameUI::Placed* top = nullptr;
+          for (const GameUI::Placed& p : placed_)
+            if (Inside(p.r, e.x, e.y) && (!p.clipped || Inside(p.clip, e.x, e.y))) top = &p;
+          if (top) {
+            if (std::find(selected_.begin(), selected_.end(), top->object) == selected_.end()) {
+              model.Select(top->object);
+              selected_ = {top->object};
+            }
+            OpenElementMenu(model, top->object, e.x, e.y);
+          }
+          break;
+        }
         if (e.button != 1) break;
         mouseDown_ = true;
         const Control* hit = nullptr;
@@ -396,6 +539,8 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
           else if (n == "zoom") OpenZoomMenu(hit->x, hit->y + hit->h + 3);
           else if (n == "preview") preview = !preview;
           else if (n == "anchor") anchorOpen_ = !anchorOpen_;
+          else if (n == "align") OpenAlignMenu(model, hit->x, hit->y + hit->h + 3);
+          else if (n == "more") OpenMoreMenu(model, hit->x, hit->y + hit->h + 3);
           else if (n.starts_with("anc.")) { SetAnchor(model, std::stoi(n.substr(4))); anchorOpen_ = false; }
           else if (n.starts_with("al.")) Align(model, n.substr(3));
           break;
@@ -404,7 +549,7 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
         if (preview) break; // the UI reacts as in the game (Draw feeds it the mouse)
         float hx2, hy2;
         for (int h = 0; h < 8 && drag_ == Drag::None; ++h)
-          if (HandlePoint(h, hx2, hy2) && std::fabs(e.x - hx2) <= kHandle && std::fabs(e.y - hy2) <= kHandle) {
+          if (HandlePoint(h, hx2, hy2) && std::fabs(e.x - hx2) <= kHandleHit && std::fabs(e.y - hy2) <= kHandleHit) {
             drag_ = Drag::Resize;
             handle_ = h;
             start_ = {{selected_[0], Find(selected_[0])->r}};
@@ -520,7 +665,7 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
   b.Rect(w.x, w.y, w.w, w.h, t.C("sunk"));
   // the device screen and the game's UI on it
   b.Rect(screen_.x - 1, screen_.y - 1, screen_.w + 2, screen_.h + 2, {0, 0, 0, 0}, 0, 1, t.C("line"));
-  b.Rect(screen_.x, screen_.y, screen_.w, screen_.h, Color{0.11f, 0.12f, 0.15f, 1});
+  b.Rect(screen_.x, screen_.y, screen_.w, screen_.h, t.C("ground"));
   if (preview != previewWas_) { // entering the preview keeps the values it may change; leaving puts them back
     if (preview) {
       kept_.clear();
@@ -554,13 +699,15 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
   game_.Draw(model.scene, b, font, rhi, screen_, assetsDir);
   placed_ = game_.Placement();
   if (placed_.empty()) {
-    const char* msg = "UICanvas가 없습니다: 장면에 UICanvas와 UIElement를 추가하세요";
-    ui.Text(screen_.x + (screen_.w - ui.Measure(13, msg)) * 0.5f, screen_.y + screen_.h * 0.5f - 8, 13, t.C("fg-dim"), msg);
+    const char* msg = "UICanvas가 없습니다: 왼쪽 팔레트에서 끌어다 놓으면 만들어집니다";
+    const float fs = t.FontSize("label", 12);
+    ui.Text(screen_.x + (screen_.w - ui.Measure(fs, msg)) * 0.5f, screen_.y + screen_.h * 0.5f - 8, fs, t.C("fg-dim"), msg);
   }
+  if (preview) b.Rect(screen_.x - 2, screen_.y - 2, screen_.w + 4, screen_.h + 4, {0, 0, 0, 0}, 0, 2, t.C("accent")); // running (D3)
   if (!preview) {
     for (const GameUI::Placed& p : placed_) { // every element's outline, faint (cut by scroll views as drawn)
       if (p.clipped) b.PushClip(p.clip.x, p.clip.y, p.clip.w, p.clip.h);
-      b.Rect(p.r.x, p.r.y, p.r.w, p.r.h, {0, 0, 0, 0}, 0, 1, Color{1, 1, 1, 0.18f});
+      b.Rect(p.r.x, p.r.y, p.r.w, p.r.h, {0, 0, 0, 0}, 0, 1, WithAlpha(t.C("fg"), 0.18f));
       if (p.clipped) b.PopClip();
     }
     for (const std::string& id : selected_) {
@@ -571,70 +718,108 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
         const int a = (int)e->anchor;
         const float ax = p->parentRect.x + (a % 3) * 0.5f * p->parentRect.w, ay = p->parentRect.y + (a / 3) * 0.5f * p->parentRect.h;
         const float q[4][2] = {{ax, ay - 6}, {ax + 6, ay}, {ax, ay + 6}, {ax - 6, ay}};
-        b.Quad(q, Color{1, 1, 1, 0.9f});
+        b.Quad(q, WithAlpha(t.C("fg"), 0.9f));
         b.Line(ax, ay, p->r.x + (a % 3) * 0.5f * p->r.w, p->r.y + (a / 3) * 0.5f * p->r.h, 1, WithAlpha(t.C("accent"), 0.6f));
       } else if (e) {
-        b.Rect(p->parentRect.x, p->parentRect.y, p->parentRect.w, p->parentRect.h, {0, 0, 0, 0}, 0, 1, Color{1, 1, 1, 0.45f});
+        b.Rect(p->parentRect.x, p->parentRect.y, p->parentRect.w, p->parentRect.h, {0, 0, 0, 0}, 0, 1, WithAlpha(t.C("fg"), 0.45f));
       }
     }
     if (selected_.size() == 1)
       for (int h = 0; h < 8; ++h) {
         float x, y;
-        if (HandlePoint(h, x, y)) b.Rect(x - kHandle * 0.5f, y - kHandle * 0.5f, kHandle, kHandle, Color{1, 1, 1, 1}, 1, 1, t.C("accent"));
+        if (HandlePoint(h, x, y)) b.Rect(x - kHandle * 0.5f, y - kHandle * 0.5f, kHandle, kHandle, t.C("fg"), t.N("radius-xs", 2), 1, t.C("accent"));
       }
     for (const Guide& g : guides_) // snap guides
-      if (g.vertical) b.Line(g.at, g.from, g.at, g.to, 1.f, Color{1.f, 0.3f, 0.8f, 0.95f});
-      else b.Line(g.from, g.at, g.to, g.at, 1.f, Color{1.f, 0.3f, 0.8f, 0.95f});
+      if (g.vertical) b.Line(g.at, g.from, g.at, g.to, 1.f, t.C("guide"));
+      else b.Line(g.from, g.at, g.to, g.at, 1.f, t.C("guide"));
     if (selected_.size() == 1) // size label under the element
       if (const GameUI::Placed* p = Find(selected_[0]); p && p->scale > 0) {
         const std::string label = std::format("{} × {}", Num(p->r.w / p->scale), Num(p->r.h / p->scale));
-        const float lw = ui.Measure(11, label) + 12;
-        b.Rect(p->r.x + (p->r.w - lw) * 0.5f, p->r.y + p->r.h + 6, lw, 18, WithAlpha(t.C("win"), 0.9f), 9);
-        ui.Text(p->r.x + (p->r.w - lw) * 0.5f + 6, p->r.y + p->r.h + 8, 11, t.C("fg"), label);
+        const float fs = t.FontSize("overlay", 11), lw = ui.Measure(fs, label) + 12;
+        b.Rect(p->r.x + (p->r.w - lw) * 0.5f, p->r.y + p->r.h + 6, lw, 18, WithAlpha(t.C("win"), 0.9f), t.N("radius-pill", 12));
+        ui.Text(p->r.x + (p->r.w - lw) * 0.5f + 6, p->r.y + p->r.h + 8, fs, t.C("fg"), label);
       }
   }
-  // toolbar: preset, zoom, preview, anchor, align
   controls_.clear();
-  { // palette: the element kinds, dragged (or clicked) onto the screen
-    float py = w.y + kBarH + 6;
-    ui.Text(w.x + 12, py, 11, t.C("fg-dim"), "Palette");
-    py += 20;
+  const float fsChip = t.FontSize("caption", 11);
+  const bool idle = drag_ == Drag::None && !ui.MenuOpen();
+  auto hover = [&](float x, float y, float cw, float ch) { return idle && mouseX_ >= x && mouseY_ >= y && mouseX_ < x + cw && mouseY_ < y + ch; };
+  { // palette: the element kinds, dragged (or clicked) onto the screen; a narrow view shows icons only (D4, D5)
+    const bool narrow = paletteW_ < kPaletteW;
+    const float top = w.y + kBarH, clipH = w.h - kBarH;
+    b.PushClip(w.x, top, paletteW_, clipH);
+    float py = top + 6 - paletteScroll_;
+    if (!narrow) {
+      ui.Text(w.x + 12, py, t.FontSize("caption", 11), t.C("fg-faint"), "팔레트");
+      py += 20;
+    }
+    const float ix = w.x + 6, iw = paletteW_ - 12;
     for (const std::string& k : PaletteKinds()) {
-      const bool hot = drag_ == Drag::Place && placeKind_ == k;
-      b.Rect(w.x + 8, py, kPaletteW - 16, 24, hot ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.9f), 6, 1, t.C("line"));
-      ui.Text(w.x + 16, py + 5, 11, hot ? Color{1, 1, 1, 1} : t.C("fg"), k);
-      controls_.push_back({"pal." + k, w.x + 8, py, kPaletteW - 16, 24});
+      const bool hot = drag_ == Drag::Place && placeKind_ == k, over = hover(ix, py, iw, 24) && py >= top && py + 24 <= top + clipH;
+      b.Rect(ix, py, iw, 24, hot ? t.C("selection") : over ? t.C("raise-hover") : WithAlpha(t.C("win"), 0.9f), t.N("radius-md", 4), 1,
+             hot ? t.C("accent") : t.C("line"));
+      DrawKindIcon(ui, k, narrow ? ix + (iw - 14) * 0.5f : ix + 6, py + 5, t.C(hot || over ? "fg" : "fg-dim"));
+      if (!narrow) ui.Text(ix + 26, py + (24 - fsChip) * 0.5f - 1, fsChip, t.C("fg"), Spaced(k));
+      if (py + 24 > top && py < top + clipH) controls_.push_back({"pal." + k, ix, std::max(py, top), iw, std::min(py + 24, top + clipH) - std::max(py, top)});
       py += 28;
     }
+    paletteMax_ = std::max(0.f, py + paletteScroll_ - (top + clipH) + 6);
+    paletteScroll_ = std::min(paletteScroll_, paletteMax_);
+    b.PopClip();
     if (drag_ == Drag::Place && Inside(screen_, mouseX_, mouseY_)) // where it will land
       b.Rect(mouseX_ - 40, mouseY_ - 16, 80, 32, WithAlpha(t.C("accent"), 0.35f), 4, 1.5f, t.C("accent"));
   }
-  float x = w.x + 10 + kPaletteW;
-  const float y = w.y + 6;
+  // toolbar: preset, zoom, preview, anchor, align; what does not fit folds into "»" (D4)
+  float x = w.x + 8 + paletteW_;
+  const float y = w.y + (kBarH - kChipH) * 0.5f, right = w.x + w.w - 8;
+  auto chipW = [&](const std::string& label, bool menu) { return ui.Measure(fsChip, label) + 20 + (menu ? 12.f : 0.f); };
   auto chip = [&](const std::string& name, const std::string& label, bool on, bool menu) {
-    const float cw = ui.Measure(11, label) + 18 + (menu ? 10.f : 0.f);
-    b.Rect(x, y, cw, 22, on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.9f), 11, 1, t.C("line"));
-    ui.Text(x + 9, y + 4, 11, on ? Color{1, 1, 1, 1} : t.C("fg"), label);
+    const float cw = chipW(label, menu);
+    const bool over = hover(x, y, cw, kChipH);
+    // on: the selection colour with an accent edge and normal text (D3: no white on accent)
+    b.Rect(x, y, cw, kChipH, on ? t.C("selection") : over ? t.C("raise-hover") : WithAlpha(t.C("win"), 0.9f), t.N("radius-pill", 12), 1,
+           on ? t.C("accent") : t.C("line"));
+    ui.Text(x + 10, y + (kChipH - fsChip) * 0.5f - 1, fsChip, t.C("fg"), label);
     if (menu) {
-      const float cx = x + cw - 10, cy = y + 11;
+      const float cx = x + cw - 12, cy = y + kChipH * 0.5f;
       const float tri[4][2] = {{cx - 3, cy - 1.5f}, {cx + 3, cy - 1.5f}, {cx, cy + 2.5f}, {cx, cy + 2.5f}};
       b.Quad(tri, t.C("fg-dim"));
     }
-    controls_.push_back({name, x, y, cw, 22});
+    controls_.push_back({name, x, y, cw, kChipH});
     x += cw + 6;
   };
-  chip("preset", Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)].name, false, true);
-  chip("zoom", zoom == 1 && panX == 0 && panY == 0 ? std::string("Fit") : std::format("{}%", (int)std::lround(zoom * 100)), false, true);
-  chip("preview", "Preview", preview, false);
+  struct Spec { std::string name, label; bool on, menu; };
+  std::vector<Spec> specs = {{"preset", Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)].name, false, true},
+                             {"zoom", zoom == 1 && panX == 0 && panY == 0 ? std::string("맞춤") : std::format("{}%", (int)std::lround(zoom * 100)), false, true},
+                             {"preview", "미리보기", preview, false}};
   if (!selected_.empty()) {
     UIElement* e = ElementOf(model, selected_.back());
-    chip("anchor", std::string("Anchor: ") + (e ? kAnchorNames[(int)e->anchor] : "-"), anchorOpen_, true);
+    specs.push_back({"anchor", std::string("앵커: ") + (e ? kAnchorKo[(int)e->anchor] : "-"), anchorOpen_, true});
   }
-  if (selected_.size() >= 2) {
-    static const struct { const char* name; const char* label; } al[] = {{"al.left", "⇤"}, {"al.center", "↔"}, {"al.right", "⇥"}, {"al.top", "⤒"},
-                                                                         {"al.middle", "↕"}, {"al.bottom", "⤓"}, {"al.dist.x", "⋯"}, {"al.dist.y", "⋮"}};
-    for (auto& a : al) chip(a.name, a.label, false, false);
+  if (selected_.size() >= 2) specs.push_back({"align", "", false, false});
+  const float more = 34, alignW = 8 * kChipH;
+  folded_.clear();
+  for (size_t i = 0; i < specs.size(); ++i) {
+    const Spec& sp = specs[i];
+    const float need = sp.name == "align" ? alignW : chipW(sp.label, sp.menu), tail = i + 1 < specs.size() ? more : 0.f;
+    if (!folded_.empty() || x + need + tail > right) {
+      if (sp.name == "align" && folded_.empty() && x + chipW("정렬", true) <= right) { chip("align", "정렬", false, true); continue; }
+      folded_.push_back(sp.name);
+      continue;
+    }
+    if (sp.name != "align") { chip(sp.name, sp.label, sp.on, sp.menu); continue; }
+    // align: eight 24 x 24 icon buttons in one group, outer corners rounded (D2)
+    b.Rect(x, y, alignW, kChipH, WithAlpha(t.C("win"), 0.9f), t.N("radius-md", 4), 1, t.C("line"));
+    for (int k = 0; k < 8; ++k) {
+      const float cx = x + k * kChipH;
+      if (hover(cx, y, kChipH, kChipH)) b.Rect(cx + 1, y + 1, kChipH - 2, kChipH - 2, t.C("raise-hover"), t.N("radius-xs", 2));
+      if (k) b.Line(cx, y + 4, cx, y + kChipH - 4, 1, t.C("line"));
+      DrawAlignIcon(b, k, cx + 5, y + 5, t.C("fg"));
+      controls_.push_back({kAlign[k].name, cx, y, kChipH, kChipH});
+    }
+    x += alignW + 6;
   }
+  if (!folded_.empty()) chip("more", "»", false, false);
   if (anchorOpen_) { // the anchor picker: 3 x 3 points and stretch, the current one lit
     const Control* ac = nullptr;
     for (const Control& c : controls_)
@@ -643,20 +828,41 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
       UIElement* e = ElementOf(model, selected_.empty() ? std::string() : selected_.back());
       const int cur = e ? (int)e->anchor : -1;
       const float px = ac->x, py = ac->y + ac->h + 4, cell = 30;
-      b.Rect(px, py, cell * 3 + 16, cell * 3 + 46, WithAlpha(t.C("win"), 0.98f), 8, 1, t.C("line"));
+      b.Rect(px, py, cell * 3 + 16, cell * 3 + 46, WithAlpha(t.C("win"), 0.98f), t.N("radius-window", 8), 1, t.C("line"));
       for (int k = 0; k < 9; ++k) {
         const float cx = px + 8 + (k % 3) * cell, cy = py + 8 + (k / 3) * cell;
-        b.Rect(cx, cy, cell - 4, cell - 4, k == cur ? WithAlpha(t.C("accent"), 0.9f) : WithAlpha(t.C("sunk"), 0.9f), 4, 1, t.C("line"));
+        b.Rect(cx, cy, cell - 4, cell - 4, k == cur ? t.C("selection") : hover(cx, cy, cell - 4, cell - 4) ? t.C("raise-hover") : WithAlpha(t.C("sunk"), 0.9f),
+               t.N("radius-md", 4), 1, k == cur ? t.C("accent") : t.C("line"));
         const float dx = cx + 4 + (k % 3) * 0.5f * (cell - 12), dy = cy + 4 + (k / 3) * 0.5f * (cell - 12);
-        b.Rect(dx, dy, 4, 4, Color{1, 1, 1, 0.9f}, 1);
+        b.Rect(dx, dy, 4, 4, k == cur ? t.C("accent") : t.C("fg"), 1);
         controls_.push_back({std::format("anc.{}", k), cx, cy, cell - 4, cell - 4});
       }
       const float sy = py + 8 + 3 * cell;
-      b.Rect(px + 8, sy, cell * 3 - 4, 26, cur == 9 ? WithAlpha(t.C("accent"), 0.9f) : WithAlpha(t.C("sunk"), 0.9f), 4, 1, t.C("line"));
-      ui.Text(px + 8 + (cell * 3 - 4 - ui.Measure(11, "Stretch")) * 0.5f, sy + 6, 11, t.C("fg"), "Stretch");
+      b.Rect(px + 8, sy, cell * 3 - 4, 26, cur == 9 ? t.C("selection") : WithAlpha(t.C("sunk"), 0.9f), t.N("radius-md", 4), 1, cur == 9 ? t.C("accent") : t.C("line"));
+      ui.Text(px + 8 + (cell * 3 - 4 - ui.Measure(fsChip, kAnchorKo[9])) * 0.5f, sy + (26 - fsChip) * 0.5f - 1, fsChip, t.C("fg"), kAnchorKo[9]);
       controls_.push_back({"anc.9", px + 8, sy, cell * 3 - 4, 26});
     }
   }
+  // tooltip after the pointer rests on a control (D2, D5)
+  std::string over;
+  for (const Control& c : controls_)
+    if (hover(c.x, c.y, c.w, c.h)) over = c.name;
+  if (over != tipName_) {
+    tipName_ = over;
+    tipSince_ = Now();
+  }
+  if (!tipName_.empty() && Now() - tipSince_ > 0.45)
+    for (const Control& c : controls_)
+      if (c.name == tipName_) {
+        const std::string tip = Tooltip(c.name);
+        if (tip.empty()) break;
+        const float fs = t.FontSize("caption", 11), tw = ui.Measure(fs, tip) + 16;
+        const float tx = std::clamp(c.name.starts_with("pal.") ? c.x + c.w + 6 : c.x, w.x, std::max(w.x, w.x + w.w - tw));
+        const float ty = c.name.starts_with("pal.") ? c.y + 2 : c.y + c.h + 4;
+        b.Rect(tx, ty, tw, 20, WithAlpha(t.C("win"), 0.96f), t.N("radius-md", 4), 1, t.C("line"));
+        ui.Text(tx + 8, ty + (20 - fs) * 0.5f - 1, fs, t.C("fg"), tip);
+        break;
+      }
   b.PopClip();
 }
 } // namespace bdg
