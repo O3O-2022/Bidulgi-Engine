@@ -78,6 +78,9 @@ jobs:
           # 1) Editor screen renders, tokens and font load, UI draws in one call
           $log = Invoke-Editor 'Release' @{ BDG_SCREENSHOT = 'ci-editor.png' } 30
           if ($log -notmatch 'tokens: \d+ colors') { $errors += 'design tokens not loaded' }
+          # UI review B5: the tokens keep text at 4.5:1 on its surfaces and input borders at 3:1 (Tests/ThemeContrastTests.cpp)
+          $contrast = (& build/Release/BidulgiTests.exe 'design tokens' 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0) { $errors += "design token contrast: $contrast" }
           if ($log -notmatch 'frame stats: .*ui_draws=1 ') { $errors += 'editor UI is not a single draw call' }
           if ($log -notmatch 'frame stats: .*draws3d=[1-9]') { $errors += 'scene view drew nothing in 3D' }
           if ($log -match '\[error\]') { $errors += 'errors in editor log' }

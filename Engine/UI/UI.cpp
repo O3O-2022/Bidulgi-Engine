@@ -231,14 +231,14 @@ void UIContext::DrawChoice(Widget& w) {
   if (style == 2) { // toggle switch: pill track + knob, then the state in words
     const float tw = 30, th = 16, tx = ix, tyy = iy + (ih - th) * 0.5f;
     const bool on = cur == 1, mixed = cur < 0;
-    b.Rect(tx, tyy, tw, th, on ? t.C("accent") : t.C("sunk"), th * 0.5f, 1, on || focus ? t.C("accent") : t.C("line-strong"));
+    b.Rect(tx, tyy, tw, th, on ? t.C("accent") : t.C("sunk"), th * 0.5f, 1, on || focus ? t.C("accent") : t.C("line-input"));
     const float knob = th - 4, kx = mixed ? tx + (tw - knob) * 0.5f : on ? tx + tw - knob - 2 : tx + 2;
     b.Rect(kx, tyy + 2, knob, knob, on ? t.C("on-accent") : t.C("fg-dim"), knob * 0.5f);
     Text(tx + tw + 8, ty, fs, on ? t.C("fg") : t.C("fg-faint"), mixed ? "—" : on ? "켜짐" : "꺼짐");
     return;
   }
   if (style == 1) { // segmented: one button per option, the current one filled
-    b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
+    b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line-input"));
     for (int k = 0; k < (int)w.items.size(); ++k) {
       float sx, sw;
       ChoiceSegment(w, k, sx, sw);
@@ -253,7 +253,7 @@ void UIContext::DrawChoice(Widget& w) {
     return;
   }
   // combo box: value + a down chevron; the list opens below on click / Enter / Space
-  b.Rect(ix, iy, iw, ih, w.hovered ? t.C("raise") : t.C("sunk"), rsm, 1, focus ? t.C("accent") : w.hovered ? t.C("fg-faint") : t.C("line"));
+  b.Rect(ix, iy, iw, ih, w.hovered ? t.C("raise") : t.C("sunk"), rsm, 1, focus ? t.C("accent") : w.hovered ? t.C("fg-faint") : t.C("line-input"));
   b.PushClip(ix + 1, iy, iw - 22, ih);
   Text(ix + t.N("space-3", 6), ty, fs, cur < 0 ? t.C("fg-faint") : t.C("fg"), w.text2.empty() ? "—" : w.text2);
   b.PopClip();
@@ -611,7 +611,7 @@ void UIContext::DrawWidget(Widget& w) {
           AxisBox(w, k, bx, bw);
           const auto [a, z] = parts[(size_t)k];
           const bool here = focus && w.cursor >= a && w.cursor <= z;
-          b.Rect(bx, iy, bw, ih, t.C("sunk"), rsm, 1, here ? t.C("accent") : t.C("line"));
+          b.Rect(bx, iy, bw, ih, t.C("sunk"), rsm, 1, here ? t.C("accent") : t.C("line-input"));
           Color tag = t.C(tagColors[k]);
           b.Rect(bx + 1, iy + 1, 14, ih - 2, WithAlphaUI(tag, scrub_ == &w && scrubAxis_ == k ? 0.55f : 0.28f), rsm);
           Text(bx + 4, iy + (ih - 10) * 0.5f - 1, 10, tag, tags[k]);
@@ -633,7 +633,7 @@ void UIContext::DrawWidget(Widget& w) {
         }
         break;
       }
-      b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line"));
+      b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line-input"));
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;
       b.PushClip(ix + 1, iy, iw - 2, ih); // long values stay inside the box
@@ -719,7 +719,8 @@ void UIContext::DrawWidget(Widget& w) {
         b.Rect(kx, ky, 11, 11, {0, 0, 0, 0}, 2, 1.5f, dim);
       }
       Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-faint") : t.C("fg"), w.text); // 1: dimmed (undone step)
-      if (!w.text2.empty() && w.text2 != "Mesh") Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, t.C("fg-faint"), w.text2);
+      if (!w.text2.empty() && w.text2 != "Mesh") // the type column: fg-dim on a selected row (fg-faint is too faint on selection)
+        Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, w.selected ? t.C("fg-dim") : t.C("fg-faint"), w.text2);
       break;
     }
     case WidgetKind::Badge: {
@@ -1028,7 +1029,7 @@ void UIContext::DrawDialog() {
     DialogItemRect(0, lx, ly0, lw, lh);
     b.Rect(lx - 6, ly0 - 4, lw + 12, dialog_->items.size() * kDialogItemH + 8, t.C("sunk"), 6, 1, t.C("line"));
     auto box = [&](float bx, float by, bool on) {
-      b.Rect(bx, by, 16, 16, on ? t.C("accent") : t.C("sunk"), 3, 1, on ? t.C("accent") : t.C("line-strong"));
+      b.Rect(bx, by, 16, 16, on ? t.C("accent") : t.C("sunk"), 3, 1, on ? t.C("accent") : t.C("line-input"));
       if (on) {
         b.Line(bx + 4, by + 8, bx + 7, by + 11.5f, 2, t.C("on-accent"));
         b.Line(bx + 7, by + 11.5f, bx + 12.5f, by + 4.5f, 2, t.C("on-accent"));
@@ -1050,7 +1051,7 @@ void UIContext::DrawDialog() {
   }
   if (!dialog_->check.empty()) {
     const float cy = y + h - kDialogPad - kDialogBtnH - 30 + 4;
-    b.Rect(x + kDialogPad, cy, 16, 16, dialog_->checked ? t.C("accent") : t.C("sunk"), 3, 1, dialog_->checked ? t.C("accent") : t.C("line-strong"));
+    b.Rect(x + kDialogPad, cy, 16, 16, dialog_->checked ? t.C("accent") : t.C("sunk"), 3, 1, dialog_->checked ? t.C("accent") : t.C("line-input"));
     if (dialog_->checked) { // tick drawn with two lines (no glyph needed)
       b.Line(x + kDialogPad + 4, cy + 8, x + kDialogPad + 7, cy + 11.5f, 2, t.C("on-accent"));
       b.Line(x + kDialogPad + 7, cy + 11.5f, x + kDialogPad + 12.5f, cy + 4.5f, 2, t.C("on-accent"));
