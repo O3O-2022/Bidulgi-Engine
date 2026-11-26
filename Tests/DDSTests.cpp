@@ -217,3 +217,36 @@ TEST_CASE("DDS: model import keeps DDS textures as blocks, the cooker reads DDS 
   CHECK(DecodeCooked(c, 0, px, w, h) && px[0] > 240 && px[1] < 16);
   fs::remove_all(dir, ec);
 }
+
+TEST_CASE("model import: cut-out base colour -> alpha mask, .DoubleSided names, *_Specular metal/rough (Bistro)") {
+  const fs::path dir = fs::temp_directory_path() / "bdg_dds_bistro_rules";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir);
+  // a leaf: BC1 blocks in 3-colour mode with index 3 = see-through, a packed metal / rough map
+  WriteBytes(dir / "leaf_BaseColor.dds", MakeDDS({.w = 8, .h = 8, .fourCC = CC("DXT1")},
+                                                 Cat({Bc1(0x001F, 0x07E0, 3), Bc1(0x001F, 0x07E0, 0), Bc1(0x001F, 0x07E0, 3), Bc1(0x001F, 0x07E0, 3)})));
+  WriteBytes(dir / "leaf_Specular.dds", MakeDDS({.fourCC = CC("DXT1")}, Bc1(0x07FF, 0, 0)));
+  WriteBytes(dir / "wall_BaseColor.dds", MakeDDS({.fourCC = CC("DXT1")}, Bc1(0xF800, 0, 0)));
+  {
+    std::ofstream mtl(dir / "plant.mtl");
+    mtl << "newmtl Leaf.DoubleSided\nKd 1 1 1\nmap_Kd leaf_BaseColor.dds\nmap_Ks leaf_Specular.dds\n"
+        << "newmtl Wall\nKd 1 1 1\nmap_Kd wall_BaseColor.dds\n";
+    std::ofstream obj(dir / "plant.obj");
+    obj << "mtllib plant.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\n"
+        << "usemtl Leaf.DoubleSided\nf 1/1/1 2/2/1 3/3/1\nusemtl Wall\nf 1/1/1 3/3/1 4/4/1\n";
+  }
+  ImportedModel m;
+  std::string err;
+  CHECK(ImportModel(dir / "plant.obj", m, &err) && m.materials.size() == 2);
+  for (const ImportedMaterial& mt : m.materials) {
+    if (mt.name == "Leaf.DoubleSided") {
+      CHECK(mt.alpha == ImportedMaterial::Alpha::Mask && mt.alphaCutoff == 0.5f && mt.doubleSided);
+      CHECK(mt.metalRoughTex >= 0 && mt.metallic == 1.f && mt.roughness == 1.f);
+      if (mt.metalRoughTex >= 0) CHECK(!m.textures[(size_t)mt.metalRoughTex].srgb);
+    } else {
+      CHECK(mt.name == "Wall" && mt.alpha == ImportedMaterial::Alpha::Opaque && !mt.doubleSided && mt.metalRoughTex < 0);
+    }
+  }
+  fs::remove_all(dir, ec);
+}

@@ -56,6 +56,24 @@ bool TakeImage(const uint8_t* data, size_t size, const std::string& name, Import
   return DecodeImageRGBA(data, size, out.w, out.h, out.rgba);
 }
 
+// Share of a texture's texels that are see-through (alpha < 0.5), from a small level (DDS) or every 4th texel:
+// cut-out textures (leaves, fences, grates) are mostly fully on or off.
+float SeeThroughShare(const ImportedTexture& t) {
+  std::vector<uint8_t> px;
+  int32_t w = 0, h = 0;
+  if (t.dds) {
+    if (t.dds->format == DdsFormat::BC4 || t.dds->format == DdsFormat::BC5 || t.dds->format == DdsFormat::BGRX8 || t.dds->format == DdsFormat::BGR8) return 0;
+    int mip = 0;
+    while (mip + 1 < (int)t.dds->mips.size() && std::max(t.dds->w >> (mip + 1), t.dds->h >> (mip + 1)) >= 32) ++mip;
+    if (!DecodeDDS(*t.dds, mip, px, w, h)) return 0;
+  }
+  const std::vector<uint8_t>& src = t.dds ? px : t.rgba;
+  const size_t step = t.dds ? 4 : 16;
+  size_t clear = 0, n = 0;
+  for (size_t i = 3; i < src.size(); i += step, ++n) clear += src[i] < 128;
+  return n ? (float)clear / (float)n : 0.f;
+}
+
 // A texture of the file: embedded bytes, else the file next to the model, else the path written in the file.
 bool LoadTexture(const ufbx_texture* t, const fs::path& dir, ImportedTexture& out) {
   out.name = Str(t->relative_filename).empty() ? Str(t->filename) : Str(t->relative_filename);
@@ -228,6 +246,28 @@ bool ImportFbxObj(const fs::path& path, ImportedModel& out, std::string* error, 
     o.baseColorTex = texture(p.base_color.texture, true);
     o.normalTex = texture(p.normal_map.texture, false);
     o.emissiveTex = texture(p.emission_color.texture, true);
+    // FBX has no alpha mode: a base colour texture whose texels are partly see-through is a cut-out (Mask)
+    if (o.alpha == ImportedMaterial::Alpha::Opaque && o.baseColorTex >= 0 && SeeThroughShare(out.textures[(size_t)o.baseColorTex]) > 0.02f) {
+      o.alpha = ImportedMaterial::Alpha::Mask;
+      o.alphaCutoff = 0.5f;
+    }
+    // double-sided: the material's own flag where the exporter wrote one, else the ".DoubleSided" name suffix some
+    // exporters use (Amazon Lumberyard Bistro)
+    const std::string lname = Lower(o.name);
+    o.doubleSided = lname.find("doublesided") != std::string::npos || lname.find("double_sided") != std::string::npos ||
+                    (m->features.double_sided.enabled);
+    // metal / roughness packed in the FBX "specular" slot, glTF layout (G roughness, B metal), as NVIDIA's ORCA scenes
+    // (Bistro: *_Specular.dds) store it; plain specular colour maps are left alone
+    if (const ufbx_texture* st = m->fbx.specular_color.texture; st && o.metalRoughTex < 0) {
+      const std::string sn = Lower(Str(st->relative_filename).empty() ? Str(st->filename) : Str(st->relative_filename));
+      if (sn.find("_specular.") != std::string::npos || sn.find("_orm.") != std::string::npos || sn.find("_metalrough") != std::string::npos) {
+        o.metalRoughTex = texture(st, false);
+        if (o.metalRoughTex >= 0) {
+          o.metallic = 1; // the map carries both (factors multiply it, glTF)
+          o.roughness = 1;
+        }
+      }
+    }
     if (o.baseColorTex >= 0) o.baseColor[0] = o.baseColor[1] = o.baseColor[2] = 1.f; // the map carries the colour
     const int index = (int)out.materials.size();
     out.materials.push_back(o);
