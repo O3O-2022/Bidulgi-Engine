@@ -525,10 +525,19 @@ void UIContext::DrawWidget(Widget& w) {
       if (!Icon(w.text2.empty() ? ComponentIconName(w.text) : "comp-script", w.x + 25, w.y + 8, 16))
         b.Rect(w.x + 27, w.y + 11, 10, 10, {0, 0, 0, 0}, 2, 1.5f, t.C("prefab"));
       Text(w.x + 44, w.y + (32 - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
+      float right = w.x + w.w - 14; // a ⋯ menu button takes the right end of the header (UI review B7)
+      if (w.onContext) {
+        float mx, my, mw, mh;
+        CardMenuBox(w, mx, my, mw, mh);
+        const bool over = w.hovered && hoverX_ >= mx;
+        if (over) b.Rect(mx, my, mw, mh, t.C("raise-hover"), t.N("radius-sm", 3));
+        for (int k = -1; k <= 1; ++k) b.Rect(mx + mw * 0.5f + k * 5 - 1.25f, my + mh * 0.5f - 1.25f, 2.5f, 2.5f, over ? t.C("fg") : t.C("fg-dim"), 1.25f);
+        right = mx - 6;
+      }
       if (!w.text2.empty()) {
         std::string key = w.text2 == "C#" ? "lang-cs" : w.text2 == "C++" ? "lang-cpp" : w.text2 == "Lua" ? "lang-lua"
                         : w.text2 == "Python" ? "lang-py" : "lang-graph";
-        float bw = Measure(10, w.text2) + 12, bx = w.x + w.w - 14 - bw;
+        float bw = Measure(10, w.text2) + 12, bx = right - bw;
         Color c = t.C(key), soft = c;
         soft.a = 0.16f;
         b.Rect(bx, w.y + 8, bw, 16, soft, 8, 1, c);
@@ -1307,7 +1316,13 @@ void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
 void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
   (void)mouseY;
   if (w.disabled) return; // greyed: nothing happens (its tooltip says why)
-  if (w.kind == WidgetKind::Card) { w.collapsed = !w.collapsed; return; }
+  if (w.kind == WidgetKind::Card) {
+    float mx, my, mw, mh;
+    CardMenuBox(w, mx, my, mw, mh);
+    if (w.onContext && mouseX >= mx) { w.onContext(w, mx, my + mh + 2); return; } // the ⋯ button: the card's menu
+    w.collapsed = !w.collapsed;
+    return;
+  }
   if (w.kind == WidgetKind::Choice) {
     const int cur = ChoiceIndex(w), n = (int)w.items.size();
     const int style = ChoiceStyle(w);
@@ -1369,6 +1384,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
     if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse
     switch (e.type) {
       case InputEvent::Type::MouseMove: {
+        hoverX_ = e.x;
         if (sliderDrag_) { SliderSet(*sliderDrag_, e.x); break; }
         if (scrub_) { ScrubTo(e.x, e.shift); break; }
         if (dragSource_) { // drag and drop: starts after 6 units so clicks stay clicks
