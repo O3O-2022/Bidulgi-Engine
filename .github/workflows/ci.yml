@@ -714,6 +714,11 @@ jobs:
             Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }
           }
           if ($log -match '(net test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # the editor ending while it plays (frames run out mid-test) takes its client windows with it (a Windows job)
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 300
+          Start-Sleep -Seconds 2
+          $orphans = @(Get-Process BidulgiPlayer -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$PWD*" })
+          if ($orphans.Count -gt 0) { $errors += "the editor left $($orphans.Count) player process(es) running"; $orphans | Stop-Process -Force }
           # 6-VFX P-1 particles: a ParticleSystem flame in front of the game camera: live count = rate x time, then rate x
           # lifetime, particles die, the Game view is brighter with them (pixels); a 3000 burst is cut to 500 at potato,
           # whole at ultra; Stop clears all

@@ -52,6 +52,7 @@ public:
 private:
   bool Launch(const std::string& title, std::vector<std::string> args);
   std::vector<Process> procs_;
+  void* job_ = nullptr; // Windows job (kill on close): the launched players end with the editor, even if it crashes
   uint16_t port_ = 0;
   int clients_ = 0;
 };

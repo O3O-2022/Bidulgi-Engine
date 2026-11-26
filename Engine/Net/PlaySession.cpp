@@ -142,10 +142,19 @@ bool PlaySession::Launch(const std::string& title, std::vector<std::string> args
   STARTUPINFOW si{};
   si.cb = sizeof si;
   PROCESS_INFORMATION pi{};
-  if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, exe.parent_path().c_str(), &si, &pi)) {
+  if (!job_) { // every player this editor starts lives in one job that dies with the editor (closed or crashed)
+    job_ = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (job_) SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+  }
+  // started suspended so it is in the job before it runs a single instruction
+  if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, exe.parent_path().c_str(), &si, &pi)) {
     LogError("play: cannot start {} ({}): error {}", title, U(exe), GetLastError());
     return false;
   }
+  if (job_ && !AssignProcessToJobObject(job_, pi.hProcess)) LogWarn("play: {} is not tied to the editor (error {})", title, GetLastError());
+  ResumeThread(pi.hThread);
   CloseHandle(pi.hThread);
   procs_.push_back({title, U(log), pi.hProcess});
   LogInfo("play: started {} (process {})", title, pi.dwProcessId);
