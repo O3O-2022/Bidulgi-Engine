@@ -1,3 +1,4 @@
+#include "UI/EditorNames.h"
 #include "Runtime/EditorModel.h"
 #include "Core/Utf8Path.h"
 #include "Core/Expr.h"
@@ -170,7 +171,7 @@ int EditorModel::RetargetAssetPath(const std::string& from, const std::string& t
     for (auto& k : o->children) stack.push_back(k);
   }
   if (sets.empty()) return 0;
-  bus.BeginGroup("Asset moved: " + from + " -> " + to, "ui");
+  bus.BeginGroup("에셋 이동: " + from + " → " + to, "ui");
   int n = 0;
   for (auto& c : sets) n += bus.Execute(c) ? 1 : 0;
   bus.EndGroup();
@@ -479,7 +480,7 @@ bool EditorModel::Duplicate() {
   const SceneObject* o = scene.Find(selected_);
   if (!o) return false;
   std::string id = scene.NewId(), name = o->name + " (1)", source = o->id;
-  bus.BeginGroup("Duplicate " + o->name, "ui");
+  bus.BeginGroup("복제: " + o->name, "ui");
   Command add;
   add.name = "add";
   add.args = std::format("{{\"name\":{},\"parent\":{},\"index\":{},\"id\":{}}}", Q(name), Q(o->parent),
@@ -590,7 +591,7 @@ void EditorModel::RebuildHistory() {
   history_->children.clear();
   auto entries = bus.History();
   size_t depth = bus.UndoDepth();
-  auto& start = history_->Add(MakeListRow("history.0", "Scene opened", ""));
+  auto& start = history_->Add(MakeListRow("history.0", "장면 열림", ""));
   start.selected = depth == 0;
   start.onClick = [this](Widget&) { pendingJump_ = 0; };
   for (size_t i = 0; i < entries.size(); ++i) {
@@ -772,7 +773,7 @@ void EditorModel::Rebuild() {
   if (!inspectAsset_.empty() && assets && assets->ByPath(inspectAsset_)) {
     BuildAssetInspector();
   } else if (!o || targets.empty()) {
-    inspector_->Add(MakeLabel("Nothing selected")).variant = 1;
+    inspector_->Add(MakeLabel("선택한 것이 없습니다")).variant = 1;
   } else {
     bool multi = targets.size() > 1;
     auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
@@ -816,7 +817,7 @@ void EditorModel::Rebuild() {
     }
     // Runs one command per target; several targets = one undo group.
     auto runAll = [this, targets](const std::string& label, const std::function<Command(const std::string&)>& make) {
-      if (targets.size() > 1) bus.BeginGroup(label + std::format(" ({} objects)", targets.size()), "ui");
+      if (targets.size() > 1) bus.BeginGroup(label + std::format(" ({}개)", targets.size()), "ui");
       for (auto& t : targets) {
         Command c = make(t);
         if (c.name.empty()) continue;
@@ -833,6 +834,7 @@ void EditorModel::Rebuild() {
       if (!everywhere) continue; // not common to the whole selection
       auto& card = inspector_->Add(MakeCard("c." + t.name, Pretty(t.name), LanguageBadge(t)));
       card.collapsed = collapsed_.count(t.name) ? collapsed_[t.name] : false;
+      card.tooltip = TermTooltip(t.name, {}); // the Korean name (U12: the title stays the engine term)
       std::vector<const TypeInfo*> chain;
       for (const TypeInfo* x = &t; x; x = x->base) chain.insert(chain.begin(), x);
       for (const TypeInfo* x : chain)
@@ -856,7 +858,7 @@ void EditorModel::Rebuild() {
             made = MakeField("f." + path, Pretty(f.name), shown);
           }
           auto& field = card.Add(std::move(made));
-          field.tooltip = f.meta.tooltip;
+          field.tooltip = TermTooltip(t.name + "." + f.name, f.meta.tooltip); // first line: the Korean name (U12)
           bool numeric = type == FieldType::Int32 || type == FieldType::Float || type == FieldType::Double;
           // E-4b: drag the label to change a number; vectors get one box per axis (drag the X / Y / Z tag)
           field.scrub = (numeric || (IsVectorLike(type) && type != FieldType::Color)) && !multi;
@@ -871,7 +873,7 @@ void EditorModel::Rebuild() {
           auto set = [this, targets, path, type, runAll](Widget& w) {
             if (w.text2 == kMixed) return; // untouched "—"
             std::string value = FromDisplay(w.text2, type);
-            runAll("Set " + path, [&](const std::string& id) {
+            runAll("값 바꾸기: " + path, [&](const std::string& id) {
               Command cmd;
               cmd.name = "set";
               cmd.target = id;
@@ -915,7 +917,7 @@ void EditorModel::Rebuild() {
             items.push_back({"값 복사", [this, wp] { ui_->SetClipboard(wp->text2); }, wp->text2 != kMixed});
             if (wp->overridden) // 6-1: this field differs from the prefab
               items.push_back({"프리팹 값으로 되돌리기", [this, path, targets = selection_] {
-                                 bus.BeginGroup("Revert " + path, "ui");
+                                 bus.BeginGroup("되돌리기: " + path, "ui");
                                  for (const std::string& id : targets) RevertPrefab(id, path);
                                  bus.EndGroup();
                                }, true});
@@ -1001,19 +1003,19 @@ void EditorModel::Rebuild() {
       paste.onClick = [this, type, runAll](Widget&) {
         if (clipType_ != type) { LogInfo("paste: the copied values are a {}, not a {}", clipType_.empty() ? "nothing" : clipType_, type); return; }
         std::string value = clipValue_;
-        runAll("Paste " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+        runAll("값 붙여넣기: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
       };
       tools.Add(MakeButton("cs." + type, "프리셋 저장")).onClick = [this, type](Widget&) { SavePreset(type); };
       tools.Add(MakeButton("ca." + type, "프리셋 적용")).onClick = [this, type, runAll](Widget&) {
         std::string value;
         if (!LoadPreset(type, value)) return;
-        runAll("Apply preset " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+        runAll("프리셋 적용: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
       };
     }
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
-    auto& addComp = addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    auto& addComp = addRow2.Add(MakeButton("insp.add", "+  컴포넌트 추가"));
     addComp.tooltip = "컴포넌트 추가: 목록에서 고르거나 이름을 입력";
     addComp.onClick = [this](Widget& w) { OpenAddComponentMenu(w.x, w.y + w.h + 2); };
     if (!multi && assets && InstanceRootOf(scene, o->id).empty()) // 6-1: this object becomes a prefab (also: drag it to the Project panel)
@@ -1024,7 +1026,7 @@ void EditorModel::Rebuild() {
     for (auto& id : targets) needPhysics = needPhysics || !PhysicsWorld::AddPhysicsCommands(scene, id).empty();
     if (needPhysics)
       addRow2.Add(MakeButton("insp.physics", "+  물리 추가")).onClick = [this, targets](Widget&) {
-        bus.BeginGroup("Add Physics", "ui");
+        bus.BeginGroup("물리 추가", "ui");
         for (const std::string& id : targets)
           for (const Command& c : PhysicsWorld::AddPhysicsCommands(scene, id)) {
             std::string err;
@@ -1037,7 +1039,7 @@ void EditorModel::Rebuild() {
     if (missing) {
       std::string type = clipType_, value = clipValue_;
       addRow2.Add(MakeButton("insp.pastenew", "+  붙여넣기: " + Pretty(type))).onClick = [this, type, value, runAll](Widget&) {
-        runAll("Paste " + type + " as new", [&](const std::string& id) {
+        runAll("새 컴포넌트로 붙여넣기: " + type, [&](const std::string& id) {
           Command cmd;
           if (scene.Find(id) && scene.Find(id)->Find(type)) return cmd; // already there: skip
           cmd.name = "addcomp";
@@ -1111,7 +1113,7 @@ std::string EditorModel::CreateObject(const std::string& kind, const std::string
       {"ui.button", {"Button", "UIElement", R"({"kind":"Button","text":"Button","size":[240,64]})", nullptr, nullptr}},
   };
   const Spec& sp = specs.at(kind);
-  bus.BeginGroup(std::string("Create ") + sp.name, "ui");
+  bus.BeginGroup(std::string("만들기: ") + sp.name, "ui");
   std::string err;
   bool ok = true;
   auto run = [&](const char* name, const std::string& target, const std::string& args) {
@@ -1167,7 +1169,7 @@ bool EditorModel::AddComponentToSelection(const std::string& type) {
   for (const std::string& id : selection_)
     if (SceneObject* o = scene.Find(id); o && !o->Find(type)) targets.push_back(id);
   if (targets.empty()) return false;
-  bus.BeginGroup("Add Component " + type, "ui");
+  bus.BeginGroup("컴포넌트 추가: " + type, "ui");
   bool ok = true;
   std::string err;
   for (const std::string& id : targets) {
@@ -1215,7 +1217,7 @@ void EditorModel::OpenAddComponentMenu(float x, float y) {
       for (const std::string& id : selection_)
         if (SceneObject* o = scene.Find(id); o && !o->Find(type)) missing = true;
       UIContext::MenuItem item{Pretty(type), [this, type] { AddComponentToSelection(type); }, missing};
-      if (!missing) item.keys = "있음";
+      item.keys = missing ? KoreanName(type) : std::string("이미 있음"); // the Korean name: shown and searched
       items.push_back(std::move(item));
     }
   }
@@ -1276,7 +1278,7 @@ std::string EditorModel::CreatePrefab(const std::string& id, const std::string& 
     Registry::Get(tc->data, *tc->type, "position", pos);
     Registry::Get(tc->data, *tc->type, "rotation", rot);
   }
-  bus.BeginGroup("Create prefab " + base, "ui");
+  bus.BeginGroup("프리팹 만들기: " + base, "ui");
   auto run = [&](const char* name, const std::string& target, const std::string& args) {
     Command c;
     c.name = name;
@@ -1322,7 +1324,7 @@ bool EditorModel::ApplyPrefab(const std::string& id) {
 bool EditorModel::RevertPrefab(const std::string& id, const std::string& path) {
   const std::vector<Command> cmds = RevertPrefabCommands(scene, path.empty() ? InstanceRootOf(scene, id) : id, path);
   if (cmds.empty()) return false;
-  bus.BeginGroup(path.empty() ? "Revert prefab overrides" : "Revert " + path, "ui");
+  bus.BeginGroup(path.empty() ? "프리팹 값으로 되돌리기" : "되돌리기: " + path, "ui");
   for (const Command& c : cmds) {
     std::string err;
     if (!bus.Execute(c, &err)) LogWarn("prefab: revert: {}", err);

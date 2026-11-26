@@ -51,7 +51,7 @@ void ProjectSettingsPanel::Build(Widget& parent, UIContext& ui, ProjectSettings&
   auto& head = parent.Add(MakeBox(Axis::Row, 8));
   head.padL = 10; head.padR = 10; head.padT = 4; head.padB = 2;
   head.crossAlign = Align::Center;
-  head.Add(MakeLabel("Project")).variant = 2;
+  head.Add(MakeLabel("프로젝트 설정")).variant = 2;
   auto& badge = head.Add(MakeBadge("● 저장 안 됨", 2));
   badge.id = "ps.dirty";
   badge.hidden = true;
