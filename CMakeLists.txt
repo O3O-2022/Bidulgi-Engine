@@ -180,6 +180,23 @@ FetchContent_MakeAvailable(box2d)
 set_target_properties(box2d PROPERTIES FOLDER ThirdParty
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL") # Box2D asks for the static CRT; the engine uses the DLL one
 
+# ENet 1.3.18 (MIT): reliable / unreliable UDP for multiplayer (round 7, Engine/Net). Built here from its sources
+# (its own CMakeLists asks for an old CMake), warnings off: third-party C.
+FetchContent_Declare(enet
+  URL https://github.com/lsalzman/enet/archive/refs/tags/v1.3.18.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  SOURCE_SUBDIR _not_a_cmake_project)
+FetchContent_MakeAvailable(enet)
+add_library(enet STATIC ${enet_SOURCE_DIR}/callbacks.c ${enet_SOURCE_DIR}/compress.c ${enet_SOURCE_DIR}/host.c ${enet_SOURCE_DIR}/list.c
+  ${enet_SOURCE_DIR}/packet.c ${enet_SOURCE_DIR}/peer.c ${enet_SOURCE_DIR}/protocol.c ${enet_SOURCE_DIR}/unix.c ${enet_SOURCE_DIR}/win32.c)
+target_include_directories(enet PUBLIC ${enet_SOURCE_DIR}/include)
+target_compile_options(enet PRIVATE $<$<C_COMPILER_ID:MSVC>:/W0> $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w>)
+target_compile_definitions(enet PRIVATE $<$<C_COMPILER_ID:MSVC>:_WINSOCK_DEPRECATED_NO_WARNINGS _CRT_SECURE_NO_WARNINGS>)
+if(WIN32)
+  target_link_libraries(enet PUBLIC ws2_32 winmm)
+endif()
+set_target_properties(enet PROPERTIES FOLDER ThirdParty)
+
 # ---- Engine (static lib; public boundary is the C API) ----
 add_library(BidulgiEngine STATIC
   Engine/include/bdg/bdg_api.h
@@ -195,6 +212,7 @@ add_library(BidulgiEngine STATIC
   Engine/Scripting/DotNetHost.h Engine/Scripting/DotNetHost.cpp Engine/Scripting/ScriptApi.h Engine/Scripting/ScriptApi.cpp Engine/Scripting/CSharpBindings.h Engine/Scripting/CSharpBindings.cpp Engine/Scripting/BehaviourRunner.h Engine/Scripting/BehaviourRunner.cpp Engine/Scripting/DataTable.h Engine/Scripting/DataTable.cpp Engine/Scripting/SaveGame.h Engine/Scripting/SaveGame.cpp
   Engine/Audio/Audio.h Engine/Audio/Audio.cpp Engine/Audio/AudioComponents.h Engine/Audio/AudioRunner.h Engine/Audio/AudioRunner.cpp
   Engine/GameUI/GameUI.h Engine/GameUI/GameUI.cpp Engine/GameUI/GameUIComponents.h
+  Engine/Net/Transport.h Engine/Net/Transport.cpp Engine/Net/NetCodec.h Engine/Net/NetCodec.cpp Engine/Net/NetWorld.h Engine/Net/NetWorld.cpp Engine/Net/NetComponents.h Engine/Net/PlaySession.h Engine/Net/PlaySession.cpp
   Engine/Terrain/TerrainData.h Engine/Terrain/TerrainData.cpp Engine/Terrain/TerrainComponents.h Engine/Terrain/TerrainView.h Engine/Terrain/TerrainView.cpp Engine/Terrain/TerrainTool.h Engine/Terrain/TerrainTool.cpp Engine/Terrain/TerrainPhysics.cpp
   Engine/VFX/VfxAsset.h Engine/VFX/VfxAsset.cpp Engine/VFX/VfxWorld.h Engine/VFX/VfxWorld.cpp Engine/VFX/VfxRender.h Engine/VFX/VfxRender.cpp Engine/VFX/VfxComponents.h
   Engine/Build/Pak.h Engine/Build/Pak.cpp Engine/Build/Templates.h Engine/Build/Templates.cpp Engine/Build/Build.h Engine/Build/Build.cpp Engine/Build/Player.cpp
@@ -237,8 +255,8 @@ add_library(BidulgiEngine STATIC
   Engine/Physics/Physics.h Engine/Physics/PhysicsJolt.cpp Engine/Physics/PhysicsBox2D.cpp Engine/Physics/PhysicsWorld.h Engine/Physics/PhysicsWorld.cpp
   Engine/Runtime/Engine.cpp)
 target_include_directories(BidulgiEngine PUBLIC Engine/include PRIVATE Engine ${CMAKE_SOURCE_DIR})
-bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h Engine/GameUI/GameUIComponents.h Engine/VFX/VfxComponents.h Engine/Terrain/TerrainComponents.h)
-target_link_libraries(BidulgiEngine PRIVATE libzstd_static miniaudio SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx Jolt box2d glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
+bdg_reflect(BidulgiEngine Engine/Scene/Components.h Engine/Scene/SampleComponents.h Engine/Project/ProjectSettings.h Engine/Audio/AudioComponents.h Engine/GameUI/GameUIComponents.h Engine/VFX/VfxComponents.h Engine/Terrain/TerrainComponents.h Engine/Net/NetComponents.h)
+target_link_libraries(BidulgiEngine PRIVATE libzstd_static miniaudio SDL3::SDL3-static glad stb cgltf meshoptimizer bc7enc xatlas ufbx Jolt box2d enet glm::glm freetype yyjson OpenGL::GL $<$<PLATFORM_ID:Windows>:psapi> $<$<PLATFORM_ID:Windows>:dbghelp> $<$<PLATFORM_ID:Windows>:uiautomationcore> $<$<PLATFORM_ID:Windows>:comctl32>)
 target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 
 # ---- Editor executable (empty window for now) ----
@@ -329,7 +347,7 @@ endif()
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/GameUITests.cpp Tests/AnimationTests.cpp Tests/IKTests.cpp Tests/GameApiTests.cpp Tests/GITier1Tests.cpp Tests/DDSTests.cpp Tests/VfxTests.cpp Tests/TerrainTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/GameUITests.cpp Tests/AnimationTests.cpp Tests/IKTests.cpp Tests/GameApiTests.cpp Tests/GITier1Tests.cpp Tests/DDSTests.cpp Tests/VfxTests.cpp Tests/TerrainTests.cpp Tests/NetTests.cpp Tests/NetWorldTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
 add_dependencies(BidulgiTests BidulgiPlayer) # the 7-4 build test packs the player exe found next to the tests
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)

@@ -6,6 +6,7 @@
 #include "Assets/AssetDatabase.h"
 #include "Core/Utf8Path.h"
 #include "VFX/VfxWorld.h"
+#include <chrono>
 #include <cstdlib>
 #include <algorithm>
 #include <cmath>
@@ -55,6 +56,12 @@ bool PlayMode::Start(EditorModel& m) {
     VfxWorld::Instance().Begin(folders);
   }
   audio_.SetPaused(paused_);
+  { // multiplayer (round 7): scripts can start / leave a session while playing
+    EditorModel* mp = &m;
+    NetWorld::SetGame(&net_, [this, mp](const NetSettings& s, std::string* err) { return StartNet(*mp, s, err); });
+    std::string err;
+    if (netSettings.mode != NetMode::Standalone && !StartNet(m, netSettings, &err)) LogError("net: {}", err);
+  }
   LogInfo("play: started ({} objects){}", m.scene.ObjectCount(), paused_ ? ", paused" : "");
   return true;
 }
@@ -64,6 +71,8 @@ bool PlayMode::Stop(EditorModel& m) {
   scripts_.End(); // OnDisable / OnDestroy while the played world still exists
   scripts_.beforeFixedStep = nullptr;
   if (physics_.Active()) LogInfo("physics: stopped: {}", physics_.Describe());
+  net_.Stop();
+  NetWorld::SetGame(nullptr, {});
   physics_.End();
   audio_.End();
   anim_.End();
@@ -111,6 +120,26 @@ bool PlayMode::Stop(EditorModel& m) {
   return true;
 }
 
+bool PlayMode::StartNet(EditorModel& m, const NetSettings& s, std::string* error) {
+  net_.Stop();
+  net_.onRpc = [this](const std::string& object, const std::string& type, const std::string& method, const std::string& args, uint32_t) {
+    scripts_.InvokeRpc(object, type, method, args);
+  };
+  net_.onPlayer = [this](uint32_t player, bool joined) {
+    scripts_.Broadcast(joined ? "OnPlayerJoined" : "OnPlayerLeft", std::format(R"({{"player":{}}})", player));
+  };
+  net_.onWelcome = [this, &m](const std::string& text) { // a client: the server's world replaces ours
+    m.scene.Clear();
+    std::string err;
+    if (!ReadSceneText(m.scene, text, nullptr, nullptr, &err)) LogError("net: the server's world could not be read: {}", err);
+    physics_.End();
+    physics_.Begin(m.scene, physicsSettings, m.assets);
+    m.SceneReplaced();
+  };
+  if (s.mode == NetMode::Standalone) return true;
+  return net_.Start(m.scene, m.bus, s, error);
+}
+
 void PlayMode::SetTimeScale(float s) { timeScale_ = std::clamp(s, 0.1f, 4.f); }
 
 void PlayMode::Tick(EditorModel& m, double realDt) {
@@ -126,6 +155,8 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
   }
   time_ += dt;
   ++frames_;
+  const double netNow = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  net_.Receive(m.scene, m.bus, netNow); // what arrived, before the scripts see the world
   bool changed = false;
   std::vector<std::string> stack(m.scene.Roots().begin(), m.scene.Roots().end());
   while (!stack.empty()) {
@@ -170,6 +201,7 @@ void PlayMode::Tick(EditorModel& m, double realDt) {
     }
   }
   audio_.Frame(m.scene, dt); // after the scripts: sounds they started or moved this frame
+  net_.Send(m.scene, m.bus, netNow, dt); // after the scripts and physics: moves, spawns, fields, snapshots
   VfxWorld::Instance().Sync(m.scene); // particles (6-VFX P-1): ParticleSystem components, then the simulation
   VfxWorld::Instance().Tick((float)dt);
   if (changed) m.ValuesChanged();

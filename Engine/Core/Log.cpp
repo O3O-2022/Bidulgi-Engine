@@ -8,6 +8,11 @@ bool g_commandLine = false;
 }
 
 void SetLogForCommandLine(bool on) { g_commandLine = on; }
+static std::string& LogPath() {
+  static std::string path = "Bidulgi.log";
+  return path;
+}
+void SetLogFile(const std::string& path) { LogPath() = path; }
 
 static std::function<void(LogLevel, std::string_view)>& LogHookSlot() {
   static std::function<void(LogLevel, std::string_view)> h;
@@ -26,7 +31,7 @@ void LogWrite(LogLevel level, std::string_view msg) {
   std::fprintf(level == LogLevel::Error ? stderr : stdout, "[%s] %.*s\n", tag, (int)msg.size(), msg.data());
   std::fflush(stdout);
   // Also write to Bidulgi.log in the working folder (a windowed app has no console).
-  static std::FILE* file = _fsopen("Bidulgi.log", "w", _SH_DENYNO); // readable while running
+  static std::FILE* file = _fsopen(LogPath().c_str(), "w", _SH_DENYNO); // readable while running
   if (file) { std::fprintf(file, "[%s] %.*s\n", tag, (int)msg.size(), msg.data()); std::fflush(file); }
 }
 }

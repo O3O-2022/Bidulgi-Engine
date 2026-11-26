@@ -1,0 +1,24 @@
+{"v":1,"defaults":"1.0","scene":"Arena","mode":"3d"}
+{"id":"sun","name":"Sun","rot":[-55,-30,0],"Light":{"type":"Directional","intensity":3}}
+{"id":"sky","name":"Sky","Sky":{}}
+{"id":"world","name":"World Settings","WorldSettings":{}}
+{"id":"rules","name":"Game Rules","GameMode":{"playerPrefab":"PlayerProto","maxPlayers":4},"NetworkObject":{},"ArenaGame":{}}
+{"id":"start1","name":"PlayerStart 1","pos":[-6,0.5,-6],"PlayerStart":{"order":0}}
+{"id":"start2","name":"PlayerStart 2","pos":[6,0.5,6],"PlayerStart":{"order":1}}
+{"id":"start3","name":"PlayerStart 3","pos":[6,0.5,-6],"PlayerStart":{"order":2}}
+{"id":"start4","name":"PlayerStart 4","pos":[-6,0.5,6],"PlayerStart":{"order":3}}
+{"id":"ring","name":"Ring","pos":[0,-0.5,0],"scale":[20,1,20],"MeshRenderer":{"mesh":"Cube","material":"Grass"}}
+{"id":"edge1","name":"Edge","pos":[0,-0.45,10.1],"scale":[20.4,0.95,0.2],"MeshRenderer":{"mesh":"Cube","material":"Glow"}}
+{"id":"edge2","name":"Edge","pos":[0,-0.45,-10.1],"scale":[20.4,0.95,0.2],"MeshRenderer":{"mesh":"Cube","material":"Glow"}}
+{"id":"edge3","name":"Edge","pos":[10.1,-0.45,0],"scale":[0.2,0.95,20],"MeshRenderer":{"mesh":"Cube","material":"Glow"}}
+{"id":"edge4","name":"Edge","pos":[-10.1,-0.45,0],"scale":[0.2,0.95,20],"MeshRenderer":{"mesh":"Cube","material":"Glow"}}
+{"id":"base","name":"Base","pos":[0,-6,0],"scale":[24,10,24],"MeshRenderer":{"mesh":"Cube","material":"Concrete"}}
+{"id":"proto","name":"PlayerProto","pos":[0,-40,0],"scale":[1,1,1],"MeshRenderer":{"mesh":"Cylinder","material":"Hero"},"NetworkObject":{},"NetworkTransform":{"maxSpeed":14},"ArenaPlayer":{}}
+{"id":"camera","name":"Main Camera","pos":[0,20,17],"rot":[-50,0,0],"Camera":{"fov":45},"AudioListener":{}}
+{"id":"hud","name":"HUD","UICanvas":{}}
+{"id":"ui_scores","name":"scores","parent":"hud","UIElement":{"kind":"Text","anchor":"TopLeft","position":[36,28],"size":[560,220],"text":"","fontSize":36,"align":"Left","color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_net","name":"net","parent":"hud","UIElement":{"kind":"Text","anchor":"TopRight","position":[-36,28],"size":[720,56],"text":"","fontSize":28,"align":"Right","textColor":[0.75,0.9,1,1],"color":[0,0,0,0.35],"cornerRadius":12}}
+{"id":"ui_message","name":"message","parent":"hud","UIElement":{"kind":"Text","anchor":"Bottom","position":[0,-40],"size":[1100,70],"text":"WASD 이동 · Space 밀기 — 상대를 링 밖으로!","fontSize":34,"color":[0,0,0,0.4],"cornerRadius":14}}
+{"id":"ui_lobby","name":"lobby","parent":"hud","UIElement":{"kind":"Panel","anchor":"Center","size":[760,380],"color":[0.05,0.06,0.09,0.88],"cornerRadius":22,"fontSize":40,"text":"멀티플레이 아레나\n\n\n","visible":false}}
+{"id":"ui_host","name":"host","parent":"ui_lobby","UIElement":{"kind":"Button","anchor":"Center","position":[-170,60],"size":[300,80],"text":"방 만들기 (Host)","fontSize":34}}
+{"id":"ui_join","name":"join","parent":"ui_lobby","UIElement":{"kind":"Button","anchor":"Center","position":[170,60],"size":[300,80],"text":"참가 (Join)","fontSize":34}}

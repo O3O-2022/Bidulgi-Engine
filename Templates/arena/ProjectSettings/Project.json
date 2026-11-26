@@ -1,0 +1,16 @@
+{
+  "description": {
+    "name": "{{GAME_NAME}}",
+    "version": "0.1.0",
+    "description": "Multiplayer arena made from the Bidulgi Engine arena template",
+    "company": "My Studio",
+    "identifier": "com.mystudio.arena"
+  },
+  "maps": {
+    "gameStartScene": "Scenes/Main.scene"
+  },
+  "display": {
+    "width": 1280,
+    "height": 720
+  }
+}

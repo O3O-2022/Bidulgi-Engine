@@ -601,7 +601,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=14 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=15 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }
@@ -617,6 +617,19 @@ jobs:
           New-Item -ItemType Directory -Force "$ga/Assets", "$ga/Saves" | Out-Null
           $log = Invoke-Editor 'Release' @{ BDG_GAMEAPI_TEST = '1'; BDG_ASSETS = "$ga/Assets"; BDG_SAVE_DIR = "$ga/Saves" } 200
           if ($log -notmatch 'game api test: save=1 events=1 raycast=1 overlap=1 vfx=1 restored=1 file=1') { $errors += 'game API test (saves, events, raycast, vfx) failed' }
+          # Round 7 multiplayer: the editor plays as a Listen Server through the Play options (2 players, 10 % loss) and starts
+          # a client process, then a late second one: spawns, the owner's predicted moves on the server, [Replicated] +
+          # OnRep, [Server] / [Client] / [Multicast] calls, the late joiner gets the world, the first client leaving cleans
+          # up its player (the player processes log into the test project's .cache/net)
+          $nt = Join-Path $env:RUNNER_TEMP 'bdg-net'
+          Remove-Item -Recurse -Force $nt -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $nt | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 3000
+          if ($log -notmatch 'net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1') {
+            $errors += 'multiplayer test failed'
+            Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }
+          }
+          if ($log -match '(net test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
           # 6-VFX P-1 particles: a ParticleSystem flame in front of the game camera: live count = rate x time, then rate x
           # lifetime, particles die, the Game view is brighter with them (pixels); a 3000 burst is cut to 500 at potato,
           # whole at ultra; Stop clears all
@@ -787,6 +800,36 @@ jobs:
           Write-Host "----- built thirdperson game (exit $($p.ExitCode))"; Write-Host $tplog
           if ($tpBuild -ne 0 -or $p.ExitCode -ne 0 -or $tplog -notmatch 'player: 120 frames, 2.00 s of game time, 2 C# behaviours, camera yes, ui elements 3' -or $tplog -notmatch 'animation: stopped \(1 animators') { $errors += 'thirdperson template build / player failed' }
 
+          # Round 7 multiplayer arena template: bdg new --template arena -> bdg build -> the built game as a dedicated server
+          # (--server, no window) and two clients (--connect, 5 % loss): both join, get their players, and the server's
+          # replicated round clock reaches them
+          $ar = Join-Path $env:RUNNER_TEMP 'bdg-arena'
+          Remove-Item -Recurse -Force $ar -ErrorAction SilentlyContinue
+          & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $ar --template arena --name 'Arena Test' | Out-String | Write-Host
+          if (-not (Test-Path "$ar/.cache/Scripts/ArenaTest.dll")) { $errors += 'arena template: scripts not built' }
+          Push-Location $ar
+          & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" build | Out-String | Write-Host
+          $arenaBuild = $LASTEXITCODE
+          Pop-Location
+          Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$ar/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
+          $aexe = "$ar/Builds/Windows-Development/Arena Test.exe"
+          $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-arena-cache'; $env:BDG_PLAYER_QUIET = '1'; $env:BDG_HIDDEN = '1'; $env:BDG_AUDIO_NULL = '1'
+          $srv = Start-Process $aexe -ArgumentList '--server', '--port', 47811, '--quit-after', 20, '--log', "$ar/server.log" -PassThru
+          Start-Sleep -Seconds 3
+          $c1 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Ann', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client1.log" -PassThru
+          $c2 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Bo', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client2.log" -PassThru
+          $srv, $c1, $c2 | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
+          $srv, $c1, $c2 | Where-Object { -not $_.HasExited } | Stop-Process -Force
+          Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_HIDDEN, Env:BDG_AUDIO_NULL
+          $slog = Get-Content "$ar/server.log" -Raw -Encoding utf8
+          $clogs = @("$ar/client1.log", "$ar/client2.log") | ForEach-Object { Get-Content $_ -Raw -Encoding utf8 -ErrorAction SilentlyContinue }
+          Write-Host "----- arena dedicated server (exit $($srv.ExitCode))"; Write-Host $slog
+          $clogs | ForEach-Object { Write-Host '----- arena client'; Write-Host $_ }
+          if ($arenaBuild -ne 0 -or $srv.ExitCode -ne 0 -or $slog -notmatch 'server: Arena Test on port 47811' -or $slog -notmatch 'player 1 "Ann" joined' -or
+              $slog -notmatch 'player 2 "Bo" joined' -or $slog -notmatch 'server: \d+ ticks, 2 player\(s\) at most') { $errors += 'arena dedicated server failed' }
+          foreach ($c in $clogs) {
+            if ($c -notmatch 'net: joined as player [12]' -or $c -notmatch 'arena: round clock \d+ s from the server') { $errors += 'arena client failed' }
+          }
           # E-9 camera shake: a near source shakes the game camera in play mode, a far one does not, Camera.Shake node
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_SHAKE_TEST = '1' } 80

@@ -130,6 +130,14 @@
 | `temperature` | float | `0` |
 | `tint` | float | `0` |
 
+## GameMode
+
+| 필드 | 타입 | 기본값 |
+|---|---|---|
+| `playerPrefab` | string | — |
+| `hostHasPlayer` | bool | `true` |
+| `maxPlayers` | int | `8` |
+
 ## Health
 
 | 필드 | 타입 | 기본값 |
@@ -169,6 +177,21 @@
 | `material` | string | — |
 | `bakeLightmap` | bool | `false` |
 
+## NetworkObject
+
+| 필드 | 타입 | 기본값 |
+|---|---|---|
+| `relevancy` | float | `0` |
+| `destroyWithOwner` | bool | `true` |
+
+## NetworkTransform
+
+| 필드 | 타입 | 기본값 |
+|---|---|---|
+| `sendRate` | float | `30` |
+| `ownerPredicted` | bool | `true` |
+| `maxSpeed` | float | `20` |
+
 ## ParticleSystem
 
 | 필드 | 타입 | 기본값 |
@@ -191,6 +214,12 @@
 |---|---|---|
 | `speed` | float | `5` |
 | `jumpHeight` | float | `4.5` |
+
+## PlayerStart
+
+| 필드 | 타입 | 기본값 |
+|---|---|---|
+| `order` | int | `0` |
 
 ## PostProcessVolume
 

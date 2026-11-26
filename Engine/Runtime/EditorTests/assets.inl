@@ -7,6 +7,7 @@
 #include "Terrain/TerrainData.h"
 #include "Terrain/TerrainTool.h"
 #include "Terrain/TerrainView.h"
+#include "Net/PlaySession.h"
 
 // Scripted check of 2-5d (BDG_IMPORT_TEST=1, BDG_IMPORT_SRC = a folder outside the project with rock.png 8x8,
 // Box.gltf + Box.bin; BDG_ASSETS = an empty project whose AssetRules.json wants T_ textures up to 4 px): drop two
@@ -1285,3 +1286,120 @@ void InjectFoliageTest(bdg_engine* e, int frame, float) {
                  fade, culled, budget, windDiff, calmDiff, info);
 }
 BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)
+
+
+// ---- Multiplayer (round 7) ----
+// Scripted check of round 7 (BDG_NET_TEST=1, BDG_SCRIPT_ASSEMBLIES = the samples, BDG_NET_DIR = an empty folder for a
+// small project): the editor plays as a Listen Server through the Play options (2 players, 10 % loss): one client
+// process joins, a second one joins late; the C# NetProbe checks spawns, the owner's predicted moves reaching the
+// server, a [Replicated] field with OnRep on the clients, [Server] / [Client] / [Multicast] calls, the late joiner
+// getting the world, and the first client's leaving cleaning up its player everywhere. Time-based (about 12 s); the
+// editor quits when done. Run with --frames 3000 (a ceiling).
+void InjectNetTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  namespace fs = std::filesystem;
+  using clock = std::chrono::steady_clock;
+  static std::vector<std::string> lines; // the editor's (server's) own log
+  static clock::time_point started, joined1, joined2;
+  static int stage = 0;
+  static float p1x0 = 0, p1x1 = 0;
+  static std::string dir, p1;
+  bdg::PlaySession& ps = bdg::PlaySession::Instance();
+  auto seconds = [](clock::time_point t) { return std::chrono::duration<double>(clock::now() - t).count(); };
+  auto byName = [&](const char* name) -> std::string {
+    std::vector<std::string> stack(m->scene.Roots().begin(), m->scene.Roots().end());
+    while (!stack.empty()) {
+      const bdg::SceneObject* o = m->scene.Find(stack.back());
+      stack.pop_back();
+      if (!o) continue;
+      if (o->name == name) return o->id;
+      stack.insert(stack.end(), o->children.begin(), o->children.end());
+    }
+    return {};
+  };
+  auto x = [&](const std::string& id) {
+    const bdg::SceneObject* o = m->scene.Find(id);
+    const bdg::Component* c = o ? const_cast<bdg::SceneObject*>(o)->Find("Transform") : nullptr;
+    return c ? static_cast<const bdg::Transform*>(c->data)->position.x : -999.f;
+  };
+  if (e->play.Playing()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  if (frame == 2) {
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.find("net probe: ") != std::string_view::npos || l.rfind("net: ", 0) == 0) lines.emplace_back(l); });
+    const char* d = std::getenv("BDG_NET_DIR");
+    dir = d ? d : (fs::temp_directory_path() / "bdg-net-test").string();
+    std::error_code ec;
+    fs::create_directories(fs::path(dir) / "ProjectSettings", ec);
+    fs::create_directories(fs::path(dir) / "Scenes", ec);
+    std::ofstream(fs::path(dir) / "ProjectSettings" / "Project.json", std::ios::binary)
+        << R"({"description":{"name":"Net Test"},"maps":{"gameStartScene":"Scenes/Main.scene"},"display":{"width":320,"height":240}})";
+    std::ofstream(fs::path(dir) / "Scenes" / "Main.scene", std::ios::binary) << R"({"v":1,"scene":"Main"}
+{"id":"rules","name":"Rules","GameMode":{"playerPrefab":"PlayerProto"}}
+{"id":"start1","name":"PlayerStart A","pos":[0,0,0],"PlayerStart":{"order":0}}
+{"id":"start2","name":"PlayerStart B","pos":[4,0,0],"PlayerStart":{"order":1}}
+{"id":"start3","name":"PlayerStart C","pos":[8,0,0],"PlayerStart":{"order":2}}
+{"id":"proto","name":"PlayerProto","pos":[0,-50,0],"NetworkObject":{},"NetworkTransform":{"maxSpeed":8},"NetProbe":{"role":"player"}}
+{"id":"board","name":"Board","NetworkObject":{},"NetProbe":{"role":"board"}}
+{"id":"cam","name":"Camera","pos":[4,3,10],"Camera":{}}
+)";
+    if (!m->OpenScene((fs::path(dir) / "Scenes" / "Main.scene").string())) bdg::LogError("net test: cannot open the scene");
+    ps.options = {};
+    ps.options.mode = bdg::NetMode::ListenServer;
+    ps.options.players = 2;
+    ps.options.port = 0;
+    ps.options.lossPercent = 10;
+    ps.options.projectDir = dir;
+    ps.options.extraArgs = {"--quit-after", "9"}; // the first client leaves by itself (a polite goodbye)
+  }
+  if (frame == 3) {
+    TogglePlay(e); // the editor hosts; the Play options start "Client 1"
+    started = clock::now();
+    stage = 1;
+  }
+  if (stage == 1 && (byName("Player 1").size() || seconds(started) > 20)) { // client 1 is in
+    p1 = byName("Player 1");
+    p1x0 = x(p1);
+    joined1 = clock::now();
+    stage = 2;
+  }
+  if (stage == 2 && seconds(joined1) > 3) { // a late joiner (stays until Stop)
+    p1x1 = x(p1);
+    ps.options.extraArgs.clear();
+    ps.LaunchClient("Client 2");
+    stage = 3;
+  }
+  if (stage == 3 && (byName("Player 2").size() || seconds(joined1) > 25)) {
+    joined2 = clock::now();
+    stage = 4;
+  }
+  if (stage == 4 && ((!ps.Running(0) && seconds(joined2) > 2) || seconds(joined2) > 25)) { // client 1 has left; let it settle
+    stage = 5;
+  }
+  if (stage == 5) {
+    const bool p1Gone = !m->scene.Find(p1);
+    TogglePlay(e); // closes Client 2
+    bdg::SetLogHook({});
+    std::string c1, c2;
+    bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 1.log").string(), c1);
+    bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 2.log").string(), c2);
+    auto has = [&](const std::string& s) { return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(s) != std::string::npos; }); };
+    auto count = [](const std::string& text, const std::string& s) {
+      int n = 0;
+      for (size_t at = text.find(s); at != std::string::npos; at = text.find(s, at + 1)) ++n;
+      return n;
+    };
+    const bool spawn = !p1.empty() && c1.find("net: joined as player 1") != std::string::npos && c1.find("net probe: start player Player 1 server=False client=True owner=True") != std::string::npos;
+    const bool sync = p1x1 > p1x0 + 1.0f; // the owner's predicted moves reached the server
+    const bool onrep = count(c1, "net probe: onrep score=") >= 3 && count(c2, "net probe: onrep score=") >= 2;
+    const bool rpc = has("net probe: fire 7 on Player 1") && c1.find("net probe: hit 14 on Player 1 owner=True") != std::string::npos &&
+                     c1.find("net probe: boom on Player 1") != std::string::npos && has("net probe: boom on Player 1");
+    const bool late = c2.find("net: joined as player 2") != std::string::npos && c2.find("net probe: start player Player 1 server=False client=True owner=False") != std::string::npos;
+    const bool left = p1Gone && has("net probe: left 1") && c2.find("net probe: gone Player 1") != std::string::npos;
+    bdg::LogInfo("net test: spawn={} sync={} onrep={} rpc={} late={} left={} (player 1 x {:.2f} -> {:.2f}, onrep {} / {}, stage times {:.1f} s)", spawn ? 1 : 0,
+                 sync ? 1 : 0, onrep ? 1 : 0, rpc ? 1 : 0, late ? 1 : 0, left ? 1 : 0, p1x0, p1x1, count(c1, "onrep"), count(c2, "onrep"), seconds(started));
+    ps.options = {};
+    stage = 6;
+    e->quitNow = true; // done: no need to wait for --frames
+  }
+}
+BDG_EDITOR_TEST("BDG_NET_TEST", InjectNetTest, nullptr)

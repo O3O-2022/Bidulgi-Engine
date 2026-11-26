@@ -8,6 +8,8 @@
 #include "Project/ProjectSettings.h"
 #include "Scripting/SaveGame.h"
 #include "VFX/VfxWorld.h"
+#include "Net/NetComponents.h"
+#include "Net/NetWorld.h"
 #include "Terrain/TerrainComponents.h"
 #include "Terrain/TerrainData.h"
 #include <glm/gtc/quaternion.hpp>
@@ -224,6 +226,52 @@ std::string HandleScriptRequest(Scene& scene, CommandBus& bus, std::string_view 
     for (const std::string& id : world->OverlapSphere(center, (float)number("radius", 1), yyjson_get_bool(yyjson_obj_get(r, "triggers"))))
       if (scene.Find(id)) ids.push_back(id);
     return Ok(IdList(ids));
+  }
+  if (op.rfind("net.", 0) == 0) { // multiplayer (round 7): state, RPCs, players, starting / leaving a session
+    NetWorld* net = NetWorld::Game();
+    if (op == "net.state") {
+      const bool networked = net && net->Active();
+      const std::string mode = net ? NetModeName(net->Mode()) : "Standalone";
+      const bool server = !networked || net->IsServer(), client = networked && net->IsClient();
+      bool owner = true, authority = server;
+      const std::string t = Str(r, "target");
+      if (!t.empty() && networked) owner = net->IsOwner(scene, t);
+      return Ok(std::format(R"({{"mode":{},"server":{},"client":{},"local":{},"owner":{},"authority":{},"joined":{}}})", Q(mode), server ? "true" : "false",
+                            client ? "true" : "false", net ? net->LocalId() : 0, owner ? "true" : "false", authority ? "true" : "false",
+                            !networked || net->Joined() ? "true" : "false"));
+    }
+    if (op == "net.players") {
+      std::string out = "[";
+      if (net)
+        for (const NetPlayer& p : net->Players()) out += std::format("{}{{\"id\":{},\"name\":{}}}", out.size() > 1 ? "," : "", p.id, Q(p.name));
+      return Ok(out + "]");
+    }
+    if (op == "net.stats") {
+      const net::PeerStats s = net && net->Active() ? net->Stats() : net::PeerStats{};
+      return Ok(std::format(R"({{"ping":{},"loss":{},"send":{},"receive":{}}})", s.rttMs, s.lossPercent, s.sendKbps, s.recvKbps));
+    }
+    if (op == "net.rpc") {
+      const std::string kind = Str(r, "kind");
+      const RpcKind k = kind == "server" ? RpcKind::Server : kind == "client" ? RpcKind::Client : RpcKind::Multicast;
+      if (!net) return Fail("net.rpc: the game is not running");
+      net->CallRpc(scene, target, Str(r, "type"), Str(r, "method"), Json(yyjson_obj_get(r, "args")), k, !yyjson_is_bool(yyjson_obj_get(r, "reliable")) || yyjson_get_bool(yyjson_obj_get(r, "reliable")));
+      return Ok();
+    }
+    if (op == "net.start" || op == "net.leave") {
+      NetSettings s = net ? net->Settings() : NetSettings{};
+      std::string err;
+      if (op == "net.leave") s.mode = NetMode::Standalone;
+      else {
+        const std::string mode = Str(r, "mode");
+        s.mode = mode == "listen" ? NetMode::ListenServer : mode == "server" ? NetMode::DedicatedServer : NetMode::Client;
+        if (s.mode == NetMode::Client) s.address = Str(r, "address").empty() ? "127.0.0.1" : Str(r, "address");
+        else s.address = "";
+        s.port = (uint16_t)number("port", 7777);
+        if (!Str(r, "name").empty()) s.playerName = Str(r, "name");
+      }
+      return NetWorld::RestartGame(s, &err) ? Ok() : Fail(err);
+    }
+    return Fail(std::format("unknown op \"{}\"", op));
   }
   if (op == "terrain.height") { // round 6: Terrain.HeightAt / NormalAt (world x, z): the first terrain that covers it
     const double x = number("x", 0), z = number("z", 0);

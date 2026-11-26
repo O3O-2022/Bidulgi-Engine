@@ -28,6 +28,7 @@
 | 모델 임포트 | cgltf(glTF), ufbx(FBX) | MIT | Assimp 대신 (cgltf 1.15 도입, 3-1) |
 | 3D 물리 | **Jolt Physics** | MIT | 멀티스레드, 대형 월드에 강함 (5.2.0 도입, 6-2: CMake FetchContent, 크로스 플랫폼 결정론) |
 | 2D 물리 | **Box2D v3** | MIT | 3.1.0 도입 (6-2: CMake FetchContent) |
+| 네트워크 | **ENet** | MIT | 1.3.18 도입 (7라운드 M-1: CMake FetchContent, 소스를 직접 빌드) — UDP 신뢰·비신뢰 채널, `Engine/Net/Transport` 뒤에 숨김 |
 | 오디오 | **miniaudio** | MIT / 퍼블릭 도메인 | 공간 음향은 이후 Steam Audio(Apache-2.0) 선택 |
 | 애니메이션 기반 | ozz-animation | MIT | 샘플링과 블렌딩. 그래프와 노티파이는 자체 구현 |
 | 길찾기 | Recast & Detour | zlib | |

@@ -12,6 +12,7 @@
 #include "Scene/CameraShake.h"
 #include "Scripting/BehaviourRunner.h"
 #include "Audio/AudioRunner.h"
+#include "Net/NetWorld.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -49,6 +50,11 @@ public:
   // Physics (6-2): stepped on the fixed step (Scripts().fixedStep / maxFixedSteps), before C# FixedUpdate; collision
   // and trigger events go to the object's Behaviours right after each step. Gravity from the project settings.
   PhysicsWorld::Settings physicsSettings;
+  // Multiplayer (round 7): how this game plays on the network (the editor's Play options, the player's --server /
+  // --connect). Standalone = no network. The world arrives from the server for a client.
+  NetSettings netSettings;
+  NetWorld& Net() { return net_; }
+  const NetWorld& Net() const { return net_; }
   const PhysicsWorld& Physics() const { return physics_; }
   struct PhysicsCounts { uint64_t collisionEnter = 0, collisionExit = 0, triggerEnter = 0, triggerExit = 0; };
   const PhysicsCounts& PhysicsEvents() const { return physicsCounts_; } // since Start
@@ -75,6 +81,8 @@ private:
   void StepPhysics(EditorModel& m, double step);
   AudioRunner audio_;       // AudioSource / AudioListener (6-3)
   AnimationSystem anim_;    // 7-1
+  NetWorld net_;            // round 7
+  bool StartNet(EditorModel& m, const NetSettings& s, std::string* error);
   bool shakesStarted_ = false;
   std::map<std::string, CameraShakeDef> shakeCache_; // asset name -> definition (read once per play)
   bool FindShake(EditorModel& m, const std::string& name, CameraShakeDef& out);

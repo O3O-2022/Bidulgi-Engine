@@ -267,6 +267,7 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   wsTabs.variant = 1;
   ws.Add(Spacer());
   ws.Add(MakeButton("tool.play", "▶  Play", true));
+  ws.Add(MakeButton("tool.playopts", "▾")).id = "tool.playopts"; // multiplayer Play options (round 7): net mode, players, network
   ws.Add(MakeButton("tool.pause", "||"));
   ws.Add(MakeButton("tool.step", "▶|"));
   auto& speed = ws.Add(MakeField("tool.timescale", "속도", "1")); // game time scale (3-6b)

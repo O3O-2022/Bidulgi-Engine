@@ -72,7 +72,8 @@ internal static class Behaviours {
     var chain = new List<Type>();
     for (Type? x = t; x != null && x != typeof(Behaviour); x = x.BaseType) chain.Insert(0, x);
     f = chain.SelectMany(x => x.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
-                                .Where(fi => fi.GetCustomAttribute<EditAttribute>() != null).OrderBy(fi => fi.MetadataToken)).ToArray();
+                                .Where(fi => fi.GetCustomAttribute<EditAttribute>() != null || fi.GetCustomAttribute<ReplicatedAttribute>() != null)
+                                .OrderBy(fi => fi.MetadataToken)).ToArray(); // [Replicated] fields travel through the same channel (round 7)
     s_fields[t] = f;
     return f;
   }
@@ -95,6 +96,7 @@ internal static class Behaviours {
       if (f.GetCustomAttribute<RangeAttribute>() is { } r) { o["min"] = r.Min; o["max"] = r.Max; }
       if (f.GetCustomAttribute<TooltipAttribute>() is { } tip) o["tooltip"] = tip.Text;
       if (f.GetCustomAttribute<HeaderAttribute>() is { } head) o["header"] = head.Text;
+      if (f.GetCustomAttribute<ReplicatedAttribute>() != null) o["replicated"] = true;
       if (f.FieldType.IsEnum) {
         var values = new JsonArray();
         foreach (object v in Enum.GetValues(f.FieldType)) values.Add(new JsonArray(v.ToString(), Convert.ToInt64(v)));
@@ -111,7 +113,21 @@ internal static class Behaviours {
     if (JsonNode.Parse(json) is not JsonObject obj) return;
     foreach (FieldInfo f in EditFields(b.GetType())) {
       if (!obj.TryGetPropertyValue(f.Name, out JsonNode? n) || n == null) continue;
-      try { f.SetValue(b, Engine.FromNode(f.FieldType, n)); }
+      try {
+        object? before = f.GetValue(b), after = Engine.FromNode(f.FieldType, n);
+        f.SetValue(b, after);
+        // a [Replicated] field the server changed: OnRep_<field>() or OnRep_<field>(old value) (round 7)
+        if (b.Running && f.GetCustomAttribute<ReplicatedAttribute>() != null && !Equals(before, after)) {
+          MethodInfo? rep = b.GetType().GetMethod("OnRep_" + f.Name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+          if (rep != null) {
+            object?[]? args = rep.GetParameters().Length == 1 ? new[] { before } : null;
+            Scheduler.Call(b, () => {
+              try { rep.Invoke(b, args); }
+              catch (Exception e) { ReportException(b, "OnRep_" + f.Name, e); }
+            });
+          }
+        }
+      }
       catch (Exception e) { Debug.LogWarning($"C#: {b.GetType().Name}.{f.Name}: {e.Message}"); }
     }
   }
@@ -369,6 +385,26 @@ internal static class Behaviours {
   public static void SendEvent(int h, string method, string json) {
     if (!s_instances.TryGetValue(h, out var i) || !i.Enabled || !i.Started) return;
     Type t = i.B.GetType();
+    if (method.StartsWith("rpc:")) { // a network call (round 7): the arguments are a JSON array
+      string name = method[4..];
+      MethodInfo? rm = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+      if (rm == null) { Debug.LogWarning($"C#: RPC {t.Name}.{name}: no such method"); return; }
+      ParameterInfo[] ps = rm.GetParameters();
+      JsonArray given = JsonNode.Parse(json) as JsonArray ?? new JsonArray();
+      object?[] callArgs = new object?[ps.Length];
+      for (int k = 0; k < ps.Length; ++k)
+        callArgs[k] = k < given.Count && given[k] != null ? Engine.FromNode(ps[k].ParameterType, given[k]!) : (ps[k].HasDefaultValue ? ps[k].DefaultValue : null);
+      Run(i, b => rm.Invoke(b, callArgs), name);
+      return;
+    }
+    if (method == "OnPlayerJoined" || method == "OnPlayerLeft") { // server events (round 7): (int player) or none
+      MethodInfo? pm = t.GetMethod(method, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+      if (pm == null) return;
+      int player = JsonNode.Parse(json)?["player"]?.GetValue<int>() ?? 0;
+      object?[]? pa = pm.GetParameters().Length == 1 ? new object?[] { player } : null;
+      Run(i, b => pm.Invoke(b, pa), method);
+      return;
+    }
     if (!s_named.TryGetValue((t, method), out MethodInfo? m)) {
       m = null;
       for (Type? x = t; x != null && x != typeof(Behaviour) && m == null; x = x.BaseType)

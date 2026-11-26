@@ -35,6 +35,7 @@
 | 씬 이동 | `await Scene.Load(Scenes.Forest, fade: 0.5f);` | `Scene::Load(...)` | `Scene.Load(Scenes.Forest)` | Load Scene |
 | 이벤트 보내기·받기 ([6-5b](#c-구현-현황--세이브이벤트레이캐스트이펙트-6-5b-2026-11-25)) | `Events.Emit(new PlayerDied(this))`, `Events.On<PlayerDied>(OnDied)` (`Send` = `Emit`) | 같음 | `Events.send("PlayerDied", self)`, `Events.on("PlayerDied", f)` | Send / On Event |
 | 저장·불러오기 ([6-5b](#c-구현-현황--세이브이벤트레이캐스트이펙트-6-5b-2026-11-25)) | `Save.Set("best", 12)`, `Save.Get("best", 0)`, `Save.Load("slot2")` (`SaveGame.Save/Load`도) | 같음 | 같음 | Save / Load Game |
+| 멀티플레이 ([7라운드](multiplayer.md)) | `[Replicated] int score;` + `OnRep_score()`, `[Server] void Fire()` + `Rpc(nameof(Fire))`, `IsOwner`, `Net.Host()` / `Net.Join(ip)` | — | — | Replicated / Run on Server |
 | 화면 UI ([7-3](ui-widgets.md#구현-현황--런타임-게임-ui-7-3-런타임-2026-11-25)) | `UI.Text("score").text = "점수 1"`, `UI.Button("restart").clicked` | — | — | Set Text / On Click |
 | 데이터 테이블 ([4-4d](data-tables.md)) | `Data.Get<Weapon>("rifle").damage` | `Data::Get<FWeapon>("rifle")` | `Data.get("Weapons", "rifle").damage` | Get Data Row |
 | 무작위 | `Random.Range(1, 6)`, `Random.Chance(0.2f)`, `list.PickRandom()` | 같음 | `random.range(1,6)`, `random.chance(0.2)` | Random |
