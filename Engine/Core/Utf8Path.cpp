@@ -15,6 +15,11 @@ bool IsUtf8(std::string_view s) {
   return true;
 }
 
+std::string PathToU8(const std::filesystem::path& p) {
+  const std::u8string u = p.u8string();
+  return std::string(reinterpret_cast<const char*>(u.data()), u.size());
+}
+
 std::filesystem::path PathU8(std::string_view s) {
   if (IsUtf8(s)) return std::filesystem::path(std::u8string((const char8_t*)s.data(), s.size()));
   return std::filesystem::path(std::string(s)); // system code page

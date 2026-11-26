@@ -11,6 +11,7 @@
 namespace bdg {
 bool IsUtf8(std::string_view s);
 std::filesystem::path PathU8(std::string_view s);
+std::string PathToU8(const std::filesystem::path& p); // the path as UTF-8 (never throws, unlike path::string())
 std::FILE* OpenU8(std::string_view path, const char* mode); // fopen with the path read as above
 bool ReadTextU8(std::string_view path, std::string& text);  // whole file; false if it cannot be opened
 }

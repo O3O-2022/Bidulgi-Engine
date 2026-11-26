@@ -1,4 +1,5 @@
 #include "Physics/PhysicsWorld.h"
+#include "Core/Utf8Path.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
 #include "Assets/ModelImport.h"
@@ -52,7 +53,7 @@ Drawn DrawnOf(SceneObject* o, const AssetDatabase* assets) {
   }
   const MeshRenderer* mr = Comp<MeshRenderer>(o, "MeshRenderer");
   if (!mr || mr->mesh.empty()) return d;
-  const std::string ext = Lower(fs::path(mr->mesh).extension().string());
+  const std::string ext = Lower(bdg::PathToU8(PathU8(mr->mesh).extension()));
   const AssetRecord* rec = assets && (ext == ".gltf" || ext == ".glb" || ext == ".fbx" || ext == ".obj") ? assets->ByPath(mr->mesh) : nullptr;
   if (rec) {
     ImportedModel im;
@@ -75,7 +76,7 @@ Drawn DrawnOf(SceneObject* o, const AssetDatabase* assets) {
     LogWarn("physics: {} did not import for its collider ({})", mr->mesh, err);
     return d;
   }
-  const std::string stem = Lower(fs::path(mr->mesh).stem().string());
+  const std::string stem = Lower(bdg::PathToU8(PathU8(mr->mesh).stem()));
   auto centred = [](MeshData m) { for (Vertex3D& v : m.vertices) v.py -= 0.5f; return m; };
   if (stem == "cube") { d.kind = "cube"; d.mesh = MakeBox(1, 1, 1); }
   else if (stem == "sphere") { d.kind = "sphere"; d.mesh = MakeSphere(0.5f); }
@@ -564,7 +565,7 @@ std::vector<Command> PhysicsWorld::AddPhysicsCommands(const Scene& scene, const 
   bool level = has("Blockout"); // greybox blocks and flat planes are level geometry
   for (const Component& c : o->components)
     if (c.type && c.type->name == "MeshRenderer") {
-      const std::string m = Lower(fs::path(static_cast<const MeshRenderer*>(c.data)->mesh).stem().string());
+      const std::string m = Lower(bdg::PathToU8(PathU8(static_cast<const MeshRenderer*>(c.data)->mesh).stem()));
       level = level || m == "plane";
     }
   auto add = [&](const char* type, const std::string& value) {

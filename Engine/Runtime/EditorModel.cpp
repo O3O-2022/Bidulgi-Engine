@@ -435,7 +435,7 @@ bool EditorModel::CopyComponent(const std::string& type) {
 }
 
 std::string EditorModel::PresetPath(const std::string& type) const {
-  return (std::filesystem::path(presetDir.empty() ? std::filesystem::current_path().string() : presetDir) / (type + ".preset")).string();
+  return bdg::PathToU8(((presetDir.empty() ? std::filesystem::current_path() : bdg::PathU8(presetDir)) / (type + ".preset")));
 }
 
 bool EditorModel::SavePreset(const std::string& type) {

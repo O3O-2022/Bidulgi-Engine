@@ -1,4 +1,5 @@
 #include "Runtime/AssetPreviews.h"
+#include "Core/Utf8Path.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/GltfImport.h"
 #include "Assets/ModelImport.h"
@@ -140,7 +141,7 @@ bool AssetPreviews::Make(const AssetRecord& r, std::vector<uint8_t>& rgba) {
   rgba = HalveFlip(px, kRenderSize);
   fs::create_directories(cacheDir_, ec);
   for (auto& old : fs::directory_iterator(cacheDir_, ec)) // the previous render of this asset
-    if (old.path().filename().string().starts_with(r.guid + "-") && old.path() != cached && old.path().string().find("-r") != std::string::npos)
+    if (bdg::PathToU8(old.path().filename()).starts_with(r.guid + "-") && old.path() != cached && bdg::PathToU8(old.path()).find("-r") != std::string::npos)
       fs::remove(old.path(), ec);
   WritePNG(cached.string().c_str(), ThumbnailCache::kSize, ThumbnailCache::kSize, rgba.data(), false);
   ++stats_.rendered;

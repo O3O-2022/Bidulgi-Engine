@@ -163,7 +163,7 @@ bool AssetDatabase::LoadCache() {
 bool AssetDatabase::SaveCache() const {
   if (cachePath_.empty()) return false;
   std::error_code ec;
-  fs::create_directories(fs::path(cachePath_).parent_path(), ec);
+  fs::create_directories(PathU8(cachePath_).parent_path(), ec);
   std::FILE* f = OpenU8(cachePath_, "wb");
   if (!f) return false;
   std::fprintf(f, "{\"assetdb\":1,\"root\":%s}\n", Registry_Quote(root_).c_str());

@@ -1,4 +1,5 @@
 #include "Assets/Thumbnails.h"
+#include "Core/Utf8Path.h"
 #include "Assets/AssetDatabase.h"
 #include "Core/Image.h"
 #include "Core/Log.h"
@@ -11,7 +12,7 @@ namespace fs = std::filesystem;
 
 bool ThumbnailCache::Supported(const AssetRecord& r) {
   if (r.importer != "texture") return false;
-  std::string e = fs::path(r.path).extension().string();
+  std::string e = bdg::PathToU8(PathU8(r.path).extension());
   for (char& c : e) c = (char)std::tolower((unsigned char)c);
   return e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".psd" || e == ".hdr";
 }
@@ -46,7 +47,7 @@ bool ThumbnailCache::Get(const AssetRecord& r, const fs::path& source, std::vect
   std::error_code ec;
   fs::create_directories(dir_, ec);
   for (auto& old : fs::directory_iterator(dir_, ec)) // the previous thumbnail of this asset is stale now
-    if (old.path().filename().string().starts_with(r.guid + "-")) fs::remove(old.path(), ec);
+    if (bdg::PathToU8(old.path().filename()).starts_with(r.guid + "-")) fs::remove(old.path(), ec);
   std::vector<uint8_t> png;
   if (EncodePNG(kSize, kSize, rgba.data(), false, png))
     if (std::FILE* f = _wfopen(cached.c_str(), L"wb")) { std::fwrite(png.data(), 1, png.size(), f); std::fclose(f); }

@@ -1,4 +1,5 @@
 #include "Core/Crash.h"
+#include "Core/Utf8Path.h"
 #include "Core/Log.h"
 #include <cstdlib>
 #include <filesystem>
@@ -76,7 +77,7 @@ void InstallCrashHandler(const std::string& reportRoot) {
 }
 
 std::string TakePendingCrash(const std::string& reportRoot) {
-  std::filesystem::path marker = std::filesystem::path(reportRoot) / "pending-crash.txt";
+  std::filesystem::path marker = bdg::PathU8(reportRoot) / "pending-crash.txt";
   std::error_code ec;
   if (!std::filesystem::exists(marker, ec)) return {};
   std::wstring dir;
@@ -87,7 +88,7 @@ std::string TakePendingCrash(const std::string& reportRoot) {
   }
   std::filesystem::remove(marker, ec);
   std::filesystem::path p(dir);
-  return std::filesystem::is_directory(p, ec) ? p.string() : std::string();
+  return std::filesystem::is_directory(p, ec) ? bdg::PathToU8(p) : std::string();
 }
 
 void CrashForTest() {

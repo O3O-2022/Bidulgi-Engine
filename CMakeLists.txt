@@ -262,13 +262,13 @@ target_compile_definitions(BidulgiEngine PRIVATE $<$<CONFIG:Debug>:BDG_DEBUG=1> 
 
 # ---- Editor executable (empty window for now) ----
 configure_file(Editor/app.rc.in ${CMAKE_BINARY_DIR}/app.rc @ONLY)
-add_executable(BidulgiEditor Editor/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
+add_executable(BidulgiEditor Editor/main.cpp ${CMAKE_BINARY_DIR}/app.rc $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/Editor/utf8.manifest>)
 target_link_libraries(BidulgiEditor PRIVATE BidulgiEngine)
 # `bdg` command line (queue 2-7): console tool over the same engine library
-add_executable(bdg tools/bdg/main.cpp)
+add_executable(bdg tools/bdg/main.cpp $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/Editor/utf8.manifest>)
 target_link_libraries(bdg PRIVATE BidulgiEngine)
 # Game player (queue 7-4): runs a built game (no editor UI); `bdg build` copies it into the build folder
-add_executable(BidulgiPlayer Player/main.cpp ${CMAKE_BINARY_DIR}/app.rc)
+add_executable(BidulgiPlayer Player/main.cpp ${CMAKE_BINARY_DIR}/app.rc $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/Editor/utf8.manifest>)
 target_link_libraries(BidulgiPlayer PRIVATE BidulgiEngine)
 add_dependencies(bdg BidulgiPlayer)
 
@@ -348,7 +348,7 @@ endif()
 
 # ---- Unit tests (console): build/<Config>/BidulgiTests.exe, also `ctest -C Release` ----
 enable_testing()
-add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/GameUITests.cpp Tests/AnimationTests.cpp Tests/IKTests.cpp Tests/GameApiTests.cpp Tests/GITier1Tests.cpp Tests/DDSTests.cpp Tests/VfxTests.cpp Tests/TerrainTests.cpp Tests/NetTests.cpp Tests/NetWorldTests.cpp Tests/McpTests.cpp Tests/bdg_test.h Tests/BTestComponent.h)
+add_executable(BidulgiTests Tests/TestMain.cpp Tests/ReflectionTests.cpp Tests/CommandTests.cpp Tests/HandleTests.cpp Tests/FaultTests.cpp Tests/FuzzTests.cpp Tests/ShortcutTests.cpp Tests/DeterminismTests.cpp Tests/SpaceTests.cpp Tests/SceneTests.cpp Tests/SceneFileTests.cpp Tests/AssetTests.cpp Tests/InspectorTests.cpp Tests/RenderTests.cpp Tests/MaterialTests.cpp Tests/ThemeTests.cpp Tests/ExprTests.cpp Tests/PostVolumeTests.cpp Tests/CliTests.cpp Tests/GraphLibraryTests.cpp Tests/CameraShakeTests.cpp Tests/ScriptingTests.cpp Tests/PhysicsTests.cpp Tests/InputTests.cpp Tests/BuildTests.cpp Tests/AudioTests.cpp Tests/PrefabTests.cpp Tests/GameUITests.cpp Tests/AnimationTests.cpp Tests/IKTests.cpp Tests/GameApiTests.cpp Tests/GITier1Tests.cpp Tests/DDSTests.cpp Tests/VfxTests.cpp Tests/TerrainTests.cpp Tests/NetTests.cpp Tests/NetWorldTests.cpp Tests/McpTests.cpp Tests/bdg_test.h Tests/BTestComponent.h $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/Editor/utf8.manifest>)
 add_dependencies(BidulgiTests BidulgiPlayer) # the 7-4 build test packs the player exe found next to the tests
 bdg_reflect(BidulgiTests Tests/BTestComponent.h)
 target_include_directories(BidulgiTests PRIVATE ${CMAKE_SOURCE_DIR} Engine)

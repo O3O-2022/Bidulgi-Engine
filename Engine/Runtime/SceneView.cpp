@@ -1,4 +1,5 @@
 #include "Runtime/SceneView.h"
+#include "Core/Utf8Path.h"
 #include "Anim/AnimationSystem.h"
 #include "Assets/AssetImport.h"
 #include "Assets/ModelImport.h"
@@ -152,7 +153,7 @@ void SceneView::DestroySkinInst(SkinInst& s) {
 
 const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const AssetDatabase* assets) {
   if (name.empty()) return nullptr;
-  std::string ext = Lower(fs::path(name).extension().string());
+  std::string ext = Lower(bdg::PathToU8(fs::path(name).extension()));
   const AssetRecord* rec = assets && IsModelFile(ext) ? assets->ByPath(name) : nullptr;
   auto it = meshes_.find(name);
   if (it != meshes_.end() && (!rec || it->second.hash == rec->hash)) return it->second.missing ? &builtins_["cube"] : &it->second;
@@ -192,7 +193,7 @@ const SceneView::MeshEntry* SceneView::Resolve(const std::string& name, const As
     }
     LogWarn("scene view: {} did not import ({}); showing a placeholder cube", name, err);
   } else {
-    auto b = builtins_.find(Lower(fs::path(name).stem().string()));
+    auto b = builtins_.find(Lower(bdg::PathToU8(fs::path(name).stem())));
     if (b != builtins_.end()) return &b->second;
     LogWarn("scene view: mesh '{}' is not in the project; showing a placeholder cube", name);
   }
@@ -618,7 +619,7 @@ void SceneView::Render(EditorModel& model, const AssetDatabase* assets, const Wi
       bakedLightmapKey_ = 0;
     }
     // Baked GI cache (GI Tier 0-D): a bake of exactly these inputs is loaded instead of baked again.
-    auto cachePath = [](uint64_t h) { return (std::filesystem::current_path() / ".cache" / "gi" / std::format("scene-{:016x}.bdggi", h)).string(); };
+    auto cachePath = [](uint64_t h) { return bdg::PathToU8((std::filesystem::current_path() / ".cache" / "gi" / std::format("scene-{:016x}.bdggi", h))); };
     auto tryLoad = [&]() {
       const uint64_t h = r_->GIInputHash(items_, light_);
       std::string err;

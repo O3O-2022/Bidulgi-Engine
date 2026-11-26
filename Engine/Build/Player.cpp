@@ -241,7 +241,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     else if (!std::strcmp(argv[i], "--sim-jitter") && more) net.sim.jitterMs = (float)std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-loss") && more) net.sim.lossPercent = (float)std::atof(argv[++i]);
   }
-  if (!logFile.empty()) bdg::SetLogFile(fs::absolute(bdg::PathU8(logFile)).string());
+  if (!logFile.empty()) bdg::SetLogFile(bdg::PathToU8(fs::absolute(bdg::PathU8(logFile))));
   const fs::path exeDir = ExeDir();
   std::error_code ec;
   fs::current_path(exeDir, ec); // Bidulgi.log goes next to the exe (opened by the first log line)

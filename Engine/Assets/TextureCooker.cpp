@@ -1,4 +1,5 @@
 #include "Assets/TextureCooker.h"
+#include "Core/Utf8Path.h"
 #include "Assets/AssetDatabase.h"
 #include "Core/DDS.h"
 #include "Core/Image.h"
@@ -154,7 +155,7 @@ bool PresetFromString(std::string_view s, TexturePreset& out) {
 
 TexturePreset PresetFromPath(const std::string& assetPath) {
   fs::path p(assetPath);
-  std::string stem = Lower(p.stem().string()), dir = Lower(p.parent_path().generic_string());
+  std::string stem = Lower(bdg::PathToU8(p.stem())), dir = Lower(p.parent_path().generic_string());
   if (dir == "ui" || dir.starts_with("ui/") || dir.find("/ui/") != std::string::npos || dir.ends_with("/ui") || EndsWithAny(stem, {"_ui"}))
     return TexturePreset::UI;
   if (EndsWithAny(stem, {"_n", "_normal", "_nrm", "_normalmap"})) return TexturePreset::Normal;
@@ -373,7 +374,7 @@ bool TextureCookCache::Get(const AssetRecord& r, const fs::path& source, std::st
   std::error_code ec;
   fs::create_directories(dir_, ec);
   for (auto& old : fs::directory_iterator(dir_, ec)) // earlier cooks of this texture are stale now
-    if (old.path().filename().string().starts_with(r.guid + "-")) fs::remove(old.path(), ec);
+    if (bdg::PathToU8(old.path().filename()).starts_with(r.guid + "-")) fs::remove(old.path(), ec);
   if (!WriteDDS(cached, out)) LogWarn("texture: could not write {}", cached.string());
   LogInfo("texture: cooked {} ({}x{}, {}, {} mips) in {:.0f} ms", r.path, out.w, out.h, PresetName(s.preset), out.mips.size(), ms);
   return true;

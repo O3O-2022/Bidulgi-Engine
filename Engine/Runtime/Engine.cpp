@@ -74,7 +74,7 @@ std::string FindUp(const char* envName, std::initializer_list<const char*> relPa
   for (const char* rel : relPaths) {
     std::filesystem::path base = std::filesystem::current_path();
     for (int up = 0; up < 4; ++up, base = base.parent_path())
-      if (std::filesystem::exists(base / rel)) return (base / rel).string();
+      if (std::filesystem::exists(base / rel)) return bdg::PathToU8((base / rel));
   }
   return {};
 }
@@ -411,7 +411,7 @@ void DeleteOldBugReports(const std::filesystem::path& root, int maxAgeDays) {
     auto t = d.last_write_time(ec);
     if (!ec && t < cutoff) {
       fs::remove_all(d.path(), ec);
-      bdg::LogInfo("bug report: deleted old report {}", d.path().filename().string());
+      bdg::LogInfo("bug report: deleted old report {}", bdg::PathToU8(d.path().filename()));
     }
   }
 }
@@ -528,15 +528,15 @@ void SetUiZoom(bdg_engine* e, float zoom) {
 void SaveEditorPrefs(bdg_engine* e) {
   if (e->prefsPath.empty()) return;
   std::error_code ec;
-  std::filesystem::create_directories(std::filesystem::path(e->prefsPath).parent_path(), ec);
-  std::ofstream(std::filesystem::path(e->prefsPath), std::ios::binary)
+  std::filesystem::create_directories(bdg::PathU8(e->prefsPath).parent_path(), ec);
+  std::ofstream(bdg::PathU8(e->prefsPath), std::ios::binary)
       << std::format("{{\"uiZoom\":{},\"confirmQuit\":{},\"autosaveMinutes\":{}}}\n", e->uiZoom, e->confirmQuit ? "true" : "false", e->autosaveMinutes);
 }
 
 void SaveEditorPrefs(bdg_engine* e);
 void LoadEditorPrefs(bdg_engine* e, bool automated) {
   const char* custom = std::getenv("BDG_PREFS");
-  e->prefsPath = custom ? custom : automated ? "" : (std::filesystem::current_path() / ".cache" / "EditorPrefs.json").string();
+  e->prefsPath = custom ? custom : automated ? "" : bdg::PathToU8((std::filesystem::current_path() / ".cache" / "EditorPrefs.json"));
   if (bdg::Widget* f = e->editor->Find("s.uizoom")) {
     f->onCommit = [e](bdg::Widget& w) { SetUiZoom(e, (float)std::strtod(w.text2.c_str(), nullptr) / 100.f); };
     f->onChange = f->onCommit;
@@ -557,7 +557,7 @@ void LoadEditorPrefs(bdg_engine* e, bool automated) {
   };
   show();
   if (e->prefsPath.empty()) return;
-  std::ifstream in(std::filesystem::path(e->prefsPath), std::ios::binary);
+  std::ifstream in(bdg::PathU8(e->prefsPath), std::ios::binary);
   const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   if (yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0)) {
     if (yyjson_val* z = yyjson_obj_get(yyjson_doc_get_root(doc), "uiZoom"); yyjson_is_num(z)) {
@@ -917,7 +917,7 @@ void RebuildThemeList(bdg_engine* e) {
 
 void SetupTheme(bdg_engine* e) {
   const char* custom = std::getenv("BDG_THEME_FILE");
-  e->themePath = custom ? custom : (std::filesystem::current_path() / "ProjectSettings" / "Theme.json").string();
+  e->themePath = custom ? custom : bdg::PathToU8((std::filesystem::current_path() / "ProjectSettings" / "Theme.json"));
   std::string err;
   if (!e->theme.LoadOverrides(e->themePath, &err)) bdg::LogWarn("theme: {}", err);
   if (bdg::Widget* b = e->editor->Find("theme.reset")) b->onClick = [e](bdg::Widget&) {
@@ -1034,7 +1034,7 @@ void SetupShortcuts(bdg_engine* e) {
   s.Register("help.bug", "Report a Bug", [e] { e->bugRequested = true; }); // F12 is Windows' debugger break key
 
   const char* custom = std::getenv("BDG_SHORTCUTS");
-  e->shortcutsPath = custom ? custom : (std::filesystem::current_path() / "ProjectSettings" / "Shortcuts.jsonl").string();
+  e->shortcutsPath = custom ? custom : bdg::PathToU8((std::filesystem::current_path() / "ProjectSettings" / "Shortcuts.jsonl"));
   std::string err;
   if (s.Load(e->shortcutsPath, &err)) {
     bdg::LogInfo("shortcuts: preset {} loaded from {}", s.Preset(), e->shortcutsPath);
@@ -1086,7 +1086,7 @@ void DrawGameViewUI(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
   const bdg::InputSystem::UIKeys keys = in.TakeUIKeys(); // typed text, Backspace, Enter, wheel (input fields, scroll views)
   if (e->play.Playing() && in.gameFocused)
     GameViewUI().Input(e->model->scene, r, {in.MousePosition().x, in.MousePosition().y, in.MouseButton(1), keys.wheel, keys.text, keys.backspaces, keys.enter});
-  const std::string assets = e->assetsOpen ? e->assets.Root() : (std::filesystem::current_path() / "Assets").string();
+  const std::string assets = e->assetsOpen ? e->assets.Root() : bdg::PathToU8((std::filesystem::current_path() / "Assets"));
   GameViewUI().Draw(e->model->scene, ui.Batch(), e->hasFont ? &e->font : nullptr, e->rhi, r, assets);
 }
 
@@ -1186,7 +1186,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   if (!desc || !out) { bdg::LogWarn("bdg_engine_create: desc and out must not be null"); return BDG_ERR_INVALID_ARG; }
   *out = nullptr;
   bdg::LogInfo("Bidulgi Engine {}", bdg_version_string());
-  bdg::LogInfo("folder: {}", std::filesystem::current_path().string());
+  bdg::LogInfo("folder: {}", bdg::PathToU8(std::filesystem::current_path()));
   auto* e = new (std::nothrow) bdg_engine();
   if (!e) return BDG_ERR_PLATFORM;
   e->createdAt = std::chrono::steady_clock::now();
@@ -1238,8 +1238,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;
   e->refSceneTest = std::getenv("BDG_REFSCENE_TEST") != nullptr;
   e->giTest = std::getenv("BDG_GI_TEST") != nullptr;
-  bdg::InstallCrashHandler((std::filesystem::current_path() / "BugReports").string());
-  e->pendingCrash = bdg::TakePendingCrash((std::filesystem::current_path() / "BugReports").string());
+  bdg::InstallCrashHandler(bdg::PathToU8((std::filesystem::current_path() / "BugReports")));
+  e->pendingCrash = bdg::TakePendingCrash(bdg::PathToU8((std::filesystem::current_path() / "BugReports")));
   const char* screen = std::getenv("BDG_SCREEN");
   e->showGallery = screen && std::string(screen) == "gallery";
   // Start-up phases (queue 2-3b): one log line says where the time goes ("startup: window=.. gl=.. ...").
@@ -1365,7 +1365,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       if (bdg::Widget* scene = e->editor->Find("scene")) { // a .prefab dragged from the Project panel: an instance there (6-1)
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) {
           if (UIDesignerActive(e) && e->model) {
-            const std::string assets = e->assetsOpen ? e->assets.Root() : (std::filesystem::current_path() / "Assets").string();
+            const std::string assets = e->assetsOpen ? e->assets.Root() : bdg::PathToU8((std::filesystem::current_path() / "Assets"));
             e->uiDesigner.Draw(w, ui, *e->model, e->hasFont ? &e->font : nullptr, e->rhi, assets);
           } else {
             e->sceneView->Draw(w, ui, e->model.get());
@@ -1526,14 +1526,14 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     });
     // Scene file: BDG_SCENE_FILE, else Scenes/Main.scene in the working folder; the sample scene when there is none.
     const char* sceneEnv = std::getenv("BDG_SCENE_FILE");
-    model->scenePath = sceneEnv ? sceneEnv : (std::filesystem::current_path() / "Scenes" / "Main.scene").string();
+    model->scenePath = sceneEnv ? sceneEnv : bdg::PathToU8((std::filesystem::current_path() / "Scenes" / "Main.scene"));
     { // Hierarchy folds (E-2): per user; automated runs neither read nor write them unless BDG_FOLDS says where
       const char* folds = std::getenv("BDG_FOLDS");
       const bool automatedRun = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST");
-      model->foldsPath = folds ? folds : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl").string();
+      model->foldsPath = folds ? folds : automatedRun ? "" : bdg::PathToU8((std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl"));
       if (e->sceneView) { // Scene view toolbar values (snapping, camera speed, ...) per project, the same rule
         const char* tb = std::getenv("BDG_TOOLBAR");
-        e->sceneView->toolbarStatePath = tb ? tb : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "SceneViewToolbar.json").string();
+        e->sceneView->toolbarStatePath = tb ? tb : automatedRun ? "" : bdg::PathToU8((std::filesystem::current_path() / ".cache" / "SceneViewToolbar.json"));
         e->sceneView->LoadToolbarState();
       }
     }
@@ -1562,7 +1562,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   mark("scene");
   if (const char* assetsDir = std::getenv("BDG_ASSETS")) { // asset database + watcher (wakes the idle editor)
     std::string err;
-    e->assetsOpen = e->assets.Open(assetsDir, &err, (std::filesystem::path(assetsDir).parent_path() / ".cache" / "assetdb.jsonl").string());
+    e->assetsOpen = e->assets.Open(assetsDir, &err, bdg::PathToU8((std::filesystem::path(assetsDir).parent_path() / ".cache" / "assetdb.jsonl")));
     if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
     else {
       e->materials.SetAssets(&e->assets);
@@ -1588,13 +1588,13 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
                                 "AssetRules.json").string();
   if (e->model) { // component presets: BDG_PRESETS, else <assets>/Presets, else ./Presets
     const char* p = std::getenv("BDG_PRESETS");
-    e->model->presetDir = p ? p : e->assetsOpen ? (std::filesystem::path(e->assets.Root()) / "Presets").string()
-                                                 : (std::filesystem::current_path() / "Presets").string();
+    e->model->presetDir = p ? p : e->assetsOpen ? bdg::PathToU8((std::filesystem::path(e->assets.Root()) / "Presets"))
+                                                 : bdg::PathToU8((std::filesystem::current_path() / "Presets"));
   }
   if (bdg::Widget* dock = e->editor->Find("dock"); dock && dock->dock) {
     // Per-user layout (.cache is git-ignored); BDG_LAYOUT overrides for tests.
     const char* custom = std::getenv("BDG_LAYOUT");
-    dock->dock->layoutPath = custom ? custom : (std::filesystem::current_path() / ".cache" / "EditorLayout.jsonl").string();
+    dock->dock->layoutPath = custom ? custom : bdg::PathToU8((std::filesystem::current_path() / ".cache" / "EditorLayout.jsonl"));
     if (dock->dock->Load(dock->dock->layoutPath)) bdg::LogInfo("dock: layout loaded {}", dock->dock->layoutPath);
     bdg::LogInfo("dock: {}", dock->dock->Describe());
     if (const char* tab = std::getenv("BDG_DOCK_TAB")) { // 0 Project, 1 Console, 2 Build Log, 3 Profiler (screenshots/tests)
