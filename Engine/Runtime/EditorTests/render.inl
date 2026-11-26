@@ -503,19 +503,19 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
   }
   if (frame == 4) {
     v[1] = std::format("{}", sv->camera.pivot.y == 2.4f && sv->camera.yaw == 0.f && sv->camera.distance == 10.5f ? 1 : 0);
-    key(bdg::Key::Num2, false, true); // Alt + 2: albedo
+    sv->debugView = bdg::DebugView::Albedo; // (Alt + digit are Unreal's view-mode keys now: BDG_VIEWMODE_TEST)
   }
   if (frame == 6) {
     int c[3];
     at(grab(), sphereFront, c); // linear 0.85 white -> sRGB 237
     v[2] = sv->debugView == bdg::DebugView::Albedo && std::abs(c[0] - 237) <= 3 && std::abs(c[2] - 237) <= 3 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
-    key(bdg::Key::Num3, false, true); // normal
+    sv->debugView = bdg::DebugView::Normal;
   }
   if (frame == 8) {
     int c[3];
     at(grab(), sphereFront, c); // facing +Z: (0.5, 0.5, 1) -> (128, 128, 255)
     v[3] = c[2] > 235 && std::abs(c[0] - 128) < 30 && std::abs(c[1] - 128) < 30 ? "1" : std::format("0({},{},{})", c[0], c[1], c[2]);
-    key(bdg::Key::Num6, false, true); // depth
+    sv->debugView = bdg::DebugView::Depth;
   }
   if (frame == 10) {
     Shot s = grab();
@@ -524,7 +524,7 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     at(s, farWall, f);
     v[4] = n[0] >= 0 && f[0] > n[0] + 5 ? "1" : std::format("0({}<{})", n[0], f[0]); // farther = brighter
     key(bdg::Key::Num2);                      // bookmark 2: lights and shadows
-    key(bdg::Key::Num7, false, true);         // shadow view
+    sv->debugView = bdg::DebugView::Shadow;
   }
   if (frame == 12) {
     Shot s = grab();
@@ -532,7 +532,7 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     at(s, shade, in);
     at(s, open, out);
     v[5] = in[0] >= 0 && in[0] < 90 && out[0] > 200 ? "1" : std::format("0({},{})", in[0], out[0]);
-    key(bdg::Key::Num1, false, true); // back to lit
+    sv->debugView = bdg::DebugView::Lit;
   }
   static long long wireBefore = 0;
   auto cyan = [](const Shot& s) {
@@ -540,14 +540,19 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     for (size_t i = 0; i + 3 < s.px.size(); i += 4) n += s.px[i] < 140 && s.px[i + 1] > 170 && s.px[i + 2] > 190;
     return n;
   };
+  if (frame == 13) sv->PressToolbar("show", *m); // the toolbar's Show menu (round 7; it was a Wire pill)
   if (frame == 14) {
     wireBefore = cyan(grab());
-    float x, y;
-    if (sv->ChipCenter("wire", x, y)) {
-      e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
-      e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
-      e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
-    }
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == "Wireframe" && e->editor->MenuItemRect(k, x, y, w, h)) {
+        x += w * 0.5f;
+        y += h * 0.5f;
+        e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+        e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+        e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+      }
   }
   static size_t undo0;
   if (frame == 16) {

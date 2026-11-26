@@ -1,5 +1,6 @@
-// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1).
+// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures, view modes, the Scene view toolbar.
 // Included by Engine.cpp after the other EditorTests files. New checks: register with BDG_EDITOR_TEST.
+#include "Core/DDS.h"
 #include "Render3D/DynamicGI.h"
 
 namespace gfxtest {
@@ -429,3 +430,372 @@ void ReportGI1Test(bdg_engine*) {
   bdg::LogInfo("gi1 test: ran={} leak={} react={} tiers={}", ran, leak, react, tiers);
 }
 BDG_EDITOR_TEST("BDG_GI1_TEST", InjectGI1Test, ReportGI1Test)
+
+// BDG_DDS_TEST=1: DDS textures on the GPU (Core/DDS.h, Renderer3D::UploadDDS). BC1, BC3, BC5 and BC7 files made
+// here (8 x 8, 4 mips, one block repeated) are uploaded and their smallest mip read back: each must match the CPU
+// decode of that level. The log says how many went up as blocks and how many were decoded first;
+// BDG_NO_BLOCK_TEXTURES=1 forces decoding (the path for drivers without the format).
+void InjectDDSTest(bdg_engine* e, int frame, float) {
+  if (frame != 2 || !e->r3d) return;
+  auto block = [](int fmt) -> std::vector<uint8_t> { // one 4 x 4 block per format
+    switch (fmt) {
+      case 1: return {0x00, 0xF8, 0x00, 0x00, 0, 0, 0, 0};                             // BC1: red
+      case 3: return {200, 200, 0, 0, 0, 0, 0, 0, 0xE0, 0x07, 0x00, 0x00, 0, 0, 0, 0}; // BC3: green, alpha 200
+      case 5: return {64, 64, 0, 0, 0, 0, 0, 0, 192, 192, 0, 0, 0, 0, 0, 0};           // BC5: X 64, Y 192
+      default: return {0x40, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0, 0}; // BC7 (mode 6)
+    }
+  };
+  auto make = [&](int fmt) {
+    uint32_t hd[31] = {};
+    hd[0] = 124;
+    hd[1] = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000;
+    hd[2] = hd[3] = 8;
+    hd[6] = 4;
+    hd[18] = 32;
+    hd[19] = 0x4;
+    hd[20] = fmt == 7 ? 0x30315844u : fmt == 1 ? 0x31545844u : fmt == 3 ? 0x35545844u : 0x32495441u; // DX10 DXT1 DXT5 ATI2
+    std::vector<uint8_t> f = {'D', 'D', 'S', ' '};
+    f.insert(f.end(), (const uint8_t*)hd, (const uint8_t*)hd + sizeof(hd));
+    if (fmt == 7) {
+      const uint32_t dx10[5] = {98, 3, 0, 1, 0};
+      f.insert(f.end(), (const uint8_t*)dx10, (const uint8_t*)dx10 + sizeof(dx10));
+    }
+    const std::vector<uint8_t> b = block(fmt);
+    for (int n : {4, 1, 1, 1}) // 8x8 = 4 blocks, then 4x4, 2x2, 1x1
+      for (int i = 0; i < n; ++i) f.insert(f.end(), b.begin(), b.end());
+    return f;
+  };
+  std::string results;
+  bool all = true;
+  for (int fmt : {1, 3, 5, 7}) {
+    const std::vector<uint8_t> file = make(fmt);
+    bdg::DdsImage img;
+    std::vector<uint8_t> want;
+    int32_t w = 0, h = 0;
+    bool ok = bdg::ParseDDS(file.data(), file.size(), img) && bdg::DecodeDDS(img, 3, want, w, h);
+    const bdg::TextureHandle t = ok ? e->r3d->UploadDDS(img, false) : bdg::TextureHandle{};
+    float mean[4] = {};
+    ok = ok && t.Valid() && e->rhi.ReadTextureMean(t, mean);
+    const int channels = fmt == 5 ? 2 : fmt == 3 ? 4 : 3;
+    for (int c = 0; ok && c < channels; ++c) ok = std::fabs(mean[c] * 255.f - (float)want[(size_t)c]) < 2.f;
+    if (t.Valid()) e->rhi.DestroyTexture(t);
+    all = all && ok;
+    results += std::format(" bc{}={}", fmt, ok ? 1 : 0);
+  }
+  bdg::LogInfo("dds test: uploaded={} decoded={}{} all={}", e->r3d->DdsUploaded(), e->r3d->DdsDecoded(), results, all ? 1 : 0);
+}
+void ReportDDSTest(bdg_engine*) {}
+BDG_EDITOR_TEST("BDG_DDS_TEST", InjectDDSTest, ReportDDSTest)
+
+// BDG_VIEWMODE_TEST=1 (with the RenderReference scene, like BDG_SSR_TEST): every view mode of the Scene view renders
+// the reference scene's bookmark 1, and each picture is compared with Lit: it must differ and show what the mode is
+// for (grey surfaces for the lighting views, mostly black for emissive and wireframe, heat colours for the
+// complexity views, colours where things move for motion vectors). Alt + 3 / 4 / 8 (Unreal's keys) and the grouped
+// view menu (a real click) switch modes; heat maps show a legend.
+namespace viewmodetest {
+std::vector<std::string> results;
+gfxtest::Shot lit;
+bool keys = false, menu = false, legend = false, groups = false;
+struct Stats { double diff = 0, sat = 0, lum = 0, dark = 0, colourful = 0; };
+Stats Measure(const gfxtest::Shot& s, const gfxtest::Shot& ref) {
+  Stats r;
+  const size_t n = (size_t)s.w * s.h;
+  if (!n || s.px.size() != ref.px.size()) return r;
+  for (size_t i = 0; i < n; ++i) {
+    const uint8_t* p = &s.px[i * 4];
+    const uint8_t* q = &ref.px[i * 4];
+    const int mx = std::max({p[0], p[1], p[2]}), mn = std::min({p[0], p[1], p[2]});
+    const double l = 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
+    r.diff += (std::abs(p[0] - q[0]) + std::abs(p[1] - q[1]) + std::abs(p[2] - q[2])) / 3.0;
+    r.sat += mx - mn;
+    r.lum += l;
+    r.dark += l < 12 ? 1 : 0;
+    r.colourful += mx - mn > 60 ? 1 : 0;
+  }
+  r.diff /= (double)n;
+  r.sat /= (double)n;
+  r.lum /= (double)n;
+  r.dark /= (double)n;
+  r.colourful /= (double)n;
+  return r;
+}
+}
+void InjectViewModeTest(bdg_engine* e, int frame, float scale) {
+  using namespace viewmodetest;
+  using T = bdg::InputEvent::Type;
+  using DV = bdg::DebugView;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::Widget* sw = e->editor ? e->editor->Find("scene") : nullptr;
+  if (!m || !sv || !sw) return;
+  const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.5f;
+  auto altKey = [&](bdg::Key k) {
+    e->window.InjectEvent({T::MouseMove, cx * scale, cy * scale});
+    bdg::InputEvent i{T::KeyDown};
+    i.key = k;
+    i.alt = true;
+    e->window.InjectEvent(i);
+  };
+  auto click = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+  };
+  // modes after Lit, two frames each; the check for each picture against Lit
+  struct Mode { DV view; const char* name; };
+  static const Mode modes[] = {{DV::Unlit, "unlit"}, {DV::LightingOnly, "lighting"}, {DV::DetailLighting, "detail"}, {DV::Reflections, "reflections"},
+                               {DV::Emissive, "emissive"}, {DV::Wireframe, "wire"}, {DV::Overdraw, "overdraw"}, {DV::LightCount, "lights"},
+                               {DV::TexelDensity, "texel"}, {DV::LodColor, "lod"}, {DV::Motion, "motion"}, {DV::Albedo, "albedo"},
+                               {DV::Normal, "normal"}, {DV::Roughness, "rough"}, {DV::Metallic, "metal"}, {DV::AO, "ao"}, {DV::Depth, "depth"},
+                               {DV::Shadow, "shadow"}, {DV::Cascades, "cascades"}, {DV::Indirect, "indirect"}};
+  constexpr int kFirst = 8, kStep = 3, kModes = (int)(sizeof(modes) / sizeof(modes[0]));
+  if (frame == 2) {
+    sv->JumpToBookmark(*m, 1);
+    // a textured box (texel density colours) and a point light (light complexity) in view
+    gfxtest::Run(m, "add", "", R"({"id":"vmbox","name":"Grid box"})");
+    gfxtest::Run(m, "set", "vmbox", R"({"path":"Transform.position","value":[-2.4,0.8,1.0]})");
+    gfxtest::Run(m, "set", "vmbox", R"({"path":"Transform.scale","value":[1.6,1.6,1.6]})");
+    gfxtest::Run(m, "addcomp", "vmbox", R"({"type":"MeshRenderer","value":{"mesh":"Cube","material":"bdg:Grid"}})");
+    gfxtest::Run(m, "add", "", R"({"id":"vmlamp","name":"Lamp"})");
+    gfxtest::Run(m, "set", "vmlamp", R"({"path":"Transform.position","value":[0,1,1.5]})");
+    gfxtest::Run(m, "addcomp", "vmlamp", R"({"type":"Light","value":{"type":"Point","intensity":4,"range":5,"castShadows":false}})");
+    m->SetSelection({});
+    sv->showGrid = false;
+    sv->iconSize = 0;
+    sv->quality = bdg::QualityPreset(bdg::QualityTier::High);
+    sv->debugView = DV::Lit;
+  }
+  if (frame == kFirst - 2) lit = gfxtest::Grab(e);
+  for (int i = 0; i < kModes; ++i) {
+    const int set = kFirst + i * kStep;
+    if (frame == set) {
+      sv->debugView = modes[i].view;
+      if (modes[i].view == DV::Motion) sv->camera.yaw += 1.5f; // something to move
+    }
+    if (modes[i].view == DV::Motion && frame == set + 1) sv->camera.yaw += 1.5f;
+    if (frame == set + 2) {
+      const gfxtest::Shot s = gfxtest::Grab(e);
+      if (const char* dump = std::getenv("BDG_VIEWMODE_DUMP")) {
+        if (i == 0) bdg::WritePNG((std::string(dump) + "_lit.png").c_str(), lit.w, lit.h, lit.px.data(), true);
+        bdg::WritePNG((std::string(dump) + "_" + modes[i].name + ".png").c_str(), s.w, s.h, s.px.data(), true);
+      }
+      const Stats a = Measure(s, lit), l = Measure(lit, lit);
+      bool ok = a.diff > 3;
+      switch (modes[i].view) {
+        case DV::LightingOnly: case DV::DetailLighting: ok = ok && l.colourful > 0.005 && a.colourful < l.colourful * 0.3; break; // grey surfaces
+        case DV::Emissive: ok = ok && a.lum < l.lum * 0.5; break;                             // nothing glows much
+        case DV::Wireframe: ok = ok && a.dark > 0.3 && a.dark < 0.98; break;                  // black with edges
+        case DV::Overdraw: ok = ok && a.colourful > 0.05; break;                              // heat colours
+        case DV::LightCount: case DV::TexelDensity: ok = ok && a.colourful > 0.01; break;     // around the lamp, on the box
+        case DV::Motion: ok = ok && a.colourful > 0.05; break;                                // the camera turned
+        default: break;
+      }
+      if (modes[i].view == DV::Overdraw) legend = sv->LegendArea().w > 0;
+      results.push_back(std::format("{}={}", modes[i].name, ok ? "1" : std::format("0(d{:.1f} s{:.1f}/{:.1f} l{:.1f}/{:.1f} k{:.2f} c{:.3f}/{:.3f})", a.diff, a.sat, l.sat, a.lum, l.lum, a.dark, a.colourful, l.colourful)));
+      if (sv->camera.yaw != 0 && modes[i].view == DV::Motion) sv->camera.yaw -= 3.f;
+    }
+  }
+  const int after = kFirst + kModes * kStep + 1;
+  if (frame == after) { // Unreal's keys: Alt + 3 unlit
+    legend = legend && (sv->debugView = DV::Lit, true);
+    altKey(bdg::Key::Num3);
+  }
+  if (frame == after + 1) {
+    keys = sv->debugView == DV::Unlit;
+    altKey(bdg::Key::Num8);
+  }
+  if (frame == after + 2) {
+    keys = keys && sv->debugView == DV::Overdraw;
+    altKey(bdg::Key::Num4);
+  }
+  if (frame == after + 3) {
+    keys = keys && sv->debugView == DV::Lit;
+    legend = legend && sv->LegendArea().w == 0;
+    bdg::SceneView::LegendRect chip{};
+    if (sv->ChipArea("view", chip)) click(chip.x + chip.w * 0.5f, chip.y + chip.h * 0.5f); // the view menu opens
+  }
+  if (frame == after + 5) { // grouped: titles are disabled rows; pick "Reflections"
+    const auto& items = e->editor->Menu();
+    int titles = 0, pick = -1;
+    for (size_t k = 0; k < items.size(); ++k) {
+      if (!items[k].enabled) ++titles;
+      if (items[k].label.find("Reflections") != std::string::npos) pick = (int)k;
+    }
+    groups = titles == 3 && items.size() == (size_t)bdg::DebugView::Count + 3;
+    float x, y, w, h;
+    if (pick >= 0 && e->editor->MenuItemRect((size_t)pick, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == after + 7) menu = sv->debugView == DV::Reflections;
+}
+void ReportViewModeTest(bdg_engine*) {
+  using namespace viewmodetest;
+  std::string all;
+  bool ok = true;
+  for (const std::string& r : results) {
+    all += " " + r;
+    ok = ok && r.ends_with("=1");
+  }
+  bdg::LogInfo("viewmode test:{} keys={} menu={} groups={} legend={} all={}", all, keys ? 1 : 0, menu ? 1 : 0, groups ? 1 : 0, legend ? 1 : 0,
+               ok && keys && menu && groups && legend && results.size() == 20 ? 1 : 0);
+}
+BDG_EDITOR_TEST("BDG_VIEWMODE_TEST", InjectViewModeTest, ReportViewModeTest)
+
+// BDG_TOOLBAR_TEST=1 (BDG_TOOLBAR = a scratch file for the kept values): the Scene view toolbar driven with real
+// clicks. Move / Rotate / Scale icons switch the tool; the grid value list sets the gizmo's step (a move lands on
+// 0.25 m) and Ctrl turns it off for a drag; the rotation snap toggle and 30° turn a rotation onto 30° steps; the
+// mouse wheel while flying steps the camera speed and the speed popup sets it; the values come back from the file
+// (reopening); every control has a tooltip; the toolbar is one row inside the view at UI zoom 1, 1.5 and 2.
+namespace toolbartest {
+std::string modes = "-", grid = "-", ctrl = "-", rotate = "-", wheel = "-", popup = "-", persist = "-", tips = "-", rows = "-";
+float startX = 0;
+}
+void InjectToolbarTest(bdg_engine* e, int frame, float scale) {
+  using namespace toolbartest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::Widget* sw = e->editor ? e->editor->Find("scene") : nullptr;
+  if (!m || !sv || !sw) return;
+  auto ev = [&](T type, float x, float y, int button = 0, bool ctrlKey = false) {
+    bdg::InputEvent i{type, x * scale, y * scale, button};
+    i.ctrl = ctrlKey;
+    e->window.InjectEvent(i);
+  };
+  auto click = [&](const std::string& name) {
+    float x, y;
+    if (!sv->ChipCenter(name, x, y)) { bdg::LogError("toolbar test: no control {}", name); return false; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    ev(T::MouseUp, x, y, 1);
+    return true;
+  };
+  auto pick = [&](const std::string& label) { // an item of the open menu, by its text
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == label && e->editor->MenuItemRect(k, x, y, w, h)) {
+        ev(T::MouseMove, x + w * 0.5f, y + h * 0.5f);
+        ev(T::MouseDown, x + w * 0.5f, y + h * 0.5f, 1);
+        ev(T::MouseUp, x + w * 0.5f, y + h * 0.5f, 1);
+        return true;
+      }
+    bdg::LogError("toolbar test: no menu item {}", label);
+    return false;
+  };
+  auto transform = [&]() -> const bdg::Transform* {
+    bdg::SceneObject* o = m->scene.Find("tbbox");
+    const bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    return c ? static_cast<const bdg::Transform*>(c->data) : nullptr;
+  };
+  auto drag = [&](bdg::GizmoHandle h, float dx, float dy, bool ctrlKey) {
+    float x, y;
+    if (!sv->GizmoPoint(*m, h, x, y)) { bdg::LogError("toolbar test: no gizmo handle"); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + dx * k / 4, y + dy * k / 4, 0, ctrlKey);
+    ev(T::MouseUp, x + dx, y + dy, 1, ctrlKey);
+  };
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) gfxtest::Run(m, "del", id, "{}");
+    gfxtest::Run(m, "add", "", R"({"id":"tbsun","name":"Sun"})");
+    gfxtest::Run(m, "addcomp", "tbsun", R"({"type":"Light","value":{"type":"Directional"}})");
+    gfxtest::Run(m, "add", "", R"({"id":"tbbox","name":"Box"})");
+    gfxtest::Run(m, "set", "tbbox", R"({"path":"Transform.position","value":[0,0.5,0]})");
+    gfxtest::Run(m, "addcomp", "tbbox", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    m->Select("tbbox");
+    m->tool = "select";
+    sv->camera.pivot = {0, 0.5f, 0};
+    sv->camera.yaw = 0;
+    sv->camera.pitch = -25;
+    sv->camera.distance = 7;
+    sv->snap = bdg::SnapSettings{};
+    sv->flyEasing = false;
+    sv->SetSpeedScalar(1);
+    sv->SetSpeedLevel(4);
+  }
+  if (frame == 4) click("gz.rotate");
+  if (frame == 6) {
+    modes = m->tool == "rotate" ? "1" : "0(" + m->tool + ")";
+    click("gz.move");
+  }
+  if (frame == 8) {
+    if (m->tool != "move") modes = "0(move)";
+    click("snapv"); // the grid value list
+  }
+  if (frame == 9) pick("0.25 m");
+  if (frame == 11) { // the gizmo's step is the chosen grid now: a drag along X lands on 0.25 m
+    grid = sv->snap.always && sv->snap.move == 0.25f ? "" : "0(not set)";
+    startX = transform() ? transform()->position.x : 0;
+    drag(bdg::GizmoHandle::X, 70, 0, false);
+  }
+  if (frame == 13) {
+    const float x = transform() ? transform()->position.x : 0, r = x / 0.25f;
+    if (grid.empty()) grid = x > startX + 0.1f && std::abs(r - std::round(r)) < 1e-4f ? "1" : std::format("0({:.4f})", x);
+    drag(bdg::GizmoHandle::X, 37, 0, true); // Ctrl: free this time
+  }
+  if (frame == 15) {
+    const float x = transform() ? transform()->position.x : 0, r = x / 0.25f;
+    ctrl = std::abs(r - std::round(r)) > 1e-3f ? "1" : std::format("0({:.4f})", x);
+    click("rsnap"); // rotation snap on
+  }
+  if (frame == 17) click("rsnapv");
+  if (frame == 18) pick("30°");
+  if (frame == 20) click("gz.rotate");
+  if (frame == 22) drag(bdg::GizmoHandle::Y, 110, 40, false); // around Y
+  if (frame == 24) {
+    const float ry = transform() ? transform()->rotation.y : 0, r = ry / 30.f;
+    rotate = sv->snap.rotateOn && sv->snap.rotate == 30.f && std::abs(ry) > 1.f && std::abs(r - std::round(r)) < 1e-2f
+                 ? "1" : std::format("0(on {} step {} y {:.3f})", sv->snap.rotateOn, sv->snap.rotate, ry);
+    // fly (right mouse held) and turn the wheel once: one speed level up
+    const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.6f;
+    ev(T::MouseMove, cx, cy);
+    ev(T::MouseDown, cx, cy, 3);
+    bdg::InputEvent wh{T::Wheel, cx * scale, cy * scale};
+    wh.wheel = 1;
+    e->window.InjectEvent(wh);
+  }
+  if (frame == 26) {
+    wheel = sv->speedLevel == 5 && std::abs(sv->FlySpeed() - bdg::SceneView::SpeedOfLevel(5)) < 1e-3f ? "1" : std::format("0({} {:.2f})", sv->speedLevel, sv->FlySpeed());
+    const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.6f;
+    ev(T::MouseUp, cx, cy, 3);
+  }
+  if (frame == 28) click("speed");
+  if (frame == 30) {
+    popup = sv->SpeedPopupOpen() ? "" : "0(closed)";
+    click("sp.l2");
+  }
+  if (frame == 32) {
+    if (popup.empty()) popup = sv->speedLevel == 2 ? "1" : std::format("0({})", sv->speedLevel);
+    sv->SaveToolbarStateIfChanged(); // (Draw saves too) then lose the values and read them back: a reopened editor
+    const bdg::SnapSettings kept = sv->snap;
+    sv->snap = bdg::SnapSettings{};
+    sv->SetSpeedLevel(4);
+    const bool loaded = sv->LoadToolbarState();
+    persist = loaded && sv->snap.move == kept.move && sv->snap.always == kept.always && sv->snap.rotate == 30.f && sv->snap.rotateOn &&
+                      sv->speedLevel == 2 ? "1" : std::format("0(loaded {} file {})", loaded, sv->toolbarStatePath);
+    bool all = true;
+    for (const char* n : {"persp", "tier", "view", "show", "tool", "gz.move", "gz.rotate", "gz.scale", "space", "surf", "snap", "snapv",
+                          "rsnap", "rsnapv", "ssnap", "ssnapv", "speed", "more"})
+      all = all && !sv->ToolbarTooltip(n).empty();
+    tips = all && sv->ToolbarTooltip("gz.move").find("(W)") != std::string::npos && sv->ToolbarTooltip("snap").find("Ctrl") != std::string::npos ? "1" : "0";
+    rows.clear();
+  }
+  // one row, inside the view, at UI zoom 1, 1.5 and 2 (on top of the display's scale)
+  static const float zooms[] = {1.f, 1.5f, 2.f};
+  for (int k = 0; k < 3; ++k) {
+    if (frame == 34 + k * 3) e->uiZoom = zooms[k];
+    if (frame == 36 + k * 3) {
+      const bdg::SceneView::ToolbarLayout tl = sv->ToolbarInfo();
+      const bool ok = tl.oneRow && tl.controls > 0 && tl.left >= sw->x - 0.5f && tl.right <= sw->x + sw->w + 0.5f;
+      rows += std::format("{}{}", rows.empty() ? "" : ",", ok ? "1" : std::format("0(rows {} {:.0f}..{:.0f} of {:.0f}..{:.0f})", tl.oneRow, tl.left, tl.right, sw->x, sw->x + sw->w));
+    }
+  }
+  if (frame == 43) e->uiZoom = 1.f;
+}
+void ReportToolbarTest(bdg_engine*) {
+  using namespace toolbartest;
+  bdg::LogInfo("toolbar test: modes={} grid={} ctrl={} rotate={} wheel={} popup={} persist={} tips={} rows={}", modes, grid, ctrl, rotate, wheel, popup,
+               persist, tips, rows);
+}
+BDG_EDITOR_TEST("BDG_TOOLBAR_TEST", InjectToolbarTest, ReportToolbarTest)

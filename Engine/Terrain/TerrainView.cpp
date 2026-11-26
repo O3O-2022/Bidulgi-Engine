@@ -365,6 +365,7 @@ void TerrainView::Append(const Scene& scene, const std::string& assetsRoot, RHI&
         it.mesh = &cm.mesh;
         it.model = place;
         it.material = mat;
+        it.lod = (uint8_t)lod; // LOD coloration view
         items.push_back(it);
         ++stats_.chunks;
         ++stats_.lodCount[std::min(lod, 7)];
@@ -424,6 +425,7 @@ void TerrainView::Append(const Scene& scene, const std::string& assetsRoot, RHI&
             it.mesh = &card_;
             it.model = glm::translate(glm::mat4(1.f), wp) * glm::rotate(glm::mat4(1.f), yaw, glm::vec3(0, 1, 0)) * glm::scale(glm::mat4(1.f), glm::vec3(s));
             it.material = card;
+            it.lod = 2;
             items.push_back(it);
             ++stats_.impostors;
             ++count;
@@ -437,6 +439,7 @@ void TerrainView::Append(const Scene& scene, const std::string& assetsRoot, RHI&
             trunk.mesh = low ? &trunkLow_ : &trunk_;
             crown.mesh = low ? &crownLow_ : &crown_;
             trunk.model = crown.model = m;
+            trunk.lod = crown.lod = low ? 1 : 0;
             trunk.material = bark;
             crown.material = fm;
             items.push_back(trunk);

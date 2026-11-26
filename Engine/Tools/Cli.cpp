@@ -740,8 +740,15 @@ int CmdShot(Ctx& c) {
   const std::string outOpt = c.Opt("out");
   const fs::path out = outOpt.empty() ? root / ".cache" / "shots" : (U8(outOpt).is_absolute() ? U8(outOpt) : c.cwd / U8(outOpt));
   fs::create_directories(out, ec);
-  std::vector<std::pair<std::string, std::string>> env{{"BDG_SCENE_FILE", Utf8(scene)}};
-  if (fs::exists(root / "Assets", ec)) env.push_back({"BDG_ASSETS", Utf8(root / "Assets")});
+  // Paths go to the editor relative to the project folder (its working folder) when they are inside it: the editor
+  // reads variables with getenv, in the system code page, which cannot spell a Korean folder on an English Windows.
+  auto forEditor = [&](const fs::path& p) {
+    std::error_code e2;
+    const fs::path r = fs::relative(p, root, e2);
+    return Utf8(!e2 && !r.empty() && *r.begin() != ".." ? r : p);
+  };
+  std::vector<std::pair<std::string, std::string>> env{{"BDG_SCENE_FILE", forEditor(scene)}};
+  if (fs::exists(root / "Assets", ec)) env.push_back({"BDG_ASSETS", "Assets"});
   if (!c.Opt("quality").empty()) env.push_back({"BDG_QUALITY", c.Opt("quality")});
   if (!c.Opt("camera").empty()) env.push_back({"BDG_SCENE_CAMERA", c.Opt("camera")});
   if (!c.Opt("set").empty()) env.push_back({"BDG_QUALITY_SET", c.Opt("set")});
@@ -751,11 +758,11 @@ int CmdShot(Ctx& c) {
   if (bookmarks) {
     fs::remove_all(base, ec); // fresh baselines each time: every bookmark gets a picture
     for (int slot = 1; slot <= 9; ++slot) fs::remove(out / std::format("{}.png", slot), ec);
-    env.push_back({"BDG_RENDER_COMPARE", Utf8(base)});
-    env.push_back({"BDG_COMPARE_OUT", Utf8(out)});
+    env.push_back({"BDG_RENDER_COMPARE", forEditor(base)});
+    env.push_back({"BDG_COMPARE_OUT", forEditor(out)});
   } else {
     fs::remove(picture, ec);
-    env.push_back({"BDG_SCREENSHOT", Utf8(picture)});
+    env.push_back({"BDG_SCREENSHOT", forEditor(picture)});
   }
   const int code = RunWithEnv(editor, {"--frames", std::to_string(std::max(frames, 6))}, root, env, 300);
   if (bookmarks) fs::remove_all(base, ec);

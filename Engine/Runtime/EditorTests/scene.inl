@@ -248,13 +248,18 @@ void InjectSceneIconTest(bdg_engine* e, int frame) {
   if (frame == 8) {
     v[3] = std::format("{}", sv->GizmoLines() >= 60 ? 1 : 0); // three circles of 32 segments
     if (v[3] != "1") bdg::LogError("scene icon test: range lines {}", sv->GizmoLines());
-    float x, y;
-    if (sv->ChipCenter("icons", x, y)) clickAt(x, y); // opens the Icons list
+    sv->PressToolbar("show", *m); // the toolbar's Show menu holds the icon sizes (round 7)
   }
   if (frame == 9) { // pick "Icons: L" from the list
     float x, y, w, h;
-    if (e->editor->MenuItemRect(3, x, y, w, h)) clickAt(x + w * 0.5f, y + h * 0.5f);
-    else bdg::LogError("scene icon test: the Icons list did not open");
+    const auto& items = e->editor->Menu();
+    bool picked = false;
+    for (size_t k = 0; k < items.size() && !picked; ++k)
+      if (items[k].label == "Icons: L" && e->editor->MenuItemRect(k, x, y, w, h)) {
+        clickAt(x + w * 0.5f, y + h * 0.5f);
+        picked = true;
+      }
+    if (!picked) bdg::LogError("scene icon test: the Show menu did not open");
   }
   if (frame == 10) {
     v[4] = std::format("{}", sv->iconSize == 3 ? 1 : 0);
@@ -588,8 +593,7 @@ void InjectBudgetTest(bdg_engine* e, int frame) {
     e->window.InjectEvent({T::MouseUp, x * s, y * s, 1});
   };
   if (frame == 2) {
-    float x, y;
-    if (sv->ChipCenter("budget", x, y)) clickAt(x, y);
+    sv->budgetPanel = true; // (the Show menu's Budget item, round 7)
     if (bdg::Widget* b = e->editor->Find("tool.platform")) clickAt(b->x + b->w * 0.5f, b->y + b->h * 0.5f); // Windows -> Android
   }
   if (frame == 5) {
@@ -607,7 +611,7 @@ void InjectBudgetTest(bdg_engine* e, int frame) {
   if (frame == 8) {
     float x = 0, y = 0;
     v[4] = std::format("{}", sv->BudgetOver() && sv->BudgetBars()[0].level == 2 ? 1 : 0);
-    v[5] = std::format("{}", sv->ChipCenter("budget", x, y) ? 1 : 0);
+    v[5] = std::format("{}", sv->BudgetOver() ? 1 : 0); // the Show menu says "Budget ⚠" (no Budget pill now)
     for (const auto& c : sv->BudgetCulprits()) // one that is not selected yet: the click must select it
       if (c.id != m->Selected() && sv->ChipCenter("bud.sel." + c.id, x, y)) {
         v[6] = c.id;
@@ -641,9 +645,12 @@ void InjectSnapTest(bdg_engine* e, int frame, float scale) {
     if (!m->bus.Execute(c, &err)) bdg::LogError("snap test: {} {}: {}", name, target, err);
   };
   auto bounds = [&](const char* id, glm::vec3& lo, glm::vec3& hi) { return sv->ObjectBounds(*m, id, lo, hi); };
-  auto click = [&](const char* chip) {
+  auto click = [&](const char* chip) { // a real click when shown; toolbar controls in the "»" menu are pressed
     float x, y;
-    if (!sv->ChipCenter(chip, x, y)) { bdg::LogError("snap test: no chip {}", chip); return; }
+    if (!sv->ChipCenter(chip, x, y)) {
+      if (!sv->PressToolbar(chip, *m)) bdg::LogError("snap test: no chip {}", chip);
+      return;
+    }
     ev(T::MouseMove, x, y);
     ev(T::MouseDown, x, y, 1);
     ev(T::MouseUp, x, y, 1);
@@ -675,9 +682,8 @@ void InjectSnapTest(bdg_engine* e, int frame, float scale) {
     m->Select("s1");
     key(bdg::Key::W);
   }
-  if (frame == 4) { // grid snap: Snap chip to 0.5 m (Off -> 0.1 -> 0.25 -> 0.5), drag along X
-    click("snap");
-    click("snap");
+  if (frame == 4) { // grid snap: the toolbar's grid toggle on, 0.5 m (round 7: toggle + value list), drag along X
+    sv->snap.move = 0.5f;
     click("snap");
     start = bdg::space::ToGlm(m->scene.WorldPosition("s1"));
     float x, y;
@@ -693,8 +699,6 @@ void InjectSnapTest(bdg_engine* e, int frame, float scale) {
     const float r = p.x / 0.5f;
     v[0] = std::format("{}", sv->snap.always && sv->snap.move == 0.5f && p.x > start.x + 0.2f && std::abs(r - std::round(r)) < 1e-4f &&
                                      p.y == start.y && p.z == start.z ? 1 : 0);
-    click("snap"); // 1 m
-    click("snap"); // 2 m
     click("snap"); // off again: free moves for the rest
     key(bdg::Key::V); // vertex snap: hold V and drag onto the second cube's top front-left corner
     dragTo(ui({1.8f, 1.f, 4.9f}), false, false);

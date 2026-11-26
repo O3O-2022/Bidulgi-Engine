@@ -105,7 +105,7 @@ std::string AssetDatabase::ImporterFor(const std::string& path) {
   if (size_t dot = path.find_last_of('.'); dot != std::string::npos && path.find('/', dot) == std::string::npos) ext = path.substr(dot);
   for (char& c : ext) c = (char)std::tolower((unsigned char)c);
   auto any = [&](std::initializer_list<const char*> l) { for (auto* e : l) if (ext == e) return true; return false; };
-  if (any({".png", ".jpg", ".jpeg", ".tga", ".psd", ".exr", ".hdr", ".bmp", ".ktx2"})) return "texture";
+  if (any({".png", ".jpg", ".jpeg", ".tga", ".psd", ".exr", ".hdr", ".bmp", ".ktx2", ".dds"})) return "texture";
   if (any({".glb", ".gltf", ".fbx", ".obj", ".blend"})) return "model";
   if (any({".wav", ".ogg", ".mp3", ".flac"})) return "audio";
   if (any({".ttf", ".otf"})) return "font";

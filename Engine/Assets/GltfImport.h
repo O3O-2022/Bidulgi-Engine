@@ -12,12 +12,18 @@
 #include <utility>
 #include <vector>
 #include <glm/glm.hpp>
+#include <memory>
+#include "Core/DDS.h"
 
 namespace bdg {
 struct ImportedTexture {
   std::string name;
   int32_t w = 0, h = 0;
   std::vector<uint8_t> rgba; // top row first
+  // A DDS file kept as it is (block-compressed, its own mips; rgba stays empty): the renderer uploads the blocks
+  // when the driver has the format, else decodes them (Core/DDS.h).
+  std::shared_ptr<const DdsImage> dds;
+  bool Valid() const { return !rgba.empty() || (dds && !dds->mips.empty()); }
   bool srgb = false;         // colour data (base colour, emissive); others are linear data
   bool nearest = false;      // glTF sampler asks for NEAREST magnification (pixel art, probes)
   bool clamp = false;        // glTF sampler wraps with CLAMP_TO_EDGE (default REPEAT)

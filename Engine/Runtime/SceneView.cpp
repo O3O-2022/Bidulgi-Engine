@@ -1176,8 +1176,12 @@ void SceneView::FrameSmooth(const EditorModel& model) {
   if (frameT_ >= 1.f) { camera.pivot = frameToPivot_; camera.distance = frameToDist_; }
 }
 
-void SceneView::SetFlySpeed(float s) {
+void SceneView::SetFlySpeed(float s) { // the nearest level at this scalar, then exactly s
   flySpeed_ = std::clamp(s, 0.1f, 500.f);
+  int best = 1;
+  for (int k = 1; k <= 8; ++k)
+    if (std::fabs(std::log(SpeedOfLevel(k) * speedScalar / flySpeed_)) < std::fabs(std::log(SpeedOfLevel(best) * speedScalar / flySpeed_))) best = k;
+  speedLevel = best;
   bookmarkNote_ = std::format("카메라 속도 {:.2g} m/s", flySpeed_);
   noteFrames_ = 90;
 }
@@ -1188,6 +1192,15 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
   auto inside = [&](const InputEvent& e) { return e.x >= v.x && e.y >= v.y && e.x < v.x + v.w && e.y < v.y + v.h; };
   for (const InputEvent& e : events)
     if ((e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseUp) && inside(e)) { hoverX_ = e.x; hoverY_ = e.y; }
+  { // toolbar tooltips: which control the pointer rests on, and for how long
+    std::string over;
+    for (const Chip& c : chips_)
+      if (c.toolbar && hover_ && hoverX_ >= c.x && hoverY_ >= c.y && hoverX_ < c.x + c.w && hoverY_ < c.y + c.h) over = c.name;
+    for (const InputEvent& e : events)
+      if (e.type == InputEvent::Type::MouseDown) over.clear(); // a click hides it
+    if (over != tipName_) { tipName_ = over; tipSeconds_ = 0; }
+    else if (!over.empty()) tipSeconds_ += dt;
+  }
   const float deg = 0.3f; // degrees per UI unit of mouse travel
   for (size_t i = 0; i < events.size();) {
     InputEvent& e = events[i];
@@ -1203,33 +1216,26 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
     if (drag_ == Drag::Fly && e.type != InputEvent::Type::Text) flyBoost_ = e.shift; // x3 only while Shift is held
     switch (e.type) {
       case T::MouseDown:
-        if (drag_ == Drag::None && inside(e) && e.button == 3) { // right-click on a stepping chip: its whole list
+        if (drag_ == Drag::None && inside(e) && e.button == 3) { // right-click on a snap toggle: its values
           const Chip* hit = nullptr;
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
-          if (hit && hit->name == "snap") { OpenChipMenu(*hit, model); used = true; break; }
+          if (hit && (hit->name == "snap" || hit->name == "rsnap" || hit->name == "ssnap")) { OpenChipMenu(*hit, model); used = true; break; }
+        }
+        if (speedPopup_ && e.button == 1) { // a click outside the camera speed popup (and its button) closes it
+          const LegendRect& r = speedPopupRect_;
+          bool onButton = false;
+          for (const Chip& c : chips_)
+            if (c.name == "speed") onButton = e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h;
+          if (!onButton && !(e.x >= r.x && e.y >= r.y && e.x < r.x + r.w && e.y < r.y + r.h)) speedPopup_ = false;
         }
         if (drag_ == Drag::None && inside(e) && e.button == 1) { // chips first
           const Chip* hit = nullptr;
           for (const Chip& c : chips_)
             if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
           if (hit) {
-            if (hit->name == "view" || hit->name == "icons" || hit->name == "tool" || hit->name == "tier") OpenChipMenu(*hit, model);
-            else if (hit->name == "wire") wireframe = !wireframe;
-            else if (hit->name == "bounds") bounds = !bounds;
-            else if (hit->name == "stats") statsPanel = !statsPanel;
-            else if (hit->name == "gi") bakeRequested_ = true;
-            else if (hit->name == "budget") budgetPanel = !budgetPanel;
+            if (hit->toolbar) ToolbarClick(*hit, model);
             else if (hit->name.starts_with("bud.sel.")) model.Select(hit->name.substr(8)); // the heavy object
-            else if (hit->name == "snap") { // Off -> 0.1 -> 0.25 -> 0.5 -> 1 -> 2 m -> Off
-              const size_t n = std::size(kSnapSteps);
-              size_t at = 0;
-              for (size_t k = 0; k < n; ++k)
-                if (snap.always && kSnapSteps[k] == snap.move) at = k;
-              const float next = kSnapSteps[(at + 1) % n];
-              snap.always = next > 0;
-              if (next > 0) snap.move = next;
-            } else if (hit->name == "align") alignOpen_ = !alignOpen_;
             else if (hit->name.starts_with("bo.")) CreateBlock(model, hit->name[3] - '0'); // bo.<shape>
             else if (hit->name.starts_with("al.")) { // al.<axis>.<mode>
               const int axis = hit->name[3] - 'x';
@@ -1337,8 +1343,10 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
       case T::MouseMove: {
         hover_ = inside(e);
         if (drag_ == Drag::Gizmo) {
-          const bool surface = e.ctrl && e.shift && gizmo_.Mode() == GizmoMode::Move;
-          GizmoDelta d = gizmo_.Update({e.x, e.y}, !surface && snap.always != e.ctrl, snap); // Ctrl flips grid snapping
+          const bool surface = ((e.ctrl && e.shift) || snap.surface) && gizmo_.Mode() == GizmoMode::Move;
+          // each mode's own snap toggle (grid, rotation, scale); Ctrl flips it for this drag
+          const bool snapOn = gizmo_.Mode() == GizmoMode::Rotate ? snap.rotateOn : gizmo_.Mode() == GizmoMode::Scale ? snap.scaleOn : snap.always;
+          GizmoDelta d = gizmo_.Update({e.x, e.y}, !surface && snapOn != e.ctrl, snap);
           hasSnapTarget_ = false;
           if (gizmo_.Mode() == GizmoMode::Move && !starts_.empty()) {
             std::set<std::string> moving;
@@ -1473,7 +1481,7 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         break;
       case T::Wheel:
         if (inside(e)) {
-          if (drag_ == Drag::Fly) SetFlySpeed(flySpeed_ * std::pow(1.2f, e.wheel));
+          if (drag_ == Drag::Fly) SetSpeedLevel(speedLevel + (e.wheel > 0 ? 1 : e.wheel < 0 ? -1 : 0)); // Unreal: the level
           else {
             frameT_ = 1.f;
             const float s = std::pow(0.88f, e.wheel);
@@ -1519,7 +1527,12 @@ void SceneView::HandleEvents(std::vector<InputEvent>& events, const Widget& v, E
         }
         if (e.key >= Key::Num1 && e.key <= Key::Num9 && hover_ && !textFocused && drag_ == Drag::None) {
           int n = (int)e.key - (int)Key::Num0;
-          if (e.alt) debugView = (DebugView)std::min(n - 1, 8);              // Alt + 1..9: what the picture shows
+          if (e.alt) { // Alt + 1..9: view modes with Unreal's keys (1, 2 wireframe, 3 unlit, 4 lit, 5 detail lighting,
+                       // 6 lighting only, 7 light complexity, 8 shader complexity; 9 reflections)
+            static const DebugView keys[] = {DebugView::Wireframe, DebugView::Wireframe, DebugView::Unlit, DebugView::Lit, DebugView::DetailLighting,
+                                             DebugView::LightingOnly, DebugView::LightCount, DebugView::Overdraw, DebugView::Reflections};
+            debugView = keys[n - 1];
+          }
           else if (e.ctrl) StoreBookmark(model, n);                       // Ctrl + 1..9: remember this view
           else if (!JumpToBookmark(model, n)) LogInfo("scene view: no camera bookmark {}", n);
           used = true;
@@ -1732,35 +1745,13 @@ void SceneView::DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorMode
   }
 }
 
-// Chips with several values open their list under the chip (the current value marked) instead of stepping
-// through the values one click at a time.
-void SceneView::OpenChipMenu(const Chip& chip, EditorModel& model) {
-  if (!ui_) return;
-  std::vector<UIContext::MenuItem> items;
-  if (chip.name == "view") {
-    for (int k = 0; k < 11; ++k)
-      items.push_back({DebugViewName((DebugView)k), [this, k] { debugView = (DebugView)k; }, true, (int)debugView == k});
-  } else if (chip.name == "icons") {
-    static const char* names[] = {"Off", "S", "M", "L"};
-    for (int k = 0; k < 4; ++k) items.push_back({std::string("Icons: ") + names[k], [this, k] { iconSize = k; }, true, iconSize == k});
-  } else if (chip.name == "tool") {
-    static const struct { const char* id; const char* label; } tools[] = {
-        {"select", "Select (Q)"}, {"move", "Move (W)"}, {"rotate", "Rotate (E)"}, {"scale", "Scale (R)"},
-        {"measure", "Measure (M)"}, {"blockout", "Blockout (B)"}, {"terrain", "Terrain (T)"}, {"view", "View (pan)"}};
-    EditorModel* m = &model;
-    for (auto& tl : tools)
-      items.push_back({tl.label, [m, id = std::string(tl.id)] { m->tool = id; LogInfo("tool: {}", id); }, true, model.tool == tl.id});
-  } else if (chip.name == "tier") {
-    for (int k = (int)QualityTier::Potato; k <= (int)QualityTier::Ultra; ++k)
-      items.push_back({TierLabel((QualityTier)k), [this, k] { quality = QualityPreset((QualityTier)k); }, true, (int)quality.tier == k});
-  } else if (chip.name == "snap") {
-    for (float step : kSnapSteps)
-      items.push_back({step > 0 ? std::format("Snap {} m", step) : std::string("Snap: Ctrl (끄기)"), [this, step] {
-                         snap.always = step > 0;
-                         if (step > 0) snap.move = step;
-                       }, true, step > 0 ? snap.always && snap.move == step : !snap.always});
-  }
-  if (!items.empty()) ui_->OpenMenu(chip.x, chip.y + chip.h + 3, std::move(items));
+bool SceneView::ChipArea(const std::string& name, LegendRect& out) const {
+  for (const Chip& c : chips_)
+    if (c.name == name) {
+      out = {c.x, c.y, c.w, c.h};
+      return true;
+    }
+  return false;
 }
 
 bool SceneView::ChipCenter(const std::string& name, float& x, float& y) const {
@@ -1888,53 +1879,11 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     if (CurrentGizmo(*model, mode, frame, gv))
       DrawGizmo(b, t, mode, frame, gv, drag_ == Drag::Gizmo ? gizmo_.Handle() : hot_);
   }
-  // Chips (top-left) and stats (top-right).
-  float px = w.x + 10, rowY = w.y + 8; // chips flow onto more rows when the view is narrow
-  std::string toolChip = !model ? "" : model->tool == "move" ? "Move (W)" : model->tool == "rotate" ? "Rotate (E)"
-                       : model->tool == "scale" ? "Scale (R)" : model->tool == "measure" ? "Measure (M)"
-                       : model->tool == "blockout" ? "Blockout (B)" : "Select";
-  std::string snapChip = snap.always ? std::format("Snap {} m", snap.move) : "Snap: Ctrl";
+  // Toolbar (round 7, Runtime/SceneViewToolbar.cpp): one row, never wrapping; blockout / align rows below it.
+  const float rowY = w.y + 8;
   const bool several = model && model->Selection().size() >= 2;
-  std::string spaceChip = localSpace ? "Local (X)" : "Global (X)";
-  std::string tierChip = std::string(TierLabel(quality.tier)) + (quality.lighting == LightingMode::Unlit ? " · Unlit" : "");
   chips_.clear();
-  struct ChipDef { std::string name, text; bool on; };
-  const ChipDef defs[] = {{"", "Perspective", false}, {"tier", tierChip, false}, {"view", std::string("View: ") + DebugViewName(debugView), debugView != DebugView::Lit},
-                          {"wire", "Wire", wireframe}, {"bounds", "Bounds", bounds}, {"stats", "Stats", statsPanel},
-                          {"icons", iconSize == 0 ? "Icons: Off" : iconSize == 1 ? "Icons: S" : iconSize == 2 ? "Icons: M" : "Icons: L", false},
-                          {"budget", BudgetOver() ? "Budget ⚠" : "Budget", budgetPanel},
-                          {probes_.empty() && !hasVolume_ && !lightmapItems_ ? "" : "gi",
-                           probes_.empty() && !hasVolume_ && !lightmapItems_ ? ""
-                               : std::format("Bake GI ({})", probes_.size() + (hasVolume_ ? 1 : 0) + lightmapItems_),
-                           lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_},
-                          {"tool", toolChip, false}, {"", spaceChip, false}, {"snap", snapChip, snap.always},
-                          {several ? "align" : "", several ? "Align" : "", alignOpen_}};
-  const std::string toolIcon = !model ? "" : model->tool == "move" ? "tool-move" : model->tool == "rotate" ? "tool-rotate"
-                             : model->tool == "scale" ? "tool-scale" : model->tool == "measure" ? "tool-measure"
-                             : model->tool == "blockout" ? "tool-blockout" : model->tool == "view" ? "tool-view" : "tool-select";
-  for (const ChipDef& chip : defs) {
-    if (chip.text.empty()) continue;
-    const std::string icon = chip.text == toolChip ? toolIcon : chip.name == "snap" ? "tool-snap" : ""; // Assets/Icons
-    const float iw = !icon.empty() && ui.HasIcon(icon) ? 17.f : 0.f;
-    const bool dropdown = chip.name == "view" || chip.name == "icons" || chip.name == "tool" || chip.name == "tier";
-    float cw = ui.Measure(11, chip.text) + 18 + iw + (dropdown ? 10 : 0);
-    const bool warn = chip.name == "budget" && BudgetOver();
-    if (px + cw > w.x + w.w - 10 && px > w.x + 10) {
-      px = w.x + 10;
-      rowY += 28;
-    }
-    b.Rect(px, rowY, cw, 22, warn ? WithAlpha(t.C("warn"), 0.9f) : chip.on ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1,
-           t.C("line"));
-    if (iw > 0) ui.Icon(icon, px + 7, rowY + 3.5f, 15);
-    ui.Text(px + 9 + iw, rowY + 4, 11, chip.on || warn ? Color{1, 1, 1, 1} : t.C("fg-dim"), chip.text);
-    if (dropdown) { // a small down chevron: this chip opens a list
-      const float cx = px + cw - 10, cy = rowY + 11;
-      const float tri[4][2] = {{cx - 3, cy - 1.5f}, {cx + 3, cy - 1.5f}, {cx, cy + 2.5f}, {cx, cy + 2.5f}};
-      b.Quad(tri, chip.on ? Color{1, 1, 1, 1} : t.C("fg-dim"));
-    }
-    if (!chip.name.empty()) chips_.push_back({chip.name, px, rowY, cw, 22});
-    px += cw + 6;
-  }
+  DrawToolbar(b, t, ui, w, model, rowY);
   if (model && model->tool == "blockout") { // greybox (3-3c): add blocks; handles on the selected block's faces
     float bx2 = w.x + 10, by2 = rowY + (several && alignOpen_ ? 54 : 28);
     for (int s = 0; s < 4; ++s) {
@@ -2049,7 +1998,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   }
   std::string stats = std::format("Draw {}  ·  Tris {}  ·  {:.2f} ms", r_->DrawsLastFrame(), r_->TrianglesLastFrame(), renderMs_);
   float sw = ui.Measure(11, stats) + 18;
-  float sy = px + 10 > w.x + w.w - sw - 10 ? rowY + 26 : rowY; // below the chips when they need the width
+  const float sy = rowY + 28; // under the toolbar, at the right
   b.Rect(w.x + w.w - sw - 10, sy, sw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
   ui.Text(w.x + w.w - sw - 1, sy + 4, 11, t.C("fg-dim"), stats);
   // Axis widget (bottom-left): world axes turned by the view.
@@ -2067,6 +2016,20 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     b.Line(ax, ay, ex, ey, 2, t.C(a.token));
     ui.Text(ex + (s.x >= 0 ? 2 : -9), ey - 7, 10, t.C(a.token), a.name);
   }
+  // Heat map legend (view modes, round 7): the colour stops and what they mean, bottom-left above the axes.
+  if (const DebugLegend lg = DebugViewLegend(debugView); !lg.colors.empty()) {
+    const float stopW = 34, lx = w.x + 12, ly = w.y + w.h - 100, lw = stopW * (float)lg.colors.size() + 16;
+    b.Rect(lx, ly - 22, lw, 54, WithAlpha(t.C("win"), 0.85f), 6);
+    ui.Text(lx + 8, ly - 18, 11, t.C("fg"), lg.title);
+    for (size_t i = 0; i < lg.colors.size(); ++i) {
+      const float x = lx + 8 + stopW * (float)i;
+      b.Rect(x, ly, stopW - 2, 10, lg.colors[i], 2);
+      if (i < lg.labels.size()) ui.Text(x + 1, ly + 13, 10, t.C("fg-dim"), lg.labels[i]);
+    }
+    legendRect_ = {lx, ly - 22, lw, 54};
+  } else {
+    legendRect_ = {0, 0, 0, 0};
+  }
   // Controls hint (bottom-right, only while the pointer is over the view).
   if (hover_) {
     const char* hint = "Alt+드래그 궤도 · 휠 확대 · 가운데 드래그 이동 · 우클릭+WASD 비행 · F 맞추기";
@@ -2075,5 +2038,6 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     ui.Text(w.x + w.w - hw - 2, w.y + w.h - 26, 11, t.C("fg-dim"), hint);
   }
   b.PopClip();
+  SaveToolbarStateIfChanged();
 }
 }

@@ -1,4 +1,5 @@
 #include "bdg_test.h"
+#include <set>
 #include "Render3D/MeshGen.h"
 #include "Render3D/Renderer3D.h"
 #include "Render3D/ReferenceBoard.h"
@@ -10,6 +11,7 @@
 #include "Render3D/Culling.h"
 #include "Render3D/Lightmap.h"
 #include "Render3D/RayScene.h"
+#include <set>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdio>
 #include <filesystem>
@@ -533,4 +535,23 @@ TEST_CASE("editor: platform budgets, tiers, project overrides and bars (queue 3-
   use.shadowLights = 3; // more shadowed lights than allowed: the light bar is over even with few lights
   CHECK(EvaluateBudget(use, DefaultBudget(1))[3].level == 2);
   CHECK(FormatCount(980) == "980" && FormatCount(12400) == "12.4k");
+}
+
+TEST_CASE("render: view modes have names, menu groups, Unreal keys and heat map legends (round 7)") {
+  std::set<std::string> names;
+  int perGroup[4] = {};
+  for (int k = 0; k < (int)DebugView::Count; ++k) {
+    const DebugView v = (DebugView)k;
+    names.insert(DebugViewName(v));
+    const int g = DebugViewGroup(v);
+    CHECK(g >= 0 && g <= 3);
+    if (g >= 0 && g <= 3) ++perGroup[g];
+    const DebugLegend lg = DebugViewLegend(v);
+    CHECK(lg.colors.size() == lg.labels.size());
+  }
+  CHECK(names.size() == (size_t)DebugView::Count); // every mode its own name
+  CHECK(perGroup[0] == 6 && perGroup[1] == 8 && perGroup[2] == 4 && perGroup[3] == 3);
+  CHECK(std::string(DebugViewKey(DebugView::Lit)) == "Alt+4" && std::string(DebugViewKey(DebugView::Unlit)) == "Alt+3" &&
+        std::string(DebugViewKey(DebugView::Wireframe)) == "Alt+2" && std::string(DebugViewKey(DebugView::Albedo)).empty());
+  CHECK(DebugViewLegend(DebugView::Overdraw).colors.size() == 6 && DebugViewLegend(DebugView::Lit).colors.empty());
 }

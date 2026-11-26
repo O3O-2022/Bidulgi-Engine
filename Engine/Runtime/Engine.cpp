@@ -1510,6 +1510,11 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       const char* folds = std::getenv("BDG_FOLDS");
       const bool automatedRun = desc->max_frames > 0 || std::getenv("BDG_IDLE_TEST");
       model->foldsPath = folds ? folds : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "HierarchyFolds.jsonl").string();
+      if (e->sceneView) { // Scene view toolbar values (snapping, camera speed, ...) per project, the same rule
+        const char* tb = std::getenv("BDG_TOOLBAR");
+        e->sceneView->toolbarStatePath = tb ? tb : automatedRun ? "" : (std::filesystem::current_path() / ".cache" / "SceneViewToolbar.json").string();
+        e->sceneView->LoadToolbarState();
+      }
     }
     if (e->hotReloadTest) { // play a copy of the v1 samples, so the test can write v2 over it (4-4)
       const std::filesystem::path managed = bdg::PathU8(bdg::DotNetHost::DefaultManagedDir());
@@ -1798,6 +1803,8 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
           e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
           e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+        } else {
+          e->sceneView->PressToolbar("gi", *e->model); // in the toolbar's "»" menu (narrow view)
         }
       }
       if (frames == 6) {

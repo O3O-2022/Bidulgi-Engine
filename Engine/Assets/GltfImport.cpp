@@ -379,7 +379,7 @@ bool Import(cgltf_data* data, const fs::path& baseDir, const cgltf_options& opt,
       t.w = t.h = 0;
     }
   }
-  auto dropMissing = [&](int& tex) { if (tex >= 0 && out.textures[tex].rgba.empty()) tex = -1; };
+  auto dropMissing = [&](int& tex) { if (tex >= 0 && !out.textures[tex].Valid()) tex = -1; };
   if (images)
     for (ImportedMaterial& m : out.materials)
       for (int* t : {&m.baseColorTex, &m.metalRoughTex, &m.normalTex, &m.occlusionTex, &m.emissiveTex}) dropMissing(*t);
