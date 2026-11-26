@@ -862,8 +862,12 @@ jobs:
           $clogs = @("$ar/client1.log", "$ar/client2.log") | ForEach-Object { Get-Content $_ -Raw -Encoding utf8 -ErrorAction SilentlyContinue }
           Write-Host "----- arena dedicated server (exit $($srv.ExitCode))"; Write-Host $slog
           $clogs | ForEach-Object { Write-Host '----- arena client'; Write-Host $_ }
-          if ($arenaBuild -ne 0 -or $srv.ExitCode -ne 0 -or $slog -notmatch 'server: Arena Test on port 47811' -or $slog -notmatch 'player 1 "Ann" joined' -or
-              $slog -notmatch 'player 2 "Bo" joined' -or $slog -notmatch 'server: \d+ ticks, 2 player\(s\) at most') { $errors += 'arena dedicated server failed' }
+          # the two clients start together, so either may join first: Ann and Bo each as player 1 or 2, not the same number
+          $annN = if ($slog -match 'player (\d+) "Ann" joined') { [int]$Matches[1] } else { 0 }
+          $boN = if ($slog -match 'player (\d+) "Bo" joined') { [int]$Matches[1] } else { 0 }
+          $joined = ($annN -in 1, 2) -and ($boN -in 1, 2) -and ($annN -ne $boN)
+          if ($arenaBuild -ne 0 -or $srv.ExitCode -ne 0 -or $slog -notmatch 'server: Arena Test on port 47811' -or -not $joined -or
+              $slog -notmatch 'server: \d+ ticks, 2 player\(s\) at most') { $errors += "arena dedicated server failed (Ann joined as $annN, Bo as $boN)" }
           foreach ($c in $clogs) {
             if ($c -notmatch 'net: joined as player [12]' -or $c -notmatch 'arena: round clock \d+ s from the server') { $errors += 'arena client failed' }
           }
