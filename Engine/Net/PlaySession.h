@@ -23,6 +23,7 @@ struct PlayOptions {
   int conditions = 0;       // 0 off, 1 LAN, 2 internet, 3 bad (presets of latency / jitter / loss)
   uint16_t port = 7777;     // 0 = any free port
   float latencyMs = 0, jitterMs = 0, lossPercent = 0;
+  uint32_t timeoutMs = 5000;          // no answer this long = gone (the editor and every launched process)
   std::vector<std::string> extraArgs; // for every launched process (tests: --quit-after ...)
   std::string projectDir;             // the processes' --project ("" = the working folder)
 };

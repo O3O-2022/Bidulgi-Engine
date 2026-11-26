@@ -702,7 +702,7 @@ jobs:
           $nt = Join-Path $env:RUNNER_TEMP 'bdg-net'
           Remove-Item -Recurse -Force $nt -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $nt | Out-Null
-          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 6000
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 100000
           if ($log -notmatch 'net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1') {
             $errors += 'multiplayer test failed'
             Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }

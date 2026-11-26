@@ -111,6 +111,7 @@ bool NetWorld::Start(Scene& scene, CommandBus& bus, const NetSettings& s, std::s
   Stop();
   settings_ = s;
   transport_.sim = s.sim;
+  transport_.timeoutMs = std::max<uint32_t>(s.timeoutMs, 1000);
   count_ = {};
   players_.clear();
   if (s.mode == NetMode::Standalone) return true;

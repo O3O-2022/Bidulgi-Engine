@@ -86,6 +86,7 @@ void PlaySession::BeforePlay(PlayMode& play, const EditorModel& model) {
   s.sim.latencyMs = options.latencyMs;
   s.sim.jitterMs = options.jitterMs;
   s.sim.lossPercent = options.lossPercent;
+  s.timeoutMs = options.timeoutMs;
   NetMode mode = options.mode;
   if (mode == NetMode::Standalone && options.players > 1) mode = NetMode::ListenServer;
   s.mode = mode;
@@ -133,6 +134,7 @@ bool PlaySession::Launch(const std::string& title, std::vector<std::string> args
   if (options.latencyMs > 0) args.insert(args.end(), {"--sim-latency", std::format("{}", options.latencyMs)});
   if (options.jitterMs > 0) args.insert(args.end(), {"--sim-jitter", std::format("{}", options.jitterMs)});
   if (options.lossPercent > 0) args.insert(args.end(), {"--sim-loss", std::format("{}", options.lossPercent)});
+  if (options.timeoutMs != 5000) args.insert(args.end(), {"--net-timeout", std::format("{}", options.timeoutMs / 1000.0)});
   args.insert(args.end(), options.extraArgs.begin(), options.extraArgs.end());
   const fs::path exe = PlayerExe();
   std::wstring cmd = Quote(exe.wstring());

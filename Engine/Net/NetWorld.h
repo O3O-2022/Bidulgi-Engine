@@ -47,6 +47,7 @@ struct NetSettings {
   float interpolationDelay = 0.1f;   // seconds clients draw others in the past
   std::vector<ContentEntry> content; // compared on join (empty on both = anything goes)
   net::SimSettings sim;
+  uint32_t timeoutMs = 5000;         // no answer this long = the other side is gone (tests on slow machines: longer)
 };
 
 struct NetPlayer {

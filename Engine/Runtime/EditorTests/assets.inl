@@ -1296,7 +1296,7 @@ BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)
 // getting the world, and the first client's leaving cleaning up its player everywhere. Every stage waits for what it
 // needs (a join, a move, the late joiner's world, the goodbye) with a generous time limit, so slow machines (software
 // OpenGL: clients take seconds to start) pass the same way; client 1 leaves when the check writes its --quit-file.
-// The editor quits when done. Run with --frames 6000 (a ceiling).
+// The editor quits when done (at most 400 s). Run with --frames 100000: a ceiling that is never what ends it.
 void InjectNetTest(bdg_engine* e, int frame, float) {
   bdg::EditorModel* m = e->model.get();
   if (!m) return;
@@ -1351,6 +1351,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     ps.options.players = 2;
     ps.options.port = 0;
     ps.options.lossPercent = 10;
+    // a starved frame on software GL (three processes on a small CI machine) must not drop peers: 30 s, not 5 s
+    ps.options.timeoutMs = std::getenv("BDG_NET_TEST_TIMEOUT") ? (uint32_t)std::atoi(std::getenv("BDG_NET_TEST_TIMEOUT")) : 30000u; // ms
     ps.options.projectDir = dir;
     quitFile = (fs::path(dir) / ".cache" / "net" / "leave-client1").string();
     fs::remove(fs::path(quitFile), ec);
@@ -1380,6 +1382,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
   }
   if (stage == 3 && ((byName("Player 2").size() && client2Has("net probe: start player Player 1")) || seconds(launched2) > 120)) {
     joined2 = clock::now(); // client 2 is in and has the world: client 1 may go
+    if (const char* stall = std::getenv("BDG_NET_TEST_STALL")) // a starved frame (software GL on a busy CI machine), seconds
+      std::this_thread::sleep_for(std::chrono::milliseconds((int)(std::atof(stall) * 1000)));
     std::ofstream(fs::path(quitFile), std::ios::binary) << "leave";
     leaveAt = clock::now();
     stage = 4;
@@ -1389,8 +1393,12 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     for (size_t at = c2log.find("net probe: onrep score="); at != std::string::npos; at = c2log.find("net probe: onrep score=", at + 1)) ++n;
     return n;
   };
-  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 60)) {
+  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 90)) {
     stage = 5; // client 1 has left, the server and client 2 cleaned up
+  }
+  if (stage >= 1 && stage < 5 && seconds(started) > 400) { // the overall wall-clock limit (the stages have their own)
+    bdg::LogError("net test: stage {} still waiting after {:.0f} s", stage, seconds(started));
+    stage = 5;
   }
   if (stage == 5) {
     const bool p1Gone = !m->scene.Find(p1);
