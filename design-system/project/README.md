@@ -21,7 +21,10 @@
 ## 색
 
 - 표면 단계: `ground`(가장 바깥) < `sunk`(입력칸) < `win`(창 테두리·헤더) < `panel`(내용) < `raise`(버튼·컴포넌트 머리). 한 단계씩만 올라가거나 내려갑니다.
-- 글자: 본문은 `fg`, 보조는 `fg-dim`. `fg-faint`는 대비가 3:1에 못 미치므로 읽어야 하는 글자에 쓰지 않습니다 (캡션, 줄 번호, 비활성 표시만).
+- 글자: 본문은 `fg`, 보조는 `fg-dim`, 소제목·종류 열·비활성은 `fg-faint`. 세 글자 토큰 모두 `panel`·`raise`·`win` 위에서 4.5:1 이상입니다(UI 검토 2026-11-26에서 `fg-faint`를 올림). 선택한 행(`selection`) 위에서는 `fg-faint` 대신 `fg-dim`.
+- 입력칸·선택칸·토글·체크박스의 테두리는 `line-input`(바탕과 3:1, 빈 칸도 보임). `line`은 패널 사이 이음선에만, `line-strong`은 버튼·노드·모달 테두리.
+- 호버는 `raise-hover`, 누름은 `raise-press`. 기즈모 강조는 `gizmo-hot`, 스냅 안내선은 `guide`(다른 데 쓰지 않음), 폴더 아이콘은 `icon-folder` / `icon-folder-tab`.
+- 대비는 단위 테스트가 지킵니다(`Tests/ThemeContrastTests.cpp`): 토큰을 바꾸면 그 표를 통과해야 합니다.
 - 선택한 행은 `selection` 바탕. 선택한 오브젝트·노드는 `accent` 2px 테두리.
 - 상태색 `ok`·`warn`·`err`는 반드시 글자(`OK`, `WARN`, `ERROR`)나 아이콘과 함께 씁니다. 색만으로 상태를 알리지 않습니다.
 - 축은 X `axis-x`, Y `axis-y`, Z `axis-z`. 기즈모와 벡터 입력칸 라벨에 같은 색.
