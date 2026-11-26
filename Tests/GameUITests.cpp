@@ -135,3 +135,43 @@ TEST_CASE("game ui: toggle, slider, input field, scroll view, dropdown (round 7)
   click(row.x + 10, row.y + 10);
   CHECK(el("dd")->value == 2.f && !el("dd")->open && !ui.DropdownRow("dd", 2, row));
 }
+
+TEST_CASE("game ui: horizontal / vertical / grid layout groups, 9-slice parts (round 7)") {
+  const char* text = R"({"v":1,"scene":"UI"}
+{"id":"hud","name":"HUD","UICanvas":{"referenceSize":[1000,500]}}
+{"id":"row","name":"row","parent":"hud","UIElement":{"kind":"Panel","position":[0,0],"size":[600,100],"layout":"Horizontal","spacing":10,"padding":5}}
+{"id":"a","name":"a","parent":"row","UIElement":{"kind":"Button","position":[300,300],"size":[100,40]}}
+{"id":"b","name":"b","parent":"row","UIElement":{"kind":"Button","size":[50,40]}}
+{"id":"col","name":"col","parent":"hud","UIElement":{"kind":"Panel","position":[0,200],"size":[200,300],"layout":"Vertical","spacing":4}}
+{"id":"c","name":"c","parent":"col","UIElement":{"kind":"Text","size":[200,30]}}
+{"id":"d","name":"d","parent":"col","UIElement":{"kind":"Text","size":[200,30]}}
+{"id":"grid","name":"grid","parent":"hud","UIElement":{"kind":"Panel","position":[600,0],"size":[230,400],"layout":"Grid","spacing":10,"cellSize":[100,60]}}
+{"id":"g1","name":"g1","parent":"grid","UIElement":{"kind":"Image"}}
+{"id":"g2","name":"g2","parent":"grid","UIElement":{"kind":"Image"}}
+{"id":"g3","name":"g3","parent":"grid","UIElement":{"kind":"Image"}}
+)";
+  Scene s;
+  std::string err;
+  CHECK(ReadSceneText(s, text, nullptr, nullptr, &err));
+  GameUI ui;
+  ui.Layout(s, {0, 0, 2000, 1000}); // scale 2
+  GameUI::Rect r;
+  CHECK(ui.ElementRect("a", r) && Near(r.x, 10) && Near(r.y, 10) && Near(r.w, 200)); // its own position is not used
+  CHECK(ui.ElementRect("b", r) && Near(r.x, (5 + 100 + 10) * 2) && Near(r.w, 100));
+  CHECK(ui.ElementRect("d", r) && Near(r.x, 0) && Near(r.y, (200 + 30 + 4) * 2));
+  CHECK(ui.ElementRect("g2", r) && Near(r.x, (600 + 110) * 2) && Near(r.y, 0) && Near(r.w, 200) && Near(r.h, 120)); // 2 cells across
+  CHECK(ui.ElementRect("g3", r) && Near(r.x, 600 * 2) && Near(r.y, 70 * 2));                                     // next row
+  bool laidOut = false;
+  for (const GameUI::Placed& p : ui.Placement())
+    if (p.object == "g3") laidOut = p.laidOut;
+    else if (p.object == "grid") CHECK(!p.laidOut);
+  CHECK(laidOut);
+  // 9-slice: a 300 x 100 rect from a 64 px image with a 16 px border drawn 20 units wide
+  GameUI::Rect parts[9];
+  float uv[9][4];
+  GameUI::NineSlice({0, 0, 300, 100}, 20, 16, 64, 64, parts, uv);
+  CHECK(Near(parts[0].w, 20) && Near(parts[0].h, 20) && Near(parts[4].x, 20) && Near(parts[4].w, 260) && Near(parts[8].x, 280));
+  CHECK(Near(uv[0][2], 0.25f) && Near(uv[4][0], 0.25f) && Near(uv[4][2], 0.75f) && Near(uv[8][3], 1.f));
+  GameUI::NineSlice({0, 0, 30, 30}, 20, 16, 64, 64, parts, uv); // smaller than two borders: halves
+  CHECK(Near(parts[0].w, 15) && Near(parts[4].w, 0));
+}

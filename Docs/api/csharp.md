@@ -489,6 +489,34 @@ A running After / Every: Cancel() stops it. Cancelled by itself when its behavio
 - `public bool interactable`
 - `public Timer OnClick(Action action)` — Calls `action` on every click while the calling behaviour runs (cancelled with it, like After / Every).
 
+### `public sealed class UIToggle : UIWidget`
+
+Controls (round 7). Each OnChanged calls `action` with the new value whenever it changes (a click, a drag, typing or a script), while the calling behaviour runs (cancelled with it, like After / Every).
+
+- `public bool on`
+- `public Timer OnChanged(Action<bool> action)`
+
+### `public sealed class UISlider : UIWidget`
+
+- `public float value` — 0..1
+- `public Timer OnChanged(Action<float> action)`
+
+### `public sealed class UIInput : UIWidget`
+
+- `public string placeholder`
+- `public Timer OnChanged(Action<string> action)`
+
+### `public sealed class UIDropdown : UIWidget`
+
+- `public int index` — The chosen option, 0 = the first.
+- `public string[] options`
+- `public string selected` — The chosen option's text ("" when the index is outside the options).
+- `public Timer OnChanged(Action<int> action)`
+
+### `public sealed class UIScrollView : UIWidget`
+
+- `public float scroll` — How far the content is scrolled down (reference pixels).
+
 ### `public static class UI`
 
 - `public static UIText Text(string name)`
@@ -496,6 +524,11 @@ A running After / Every: Cancel() stops it. Cancelled by itself when its behavio
 - `public static UIImage Image(string name)`
 - `public static UIPanel Panel(string name)`
 - `public static UIBar Bar(string name)`
+- `public static UIToggle Toggle(string name)`
+- `public static UISlider Slider(string name)`
+- `public static UIInput Input(string name)`
+- `public static UIDropdown Dropdown(string name)`
+- `public static UIScrollView ScrollView(string name)`
 
 ## Vfx.cs
 

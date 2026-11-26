@@ -361,6 +361,9 @@ jobs:
           # ... and the palette (a dragged Slider, a clicked Toggle; one undo step) and Preview (a click flips the toggle, put back after)
           $log = Invoke-Editor 'Release' @{ BDG_UIDESIGNER_TEST = '1' } 43
           if ($log -notmatch 'uidesigner test: tab=1 select=1 move=1 resize=1 snap=1 anchor=1 undo=1 resolution=1 palette=1 preview=1') { $errors += 'UI designer test failed' }
+          # C# UI controls: UI.Toggle / Slider / Input / Dropdown / ScrollView read, set, OnChanged once per change, missing = stand-in
+          $log = Invoke-Editor 'Release' @{ BDG_UICSHARP_TEST = '1'; BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll" } 24
+          if ($log -notmatch 'uicsharp test: ui probe: read=1 set=1 changed=1 missing=1') { $errors += 'C# UI controls test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking
@@ -635,7 +638,7 @@ jobs:
           # 4-2 C# Behaviours: Spinner turns its object in play mode, lifecycle order, Stop restores the edited world
           $env:BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll"
           $log = Invoke-Editor 'Release' @{ BDG_BEHAVIOUR_TEST = '1' } 20
-          if ($log -notmatch 'behaviour test: types=15 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
+          if ($log -notmatch 'behaviour test: types=16 instances=2 spun=1 order=1 restored=1 ended=1') { $errors += 'C# behaviour lifecycle test failed' }
           # 4-3 [Edit] fields: C# defaults, Inspector slider / choice, saved value before Awake, edit while playing, live value back
           $log = Invoke-Editor 'Release' @{ BDG_EDITFIELD_TEST = '1' } 17
           if ($log -notmatch 'edit field test: defaults=1 inspector=1 saved=1 push=1 pull=1 restored=1') { $errors += 'C# [Edit] field test failed' }

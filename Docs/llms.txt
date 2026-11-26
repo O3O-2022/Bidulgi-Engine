@@ -17,7 +17,7 @@
 
 - [api/cli.md](api/cli.md): `bdg` 명령 12개
 - [api/components.md](api/components.md): 장면 컴포넌트 35개와 필드·타입·기본값
-- [api/csharp.md](api/csharp.md): C# 공개 API 304개
+- [api/csharp.md](api/csharp.md): C# 공개 API 325개
 - [QUEUE.md](QUEUE.md): 작업 큐, 빌드 방법, 자동 검사 환경 변수(`BDG_*_TEST`), 코드 지도
 
 ## 기능 문서

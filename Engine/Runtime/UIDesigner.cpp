@@ -191,6 +191,11 @@ void UIDesigner::Apply(EditorModel& model, const std::string& id, const GameUI::
     std::string err;
     if (!model.bus.Execute(c, &err)) LogWarn("ui designer: {} {}: {}", id, path, err);
   };
+  if (p->laidOut) { // its parent's layout group places it: only the size is its own
+    const std::string lv = std::format("[{},{}]", Num(r.w / s), Num(r.h / s));
+    if (lv != std::format("[{},{}]", Num(e->size.x), Num(e->size.y))) set("size", lv);
+    return;
+  }
   if (anchorOverride >= 0 && anchorOverride != (int)e->anchor) set("anchor", std::format("\"{}\"", kAnchorNames[anchorOverride]));
   const std::string pv = std::format("[{},{}]", Num(pos.x), Num(pos.y)), sv = std::format("[{},{}]", Num(size.x), Num(size.y));
   if (pv != std::format("[{},{}]", Num(e->position.x), Num(e->position.y))) set("position", pv);
@@ -431,11 +436,12 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
           selected_ = sel;
         }
         start_.clear();
+        if (top->laidOut) break; // placed by its parent's layout group: selected, not dragged (order it in the Hierarchy)
         start_.push_back({top->object, top->r});
         for (const std::string& id : selected_) { // the others along, unless a selected parent carries them
           if (id == top->object) continue;
           const GameUI::Placed* p = Find(id);
-          if (!p) continue;
+          if (!p || p->laidOut) continue;
           bool underSelected = false;
           for (const GameUI::Placed* q = Find(p->parent); q && !underSelected; q = Find(q->parent))
             underSelected = std::find(selected_.begin(), selected_.end(), q->object) != selected_.end();
