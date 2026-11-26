@@ -575,6 +575,11 @@ void UIContext::DrawWidget(Widget& w) {
     }
     case WidgetKind::Button: {
       float fs = t.FontSize("label", 12);
+      if (w.variant == 2) { // menu bar: flat, the raised fill only on hover / press / open
+        if (w.hovered || w.pressed || w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"), rmd);
+        Text(w.x + (w.w - Measure(fs, w.text)) * 0.5f, w.y + (w.h - fs) * 0.5f - 1, fs, w.hovered || w.selected ? t.C("fg") : t.C("fg-dim"), w.text);
+        break;
+      }
       Color fill = w.primary ? t.C("accent") : t.C("raise");
       Color border = w.primary ? t.C("accent") : (w.hovered ? t.C("fg-faint") : t.C("line-strong"));
       if (w.pressed) fill = Alpha(fill, 0.8f);
@@ -1079,7 +1084,7 @@ void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items, bool sea
   for (size_t i = 0; i < menu_.size(); ++i) if (menu_[i].checked) menuHot_ = (int)i; // keyboard starts on the current value
   const float fs = theme_.FontSize("control", 12.5f);
   menuW_ = 160;
-  for (const MenuItem& it : menu_) menuW_ = std::max(menuW_, Measure(fs, it.label) + 32);
+  for (const MenuItem& it : menu_) menuW_ = std::max(menuW_, Measure(fs, it.label) + 32 + (it.keys.empty() ? 0.f : Measure(fs, it.keys) + 28));
   const float h = (menu_.size() + (search ? 1 : 0)) * kMenuRow + kMenuPad * 2;
   menuX_ = root_ ? std::min(x, root_->w - menuW_ - 2) : x; // keep it on screen
   menuY_ = root_ ? std::min(y, root_->h - h - 2) : y;
@@ -1178,7 +1183,15 @@ void UIContext::DrawMenu() {
     MenuItemRect(i, x, y, w, rh);
     if ((int)i == menuHot_ && menu_[i].enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
     if (menu_[i].checked) b.Rect(menuX_ + 6, y + 7, 3, kMenuRow - 14, t.C("accent"), 1.5f); // the current value
-    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !menu_[i].enabled ? t.C("fg-faint") : menu_[i].checked ? t.C("accent") : t.C("fg"), menu_[i].label);
+    // a label ending in " ▸" opens a submenu: the arrow is drawn at the right (the font has ▶, not ▸)
+    static const std::string kSub = " ▸";
+    const std::string& label = menu_[i].label;
+    const bool sub = label.size() > kSub.size() && label.compare(label.size() - kSub.size(), kSub.size(), kSub) == 0;
+    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !menu_[i].enabled ? t.C("fg-faint") : menu_[i].checked ? t.C("accent") : t.C("fg"),
+         sub ? label.substr(0, label.size() - kSub.size()) : label);
+    if (sub) Text(menuX_ + menuW_ - 14 - Measure(fs * 0.6f, "▶"), y + (kMenuRow - fs * 0.6f) * 0.5f - 1, fs * 0.6f, menu_[i].enabled ? t.C("fg-dim") : t.C("fg-faint"), "▶");
+    if (!menu_[i].keys.empty()) // the shortcut at the right
+      Text(menuX_ + menuW_ - 14 - Measure(fs, menu_[i].keys), y + (kMenuRow - fs) * 0.5f - 1, fs, menu_[i].enabled ? t.C("fg-dim") : t.C("fg-faint"), menu_[i].keys);
   }
 }
 

@@ -364,6 +364,10 @@ jobs:
           # C# UI controls: UI.Toggle / Slider / Input / Dropdown / ScrollView read, set, OnChanged once per change, missing = stand-in
           $log = Invoke-Editor 'Release' @{ BDG_UICSHARP_TEST = '1'; BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll" } 24
           if ($log -notmatch 'uicsharp test: ui probe: read=1 set=1 changed=1 missing=1') { $errors += 'C# UI controls test failed' }
+          # UI review B2: the menu bar with real clicks - eight menus open, Save shows its shortcut, GameObject > 3D > Cube
+          # (one undo step) and Edit > Undo, Window > Open panel > Console, Component > Add (searched) > AudioSource
+          $log = Invoke-Editor 'Release' @{ BDG_MENUBAR_TEST = '1' } 57
+          if ($log -notmatch 'menubar test: open=1 keys=1 create=1 undo=1 panel=1 component=1') { $errors += 'menu bar test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking
