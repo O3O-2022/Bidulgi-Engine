@@ -226,6 +226,12 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_LANG_TEST = '1' } 30
           if ($log -notmatch 'lang test: names=1 tooltip=1 card=1 mixed=1 search=1') { $errors += 'language rule test (U12) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # UI review B6: widget states with the real mouse and keys: hover / pressed fills, a greyed button (no click, not in
+          # the Tab order, says why), the focus ring on a field, toggles and ranges without the accent, Save not primary when clean
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_STATES_TEST = '1' } 40
+          if ($log -notmatch 'states test: hover=1 press=1 disabled=1 ring=1 tab=1 toggle=1 slider=1 save=1') { $errors += 'widget states test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
           # UI review B8: search boxes with real clicks and typing: Hierarchy (name, t:Light), Inspector (the Korean field name),
           # Project (every folder, t:texture; the ⋯ view menu), Project Settings (중력 opens the physics card)
           $sa = Join-Path $PWD 'ci-search'

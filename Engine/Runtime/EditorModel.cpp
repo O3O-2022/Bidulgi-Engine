@@ -1053,6 +1053,8 @@ void EditorModel::Rebuild() {
       std::string type = t.name;
       tools.Add(MakeButton("cc." + type, "값 복사")).onClick = [this, type](Widget&) { CopyComponent(type); };
       auto& paste = tools.Add(MakeButton("cp." + type, "값 붙여넣기"));
+      paste.disabled = clipType_ != type; // UI review B6: greyed, the tooltip says why
+      paste.tooltip = clipType_.empty() ? "먼저 같은 컴포넌트에서 \"값 복사\"" : clipType_ != type ? "복사한 값은 " + clipType_ + "의 값입니다" : "복사한 " + type + " 값을 붙여넣기";
       paste.onClick = [this, type, runAll](Widget&) {
         if (clipType_ != type) { LogInfo("paste: the copied values are a {}, not a {}", clipType_.empty() ? "nothing" : clipType_, type); return; }
         std::string value = clipValue_;

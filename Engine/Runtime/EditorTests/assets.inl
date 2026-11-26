@@ -1822,3 +1822,91 @@ void InjectSearchTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_SEARCH_TEST", InjectSearchTest, nullptr)
+
+// Scripted check of UI review B6 (BDG_STATES_TEST=1, --frames 40): widget states with the real mouse and keys, on the
+// Sun's Inspector. "값 복사" under the mouse takes raise-hover, held down raise-press, and copies the Light; then the
+// Transform card's "값 붙여넣기" is greyed (fg-faint) and a click on it does nothing (no undo step, no focus); a click
+// on Intensity focuses it with the ring; Tab never lands on the greyed button; an on toggle (Cast Shadows) has the
+// selection track, not the accent; a range's fill is neutral until it is focused (then the accent); Project Settings'
+// Save is not the primary (accent) button while nothing is unsaved.
+namespace statestest {
+std::string hover = "-", press = "-", disabled = "-", ring = "-", tab = "-", toggle = "-", slider = "-", save = "-";
+size_t depth0 = 0;
+}
+void InjectStatesTest(bdg_engine* e, int frame, float scale) {
+  using namespace statestest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  const bdg::Theme& th = e->theme;
+  auto same = [](bdg::Color a, bdg::Color b) { return std::abs(a.r - b.r) < 0.01f && std::abs(a.g - b.g) < 0.01f && std::abs(a.b - b.b) < 0.01f && std::abs(a.a - b.a) < 0.01f; };
+  auto at = [&](const char* id, float& x, float& y) {
+    bdg::Widget* w = ui.Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("states test: {} is not on screen", id); return false; }
+    x = (w->x + w->w * 0.5f) * scale;
+    y = (w->y + w->h * 0.5f) * scale;
+    return true;
+  };
+  float x = 0, y = 0;
+  if (frame == 2)
+    for (const std::string& r : m->scene.Roots())
+      if (m->scene.Find(r)->name == "Sun") m->Select(r);
+  if (frame == 5 && at("cc.Light", x, y)) e->window.InjectEvent({T::MouseMove, x, y});
+  if (frame == 7) {
+    bdg::Widget* b = ui.Find("cc.Light");
+    hover = b && b->hovered && same(ui.ButtonFill(*b), th.C("raise-hover")) ? "1" : "0";
+    if (at("cc.Light", x, y)) e->window.InjectEvent({T::MouseDown, x, y, 1});
+  }
+  if (frame == 9) {
+    bdg::Widget* b = ui.Find("cc.Light");
+    press = b && b->pressed && same(ui.ButtonFill(*b), th.C("raise-press")) ? "1" : "0";
+    if (at("cc.Light", x, y)) e->window.InjectEvent({T::MouseUp, x, y, 1}); // copies the Light's values
+  }
+  if (frame == 12) {
+    depth0 = m->bus.UndoDepth();
+    if (at("cp.Transform", x, y)) { // greyed (the copied values are a Light)
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  }
+  if (frame == 14) {
+    bdg::Widget* b = ui.Find("cp.Transform");
+    bdg::Widget* ok = ui.Find("cp.Light");
+    disabled = b && b->disabled && ok && !ok->disabled && m->bus.UndoDepth() == depth0 && ui.Focused() != b && same(ui.ButtonText(*b), th.C("fg-faint")) &&
+                       !b->tooltip.empty() ? "1" : "0";
+    if (at("f.Light.intensity", x, y)) {
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  }
+  if (frame == 16) {
+    bdg::Widget* f = ui.Find("f.Light.intensity");
+    ring = f && ui.Focused() == f && ui.FocusRingShown(*f) ? "1" : "0";
+    slider = "0(not a range)";
+    if (f && f->slider) slider = same(ui.SliderFill(*f), bdg::Color{th.C("accent").r, th.C("accent").g, th.C("accent").b, 0.22f}) ? "focused" : "0(focused)";
+    bdg::Widget* t = ui.Find("f.Light.castShadows");
+    toggle = t && t->text2 == "true" && same(ui.ToggleTrack(true), th.C("selection")) && !same(ui.ToggleTrack(true), th.C("accent")) ? "1" : "0";
+    for (int k = 0; k < 40; ++k) { // Tab through the Inspector: the greyed button is never focused
+      bdg::InputEvent tabKey{T::KeyDown};
+      tabKey.key = bdg::Key::Tab;
+      e->window.InjectEvent(tabKey);
+    }
+  }
+  static bool landed = false;
+  if (frame >= 17 && frame <= 19)
+    if (bdg::Widget* b = ui.Find("cp.Transform"); b && ui.Focused() == b) landed = true;
+  if (frame == 20) {
+    tab = !landed ? "1" : "0";
+    bdg::Widget* f = ui.Find("f.Light.intensity");
+    if (slider == "focused") // focus elsewhere: the fill goes back to neutral
+      slider = f && ui.Focused() != f && same(ui.SliderFill(*f), bdg::Color{th.C("fg-faint").r, th.C("fg-faint").g, th.C("fg-faint").b, 0.35f}) ? "1" : "0(idle)";
+    bdg::Widget* s = ui.Find("ps.save");
+    save = s && !s->primary && s->disabled ? "1" : "0";
+    bdg::LogInfo("states test: hover={} press={} disabled={} ring={} tab={} toggle={} slider={} save={}", hover, press, disabled, ring, tab, toggle, slider,
+                 save);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_STATES_TEST", InjectStatesTest, nullptr)
