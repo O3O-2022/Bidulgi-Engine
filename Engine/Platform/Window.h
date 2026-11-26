@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -72,6 +73,9 @@ public:
   // The system's file picker (several files): the chosen files arrive as DropFile events on a later PumpEvents, as
   // if dropped from Explorer (x = y = -1). Not shown in hidden (automated) windows.
   void OpenFileDialog();
+  // The system's folder picker: `done` runs on a later PumpEvents (the main thread) with the chosen folder; not at
+  // all when cancelled. Hidden (automated) windows answer with BDG_DIALOG_ANSWER when it is set, else nothing.
+  void OpenFolderDialog(std::function<void(const std::string&)> done);
   void* NativeHandle() const;           // HWND on Windows (accessibility bridge)
   void SetClipboardText(const std::string& text);
 
@@ -89,5 +93,9 @@ private:
   std::mutex dialogMutex_;     // the file picker answers on another thread
   std::vector<std::string> dialogFiles_;
   static void DialogDone(void* self, const char* const* files, int filter);
+  std::function<void(const std::string&)> folderDone_; // the open folder picker's answer (main thread)
+  std::string folderAnswer_;                            // set by FolderDone (dialogMutex_)
+  bool folderAnswered_ = false;
+  static void FolderDone(void* self, const char* const* files, int filter);
 };
 }
