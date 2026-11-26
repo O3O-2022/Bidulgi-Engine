@@ -440,3 +440,147 @@ void ReportTokensTest(bdg_engine*) {
   bdg::LogInfo("tokens test: missing={} screens={}", missing, drawn);
 }
 BDG_EDITOR_TEST("BDG_TOKENS_TEST", InjectTokensTest, ReportTokensTest)
+
+// BDG_CONSOLE_TEST=1 (UI review B3): the Console shows the real log. Three probe lines appear (no sample lines); the
+// 오류 toggle hides the error and counts stay (real clicks); typing in the search box narrows to one line; a
+// double-click on "file:line" opens that file (a temp file); right-click > 복사 puts the line on the clipboard; 60
+// more lines and the wheel scroll up, which stops following; Build > 검사만 fills the Build Log (channel "build").
+namespace consoletest {
+std::string lines = "-", filter = "-", search = "-", open = "-", copy = "-", scroll = "-", build = "-";
+std::string probeFile;
+}
+void InjectConsoleTest(bdg_engine* e, int frame, float scale) {
+  using namespace consoletest;
+  using T = bdg::InputEvent::Type;
+  if (!e->editor) return;
+  bdg::ConsoleView& c = e->console;
+  auto click = [&](float x, float y, int button = 1, int times = 1) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    for (int k = 0; k < times; ++k) {
+      e->window.InjectEvent({T::MouseDown, x * scale, y * scale, button});
+      e->window.InjectEvent({T::MouseUp, x * scale, y * scale, button});
+    }
+  };
+  auto clickWidget = [&](const char* id) {
+    if (bdg::Widget* w = e->editor->Find(id)) click(w->x + w->w * 0.5f, w->y + w->h * 0.5f);
+    else bdg::LogError("console test: no {}", id);
+  };
+  auto shownWith = [&](const std::string& part) {
+    int n = 0;
+    for (const std::string& s : c.ShownTexts()) n += s.find(part) != std::string::npos;
+    return n;
+  };
+  auto rowOf = [&](const std::string& part, float& x, float& y) {
+    const auto texts = c.ShownTexts();
+    for (size_t k = 0; k < texts.size(); ++k)
+      if (texts[k].find(part) != std::string::npos) {
+        float w, h;
+        if (c.RowRect(k, x, y, w, h)) {
+          x += 60;
+          y += h * 0.5f;
+          return true;
+        }
+      }
+    return false;
+  };
+  if (frame == 2) {
+    if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("console");
+    { // a project of its own, so Build > 검사만 below reads that folder (not the working folder)
+      const std::filesystem::path proj = std::filesystem::temp_directory_path() / "bdg_console_project";
+      std::error_code ec;
+      std::filesystem::remove_all(proj, ec);
+      std::filesystem::create_directories(proj / "Assets", ec);
+      std::filesystem::create_directories(proj / "Scenes", ec);
+      OpenProject(e, bdg::PathToU8(proj / "Assets"));
+    }
+    probeFile = bdg::PathToU8(std::filesystem::temp_directory_path() / "bdg_console_probe.cs");
+    std::ofstream(bdg::PathU8(probeFile)) << "// console probe\n";
+    bdg::LogInfo("console probe: info");
+    bdg::LogWarn("console probe: warn");
+    bdg::LogError("console probe: error at {}:12", probeFile);
+  }
+  if (frame == 4) {
+    lines = shownWith("console probe:") == 3 && shownWith("quest.lua") == 0 ? "1" : std::format("0({})", shownWith("console probe:"));
+    clickWidget("console.error"); // hide errors
+  }
+  if (frame == 6) {
+    bdg::Widget* b = e->editor->Find("console.error");
+    filter = shownWith("console probe: error") == 0 && shownWith("console probe: warn") == 1 && b && !b->selected && b->text.starts_with("오류 ")
+                 ? "1" : std::format("0(error {} '{}')", shownWith("console probe: error"), b ? b->text : "");
+    clickWidget("console.error"); // show them again
+    if (bdg::Widget* f = e->editor->Find("console.search")) click(f->x + f->w * 0.8f, f->y + f->h * 0.5f); // in the box
+  }
+  if (frame == 8) {
+    bdg::InputEvent t{T::Text};
+    t.text = "probe: w";
+    e->window.InjectEvent(t);
+  }
+  if (frame == 10) {
+    search = c.ShownTexts().size() == 1 && shownWith("probe: warn") == 1 ? "1" : std::format("0({})", c.ShownTexts().size());
+    bdg::InputEvent all{T::KeyDown}; // empty the box again as a user would: Ctrl+A, Backspace
+    all.key = bdg::Key::A;
+    all.ctrl = true;
+    e->window.InjectEvent(all);
+    bdg::InputEvent back{T::KeyDown};
+    back.key = bdg::Key::Backspace;
+    e->window.InjectEvent(back);
+  }
+  if (frame == 12) {
+    float x, y;
+    if (rowOf("console probe: error", x, y)) click(x, y, 1, 2); // a double-click
+    else bdg::LogError("console test: error row not shown");
+  }
+  if (frame == 14) {
+    open = "0"; // read from the log below
+    for (const bdg::LogLine& l : bdg::LogHistory())
+      if (l.text.starts_with("console: open ") && l.text.find("bdg_console_probe.cs:12") != std::string::npos) open = "1";
+    float x, y;
+    if (rowOf("console probe: warn", x, y)) click(x, y, 3);; // right-click
+  }
+  if (frame == 16) {
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == "복사" && e->editor->MenuItemRect(k, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == 18) {
+    copy = e->editor->Clipboard() == "console probe: warn" ? "1" : "0(" + e->editor->Clipboard() + ")";
+    for (int k = 0; k < 60; ++k) bdg::LogInfo("console filler {}", k);
+  }
+  if (frame == 20) {
+    const bool followed = c.Following();
+    if (bdg::Widget* l = e->editor->Find("console.list")) { // the wheel over the list, up
+      bdg::InputEvent wh{T::Wheel, (l->x + l->w * 0.5f) * scale, (l->y + l->h * 0.5f) * scale};
+      wh.wheel = 4;
+      e->window.InjectEvent(wh);
+    }
+    scroll = followed ? "" : "0(not following)";
+  }
+  if (frame == 22) {
+    if (scroll.empty()) scroll = !c.Following() && c.Scroll() > 0 ? "1" : std::format("0(follow {} scroll {})", c.Following(), c.Scroll());
+    if (bdg::Widget* b = e->editor->Find("menu.build")) click(b->x + b->w * 0.5f, b->y + b->h * 0.5f);
+  }
+  if (frame == 24) {
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == "검사만" && e->editor->MenuItemRect(k, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == 27) {
+    bdg::Widget* panel = e->editor->Find("buildlog");
+    const auto texts = e->buildLog.ShownTexts();
+    bool check = false, other = false;
+    for (const std::string& s : texts) {
+      check |= s.starts_with("build: check");
+      other |= s.find("console probe") != std::string::npos;
+    }
+    build = check && !other && panel && !panel->hidden ? "1" : std::format("0(lines {} check {} shown {})", texts.size(), check, panel && !panel->hidden);
+    std::error_code ec;
+    std::filesystem::remove(bdg::PathU8(probeFile), ec);
+  }
+}
+void ReportConsoleTest(bdg_engine*) {
+  using namespace consoletest;
+  bdg::LogInfo("console test: lines={} filter={} search={} open={} copy={} scroll={} build={}", lines, filter, search, open, copy, scroll, build);
+}
+BDG_EDITOR_TEST("BDG_CONSOLE_TEST", InjectConsoleTest, ReportConsoleTest)

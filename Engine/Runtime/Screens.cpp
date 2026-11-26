@@ -135,32 +135,13 @@ void DrawSceneViewV2(Widget& w, UIContext& ui) {
   ui.Text(ax - 3, ay - 31, t.FontSize("badge", 10), t.C("axis-y"), "Y");
 }
 
-// Bottom dock: Console / Build Log / Profiler in one panel (tab index picks the view).
+// Bottom dock: the Profiler (Console / Build Log: ConsoleView, Project: EditorModel).
 void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
   const Theme& t = ui.Tokens();
   Batch2D& b = ui.Batch();
   int tab = panel ? panel->selectedIndex : 0;
-  float cap = t.FontSize("caption", 10.5f), body = t.FontSize("label", 12);
-  if (tab == 1 || tab == 2) { // Console / Build Log
-    struct Line { const char* lvl; const char* text; };
-    static const Line console[] = {{"info", "Bidulgi Engine 0.0.1"}, {"info", "rhi: OpenGL 4.5 · NVIDIA GeForce RTX 5070 Ti"},
-                                   {"info", "font: Pretendard (SDF atlas 2048)"}, {"info", "tokens: 40 colors, 18 sizes, 12 type styles"},
-                                   {"warn", "vsync ignored by the driver, frame limiter 240 Hz"}, {"info", "PlayerMove.cs compiled in 0.42 s"},
-                                   {"error", "quest.lua:12  attempt to index nil value 'npc'"}};
-    static const Line build[] = {{"info", "> bdg build --platform windows --profile development"}, {"info", "[1/5] collect   38 assets"},
-                                 {"info", "[2/5] cook      BC7 · binary scenes (cache 92%)"}, {"info", "[3/5] scripts   C# 3 · Lua 2 · Graph 4"},
-                                 {"info", "[4/5] pack      base.bpak 12.4 MB"}, {"ok", "[5/5] done      Bin/MyGame.exe  (6.8 s)"}};
-    const Line* lines = tab == 1 ? console : build;
-    int n = tab == 1 ? 7 : 6;
-    for (int i = 0; i < n; ++i) {
-      std::string lvl = lines[i].lvl;
-      Color c = lvl == "error" ? t.C("err") : lvl == "warn" ? t.C("warn") : lvl == "ok" ? t.C("ok") : t.C("fg-faint");
-      float y = w.y + 8 + i * 20.f;
-      if (lvl == "error") b.Rect(w.x, y - 2, w.w, 20, Alpha(t.C("err"), 0.1f));
-      b.Rect(w.x + 12, y + 5, 6, 6, c, t.N("radius-sm", 3));
-      ui.Text(w.x + 26, y + 1, body, lvl == "info" ? t.C("fg-dim") : c, lines[i].text, true);
-    }
-  } else { // Profiler: frame time bars (real values from the engine loop)
+  float cap = t.FontSize("caption", 10.5f);
+  if (tab == 3) { // Profiler: frame time bars (real values from the engine loop)
     float maxMs = 16.7f;
     for (float v : g_frameTimes) maxMs = std::max(maxMs, v);
     float gx = w.x + 50, gw = w.w - 70, gh = w.h - 40, gy = w.y + 12;
@@ -301,6 +282,27 @@ std::unique_ptr<Widget> BuildEditorScreen() {
       row.Add(MakeButton("project.open", "프로젝트 열기…", true)).tooltip = "프로젝트 폴더(Assets가 있는 곳)를 고릅니다";
       row.Add(MakeButton("project.new", "새 프로젝트…")).tooltip = "빈 폴더를 고르면 Assets·Scenes를 만들고 엽니다";
       empty.Add(MakeBox(Axis::Column)).height = Length::Fill();
+      continue;
+    }
+    if (i == 1 || i == 2) { // Console / Build Log (UI review U4): the real log; ConsoleView (Engine.cpp) fills and draws it
+      const std::string id = bottom[i];
+      auto& panel = dock.Add(MakeBox(Axis::Column));
+      panel.id = id;
+      auto& bar = panel.Add(MakeBox(Axis::Row, 6));
+      bar.height = Length::Px(30);
+      bar.padL = 8;
+      bar.padR = 8;
+      bar.crossAlign = Align::Center;
+      auto& search = bar.Add(MakeField(id + ".search", "검색", ""));
+      search.width = Length::Px(240);
+      search.tooltip = "이 글자가 든 줄만 보입니다";
+      for (auto [key, text, tip] : {std::tuple{"info", "정보 0", "정보 줄 보이기 / 숨기기"}, std::tuple{"warn", "경고 0", "경고 줄 보이기 / 숨기기"},
+                                    std::tuple{"error", "오류 0", "오류 줄 보이기 / 숨기기"}})
+        bar.Add(MakeButton(id + "." + key, text)).tooltip = tip;
+      bar.Add(Spacer());
+      bar.Add(MakeButton(id + ".follow", "자동 스크롤")).tooltip = "새 줄이 오면 끝으로 갑니다 (위로 스크롤하면 꺼짐)";
+      bar.Add(MakeButton(id + ".clear", "지우기")).tooltip = "지금 있는 줄을 목록에서 지웁니다";
+      panel.Add(MakeCustom(id + ".list", [](Widget&, UIContext&) {})).height = Length::Fill(); // drawn by ConsoleView
       continue;
     }
     dock.Add(MakeCustom(bottom[i], draw));

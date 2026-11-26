@@ -251,6 +251,7 @@ add_library(BidulgiEngine STATIC
   Engine/Runtime/EditorModel.h Engine/Runtime/EditorModel.cpp Engine/Runtime/ProjectPanel.cpp
   Engine/Runtime/SceneView.h Engine/Runtime/SceneView.cpp Engine/Runtime/SceneViewToolbar.cpp
   Engine/Runtime/UIDesigner.h Engine/Runtime/UIDesigner.cpp
+  Engine/Runtime/ConsoleView.h Engine/Runtime/ConsoleView.cpp
   Engine/Runtime/Gizmo.h Engine/Runtime/Gizmo.cpp Engine/Runtime/Snapping.h Engine/Runtime/Snapping.cpp Engine/Runtime/PlayMode.h Engine/Runtime/PlayMode.cpp Engine/Runtime/Budget.h Engine/Runtime/Budget.cpp
   Engine/Runtime/MaterialLibrary.h Engine/Runtime/MaterialLibrary.cpp
   Engine/Input/InputActions.h Engine/Input/InputActions.cpp Engine/Input/GameInput.h Engine/Input/GameInput.cpp Engine/Platform/Gamepad.h Engine/Platform/Gamepad.cpp
