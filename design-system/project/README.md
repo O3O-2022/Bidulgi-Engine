@@ -56,6 +56,8 @@
 ## 글쓰기
 
 - 화면 글은 한국어. 엔진 고유 명사(Hierarchy, Inspector, Graph, Prefab 등)와 메뉴 이름은 영어 그대로 둡니다. 유니티·언리얼 사용자가 바로 알아보게 하기 위해서입니다.
+- **예외: 엔진 용어는 영어**(UI 검토 U12, 2026-11-26 결정). 컴포넌트 이름(Light, Rigidbody), 필드 이름(Cast Shadows, Linear Damping), 열거형 값(Directional, TopLeft), 패널·워크스페이스 이름은 유니티·언리얼과 같은 영어로 둡니다. 대신 **툴팁 첫 줄에 한국어 이름**을 보여 줍니다. 한국어 이름표는 [`editor.ko.json`](editor.ko.json)(키: `컴포넌트` 또는 `컴포넌트.필드`, 없으면 한국어 줄 없음)이고, 두 레인·AI 참고서·번역이 같이 씁니다. 코드에서는 `bdg::KoreanName` / `bdg::TermTooltip`(`Engine/UI/EditorNames.h`).
+- 버튼·메뉴·메시지·대화상자·빈 상태 글·값 표시(켜짐/꺼짐)·실행 취소 기록은 한국어. 엔진 용어는 한국어 문장 안에 그대로 들어갈 수 있습니다("+ 붙여넣기: Rigidbody", "만들기: Cube"). 한 줄(한 행) 안에서 **UI 말**을 두 언어로 섞지 않습니다("+ Add Component"와 "+ 프리팹 만들기"를 한 줄에 두지 않음).
 - 버튼은 동작을 말합니다: "Compile", "재생", "되돌리기". 결과는 짧게: "컴파일됨", "저장됨".
 - 에러는 한 줄로 `위치 → 원인 → 고칠 방법`: `scenes/forest_01.scene:12 g1.Health.hpp → Health에 hpp 필드가 없습니다. 가능한 필드: hp, max`.
 - 이모지는 쓰지 않습니다.

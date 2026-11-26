@@ -9,6 +9,7 @@ Usage: python tools/gen_llms.py [--bdg build/Release/bdg.exe] [--check]
 --check writes nothing and exits 1 when a file would change (CI keeps the reference up to date).
 """
 import io
+import json
 import os
 import re
 import subprocess
@@ -22,18 +23,28 @@ def run_bdg(bdg, *args):
     return r.stdout.decode('utf-8', 'replace').replace('\r\n', '\n')
 
 
+def korean_names():
+    """design-system/project/editor.ko.json: Korean names of the engine terms (the editor shows them in tooltips)."""
+    p = os.path.join(ROOT, 'design-system', 'project', 'editor.ko.json')
+    return json.load(io.open(p, encoding='utf-8')).get('names', {}) if os.path.exists(p) else {}
+
+
 def components(bdg):
+    ko = korean_names()
     lines = [l for l in run_bdg(bdg, 'schema').split('\n') if ':' in l]
     out = ['# 컴포넌트 레퍼런스', '',
            '장면 파일(`.scene`, 한 줄에 물체 하나)에 쓰는 컴포넌트와 필드입니다. `bdg schema <이름>`과 같은 내용이고,',
-           '`bdg set <id> 컴포넌트.필드=값`, `bdg addcomp <id> <컴포넌트>`로 바꿉니다. 이 파일은 `tools/gen_llms.py`가 만듭니다.', '']
+           '`bdg set <id> 컴포넌트.필드=값`, `bdg addcomp <id> <컴포넌트>`로 바꿉니다. 이 파일은 `tools/gen_llms.py`가 만듭니다.',
+           '이름은 엔진 용어라 영어 그대로 쓰고, 한국어 이름은 에디터 툴팁과 같은 `design-system/project/editor.ko.json`에서 옵니다.', '']
     for l in sorted(lines, key=lambda x: x.split(':', 1)[0]):
         name, rest = l.split(':', 1)
-        out += [f'## {name}', '', '| 필드 | 타입 | 기본값 |', '|---|---|---|']
+        title = f'## {name} ({ko[name]})' if name in ko else f'## {name}'
+        out += [title, '', '| 필드 | 한국어 | 타입 | 기본값 |', '|---|---|---|---|']
         for f in rest.split():
             m = re.match(r'([^:]+):([^=]+)(?:=(.*))?$', f)
             if m:
-                out.append(f'| `{m.group(1)}` | {m.group(2)} | {("`" + m.group(3) + "`") if m.group(3) is not None else "—"} |')
+                k = ko.get(f'{name}.{m.group(1)}', '')
+                out.append(f'| `{m.group(1)}` | {k} | {m.group(2)} | {("`" + m.group(3) + "`") if m.group(3) is not None else "—"} |')
         out.append('')
     return '\n'.join(out), len(lines)
 

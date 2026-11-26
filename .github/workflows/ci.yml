@@ -170,7 +170,7 @@ jobs:
           #     (its first control: the Hierarchy's "+" button, UI review B1)
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_A11Y_TEST = '1' } 8
-          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.create') { $errors += 'accessibility test failed' }
+          if ($log -notmatch 'a11y test: focused_name=컴포넌트 추가 control=Button children=(\d+) next_panel=h\.create') { $errors += 'accessibility test failed' }
           elseif ([int]$Matches[1] -lt 10) { $errors += "accessibility tree too small ($($Matches[1]) elements)" }
           Remove-Item Env:BDG_LAYOUT
 
@@ -219,6 +219,12 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_CREATE_TEST = '1' } 40
           if ($log -notmatch 'create test: plus=1 child=1 hints=1 addcomp=1 ui=1 shortcut=1 undo=1') { $errors += 'create objects / Add Component test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # UI review B12 (U12): engine terms stay English with the Korean name as the tooltip's first line (real hover,
+          # design-system/project/editor.ko.json); no button mixes Korean with non-term English; Add Component finds "강체"
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_LANG_TEST = '1' } 30
+          if ($log -notmatch 'lang test: names=1 tooltip=1 card=1 mixed=1 search=1') { $errors += 'language rule test (U12) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 17) Project panel (queue 2-5): real asset folder, C++ .h/.cpp shown as one class item, renamed together

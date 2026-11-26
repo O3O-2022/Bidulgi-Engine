@@ -445,7 +445,7 @@ int EditorModel::ReplaceReferences(const std::string& from, const std::string& t
   }
   int n = 0;
   if (!sets.empty()) {
-    bus.BeginGroup(std::format("Replace {} with {}", FileName(from), FileName(to)), "ui");
+    bus.BeginGroup(std::format("바꾸기: {} → {}", FileName(from), FileName(to)), "ui");
     for (auto& c : sets) n += bus.Execute(c) ? 1 : 0;
     bus.EndGroup();
   }
@@ -496,7 +496,7 @@ int EditorModel::RenameSelection(const std::string& pattern) {
     renames.push_back(c);
   }
   if (renames.empty()) { needRebuild_ = true; return 0; }
-  bus.BeginGroup(std::format("Rename {} objects", renames.size()), "ui");
+  bus.BeginGroup(std::format("이름 바꾸기: {}개", renames.size()), "ui");
   int n = 0;
   for (auto& c : renames) n += bus.Execute(c) ? 1 : 0;
   bus.EndGroup();
