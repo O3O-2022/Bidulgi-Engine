@@ -178,6 +178,9 @@ public:
   Color ToggleTrack(bool on) const;
   Color SliderFill(const Widget& w) const;
   bool FocusRingShown(const Widget& w) const { return focused_ == &w && !w.disabled; }
+  // A Card with onContext shows a ⋯ button at the right of its header (UI review B7): a click there opens the menu
+  // (instead of folding), the same as a right-click on the header. The button's box (UI units):
+  static void CardMenuBox(const Widget& card, float& x, float& y, float& w, float& h) { x = card.x + card.w - 34; y = card.y + 6; w = 24; h = 20; }
   // Byte ranges of the numbers in "x, y, z" (spaces trimmed); empty when the text has another shape.
   static std::vector<std::pair<size_t, size_t>> FieldParts(const std::string& v, int count);
   bool AxisBox(const Widget& f, int k, float& x, float& w) const; // a vector field's box k (UI units)
@@ -287,6 +290,7 @@ private:
   Widget* sliderDrag_ = nullptr;
   void SliderSet(Widget& f, float mouseX);
   float pressX_ = 0, pressY_ = 0, dragX_ = 0, dragY_ = 0;
+  float hoverX_ = 0; // the pointer's x at the last move (a card's ⋯ button lights up under it)
   Widget* DropTargetAt(float x, float y);
   void DrawDragOverlay();
 

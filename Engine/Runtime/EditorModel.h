@@ -155,9 +155,18 @@ public:
   // Search boxes (UI review B8): the Hierarchy (name, or t:Component), the Inspector (field names, English or Korean)
   // and the Project panel (file names in every folder, t:type) show only what matches.
   std::string hierarchySearch, inspectorSearch, projectSearch;
+  // The component card's ⋯ menu (UI review B7): each acts on every selected object, one undo step.
+  void OpenComponentMenu(const std::string& type, float x, float y);
+  bool PasteComponent(const std::string& type);  // the copied values (CopyComponent) of the same type
+  bool ApplyPreset(const std::string& type);     // the saved preset (SavePreset)
+  bool ResetComponent(const std::string& type);  // every field back to the type's default
+  bool RemoveComponent(const std::string& type); // not Transform
+  // B15 (D1): a UIElement shows the fields its kind uses (a Text: text, font, align, colour; a Panel: colour, image, layout ...)
+  static bool UIFieldShown(const Component& c, const std::string& field);
   static bool SearchMatches(const std::string& query, std::initializer_list<std::string_view> texts); // case-insensitive, every word
 
 private:
+  bool ForSelection(const std::string& label, const std::function<Command(const std::string& id)>& make); // one undo step
   uint64_t savedRevision_ = 0;
   void BuildSampleScene();
   void Rebuild();

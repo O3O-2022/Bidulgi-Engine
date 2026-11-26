@@ -1824,8 +1824,8 @@ void InjectSearchTest(bdg_engine* e, int frame, float scale) {
 BDG_EDITOR_TEST("BDG_SEARCH_TEST", InjectSearchTest, nullptr)
 
 // Scripted check of UI review B6 (BDG_STATES_TEST=1, --frames 40): widget states with the real mouse and keys, on the
-// Sun's Inspector. "값 복사" under the mouse takes raise-hover, held down raise-press, and copies the Light; then the
-// Transform card's "값 붙여넣기" is greyed (fg-faint) and a click on it does nothing (no undo step, no focus); a click
+// Sun's Inspector. "+ 컴포넌트 추가" under the mouse takes raise-hover, held down raise-press; Project Settings' Save (nothing
+// unsaved) is greyed (fg-faint) and a click on it does nothing (no undo step, no focus); a click
 // on Intensity focuses it with the ring; Tab never lands on the greyed button; an on toggle (Cast Shadows) has the
 // selection track, not the accent; a range's fill is neutral until it is focused (then the accent); Project Settings'
 // Save is not the primary (accent) button while nothing is unsaved.
@@ -1852,52 +1852,61 @@ void InjectStatesTest(bdg_engine* e, int frame, float scale) {
   if (frame == 2)
     for (const std::string& r : m->scene.Roots())
       if (m->scene.Find(r)->name == "Sun") m->Select(r);
-  if (frame == 5 && at("cc.Light", x, y)) e->window.InjectEvent({T::MouseMove, x, y});
+  if (frame == 5 && at("insp.add", x, y)) e->window.InjectEvent({T::MouseMove, x, y});
   if (frame == 7) {
-    bdg::Widget* b = ui.Find("cc.Light");
+    bdg::Widget* b = ui.Find("insp.add");
     hover = b && b->hovered && same(ui.ButtonFill(*b), th.C("raise-hover")) ? "1" : "0";
-    if (at("cc.Light", x, y)) e->window.InjectEvent({T::MouseDown, x, y, 1});
+    if (at("insp.add", x, y)) e->window.InjectEvent({T::MouseDown, x, y, 1});
   }
   if (frame == 9) {
-    bdg::Widget* b = ui.Find("cc.Light");
+    bdg::Widget* b = ui.Find("insp.add");
     press = b && b->pressed && same(ui.ButtonFill(*b), th.C("raise-press")) ? "1" : "0";
-    if (at("cc.Light", x, y)) e->window.InjectEvent({T::MouseUp, x, y, 1}); // copies the Light's values
+    if (at("insp.add", x, y)) e->window.InjectEvent({T::MouseUp, x, y, 1}); // opens the list (closed next)
+  }
+  if (frame == 11) {
+    bdg::InputEvent esc{T::KeyDown};
+    esc.key = bdg::Key::Escape;
+    e->window.InjectEvent(esc); // close the Add Component list
+    if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings");
   }
   if (frame == 12) {
     depth0 = m->bus.UndoDepth();
-    if (at("cp.Transform", x, y)) { // greyed (the copied values are a Light)
+    if (at("ps.save", x, y)) { // greyed (nothing unsaved)
       e->window.InjectEvent({T::MouseMove, x, y});
       e->window.InjectEvent({T::MouseDown, x, y, 1});
       e->window.InjectEvent({T::MouseUp, x, y, 1});
     }
   }
   if (frame == 14) {
-    bdg::Widget* b = ui.Find("cp.Transform");
-    bdg::Widget* ok = ui.Find("cp.Light");
-    disabled = b && b->disabled && ok && !ok->disabled && m->bus.UndoDepth() == depth0 && ui.Focused() != b && same(ui.ButtonText(*b), th.C("fg-faint")) &&
+    bdg::Widget* b = ui.Find("ps.save");
+    disabled = b && b->disabled && m->bus.UndoDepth() == depth0 && ui.Focused() != b && same(ui.ButtonText(*b), th.C("fg-faint")) &&
                        !b->tooltip.empty() ? "1" : "0";
+    if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) dw->dock->SelectPanel("inspector");
+  }
+  if (frame == 15) {
     if (at("f.Light.intensity", x, y)) {
       e->window.InjectEvent({T::MouseDown, x, y, 1});
       e->window.InjectEvent({T::MouseUp, x, y, 1});
     }
   }
-  if (frame == 16) {
+  if (frame == 17) {
     bdg::Widget* f = ui.Find("f.Light.intensity");
     ring = f && ui.Focused() == f && ui.FocusRingShown(*f) ? "1" : "0";
     slider = "0(not a range)";
     if (f && f->slider) slider = same(ui.SliderFill(*f), bdg::Color{th.C("accent").r, th.C("accent").g, th.C("accent").b, 0.22f}) ? "focused" : "0(focused)";
     bdg::Widget* t = ui.Find("f.Light.castShadows");
     toggle = t && t->text2 == "true" && same(ui.ToggleTrack(true), th.C("selection")) && !same(ui.ToggleTrack(true), th.C("accent")) ? "1" : "0";
-    for (int k = 0; k < 40; ++k) { // Tab through the Inspector: the greyed button is never focused
+    if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings"); // Tab past the greyed Save
+    for (int k = 0; k < 40; ++k) { // Tab through: the greyed button is never focused
       bdg::InputEvent tabKey{T::KeyDown};
       tabKey.key = bdg::Key::Tab;
       e->window.InjectEvent(tabKey);
     }
   }
   static bool landed = false;
-  if (frame >= 17 && frame <= 19)
-    if (bdg::Widget* b = ui.Find("cp.Transform"); b && ui.Focused() == b) landed = true;
-  if (frame == 20) {
+  if (frame >= 18 && frame <= 20)
+    if (bdg::Widget* b = ui.Find("ps.save"); b && ui.Focused() == b) landed = true;
+  if (frame == 21) {
     tab = !landed ? "1" : "0";
     bdg::Widget* f = ui.Find("f.Light.intensity");
     if (slider == "focused") // focus elsewhere: the fill goes back to neutral
@@ -1910,3 +1919,148 @@ void InjectStatesTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_STATES_TEST", InjectStatesTest, nullptr)
+
+// Scripted check of UI review B7 + B15 (BDG_COMPMENU_TEST=1, --frames 50): the component card's ⋯ menu with real clicks
+// (copy the Sun's Light, paste it on the Lantern's, Ctrl+Z, a right-click on the header opens the same menu, back to
+// defaults, remove; undo brings it back); names keep acronyms ("FOV", "UI Element"); a colour shows as #RRGGBB and a
+// typed "#FF0000" is red; a UI Button shows its kind's fields (text yes, placeholder / spacing no) and no Transform
+// card; as a Panel it gets the layout field.
+namespace compmenutest {
+std::string menu = "-", copy = "-", paste = "-", undo = "-", right = "-", reset = "-", removed = "-", names = "-", hex = "-", uikind = "-", uinot3d = "-";
+std::string sun, lantern, light0, uiButton;
+size_t depth0 = 0;
+}
+void InjectCompMenuTest(bdg_engine* e, int frame, float scale) {
+  using namespace compmenutest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  auto clickAt = [&](float x, float y, int mouseButton = 1) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, mouseButton});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, mouseButton});
+  };
+  auto dots = [&](const char* card) { // the card's ⋯ uiButton
+    bdg::Widget* c = ui.Find(card);
+    if (!c || c->hidden || c->w <= 0) { bdg::LogError("compmenu test: {} is not on screen", card); return; }
+    float x, y, w, h;
+    bdg::UIContext::CardMenuBox(*c, x, y, w, h);
+    clickAt(x + w * 0.5f, y + h * 0.5f);
+  };
+  auto item = [&](const std::string& label) {
+    const auto& items = ui.Menu();
+    for (size_t i = 0; i < items.size(); ++i)
+      if (items[i].label == label) {
+        float x, y, w, h;
+        if (ui.MenuItemRect(i, x, y, w, h)) { clickAt(x + w * 0.5f, y + h * 0.5f); return items[i].enabled; }
+      }
+    bdg::LogError("compmenu test: no menu item {}", label);
+    return false;
+  };
+  auto light = [&](const std::string& id) {
+    bdg::SceneObject* o = m->scene.Find(id);
+    bdg::Component* c = o ? o->Find("Light") : nullptr;
+    std::string v;
+    if (c) {
+      bdg::ValueType vt;
+      vt.type = bdg::FieldType::Struct;
+      vt.structType = c->type;
+      v = bdg::Registry::ToJson(c->data, vt);
+    }
+    return v;
+  };
+  if (frame == 2) {
+    for (const std::string& r : m->scene.Roots()) {
+      if (m->scene.Find(r)->name == "Sun") sun = r;
+      if (m->scene.Find(r)->name == "Lantern Light") lantern = r;
+    }
+    m->Select(sun);
+  }
+  if (frame == 4) dots("c.Light");
+  if (frame == 6) {
+    bool pasteGrey = false;
+    for (const auto& it : ui.Menu()) pasteGrey = pasteGrey || (it.label == "값 붙여넣기" && !it.enabled);
+    menu = ui.MenuOpen() && pasteGrey ? "1" : "0";
+    item("값 복사");
+  }
+  if (frame == 8) { copy = light(sun).empty() ? "0" : "1"; m->Select(lantern); light0 = light(lantern); }
+  if (frame == 10) dots("c.Light");
+  if (frame == 12) { depth0 = m->bus.UndoDepth(); paste = item("값 붙여넣기") ? "1" : "0(greyed)"; }
+  if (frame == 14) {
+    paste = paste == "1" && light(lantern) == light(sun) && m->bus.UndoDepth() == depth0 + 1 ? "1" : "0";
+    bdg::InputEvent z{T::KeyDown};
+    z.key = bdg::Key::Z;
+    z.ctrl = true;
+    e->window.InjectEvent(z);
+  }
+  if (frame == 16) {
+    undo = light(lantern) == light0 ? "1" : "0";
+    if (bdg::Widget* c = ui.Find("c.Light")) clickAt(c->x + 60, c->y + 16, 3); // right-click on the header's title
+  }
+  if (frame == 18) {
+    right = ui.MenuOpen() ? "1" : "0";
+    item("기본값으로");
+  }
+  if (frame == 20) {
+    float intensity = -1;
+    if (bdg::SceneObject* o = m->scene.Find(lantern); o && o->Find("Light")) intensity = static_cast<const bdg::Light*>(o->Find("Light")->data)->intensity;
+    reset = intensity == 1.f ? "1" : std::format("0({})", intensity);
+    dots("c.Light");
+  }
+  if (frame == 22) item("컴포넌트 제거");
+  if (frame == 24) {
+    const bool gone = !m->scene.Find(lantern)->Find("Light");
+    std::string err;
+    m->bus.Undo(&err);
+    removed = gone && m->scene.Find(lantern)->Find("Light") ? "1" : "0";
+    for (const std::string& r : m->scene.Roots())
+      if (m->scene.Find(r)->name == "Main Camera") m->Select(r);
+  }
+  if (frame == 26) {
+    bdg::Widget* fov = ui.Find("f.Camera.fov");
+    names = fov && fov->text == "FOV" ? "1" : std::format("0({})", fov ? fov->text : "-");
+    m->Select(sun);
+  }
+  if (frame == 28) {
+    bdg::Widget* col = ui.Find("f.Light.color");
+    const bool shown = col && !col->text2.empty() && col->text2[0] == '#';
+    if (col) { // type a colour
+      ui.Focus(col);
+      bdg::InputEvent a{T::KeyDown};
+      a.key = bdg::Key::A;
+      a.ctrl = true;
+      e->window.InjectEvent(a);
+      bdg::InputEvent t{T::Text};
+      t.text = "#FF0000";
+      e->window.InjectEvent(t);
+      bdg::InputEvent en{T::KeyDown};
+      en.key = bdg::Key::Enter;
+      e->window.InjectEvent(en);
+    }
+    hex = shown ? "shown" : std::format("0({})", col ? col->text2 : "-");
+  }
+  if (frame == 30) {
+    const bdg::Light* l = static_cast<const bdg::Light*>(m->scene.Find(sun)->Find("Light")->data);
+    if (hex == "shown") hex = l->color.r == 1 && l->color.g == 0 && l->color.b == 0 ? "1" : "0(typed)";
+    uiButton = m->CreateObject("ui.button");
+  }
+  if (frame == 33) {
+    uikind = ui.Find("f.UIElement.text") && !ui.Find("f.UIElement.placeholder") && !ui.Find("f.UIElement.spacing") && !ui.Find("f.UIElement.layout") ? "kind"
+                                                                                                                                                       : "0(button)";
+    bdg::Widget* card = ui.Find("c.UIElement");
+    uinot3d = !ui.Find("c.Transform") && card && card->text == "UI Element" ? "1" : "0";
+    bdg::Command c;
+    c.name = "set";
+    c.target = uiButton;
+    c.args = R"({"path":"UIElement.kind","value":"Panel"})";
+    m->bus.Execute(c);
+  }
+  if (frame == 36) {
+    if (uikind == "kind") uikind = ui.Find("f.UIElement.layout") && !ui.Find("f.UIElement.spacing") && !ui.Find("f.UIElement.text") ? "1" : "0(panel)";
+    bdg::LogInfo("compmenu test: menu={} copy={} paste={} undo={} right={} reset={} removed={} names={} hex={} uikind={} uinot3d={}", menu, copy, paste, undo,
+                 right, reset, removed, names, hex, uikind, uinot3d);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_COMPMENU_TEST", InjectCompMenuTest, nullptr)

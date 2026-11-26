@@ -676,10 +676,10 @@ void InjectMultiTest(bdg_engine* e, int frame, float scale) {
     wh.wheel = -30;
     e->window.InjectEvent(wh);
   }
-  if (frame == 12) { click("cc.Health", false); m->Select("g8"); }
+  if (frame == 12) { m->CopyComponent("Health"); m->Select("g8"); } // the ⋯ menu's "값 복사" (UI review B7)
   if (frame == 14) click("insp.pastenew", false);
-  if (frame == 16) { v[6] = value("g8", "Health", "maxHealth"); click("cs.Health", false); }
+  if (frame == 16) { v[6] = value("g8", "Health", "maxHealth"); m->SavePreset("Health"); }
   if (frame == 18) { set("g8", R"({"path":"Health.maxHealth","value":5})"); }
-  if (frame == 20) click("ca.Health", false);
+  if (frame == 20) m->ApplyPreset("Health");
   if (frame == 22) v[7] = value("g8", "Health", "maxHealth");
 }

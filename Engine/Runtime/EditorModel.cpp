@@ -15,6 +15,7 @@
 #include <format>
 #include <algorithm>
 #include <map>
+#include <set>
 #include <sstream>
 #include <cstdio>
 #include <cstdlib>
@@ -25,16 +26,42 @@ namespace bdg {
 namespace {
 std::string Q(const std::string& s) { return Registry::ToJson(&s, reflect::ValueTypeOf<std::string>()); }
 
-// "jumpHeight" -> "Jump Height", "MeshRenderer" -> "Mesh Renderer"
+// "jumpHeight" -> "Jump Height", "MeshRenderer" -> "Mesh Renderer", "UIElement" -> "UI Element", "fov" -> "FOV",
+// "dofBlur" -> "DOF Blur" (UI review U14: acronyms stay together and upper case)
 std::string Pretty(const std::string& s) {
-  std::string out;
+  std::string spaced;
   for (size_t i = 0; i < s.size(); ++i) {
     char c = s[i];
     if (i == 0) c = (char)std::toupper((unsigned char)c);
-    else if (std::isupper((unsigned char)c) && std::islower((unsigned char)s[i - 1])) out += ' ';
-    out += c;
+    else if (std::isupper((unsigned char)c) &&
+             (std::islower((unsigned char)s[i - 1]) || (i + 1 < s.size() && std::isupper((unsigned char)s[i - 1]) && std::islower((unsigned char)s[i + 1]))))
+      spaced += ' '; // a new word: after a lower-case letter, or the last capital of an acronym before a lower-case one
+    spaced += c;
   }
+  static const std::map<std::string, std::string> acronyms = {{"Fov", "FOV"}, {"Lod", "LOD"}, {"Ik", "IK"}, {"Ui", "UI"}, {"Lut", "LUT"},
+                                                             {"Dof", "DOF"}, {"Hdr", "HDR"}, {"Ev", "EV"}, {"Id", "ID"}, {"Ssr", "SSR"}};
+  std::string out, word;
+  auto flush = [&] { auto it = acronyms.find(word); out += it != acronyms.end() ? it->second : word; word.clear(); };
+  for (char c : spaced) {
+    if (c == ' ') { flush(); out += ' '; }
+    else word += c;
+  }
+  flush();
   return out;
+}
+
+// A colour field's text -> r, g, b, a: "#RRGGBB", "#RRGGBBAA" or "r, g, b[, a]" (U15)
+bool ColorFromText(const std::string& text, double rgba[4]) {
+  rgba[3] = 1;
+  if (!text.empty() && text[0] == '#') {
+    const std::string h = text.substr(1);
+    if (h.size() != 6 && h.size() != 8) return false;
+    for (char c : h)
+      if (!std::isxdigit((unsigned char)c)) return false;
+    for (size_t k = 0; k < h.size() / 2; ++k) rgba[k] = std::stoi(h.substr(k * 2, 2), nullptr, 16) / 255.0;
+    return true;
+  }
+  return sscanf_s(text.c_str(), "%lf , %lf , %lf , %lf", &rgba[0], &rgba[1], &rgba[2], &rgba[3]) >= 3;
 }
 
 const char* LanguageBadge(const TypeInfo& t) {
@@ -619,12 +646,49 @@ std::string EditorModel::ToDisplay(const std::string& json, FieldType type) {
     yyjson_doc_free(d);
     return out;
   }
+  if (type == FieldType::Color && json.size() >= 2 && json.front() == '[') { // U15: #RRGGBB, #RRGGBBAA when see-through
+    double v[4] = {0, 0, 0, 1};
+    const int n = sscanf_s(json.c_str(), "[%lf,%lf,%lf,%lf]", &v[0], &v[1], &v[2], &v[3]);
+    bool unit = n >= 3;
+    for (double x : v) unit = unit && x >= 0 && x <= 1;
+    if (unit) {
+      auto byte = [](double x) { return (int)std::lround(x * 255); };
+      std::string out = std::format("#{:02X}{:02X}{:02X}", byte(v[0]), byte(v[1]), byte(v[2]));
+      if (byte(v[3]) != 255) out += std::format("{:02X}", byte(v[3]));
+      return out;
+    }
+  }
   if (IsVectorLike(type) && json.size() >= 2 && json.front() == '[') {
     std::string out;
     for (char c : json.substr(1, json.size() - 2)) out += c == ',' ? std::string(", ") : std::string(1, c);
     return out;
   }
   return json;
+}
+
+bool EditorModel::UIFieldShown(const Component& c, const std::string& field) {
+  if (c.type->name != "UIElement") return true;
+  auto value = [&](const char* name) { std::string v; Registry::Get(c.data, *c.type, name, v); return ToDisplay(v, FieldType::Enum); };
+  const std::string kind = value("kind"), layout = value("layout");
+  static const std::set<std::string> common = {"kind", "anchor", "position", "size", "visible", "interactable"};
+  static const std::map<std::string, std::set<std::string>> byKind = {
+      {"Text", {"text", "fontSize", "align", "textColor"}},
+      {"Image", {"image", "slice", "color", "cornerRadius"}},
+      {"Button", {"text", "fontSize", "align", "textColor", "color", "image", "slice", "cornerRadius"}},
+      {"ProgressBar", {"value", "fillColor", "color", "cornerRadius"}},
+      {"Slider", {"value", "fillColor", "color"}},
+      {"Toggle", {"value", "text", "fontSize", "textColor", "color"}},
+      {"InputField", {"text", "placeholder", "fontSize", "align", "textColor", "color", "cornerRadius"}},
+      {"Dropdown", {"options", "value", "fontSize", "textColor", "color", "cornerRadius"}},
+      {"ScrollView", {"scroll", "color", "layout", "spacing", "padding", "cellSize"}},
+      {"Panel", {"color", "image", "slice", "cornerRadius", "layout", "spacing", "padding", "cellSize"}},
+  };
+  if (common.count(field)) return true;
+  auto it = byKind.find(kind);
+  if (it == byKind.end() || !it->second.count(field)) return it == byKind.end(); // an unknown kind: everything
+  if ((field == "spacing" || field == "padding") && layout == "None") return false;
+  if (field == "cellSize" && layout != "Grid") return false;
+  return true;
 }
 
 bool EditorModel::ShowIfPasses(const Component& c, const std::string& condition) {
@@ -662,10 +726,17 @@ std::string EditorModel::ShowIfState() const {
     for (const TypeInfo* t = c.type; t; t = t->base)
       for (const FieldInfo& f : t->fields)
         if (!f.meta.showIf.empty()) s += ShowIfPasses(c, f.meta.showIf) ? '1' : '0';
+  for (const Component& c : o->components) // B15: a UI element's fields follow its kind and layout
+    if (c.type->name == "UIElement")
+      for (const FieldInfo& f : c.type->fields) s += UIFieldShown(c, f.name) ? 'u' : '-';
   return s;
 }
 
 std::string EditorModel::FromDisplay(const std::string& text, FieldType type) {
+  if (type == FieldType::Color && !text.empty() && text.find_first_not_of(" ") != std::string::npos && Trim(text)[0] == '#') { // U15
+    double v[4];
+    if (ColorFromText(Trim(text), v)) return std::format("[{:.4g},{:.4g},{:.4g},{:.4g}]", v[0], v[1], v[2], v[3]);
+  }
   std::string t = Trim(text);
   if (type == FieldType::String) return Q(text);
   // Arithmetic (E-4): "2*3" in a number, or in each part of a vector ("1+1, 0, 90/2")
@@ -875,6 +946,7 @@ void EditorModel::Rebuild() {
       bool everywhere = true;
       for (auto& id : targets) everywhere = everywhere && scene.Find(id)->Find(t.name);
       if (!everywhere) continue; // not common to the whole selection
+      if (t.name == "Transform" && const_cast<SceneObject*>(o)->Find("UIElement")) continue; // B15 (D7): a UI element is placed by its UIElement, not in 3D
       const bool searching = !Trim(inspectorSearch).empty();
       const bool wholeCard = !searching || SearchMatches(inspectorSearch, {t.name, Pretty(t.name), KoreanName(t.name)});
       if (searching && !wholeCard) { // only cards with a matching field
@@ -892,6 +964,7 @@ void EditorModel::Rebuild() {
       for (const TypeInfo* x : chain)
         for (const FieldInfo& f : x->fields) {
           if (!(f.flags & kEdit)) continue;
+          if (!UIFieldShown(c, f.name)) continue; // B15: a UI element shows what its kind uses
           if (!wholeCard && !SearchMatches(inspectorSearch, {f.name, Pretty(f.name), KoreanName(t.name + "." + f.name)})) continue; // searching
           if (!f.meta.header.empty() && wholeCard) card.Add(MakeLabel(f.meta.header)).variant = 3; // section caption
           if (!ShowIfPasses(c, f.meta.showIf)) continue;                                // hidden until its condition holds
@@ -939,7 +1012,7 @@ void EditorModel::Rebuild() {
           if (type == FieldType::Color && !multi) { // colour box + HSV picker under the field (E-4b)
             field.swatch = true;
             double rgba[4] = {0, 0, 0, 1};
-            sscanf_s(field.text2.c_str(), "%lf , %lf , %lf , %lf", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+            ColorFromText(field.text2, rgba);
             field.swatchColor = {(float)rgba[0], (float)rgba[1], (float)rgba[2], 1};
             field.onSwatch = [this, path](Widget&) {
               openColor_ = openColor_ == path ? std::string() : path;
@@ -985,7 +1058,7 @@ void EditorModel::Rebuild() {
           bindings_.push_back({&field, targets, path, type});
           if (type == FieldType::Color && openColor_ == path && !multi) { // the open picker: hue, saturation, value, alpha
             double rgba[4] = {0, 0, 0, 1};
-            sscanf_s(field.text2.c_str(), "%lf , %lf , %lf , %lf", &rgba[0], &rgba[1], &rgba[2], &rgba[3]);
+            ColorFromText(field.text2, rgba);
             float h, sv, vv;
             Theme::ToHSV({(float)rgba[0], (float)rgba[1], (float)rgba[2], 1}, h, sv, vv);
             if (sv > 0.001f) pickerHue_ = h;
@@ -1047,25 +1120,9 @@ void EditorModel::Rebuild() {
             });
           };
         }
-      // Component tools: copy / paste values, save / apply the type's preset (no menus in the UI yet)
-      auto& tools = card.Add(MakeBox(Axis::Row, 4));
-      tools.padL = 12; tools.padT = 2; tools.padB = 4;
-      std::string type = t.name;
-      tools.Add(MakeButton("cc." + type, "값 복사")).onClick = [this, type](Widget&) { CopyComponent(type); };
-      auto& paste = tools.Add(MakeButton("cp." + type, "값 붙여넣기"));
-      paste.disabled = clipType_ != type; // UI review B6: greyed, the tooltip says why
-      paste.tooltip = clipType_.empty() ? "먼저 같은 컴포넌트에서 \"값 복사\"" : clipType_ != type ? "복사한 값은 " + clipType_ + "의 값입니다" : "복사한 " + type + " 값을 붙여넣기";
-      paste.onClick = [this, type, runAll](Widget&) {
-        if (clipType_ != type) { LogInfo("paste: the copied values are a {}, not a {}", clipType_.empty() ? "nothing" : clipType_, type); return; }
-        std::string value = clipValue_;
-        runAll("값 붙여넣기: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
-      };
-      tools.Add(MakeButton("cs." + type, "프리셋 저장")).onClick = [this, type](Widget&) { SavePreset(type); };
-      tools.Add(MakeButton("ca." + type, "프리셋 적용")).onClick = [this, type, runAll](Widget&) {
-        std::string value;
-        if (!LoadPreset(type, value)) return;
-        runAll("프리셋 적용: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
-      };
+      // Component tools (UI review B7, U13): the ⋯ button in the card header and a right-click on it open one menu:
+      // copy / paste values, save / apply the type's preset, back to defaults, remove
+      card.onContext = [this, type = t.name](Widget&, float x, float y) { OpenComponentMenu(type, x, y); };
     }
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
@@ -1078,7 +1135,9 @@ void EditorModel::Rebuild() {
         CreatePrefab(id, projectFolder_.empty() ? std::string("Prefabs") : projectFolder_); // the open Project folder, else Prefabs/
       };
     bool needPhysics = false; // 6-2: Rigidbody + Auto Collider in one click (one undo step)
-    for (auto& id : targets) needPhysics = needPhysics || !PhysicsWorld::AddPhysicsCommands(scene, id).empty();
+    for (auto& id : targets) // not for game UI (UI review B15: a UI element has no 3D body)
+      if (SceneObject* to = scene.Find(id); to && !to->Find("UIElement") && !to->Find("UICanvas"))
+        needPhysics = needPhysics || !PhysicsWorld::AddPhysicsCommands(scene, id).empty();
     if (needPhysics)
       addRow2.Add(MakeButton("insp.physics", "+  물리 추가")).onClick = [this, targets](Widget&) {
         bus.BeginGroup("물리 추가", "ui");
@@ -1108,6 +1167,78 @@ void EditorModel::Rebuild() {
   showIfState_ = ShowIfState();
   if (ui_) ui_->ForgetRemovedWidgets();
   RebuildHistory();
+}
+
+// ---- Component menu (UI review B7) --------------------------------------------------------------------------------
+bool EditorModel::ForSelection(const std::string& label, const std::function<Command(const std::string& id)>& make) {
+  std::vector<Command> cmds;
+  for (const std::string& id : selection_)
+    if (scene.Find(id)) {
+      Command c = make(id);
+      if (!c.name.empty()) cmds.push_back(std::move(c));
+    }
+  if (cmds.empty()) return false;
+  bus.BeginGroup(label + (cmds.size() > 1 ? std::format(" ({}개)", cmds.size()) : std::string()), "ui");
+  bool ok = true;
+  std::string err;
+  for (const Command& c : cmds) ok = bus.Execute(c, &err) && ok;
+  bus.EndGroup();
+  if (!ok) LogWarn("{}: {}", label, err);
+  return ok;
+}
+
+bool EditorModel::PasteComponent(const std::string& type) {
+  if (clipType_ != type) { LogInfo("paste: the copied values are a {}, not a {}", clipType_.empty() ? "nothing" : clipType_, type); return false; }
+  const std::string value = clipValue_;
+  return ForSelection("값 붙여넣기: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+}
+
+bool EditorModel::ApplyPreset(const std::string& type) {
+  std::string value;
+  if (!LoadPreset(type, value)) return false;
+  return ForSelection("프리셋 적용: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+}
+
+bool EditorModel::ResetComponent(const std::string& type) {
+  const TypeInfo* t = Registry::Instance().Find(type);
+  if (!t || !t->create) return false;
+  void* fresh = t->create();
+  ValueType vt;
+  vt.type = FieldType::Struct;
+  vt.structType = t;
+  const std::string value = Registry::ToJson(fresh, vt);
+  if (t->destroy) t->destroy(fresh);
+  return ForSelection("기본값으로: " + type, [&](const std::string& id) { return SetComp(id, type, value); });
+}
+
+bool EditorModel::RemoveComponent(const std::string& type) {
+  if (type == "Transform") return false;
+  return ForSelection("컴포넌트 제거: " + type, [&](const std::string& id) {
+    Command c;
+    if (!scene.Find(id) || !scene.Find(id)->Find(type)) return c;
+    c.name = "rmcomp";
+    c.target = id;
+    c.args = std::format(R"({{"type":{}}})", Q(type));
+    return c;
+  });
+}
+
+void EditorModel::OpenComponentMenu(const std::string& type, float x, float y) {
+  if (!ui_) return;
+  std::vector<UIContext::MenuItem> items;
+  items.push_back({"값 복사", [this, type] { CopyComponent(type); }});
+  UIContext::MenuItem paste{"값 붙여넣기", [this, type] { PasteComponent(type); }, clipType_ == type};
+  if (clipType_ != type) paste.keys = clipType_.empty() ? "복사한 값 없음" : clipType_ + "의 값";
+  items.push_back(std::move(paste));
+  items.push_back({"프리셋 저장", [this, type] { SavePreset(type); }});
+  std::string preset;
+  const bool hasPreset = std::filesystem::exists(PathU8(PresetPath(type)));
+  UIContext::MenuItem apply{"프리셋 적용", [this, type] { ApplyPreset(type); }, hasPreset};
+  if (!hasPreset) apply.keys = "저장한 프리셋 없음";
+  items.push_back(std::move(apply));
+  items.push_back({"기본값으로", [this, type] { ResetComponent(type); }});
+  if (type != "Transform") items.push_back({"컴포넌트 제거", [this, type] { RemoveComponent(type); }});
+  ui_->OpenMenu(x, y, std::move(items));
 }
 
 // ---- Search (UI review B8) -----------------------------------------------------------------------------------------
