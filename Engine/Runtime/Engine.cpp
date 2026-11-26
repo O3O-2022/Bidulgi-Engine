@@ -14,6 +14,7 @@
 #include "Runtime/SceneView.h"
 #include "Runtime/UIDesigner.h"
 #include "Runtime/ConsoleView.h"
+#include "UI/Dock.h"
 #include "Net/PlaySession.h"
 #include "Runtime/AssetPreviews.h"
 #include "Scene/GraphLibrary.h"
@@ -204,6 +205,11 @@ struct bdg_engine {
   int lastWorkspace = 0;       // ws.tabs index of the last frame
   float wsBack[4] = {0, 0, 0, 0}; // "레벨로 돌아가기" in an empty workspace (x, y, w, h; UI review U5)
   float wsMouse[2] = {-1, -1};    // the mouse over the Scene panel, for that button's hover
+  // A narrow window (UI review U7): the dock as it was before the Hierarchy was stacked with the Inspector
+  bool dockStacked = false;
+  std::vector<bdg::DockNode> dockSaved;
+  int dockSavedRoot = -1;
+  std::string dockSavedPath;
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bdg::AssetPreviews previews;                // Project thumbnails and the Inspector preview (E-1)
   bool previewsReady = false;
@@ -955,6 +961,7 @@ void TogglePlay(bdg_engine* e); // play mode (3-6), below
 void SetPlayPaused(bdg_engine* e, bool paused);
 void StepPlay(bdg_engine* e);
 void SetToolbarTips(bdg_engine* e); // tooltips with the preset's keys, below
+void SetTimeScale(bdg_engine* e, float scale);
 
 void UsePreset(bdg_engine* e, const char* preset) {
   e->shortcuts.ApplyPreset(preset);
@@ -1131,6 +1138,85 @@ bool OpenProject(bdg_engine* e, const std::string& assetsDir) {
   }
   bdg::LogInfo("project: opened {}", e->assets.Root());
   return true;
+}
+
+// A narrow window (UI review U7 / B9), each frame before the layout:
+//   - the dock: when the side-by-side panels cannot all keep their minimum widths, the Hierarchy joins the
+//     Inspector's tab group; the layout as it was comes back once the window is wide enough (nothing is saved
+//     meanwhile, so the per-user layout file keeps the wide one);
+//   - the top toolbar: under 1000 units the speed, the badges and Build move into a "»" menu, under 720 also the
+//     Play options and one-frame buttons; the scene title is cut with "…" to fit beside the menus.
+void FitNarrow(bdg_engine* e, float lw) {
+  bdg::UIContext& ui = *e->editor;
+  if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) {
+    bdg::DockState& d = *dw->dock;
+    const float avail = lw; // the dock spans the window (this frame's width: the last layout's is stale after a zoom)
+    if (!e->dockStacked && d.MinWidth(d.root) > avail + 0.5f) {
+      const int h = d.FindLeaf("hierarchy"), i = d.FindLeaf("inspector");
+      if (h >= 0 && i >= 0 && h != i) {
+        e->dockSaved = d.nodes;
+        e->dockSavedRoot = d.root;
+        e->dockSavedPath = d.layoutPath;
+        d.layoutPath.clear(); // the stacked layout is never saved
+        const float need = d.MinWidth(d.root);
+        const std::string shown = d.nodes[i].tabs.empty() ? std::string() : d.nodes[i].tabs[(size_t)d.nodes[i].sel];
+        d.MovePanel("hierarchy", d.FindLeaf("inspector"), bdg::DockZone::Center);
+        if (!shown.empty()) d.SelectPanel(shown); // the Inspector (or what was shown there) stays in front
+        e->dockStacked = true;
+        bdg::LogInfo("dock: narrow ({:.0f} < {:.0f} the panels need), Hierarchy stacked with the Inspector", avail, need);
+      }
+    } else if (e->dockStacked) {
+      bdg::DockState wide = d;
+      wide.nodes = e->dockSaved;
+      wide.root = e->dockSavedRoot;
+      if (wide.MinWidth(wide.root) <= avail) {
+        d.nodes = std::move(e->dockSaved);
+        d.root = e->dockSavedRoot;
+        d.layoutPath = e->dockSavedPath;
+        e->dockStacked = false;
+        bdg::LogInfo("dock: wide again, the Hierarchy is back");
+      }
+    }
+  }
+  const bool narrow = lw < 1000, tight = lw < 720;
+  for (const char* id : {"tool.timescale", "tool.quality", "tool.platform", "tool.build"})
+    if (bdg::Widget* w = ui.Find(id)) w->hidden = narrow;
+  for (const char* id : {"tool.playopts", "tool.step"})
+    if (bdg::Widget* w = ui.Find(id)) w->hidden = tight;
+  if (bdg::Widget* w = ui.Find("tool.more")) w->hidden = !narrow;
+  if (bdg::Widget* title = ui.Find("title.scene")) { // cut to the room right of the menus
+    const bdg::Widget* help = ui.Find("menu.help");
+    const float fs = title->fontSize > 0 ? title->fontSize : 12, room = help && help->w > 0 ? lw - (help->x + help->w) - 24 : 1e9f;
+    title->text = ui.FitText(fs, title->text, room);
+  }
+}
+
+// The "»" of a narrow toolbar: the controls FitNarrow hid, as a list.
+void OpenToolbarMore(bdg_engine* e, bdg::Widget& more) {
+  bdg::UIContext& ui = *e->editor;
+  const float x = more.x, y = more.y + more.h + 2;
+  std::vector<bdg::UIContext::MenuItem> items;
+  auto hidden = [&](const char* id) { const bdg::Widget* w = ui.Find(id); return w && w->hidden; };
+  if (hidden("tool.playopts"))
+    items.push_back({"플레이 옵션…", [e, &more] { bdg::PlaySession::Instance().OpenMenu(*e->editor, more); }});
+  if (hidden("tool.step")) items.push_back({"한 프레임 진행", [e] { StepPlay(e); }, e->play.Playing(), false, e->shortcuts.KeysOf("play.step")});
+  if (hidden("tool.timescale")) {
+    std::vector<bdg::UIContext::MenuItem> speeds;
+    for (float v : {0.1f, 0.25f, 0.5f, 1.f, 2.f, 4.f})
+      speeds.push_back({std::format("{:g}×", v), [e, v] { SetTimeScale(e, v); }, true, std::abs(e->play.TimeScale() - v) < 1e-4f});
+    items.push_back({std::format("게임 속도: {:g}× ▸", std::round(e->play.TimeScale() * 100) / 100), [e, x, y, speeds] { e->editor->OpenMenu(x, y, speeds); }});
+  }
+  for (auto [id, label] : {std::pair{"tool.quality", "품질"}, std::pair{"tool.platform", "예산 플랫폼"}})
+    if (bdg::Widget* b = ui.Find(id); b && b->hidden && b->onClick)
+      items.push_back({std::format("{}: {} ▸", label, b->text), [b, x, y, &more] {
+                         b->x = more.x; // its own list opens where the "»" is
+                         b->y = more.y;
+                         b->w = more.w;
+                         b->h = more.h;
+                         b->onClick(*b);
+                       }});
+  if (hidden("tool.build")) items.push_back({"빌드", [e] { RunBuild(e, false); }});
+  ui.OpenMenu(x, y, std::move(items));
 }
 
 // Console / Build Log (UI review B3): toolbars, the lists' drawing, opening "file:line" from a double-click.
@@ -1817,6 +1903,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     SetupMenuBar(e); // the menu bar (UI review B2)
     SetToolbarTips(e); // the play controls' tooltips name their keys (B10)
     SetupConsoles(e);  // Console / Build Log (B3)
+    if (bdg::Widget* more = e->editor->Find("tool.more")) more->onClick = [e](bdg::Widget& w) { OpenToolbarMore(e, w); }; // B9
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { // keep the work
       model->Autosave();
       if (model->Dirty()) model->WriteBackup(); // offered back on the next start
@@ -2309,6 +2396,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           const std::string want = e->project.description.name + "  ·  " + (u.empty() ? std::string("Untitled") : std::string(u.begin(), u.end())) + (e->model->Dirty() ? "  ●" : "");
           if (title->text != want) title->text = want;
         }
+      if (&ui == e->editor.get()) FitNarrow(e, lw);
       ui.Layout(lw, lh);
       if (e->board && &ui == e->editor.get())
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);

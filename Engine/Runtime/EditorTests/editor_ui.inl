@@ -321,6 +321,8 @@ void InjectInspect2Test(bdg_engine* e, int frame) {
     if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("inspector");
     m->Select("g6");
   }
+  if (frame == 3) // a narrow Inspector (B9: stacked vectors) may have it below the fold
+    if (bdg::Widget* f = e->editor->Find("f.Health.maxHealth")) e->editor->ScrollIntoView(*f);
   if (frame == 4) { // drag the label of Health.maxHealth 40 units right: +10 (whole numbers, 0.25 per unit)
     health0 = get("g6", "Health", "maxHealth");
     depth0 = m->bus.UndoDepth();

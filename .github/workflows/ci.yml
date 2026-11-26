@@ -431,6 +431,13 @@ jobs:
           # double-click on file:line opens it, right-click copy, wheel stops following, Build > check fills the Build Log
           $log = Invoke-Editor 'Release' @{ BDG_CONSOLE_TEST = '1' } 30
           if ($log -notmatch 'console test: lines=1 filter=1 search=1 open=1 copy=1 scroll=1 build=1') { $errors += 'Console / Build Log test failed' }
+          # UI review B9: narrow windows - at scale 1 the splits pushed to their ends keep the minimum widths (Hierarchy rows
+          # drop the type column, vectors stack, button rows wrap); at 2.5 (768 units) the Hierarchy stacks with the Inspector,
+          # the toolbar fits with "»" (its list has 빌드, a real click), the title fits
+          $log = Invoke-Editor 'Release' @{ BDG_NARROW_TEST = '1'; BDG_UI_SCALE = '1' } 10
+          if ($log -notmatch 'narrow test: mode=wide rows=1 vector=1 wrap=1') { $errors += 'narrow panels test failed' }
+          $log = Invoke-Editor 'Release' @{ BDG_NARROW_TEST = '1'; BDG_UI_SCALE = '2.5' } 10
+          if ($log -notmatch 'narrow test: mode=narrow stacked=1 toolbar=1 title=1 vector=1 more=1') { $errors += 'narrow window test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

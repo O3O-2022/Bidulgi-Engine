@@ -921,6 +921,7 @@ void EditorModel::Rebuild() {
         auto& pr = inspector_->Add(MakeBox(Axis::Row, 6));
         pr.padL = 10; pr.padR = 10; pr.padB = 4;
         pr.crossAlign = Align::Center;
+        pr.wrap = true; // U7
         auto& label = pr.Add(MakeLabel("프리팹  " + (path.empty() ? canonical : path) + (root != o->id ? "  (" + scene.Find(root)->name + ")" : "")));
         label.variant = 1;
         label.width = Length::Fill();
@@ -1126,6 +1127,7 @@ void EditorModel::Rebuild() {
     }
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
+    addRow2.wrap = true; // U7
     addRow2.crossAlign = Align::Center;
     auto& addComp = addRow2.Add(MakeButton("insp.add", "+  컴포넌트 추가"));
     addComp.tooltip = "컴포넌트 추가: 목록에서 고르거나 이름을 입력";

@@ -335,7 +335,11 @@ void UIContext::Measure(Widget& w) {
     case WidgetKind::Button:
       w.prefW = Measure(t.FontSize("label", 12), w.text) + s5 * 2 + 2 + (w.variant == 1 ? 8 + s3 : 0); w.prefH = 24; break;
     case WidgetKind::Choice:
-    case WidgetKind::Field:   w.prefW = 240; w.prefH = std::max(26.f, t.N("size-row", 22) + 4); break;
+    case WidgetKind::Field:
+      w.prefW = 240;
+      w.prefH = std::max(26.f, t.N("size-row", 22) + 4);
+      if (FieldStacked(w)) w.prefH += t.N("size-row", 22) + 2; // the numbers on their own line (last width)
+      break;
     case WidgetKind::Badge:
       if (w.variant >= 10) w.prefW = MeasureSpaced(10, w.text, 0.04f) + s3 * 2 + 2; // origin badge (.bdg-src)
       else w.prefW = Measure(t.FontSize("badge", 10), w.text) + s3 * 2 + 2;          // pill (.bdg-pill)
@@ -400,6 +404,23 @@ void UIContext::Measure(Widget& w) {
       float padCross = w.axis == Axis::Row ? w.padT + w.padB : w.padL + w.padR;
       w.prefW = w.axis == Axis::Row ? main + padMain : cross + padCross;
       w.prefH = w.axis == Axis::Row ? cross + padCross : main + padMain;
+      if (w.wrap && w.axis == Axis::Row && w.w > 0) { // lines at the last width (the next layout settles)
+        const float room = std::max(1.f, w.w - padMain);
+        float lineW = 0, lineH = 0, total = 0;
+        for (auto& c : w.children) {
+          if (c->hidden) continue;
+          const float cw = c->width.mode == Length::Mode::Px ? c->width.value : c->prefW;
+          const float ch = c->height.mode == Length::Mode::Px ? c->height.value : c->prefH;
+          if (lineW > 0 && lineW + w.gap + cw > room) {
+            total += lineH + w.gap;
+            lineW = lineH = 0;
+          }
+          lineW += (lineW > 0 ? w.gap : 0) + cw;
+          lineH = std::max(lineH, ch);
+        }
+        w.prefH = total + lineH + padCross;
+        w.prefW = std::min(w.prefW, w.w); // as wide as it was given, not its one-line width
+      }
       if (w.kind == WidgetKind::Panel) w.prefW = std::max(w.prefW, Measure(12, w.text) + 40);
       if (w.kind == WidgetKind::Cover) { w.prefW = 960; w.prefH = 300; }
       break;
@@ -426,6 +447,23 @@ void UIContext::Arrange(Widget& w, float x, float y, float width, float height) 
   bool row = w.axis == Axis::Row;
   float cx = x + w.padL, cy = y + w.padT;
   float cw = std::max(0.f, width - w.padL - w.padR), ch = std::max(0.f, height - w.padT - w.padB);
+  if (w.wrap && row) { // flow: each child at its own width, a new line when the next does not fit (U7)
+    float px = cx, py = cy, lineH = 0;
+    for (auto& c : w.children) {
+      if (c->hidden) continue;
+      const float cwi = c->width.mode == Length::Mode::Px ? c->width.value : std::min(c->prefW, cw);
+      const float chi = c->height.mode == Length::Mode::Px ? c->height.value : c->prefH;
+      if (px > cx && px + cwi > cx + cw) {
+        px = cx;
+        py += lineH + w.gap;
+        lineH = 0;
+      }
+      Arrange(*c, px, py, cwi, chi);
+      px += cwi + w.gap;
+      lineH = std::max(lineH, chi);
+    }
+    return;
+  }
   size_t shown = 0;
   for (auto& c : w.children) shown += c->hidden ? 0 : 1;
   float avail = (row ? cw : ch) - w.gap * (float)(shown ? shown - 1 : 0), fillWeight = 0;
@@ -607,7 +645,8 @@ void UIContext::DrawWidget(Widget& w) {
       bool focus = focused_ == &w;
       if (w.overridden) b.Rect(w.x, w.y + 2, 2, w.h - 4, t.C("prefab"), 1); // prefab override (6-1): the prefab colour
       if (w.marked) b.Rect(w.x + s6 - 8, w.y + w.h * 0.5f - 3, 6, 6, t.C("accent"), 3);
-      Text(w.x + s6, w.y + (w.h - fs) * 0.5f - 1, fs, w.marked || scrub_ == &w ? t.C("accent") : w.scrub && w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
+      const float ly = FieldStacked(w) ? w.y + 4 : w.y + (w.h - fs) * 0.5f - 1; // stacked: the label on the first line
+      Text(w.x + s6, ly, fs, w.marked || scrub_ == &w ? t.C("accent") : w.scrub && w.hovered ? t.C("fg") : t.C("fg-dim"), w.text);
       const auto parts = w.axes > 0 ? FieldParts(w.text2, w.axes) : std::vector<std::pair<size_t, size_t>>{};
       if (!parts.empty() && w.composing.empty()) { // vector: one box per number with its axis tag (E-4b)
         static const char* tags[] = {"X", "Y", "Z", "W"};
@@ -726,9 +765,13 @@ void UIContext::DrawWidget(Widget& w) {
       } else {
         b.Rect(kx, ky, 11, 11, {0, 0, 0, 0}, 2, 1.5f, dim);
       }
-      Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-faint") : t.C("fg"), w.text); // 1: dimmed (undone step)
-      if (!w.text2.empty() && w.text2 != "Mesh") // the type column: fg-dim on a selected row (fg-faint is too faint on selection)
-        Text(w.x + w.w - s5 - Measure(11, w.text2), w.y + (w.h - 11) * 0.5f - 1, 11, w.selected ? t.C("fg-dim") : t.C("fg-faint"), w.text2);
+      const float fsType = t.FontSize("overlay", 11);
+      const bool typeCol = !w.text2.empty() && w.text2 != "Mesh" && w.w >= 220; // narrow rows drop the type column (U7)
+      const float typeX = typeCol ? w.x + w.w - s5 - Measure(fsType, w.text2) : w.x + w.w - s5;
+      const std::string name = FitText(fs, w.text, typeX - 8 - (kx + 18)); // cut to fit, with "…"
+      Text(kx + 18, w.y + (w.h - fs) * 0.5f - 1, fs, w.variant == 1 ? t.C("fg-faint") : t.C("fg"), name); // 1: dimmed (undone step)
+      if (typeCol) // the type column: fg-dim on a selected row (fg-faint is too faint on selection)
+        Text(typeX, w.y + (w.h - fsType) * 0.5f - 1, fsType, w.selected ? t.C("fg-dim") : t.C("fg-faint"), w.text2);
       break;
     }
     case WidgetKind::Badge: {
@@ -1672,11 +1715,38 @@ void UIContext::ScrubTo(float x, bool fine) {
   if (f.onChange) f.onChange(f);
 }
 
+std::string UIContext::FitText(float size, const std::string& s, float room, bool mono) const {
+  if (Measure(size, s, mono) <= room) return s;
+  std::string t = s;
+  while (!t.empty() && Measure(size, t + "…", mono) > room) {
+    size_t cut = t.size() - 1;
+    while (cut > 0 && ((unsigned char)t[cut] & 0xC0) == 0x80) --cut; // whole UTF-8 characters
+    t.resize(cut);
+  }
+  return t + "…";
+}
+
+bool UIContext::FieldStacked(const Widget& f) const {
+  // A vector field whose numbers would get under 48 units each beside the label (narrow Inspector): label on one
+  // line, the numbers under it at full width (UI review U7). Decided from the last layout's width.
+  if (f.kind != WidgetKind::Field || f.axes <= 0 || f.text.empty() || f.w <= 0) return false;
+  const Theme& t = theme_;
+  const float labelW = std::max(80.f, f.w * 0.4f);
+  const float inputW = f.w - t.N("space-6", 12) - labelW - t.N("space-4", 8) - t.N("space-5", 10);
+  return inputW / (float)f.axes < 48.f; // a box (axis tag and number) under 48: too narrow to read
+}
+
 void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {
   const Theme& t = theme_;
   const bool noLabel = f.text.empty(); // a bare input (search boxes): the whole width
   float labelW = noLabel ? 0.f : std::max(80.f, f.w * 0.4f);
   h = t.N("size-row", 22);
+  if (FieldStacked(f)) { // under the label, the whole width
+    x = f.x + t.N("space-6", 12);
+    y = f.y + f.h - h - 2;
+    w = f.x + f.w - t.N("space-5", 10) - x;
+    return;
+  }
   x = noLabel ? f.x + 2 : f.x + t.N("space-6", 12) + labelW + t.N("space-4", 8);
   y = f.y + (f.h - h) * 0.5f;
   w = f.x + f.w - t.N("space-5", 10) - x;
