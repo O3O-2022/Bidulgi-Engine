@@ -164,9 +164,10 @@ jobs:
           Remove-Item Env:BDG_SHORTCUTS, Env:BDG_LAYOUT
 
           # 11) Accessibility (queue 1-6): a UI Automation client reads the focused button; Ctrl+F6 moves to the next panel
+          #     (its first control: the Hierarchy's "+" button, UI review B1)
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_A11Y_TEST = '1' } 8
-          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.scene') { $errors += 'accessibility test failed' }
+          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.create') { $errors += 'accessibility test failed' }
           elseif ([int]$Matches[1] -lt 10) { $errors += "accessibility tree too small ($($Matches[1]) elements)" }
           Remove-Item Env:BDG_LAYOUT
 
@@ -209,6 +210,12 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_MULTI_TEST = '1'; BDG_PRESETS = "$PWD/ci-presets" } 24
           if ($log -notmatch 'multi test: common=Transform,MeshRenderer mixed=1 same=1 shared="M_Shared","M_Shared" undo_steps=1 restored="M_Gold","M_Knight" pasted=321 preset=321') { $errors += 'multi-object editing test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # UI review B1: Hierarchy "+" -> Cube, row right-click -> child Point Light (menu shows the keys), "+ Add
+          # Component" -> type "rigid" -> Enter, empty-space right-click -> UI Text under a new Canvas, Ctrl+Shift+N, undo
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_CREATE_TEST = '1' } 40
+          if ($log -notmatch 'create test: plus=1 child=1 hints=1 addcomp=1 ui=1 shortcut=1 undo=1') { $errors += 'create objects / Add Component test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 17) Project panel (queue 2-5): real asset folder, C++ .h/.cpp shown as one class item, renamed together

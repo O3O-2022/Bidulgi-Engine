@@ -1482,3 +1482,110 @@ void InjectMcpLiveTest(bdg_engine* e, int frame, float) {
   e->quitNow = true;
 }
 BDG_EDITOR_TEST("BDG_MCP_LIVE_TEST", InjectMcpLiveTest, nullptr)
+
+// Scripted check of UI review B1 (BDG_CREATE_TEST=1, --frames 40): making objects and adding components with real
+// clicks. The Hierarchy "+" opens the make menu, "큐브" adds a Cube (selected, one undo step); a right-click on its row
+// -> "자식 만들기…" -> "점광" adds a Point Light under it; the Inspector's "+ Add Component" opens the list, typing
+// "rigid" narrows it and Enter adds a Rigidbody; a right-click on the Hierarchy's empty space -> "UI 텍스트" adds a
+// Text under a new Canvas (one undo step takes both away); Ctrl+Shift+N adds an empty GameObject at the top level.
+namespace createtest {
+std::string plus = "-", child = "-", addcomp = "-", uiText = "-", shortcut = "-", undo = "-", hints = "-";
+std::string cube, light;
+size_t roots0 = 0;
+}
+void InjectCreateTest(bdg_engine* e, int frame, float scale) {
+  using namespace createtest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  auto at = [&](T type, float x, float y, int button) { e->window.InjectEvent({type, x * scale, y * scale, button}); };
+  auto clickAt = [&](float x, float y, int button = 1) { at(T::MouseMove, x, y, 0); at(T::MouseDown, x, y, button); at(T::MouseUp, x, y, button); };
+  auto clickWidget = [&](const std::string& id, int button = 1) {
+    bdg::Widget* w = ui.Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("create test: {} is not on screen", id); return; }
+    clickAt(w->x + w->w * 0.5f, w->y + w->h * 0.5f, button);
+  };
+  auto clickItem = [&](const std::string& label) { // a real click on the open menu's item
+    const auto& items = ui.Menu();
+    for (size_t i = 0; i < items.size(); ++i)
+      if (items[i].label == label) {
+        float x, y, w, h;
+        if (ui.MenuItemRect(i, x, y, w, h)) { clickAt(x + w * 0.5f, y + h * 0.5f); return; }
+      }
+    bdg::LogError("create test: no menu item {} (menu open: {})", label, ui.MenuOpen() ? 1 : 0);
+  };
+  auto byName = [&](const std::string& name, const std::string& parent) {
+    const std::vector<std::string>& ids = parent.empty() ? m->scene.Roots() : m->scene.Find(parent)->children;
+    for (const std::string& id : ids)
+      if (m->scene.Find(id)->name == name) return id;
+    return std::string();
+  };
+  if (frame == 3) { roots0 = m->scene.Roots().size(); m->SetSelection({}); }
+  if (frame == 5) clickWidget("h.create");
+  if (frame == 7) {
+    if (!ui.MenuOpen()) bdg::LogError("create test: + did not open a menu");
+    clickItem("큐브");
+  }
+  if (frame == 9) {
+    cube = m->Selected();
+    bdg::SceneObject* o = m->scene.Find(cube);
+    bdg::Component* c = o ? o->Find("MeshRenderer") : nullptr;
+    std::string mesh;
+    if (c) bdg::Registry::Get(c->data, *c->type, "mesh", mesh);
+    plus = o && o->name == "Cube" && mesh == "\"Cube\"" && m->scene.Roots().size() == roots0 + 1 ? "1" : "0(" + mesh + ")";
+    clickWidget("h." + cube, 3); // right-click: the row's menu
+  }
+  if (frame == 11) {
+    bool dup = false, del = false; // the menu shows the keys next to the actions
+    for (const auto& it : ui.Menu()) { dup = dup || (it.label == "복제" && it.hint == "Ctrl+D"); del = del || (it.label == "삭제" && it.hint == "Delete"); }
+    hints = dup && del ? "1" : "0";
+    clickItem("자식 만들기…");
+  }
+  if (frame == 13) clickItem("점광");
+  if (frame == 15) {
+    light = byName("Point Light", cube);
+    bdg::SceneObject* o = m->scene.Find(light);
+    child = o && o->Find("Light") && m->Selected() == light ? "1" : "0";
+    clickWidget("insp.add");
+  }
+  if (frame == 17) {
+    bdg::InputEvent t{T::Text};
+    t.text = "rigid";
+    e->window.InjectEvent(t);
+  }
+  if (frame == 19) {
+    bdg::InputEvent k{T::KeyDown};
+    k.key = bdg::Key::Enter;
+    e->window.InjectEvent(k);
+  }
+  if (frame == 21) {
+    bdg::SceneObject* o = m->scene.Find(light);
+    addcomp = o && o->Find("Rigidbody") && !ui.MenuOpen() ? "1" : "0";
+    if (bdg::Widget* h = ui.Find("hierarchy")) clickAt(h->x + h->w * 0.5f, h->y + h->h - 20, 3); // the empty space below the rows
+  }
+  if (frame == 23) clickItem("UI 텍스트");
+  if (frame == 25) {
+    const std::string text = m->Selected();
+    bdg::SceneObject* o = m->scene.Find(text);
+    bdg::SceneObject* p = o && !o->parent.empty() ? m->scene.Find(o->parent) : nullptr;
+    uiText = o && o->Find("UIElement") && p && p->Find("UICanvas") ? "1" : "0";
+    bdg::InputEvent k{T::KeyDown}; // Ctrl+Shift+N: an empty object at the top level
+    k.key = bdg::Key::N;
+    k.ctrl = k.shift = true;
+    e->window.InjectEvent(k);
+  }
+  if (frame == 27) {
+    bdg::SceneObject* o = m->scene.Find(m->Selected());
+    shortcut = o && o->name == "GameObject" && o->parent.empty() && o->components.size() == 1 ? "1" : "0";
+    std::string err; // undo: the GameObject, then the Text and its new Canvas together, then the Rigidbody
+    const size_t roots = m->scene.Roots().size();
+    bool ok = m->bus.Undo(&err) && m->scene.Roots().size() == roots - 1;
+    ok = ok && m->bus.Undo(&err) && m->scene.Roots().size() == roots - 2 && byName("Canvas", "").empty();
+    ok = ok && m->bus.Undo(&err) && m->scene.Find(light) && !m->scene.Find(light)->Find("Rigidbody");
+    undo = ok ? "1" : "0(" + err + ")";
+    bdg::LogInfo("create test: plus={} child={} hints={} addcomp={} ui={} shortcut={} undo={}", plus, child, hints, addcomp, uiText, shortcut, undo);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_CREATE_TEST", InjectCreateTest, nullptr)

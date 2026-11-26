@@ -1076,19 +1076,32 @@ void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items, bool sea
   menuAll_ = search ? items : std::vector<MenuItem>{};
   menu_ = std::move(items);
   menuHot_ = menuPressed_ = -1;
+  menuTop_ = 0;
   for (size_t i = 0; i < menu_.size(); ++i) if (menu_[i].checked) menuHot_ = (int)i; // keyboard starts on the current value
   const float fs = theme_.FontSize("control", 12.5f);
   menuW_ = 160;
-  for (const MenuItem& it : menu_) menuW_ = std::max(menuW_, Measure(fs, it.label) + 32);
-  const float h = (menu_.size() + (search ? 1 : 0)) * kMenuRow + kMenuPad * 2;
-  menuX_ = root_ ? std::min(x, root_->w - menuW_ - 2) : x; // keep it on screen
-  menuY_ = root_ ? std::min(y, root_->h - h - 2) : y;
+  for (const MenuItem& it : menu_)
+    menuW_ = std::max(menuW_, Measure(fs, it.label) + 32 + (it.hint.empty() ? 0.f : Measure(fs, it.hint) + 24));
+  // as many rows as fit in the window (at least 4); the rest scroll
+  const float room = root_ ? root_->h - 4 - kMenuPad * 2 - (search ? kMenuRow : 0) : 1e9f;
+  menuRows_ = std::max(1, std::min((int)menu_.size(), std::max(4, (int)(room / kMenuRow))));
+  const float h = (menuRows_ + (search ? 1 : 0)) * kMenuRow + kMenuPad * 2;
+  menuX_ = root_ ? std::max(2.f, std::min(x, root_->w - menuW_ - 2)) : x; // keep it on screen
+  menuY_ = root_ ? std::max(2.f, std::min(y, root_->h - h - 2)) : y;
+  MenuKeepHotVisible();
+}
+
+void UIContext::MenuKeepHotVisible() {
+  const int n = (int)menu_.size();
+  menuTop_ = std::clamp(menuTop_, 0, std::max(0, n - menuRows_));
+  if (menuHot_ >= 0 && menuHot_ < menuTop_) menuTop_ = menuHot_;
+  if (menuHot_ >= menuTop_ + menuRows_) menuTop_ = menuHot_ - menuRows_ + 1;
 }
 
 bool UIContext::MenuItemRect(size_t i, float& x, float& y, float& w, float& h) const {
-  if (i >= menu_.size()) return false;
+  if (i >= menu_.size() || (int)i < menuTop_ || (int)i >= menuTop_ + menuRows_) return false; // scrolled out of view
   x = menuX_;
-  y = menuY_ + kMenuPad + (i + (menuSearch_ ? 1 : 0)) * kMenuRow;
+  y = menuY_ + kMenuPad + ((int)i - menuTop_ + (menuSearch_ ? 1 : 0)) * kMenuRow;
   w = menuW_;
   h = kMenuRow;
   return true;
@@ -1099,12 +1112,13 @@ bool UIContext::MenuEvent(const InputEvent& e) {
   const float top = menuY_ + kMenuPad + (menuSearch_ ? kMenuRow : 0);
   auto itemAt = [&](float x, float y) {
     if (x < menuX_ || x >= menuX_ + menuW_ || y < top) return -1;
-    const int i = (int)((y - top) / kMenuRow);
-    return i < (int)menu_.size() ? i : -1;
+    const int row = (int)((y - top) / kMenuRow);
+    const int i = menuTop_ + row;
+    return row < menuRows_ && i < (int)menu_.size() ? i : -1;
   };
   auto insideSearch = [&](float x, float y) { return menuSearch_ && x >= menuX_ && x < menuX_ + menuW_ && y >= menuY_ && y < top; };
   auto run = [&](int i) {
-    if (i < 0 || i >= (int)menu_.size() || !menu_[(size_t)i].enabled) return;
+    if (i < 0 || i >= (int)menu_.size() || !menu_[(size_t)i].enabled || menu_[(size_t)i].header) return;
     std::function<void()> fn = menu_[(size_t)i].run; // the item may open another menu
     CloseMenu();
     if (fn) fn();
@@ -1124,8 +1138,17 @@ bool UIContext::MenuEvent(const InputEvent& e) {
     case InputEvent::Type::KeyDown: {
       const int n = (int)menu_.size();
       if (e.key == Key::Escape) { CloseMenu(); return true; }
-      if (e.key == Key::Down && n) { menuHot_ = (menuHot_ + 1) % n; return true; }
-      if (e.key == Key::Up && n) { menuHot_ = menuHot_ <= 0 ? n - 1 : menuHot_ - 1; return true; }
+      auto usable = [&](int i) { return menu_[(size_t)i].enabled && !menu_[(size_t)i].header; };
+      if ((e.key == Key::Down || e.key == Key::Up) && n) { // the next item that can be run (headers and greyed ones skipped)
+        int i = menuHot_;
+        for (int k = 0; k < n; ++k) {
+          i = e.key == Key::Down ? (i + 1) % n : i <= 0 ? n - 1 : i - 1;
+          if (usable(i)) break;
+        }
+        menuHot_ = i;
+        MenuKeepHotVisible();
+        return true;
+      }
       if (e.key == Key::Enter || (e.key == Key::Space && !menuSearch_)) { run(menuHot_ >= 0 ? menuHot_ : (n == 1 ? 0 : -1)); return true; }
       if (menuSearch_ && e.key == Key::Backspace) {
         while (!menuFilter_.empty() && ((unsigned char)menuFilter_.back() & 0xC0) == 0x80) menuFilter_.pop_back();
@@ -1141,7 +1164,10 @@ bool UIContext::MenuEvent(const InputEvent& e) {
       FilterMenu();
       return true;
     case InputEvent::Type::TextEditing: return menuSearch_;
-    case InputEvent::Type::Wheel: return true;
+    case InputEvent::Type::Wheel:
+      menuTop_ -= (int)std::lround(e.wheel) * 3;
+      menuTop_ = std::clamp(menuTop_, 0, std::max(0, (int)menu_.size() - menuRows_));
+      return true;
     default: return false;
   }
 }
@@ -1151,8 +1177,11 @@ void UIContext::FilterMenu() {
   const std::string f = lower(menuFilter_);
   menu_.clear();
   for (const MenuItem& it : menuAll_)
-    if (f.empty() || lower(it.label).find(f) != std::string::npos) menu_.push_back(it);
-  menuHot_ = menu_.empty() ? -1 : 0;
+    if (f.empty() ? true : !it.header && lower(it.label + " " + it.hint).find(f) != std::string::npos) menu_.push_back(it);
+  menuHot_ = -1;
+  for (size_t i = 0; i < menu_.size() && menuHot_ < 0; ++i)
+    if (menu_[i].enabled && !menu_[i].header) menuHot_ = (int)i; // Enter runs the first match
+  menuTop_ = 0;
   if (menu_.empty()) menu_.push_back({"(맞는 항목 없음)", nullptr, false}); // keeps the popup open while typing
 }
 
@@ -1160,7 +1189,8 @@ void UIContext::DrawMenu() {
   if (menu_.empty()) return;
   const Theme& t = theme_;
   Batch2D& b = batch_;
-  const float h = (menu_.size() + (menuSearch_ ? 1 : 0)) * kMenuRow + kMenuPad * 2;
+  const int rows = std::min((int)menu_.size(), menuRows_);
+  const float h = (rows + (menuSearch_ ? 1 : 0)) * kMenuRow + kMenuPad * 2;
   const Theme::Shadow sh = t.S("shadow-pop");
   if (sh.color.a > 0) b.Shadow(menuX_ + sh.x, menuY_ + sh.y, menuW_, h, sh.color, 6, sh.blur);
   else b.Shadow(menuX_, menuY_ + 4, menuW_, h, {0, 0, 0, 0.45f}, 6, 14);
@@ -1175,10 +1205,23 @@ void UIContext::DrawMenu() {
   }
   for (size_t i = 0; i < menu_.size(); ++i) {
     float x, y, w, rh;
-    MenuItemRect(i, x, y, w, rh);
-    if ((int)i == menuHot_ && menu_[i].enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
-    if (menu_[i].checked) b.Rect(menuX_ + 6, y + 7, 3, kMenuRow - 14, t.C("accent"), 1.5f); // the current value
-    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !menu_[i].enabled ? t.C("fg-faint") : menu_[i].checked ? t.C("accent") : t.C("fg"), menu_[i].label);
+    if (!MenuItemRect(i, x, y, w, rh)) continue; // scrolled out of view
+    const MenuItem& it = menu_[i];
+    if (it.header) { // group title: caption style (small, upper case, dim), a line above unless first
+      if ((int)i > menuTop_) b.Rect(menuX_ + 8, y + 2, menuW_ - 16, 1, t.C("line"));
+      const float cs = t.FontSize("caption", 10.5f);
+      Text(menuX_ + 12, y + kMenuRow - cs - 6, cs, t.C("fg-dim"), it.label);
+      continue;
+    }
+    if ((int)i == menuHot_ && it.enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
+    if (it.checked) b.Rect(menuX_ + 6, y + 7, 3, kMenuRow - 14, t.C("accent"), 1.5f); // the current value
+    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !it.enabled ? t.C("fg-faint") : it.checked ? t.C("accent") : t.C("fg"), it.label);
+    if (!it.hint.empty()) Text(menuX_ + menuW_ - 12 - Measure(fs, it.hint), y + (kMenuRow - fs) * 0.5f - 1, fs, t.C("fg-dim"), it.hint);
+  }
+  if ((int)menu_.size() > menuRows_) { // scroll bar: where the shown rows are in the list
+    const float top = menuY_ + kMenuPad + (menuSearch_ ? kMenuRow : 0), span = menuRows_ * kMenuRow;
+    const float bh = std::max(16.f, span * menuRows_ / menu_.size()), by = top + (span - bh) * menuTop_ / std::max(1, (int)menu_.size() - menuRows_);
+    b.Rect(menuX_ + menuW_ - 5, by, 3, bh, t.C("line-strong"), 1.5f);
   }
 }
 
@@ -1204,6 +1247,25 @@ Widget* UIContext::HitTest(Widget& w, float x, float y) {
       if (Widget* hit = HitTest(**it, x, y)) return hit;
   bool headerTabs = w.kind == WidgetKind::Panel && !w.items.empty() && y < w.y + theme_.N("size-panel-header", 30);
   return (w.focusable || w.onClick || headerTabs) ? &w : nullptr;
+}
+
+// Right-click: the innermost widget under the point that has a menu (a row's, else its panel's: empty space).
+Widget* UIContext::ContextHit(Widget& w, float x, float y) {
+  if (w.hidden) return nullptr;
+  if (w.kind == WidgetKind::Dock && w.dock) {
+    if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
+    for (auto it = w.children.rbegin(); it != w.children.rend(); ++it) {
+      auto body = w.dock->bodyRects.find((*it)->id);
+      if ((*it)->hidden || body == w.dock->bodyRects.end() || !body->second.Contains(x, y)) continue;
+      if (Widget* hit = ContextHit(**it, x, y)) return hit;
+    }
+    return nullptr;
+  }
+  if (x < w.x || y < w.y || x >= w.x + w.w || y >= w.y + w.h) return nullptr;
+  if (!w.collapsed)
+    for (auto it = w.children.rbegin(); it != w.children.rend(); ++it)
+      if (Widget* hit = ContextHit(**it, x, y)) return hit;
+  return w.onContext ? &w : nullptr;
 }
 
 void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
@@ -1259,10 +1321,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
     if (MenuEvent(e)) continue; // an open popup menu takes the mouse (and Esc)
     bool mouse = e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseDown || e.type == InputEvent::Type::MouseUp;
     if (e.type == InputEvent::Type::MouseDown && e.button == 3) { // right-click: the widget's menu (E-4)
-      for (Widget* w = HitTest(*root_, e.x, e.y); w;) {
-        if (w->onContext) w->onContext(*w, e.x, e.y);
-        break;
-      }
+      if (Widget* w = ContextHit(*root_, e.x, e.y)) w->onContext(*w, e.x, e.y); // the innermost widget with a menu
       continue;
     }
     if (mouse && DockMouse(e)) continue; // splitter / tab drag owns the mouse

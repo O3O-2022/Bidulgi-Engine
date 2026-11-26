@@ -13,6 +13,7 @@
 #include <cctype>
 #include <format>
 #include <algorithm>
+#include <map>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -710,8 +711,17 @@ void EditorModel::Rebuild() {
     if (c->kind == WidgetKind::Card && c->id.rfind("c.", 0) == 0) collapsed_[c->id.substr(2)] = c->collapsed;
   bindings_.clear();
 
-  // Hierarchy: the scene tree in order
+  // Hierarchy: the scene tree in order, under a small tool row ("+": make an object). Right-click on a row: its menu;
+  // on the empty space below the rows: the make menu.
   hierarchy_->children.clear();
+  hierarchy_->onContext = [this](Widget&, float x, float y) { OpenCreateMenu(x, y, {}); };
+  auto& hierTools = hierarchy_->Add(MakeBox(Axis::Row, 4));
+  hierTools.padL = 6; hierTools.padT = 4; hierTools.padB = 2;
+  auto& create = hierTools.Add(MakeButton("h.create", "+"));
+  create.width = Length::Px(28);
+  create.tooltip = shortcuts && !shortcuts->KeysOf("edit.createEmpty").empty()
+                       ? std::format("만들기 (빈 오브젝트: {})", shortcuts->KeysOf("edit.createEmpty")) : std::string("만들기");
+  create.onClick = [this](Widget& w) { OpenCreateMenu(w.x, w.y + w.h + 2, selected_); };
   auto& sceneRow = hierarchy_->Add(MakeListRow("h.scene", "Main", "Scene"));
   sceneRow.onDrop = [this](Widget& w) { // drop on the scene row: back to the top level
     if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_.clear(); pendingMove_ = true; }
@@ -744,6 +754,7 @@ void EditorModel::Rebuild() {
     row.onDrop = [this, id](Widget& w) {
       if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_ = id; pendingMove_ = true; }
     };
+    row.onContext = [this, id](Widget&, float x, float y) { OpenHierarchyMenu(id, x, y); };
     if (folded_.count(id)) return;
     std::vector<uint8_t> next = lines;
     next.push_back(last ? 0 : 1);
@@ -1002,7 +1013,9 @@ void EditorModel::Rebuild() {
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
     addRow2.crossAlign = Align::Center;
-    addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    auto& addComp = addRow2.Add(MakeButton("insp.add", "+  Add Component"));
+    addComp.tooltip = "컴포넌트 추가: 목록에서 고르거나 이름을 입력";
+    addComp.onClick = [this](Widget& w) { OpenAddComponentMenu(w.x, w.y + w.h + 2); };
     if (!multi && assets && InstanceRootOf(scene, o->id).empty()) // 6-1: this object becomes a prefab (also: drag it to the Project panel)
       addRow2.Add(MakeButton("insp.prefab.create", "+  프리팹 만들기")).onClick = [this, id = o->id](Widget&) {
         CreatePrefab(id, projectFolder_.empty() ? std::string("Prefabs") : projectFolder_); // the open Project folder, else Prefabs/
@@ -1038,6 +1051,194 @@ void EditorModel::Rebuild() {
   showIfState_ = ShowIfState();
   if (ui_) ui_->ForgetRemovedWidgets();
   RebuildHistory();
+}
+
+// ---- Making objects, adding components (UI review B1) ---------------------------------------------------------
+const std::vector<EditorModel::CreateKind>& EditorModel::CreateKinds() {
+  static const std::vector<CreateKind> k = {
+      {"empty", "빈 오브젝트", ""},
+      {"cube", "큐브", "3D 도형"}, {"sphere", "구", "3D 도형"}, {"plane", "평면", "3D 도형"}, {"cylinder", "원기둥", "3D 도형"}, {"cone", "원뿔", "3D 도형"},
+      {"light.directional", "방향광", "라이트"}, {"light.point", "점광", "라이트"}, {"light.spot", "스포트라이트", "라이트"},
+      {"camera", "카메라", "렌더링"}, {"postvolume", "포스트 프로세스 볼륨", "렌더링"}, {"reflectionprobe", "반사 프로브", "렌더링"},
+      {"audio", "오디오 소스", "오디오·효과"}, {"particles", "파티클", "오디오·효과"},
+      {"canvas", "UI 캔버스", "UI"}, {"ui.text", "UI 텍스트", "UI"}, {"ui.button", "UI 버튼", "UI"},
+  };
+  return k;
+}
+
+std::string EditorModel::ComponentGroup(const std::string& type) {
+  static const std::vector<std::pair<const char*, std::vector<std::string>>> groups = {
+      {"렌더링", {"MeshRenderer", "Light", "Camera", "Sky", "PostProcessVolume", "ColorGrading", "ReflectionProbe", "LightProbeVolume", "Blockout",
+                  "CameraBookmark", "CameraShakeSource"}},
+      {"물리", {"Rigidbody", "Collider", "PhysicsMaterial", "Rigidbody2D", "Collider2D", "Ragdoll"}},
+      {"애니메이션", {"Animator", "AnimatorIK"}},
+      {"오디오", {"AudioSource", "AudioListener"}},
+      {"UI", {"UICanvas", "UIElement"}},
+      {"효과", {"ParticleSystem"}},
+      {"월드", {"Terrain", "WorldSettings"}},
+      {"네트워크", {"NetworkObject", "NetworkTransform", "GameMode", "PlayerStart"}},
+  };
+  for (const auto& [group, types] : groups)
+    if (std::find(types.begin(), types.end(), type) != types.end()) return group;
+  return "스크립트"; // game components (C++ BCLASS, C# behaviours)
+}
+
+std::string EditorModel::CreateObject(const std::string& kind, const std::string& parentIn) {
+  const CreateKind* ck = nullptr;
+  for (const CreateKind& k : CreateKinds())
+    if (kind == k.key) ck = &k;
+  if (!ck) { LogWarn("create: unknown kind {}", kind); return {}; }
+  std::string parent = parentIn;
+  if (!parent.empty() && !scene.Find(parent)) parent.clear();
+  struct Spec { const char* name; const char* comp; const char* value; const char* rot; const char* pos; };
+  static const std::map<std::string, Spec> specs = {
+      {"empty", {"GameObject", nullptr, nullptr, nullptr, nullptr}},
+      {"cube", {"Cube", "MeshRenderer", R"({"mesh":"Cube"})", nullptr, nullptr}},
+      {"sphere", {"Sphere", "MeshRenderer", R"({"mesh":"Sphere"})", nullptr, nullptr}},
+      {"plane", {"Plane", "MeshRenderer", R"({"mesh":"Plane"})", nullptr, nullptr}},
+      {"cylinder", {"Cylinder", "MeshRenderer", R"({"mesh":"Cylinder"})", nullptr, nullptr}},
+      {"cone", {"Cone", "MeshRenderer", R"({"mesh":"Cone"})", nullptr, nullptr}},
+      {"light.directional", {"Directional Light", "Light", R"({"type":"Directional"})", "[-45,-30,0]", nullptr}},
+      {"light.point", {"Point Light", "Light", R"({"type":"Point"})", nullptr, "[0,2,0]"}},
+      {"light.spot", {"Spot Light", "Light", R"({"type":"Spot"})", "[-90,0,0]", "[0,3,0]"}},
+      {"camera", {"Camera", "Camera", nullptr, nullptr, "[0,1,-5]"}},
+      {"postvolume", {"Post Process Volume", "PostProcessVolume", nullptr, nullptr, nullptr}},
+      {"reflectionprobe", {"Reflection Probe", "ReflectionProbe", nullptr, nullptr, "[0,1,0]"}},
+      {"audio", {"Audio Source", "AudioSource", nullptr, nullptr, nullptr}},
+      {"particles", {"Particle System", "ParticleSystem", nullptr, nullptr, nullptr}},
+      {"canvas", {"Canvas", "UICanvas", nullptr, nullptr, nullptr}},
+      {"ui.text", {"Text", "UIElement", R"({"kind":"Text","text":"Text","size":[300,60]})", nullptr, nullptr}},
+      {"ui.button", {"Button", "UIElement", R"({"kind":"Button","text":"Button","size":[240,64]})", nullptr, nullptr}},
+  };
+  const Spec& sp = specs.at(kind);
+  bus.BeginGroup(std::string("Create ") + sp.name, "ui");
+  std::string err;
+  bool ok = true;
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    if (!ok) return;
+    Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    ok = bus.Execute(c, &err);
+  };
+  if (kind.rfind("ui.", 0) == 0) { // a UI element lives under a canvas: the parent's, else the first one, else a new one
+    std::string canvas;
+    for (SceneObject* p = parent.empty() ? nullptr : scene.Find(parent); p && canvas.empty(); p = p->parent.empty() ? nullptr : scene.Find(p->parent))
+      if (p->Find("UICanvas")) canvas = p->id;
+    if (canvas.empty())
+      for (const std::string& r : scene.Roots())
+        if (SceneObject* o = scene.Find(r); o && o->Find("UICanvas") && canvas.empty()) canvas = r;
+    if (canvas.empty()) {
+      canvas = scene.NewId();
+      run("add", "", std::format(R"({{"id":{},"name":"Canvas"}})", Q(canvas)));
+      run("addcomp", canvas, R"({"type":"UICanvas"})");
+    }
+    if (parent.empty() || !scene.Find(parent) || (!scene.Find(parent)->Find("UICanvas") && !scene.Find(parent)->Find("UIElement"))) parent = canvas;
+  }
+  auto taken = [&](const std::string& name) { // a free name among the new object's siblings: "Cube", "Cube (1)", ...
+    const std::vector<std::string>& sib = parent.empty() ? scene.Roots() : scene.Find(parent)->children;
+    for (const std::string& s : sib)
+      if (SceneObject* o = scene.Find(s); o && o->name == name) return true;
+    return false;
+  };
+  std::string name = sp.name;
+  for (int n = 1; taken(name); ++n) name = std::format("{} ({})", sp.name, n);
+  const std::string id = scene.NewId();
+  run("add", "", std::format(R"({{"id":{},"name":{},"parent":{}}})", Q(id), Q(name), Q(parent)));
+  if (sp.comp) run("addcomp", id, sp.value ? std::format(R"({{"type":"{}","value":{}}})", sp.comp, sp.value) : std::format(R"({{"type":"{}"}})", sp.comp));
+  if (sp.rot) run("set", id, std::format(R"({{"path":"Transform.rotation","value":{}}})", sp.rot));
+  if (sp.pos) run("set", id, std::format(R"({{"path":"Transform.position","value":{}}})", sp.pos));
+  bus.EndGroup();
+  if (!ok) {
+    LogWarn("create {}: {}", kind, err);
+    std::string undoErr;
+    bus.Undo(&undoErr); // the half-made group goes away
+    return {};
+  }
+  if (!parent.empty()) folded_.erase(parent); // the new child is visible
+  pendingSelect_ = id;
+  pendingSelectMode_ = 0;
+  return id;
+}
+
+bool EditorModel::AddComponentToSelection(const std::string& type) {
+  std::vector<std::string> targets;
+  for (const std::string& id : selection_)
+    if (SceneObject* o = scene.Find(id); o && !o->Find(type)) targets.push_back(id);
+  if (targets.empty()) return false;
+  bus.BeginGroup("Add Component " + type, "ui");
+  bool ok = true;
+  std::string err;
+  for (const std::string& id : targets) {
+    Command c;
+    c.name = "addcomp";
+    c.target = id;
+    c.args = std::format(R"({{"type":{}}})", Q(type));
+    ok = ok && bus.Execute(c, &err);
+  }
+  bus.EndGroup();
+  if (!ok) LogWarn("add component {}: {}", type, err);
+  return ok;
+}
+
+void EditorModel::OpenCreateMenu(float x, float y, const std::string& parent) {
+  if (!ui_) return;
+  std::vector<UIContext::MenuItem> items;
+  std::string group = "-";
+  for (const CreateKind& k : CreateKinds()) {
+    if (group != k.group && *k.group) items.push_back({k.group, nullptr, false, false, {}, true});
+    group = k.group;
+    std::string key = k.key;
+    UIContext::MenuItem it{k.label, [this, key, parent] { CreateObject(key, parent); }};
+    if (key == "empty" && shortcuts) it.hint = shortcuts->KeysOf("edit.createEmpty");
+    items.push_back(std::move(it));
+  }
+  ui_->OpenMenu(x, y, std::move(items), true);
+}
+
+void EditorModel::OpenAddComponentMenu(float x, float y) {
+  if (!ui_ || selection_.empty()) return;
+  std::map<std::string, std::vector<std::string>> byGroup; // group -> component types, in a fixed group order below
+  for (const TypeInfo* t : Registry::Instance().Types()) {
+    if (std::find(t->tags.begin(), t->tags.end(), "Component") == t->tags.end() || t->name == "Transform") continue;
+    byGroup[ComponentGroup(t->name)].push_back(t->name);
+  }
+  std::vector<UIContext::MenuItem> items;
+  for (const char* g : {"렌더링", "물리", "애니메이션", "오디오", "UI", "효과", "월드", "네트워크", "스크립트"}) {
+    auto it = byGroup.find(g);
+    if (it == byGroup.end()) continue;
+    std::sort(it->second.begin(), it->second.end(), [](const std::string& a, const std::string& b) { return Pretty(a) < Pretty(b); });
+    items.push_back({g, nullptr, false, false, {}, true});
+    for (const std::string& type : it->second) {
+      bool missing = false; // some selected object can still take it
+      for (const std::string& id : selection_)
+        if (SceneObject* o = scene.Find(id); o && !o->Find(type)) missing = true;
+      UIContext::MenuItem item{Pretty(type), [this, type] { AddComponentToSelection(type); }, missing};
+      if (!missing) item.hint = "있음";
+      items.push_back(std::move(item));
+    }
+  }
+  ui_->OpenMenu(x, y, std::move(items), true);
+}
+
+void EditorModel::OpenHierarchyMenu(const std::string& id, float x, float y) {
+  if (!ui_ || !scene.Find(id)) return;
+  if (std::find(selection_.begin(), selection_.end(), id) == selection_.end()) ApplySelection(id, 0); // right-click selects (Unity)
+  SceneObject* o = scene.Find(id);
+  auto keys = [this](const char* action) { return shortcuts ? shortcuts->KeysOf(action) : std::string(); };
+  std::vector<UIContext::MenuItem> items;
+  items.push_back({"자식 만들기…", [this, id, x, y] { OpenCreateMenu(x, y, id); }});
+  items.push_back({"복제", [this] { Duplicate(); }, true, false, keys("edit.duplicate")});
+  items.push_back({"이름 바꾸기", [this] {
+                     if (Widget* f = ui_ ? ui_->Find("insp.name") : nullptr) { ui_->Focus(f); f->anchor = 0; f->cursor = f->text2.size(); }
+                   }, true, false, keys("edit.rename")});
+  items.push_back({"삭제", [this] { DeleteSelected(); }, true, false, keys("edit.delete")});
+  if (assets && InstanceRootOf(scene, id).empty())
+    items.push_back({"프리팹 만들기", [this, id] { CreatePrefab(id, projectFolder_.empty() ? std::string("Prefabs") : projectFolder_); }});
+  if (!o->parent.empty())
+    items.push_back({"부모에서 빼기", [this, id] { moveSource_ = id; moveTarget_.clear(); pendingMove_ = true; }});
+  ui_->OpenMenu(x, y, std::move(items));
 }
 
 // ---- Prefabs (6-1) ----------------------------------------------------------------------------------------------
