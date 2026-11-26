@@ -13,6 +13,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
 #include "Runtime/UIDesigner.h"
+#include "Runtime/ConsoleView.h"
 #include "Net/PlaySession.h"
 #include "Runtime/AssetPreviews.h"
 #include "Scene/GraphLibrary.h"
@@ -199,6 +200,7 @@ struct bdg_engine {
   std::string stressTestValues[10];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::UIDesigner uiDesigner;  // the "UI Designer" workspace shows it in the Scene panel (7-3)
+  bdg::ConsoleView console, buildLog; // the Console / Build Log panels: the real log (UI review B3)
   int lastWorkspace = 0;       // ws.tabs index of the last frame
   float wsBack[4] = {0, 0, 0, 0}; // "레벨로 돌아가기" in an empty workspace (x, y, w, h; UI review U5)
   float wsMouse[2] = {-1, -1};    // the mouse over the Scene panel, for that button's hover
@@ -1089,6 +1091,8 @@ void NewAssetFile(bdg_engine* e, const std::string& stem, const std::string& ext
 }
 
 void RunBuild(bdg_engine* e, bool checkOnly) {
+  bdg::LogChannel channel("build"); // every line written while building shows in the Build Log (UI review B3)
+  if (bdg::Widget* dw = e->editor ? e->editor->Find("dock") : nullptr; dw && dw->dock) dw->dock->SelectPanel("buildlog");
   bdg::BuildOptions o;
   o.project = e->assetsOpen ? bdg::PathToU8(bdg::PathU8(e->assets.Root()).parent_path()) : bdg::PathToU8(std::filesystem::current_path());
   if (e->model && e->model->Dirty()) e->model->SaveScene(); // the build reads the saved scene
@@ -1127,6 +1131,37 @@ bool OpenProject(bdg_engine* e, const std::string& assetsDir) {
   }
   bdg::LogInfo("project: opened {}", e->assets.Root());
   return true;
+}
+
+// Console / Build Log (UI review B3): toolbars, the lists' drawing, opening "file:line" from a double-click.
+void SetupConsoles(bdg_engine* e) {
+  e->console.prefix = "console";
+  e->buildLog.prefix = "buildlog";
+  e->buildLog.channel = "build";
+  e->buildLog.emptyText = "아직 빌드하지 않았습니다 (위 도구줄의 빌드, 또는 Build 메뉴)";
+  for (bdg::ConsoleView* v : {&e->console, &e->buildLog}) {
+    v->Bind(*e->editor);
+    if (bdg::Widget* list = e->editor->Find(v->prefix + ".list")) list->onDraw = [v](bdg::Widget& w, bdg::UIContext& ui) { v->Draw(w, ui); };
+    v->resolve = [e](const std::string& name) -> std::string { // absolute, else under the project, else the working folder
+      std::error_code ec;
+      const std::filesystem::path p = bdg::PathU8(name);
+      std::vector<std::filesystem::path> tries = {p};
+      if (p.is_relative()) {
+        if (e->assetsOpen) {
+          tries.insert(tries.begin(), bdg::PathU8(e->assets.Root()).parent_path() / p);
+          tries.insert(tries.begin() + 1, bdg::PathU8(e->assets.Root()) / p);
+        }
+        tries.push_back(std::filesystem::current_path() / p);
+      }
+      for (const std::filesystem::path& t : tries)
+        if (std::filesystem::is_regular_file(t, ec)) return bdg::PathToU8(std::filesystem::absolute(t, ec));
+      return "";
+    };
+    v->open = [e](const std::string& path, int line) {
+      bdg::LogInfo("console: open {}:{}", path, line);
+      if (!e->window.Hidden()) e->window.OpenURL("file:///" + path); // the system's editor for that file type
+    };
+  }
 }
 
 // The Project panel's empty state (no project): open a project folder, or make one in an empty folder (U21).
@@ -1781,6 +1816,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     SetupShortcuts(e);
     SetupMenuBar(e); // the menu bar (UI review B2)
     SetToolbarTips(e); // the play controls' tooltips name their keys (B10)
+    SetupConsoles(e);  // Console / Build Log (B3)
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { // keep the work
       model->Autosave();
       if (model->Dirty()) model->WriteBackup(); // offered back on the next start
@@ -2243,6 +2279,12 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->sceneView->HandleEvents(events, *sceneWidget, *e->model, dt, focused && focused->kind == bdg::WidgetKind::Field);
         else
           std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
+      }
+      if (&ui == e->editor.get()) { // Console / Build Log: new log lines, then their lists' mouse (B3)
+        for (bdg::ConsoleView* v : {&e->console, &e->buildLog}) {
+          v->Sync(ui);
+          v->HandleEvents(events, ui);
+        }
       }
       if (&ui == e->editor.get()) PreviewOrbit(e, events); // drag / wheel on the Inspector preview (E-1)
       if (&ui == e->editor.get()) // which panel gets the arrow keys: the Hierarchy when it was clicked last (E-4b)
