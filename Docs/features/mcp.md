@@ -60,9 +60,16 @@ Claude Code(프로젝트의 `.mcp.json`) 또는 Claude Desktop(`claude_desktop_c
 
 ## 라이브 에디터
 
-에디터가 그 프로젝트에서 열려 있으면(`.cache/editor.json`) 고치는 도구는 파일 대신 **열린 에디터의 명령 버스**로 갑니다 — 화면에 바로 보이고 에디터의 Ctrl+Z로 되돌립니다. 에디터가 없거나 답하지 않으면 파일을 직접 고칩니다.
+에디터가 그 프로젝트에서 열려 있으면 `127.0.0.1`의 빈 포트에서 기다리고 `.cache/editor.json`(`port`, `pid`, `token`)을 씁니다. 그러면 **열린 장면의 도구**(`scene_view` `scene_outline` `query` `set` `add` `del` `addcomp` `rmcomp`)는 파일 대신 에디터로 갑니다:
+
+- 고치기는 에디터의 **명령 버스**로 — 화면에 바로 보이고, 한 번의 호출이 Ctrl+Z 한 번. 저장은 하지 않음(제목에 ●, 저장은 사람이).
+- 읽기는 저장 안 된 지금 장면을 봄. `dry_run`은 열린 장면의 복사본에서.
+- `scene`을 주면(다른 장면), 그리고 `validate` `shot` `build` `run_check`는 파일로.
+- Play 중에는 거절("Stop한 뒤 다시"). 에디터가 없거나 답하지 않으면(파일이 남았는데 에디터가 꺼짐) 조용히 파일로.
+- 자동 실행(`--frames`, `BDG_HIDDEN` — `bdg shot`·`bdg check`가 띄우는 에디터)은 기다리지 않음: 사람이 연 에디터의 `editor.json`을 덮지 않게. 에디터가 끝나면 파일을 지움.
 
 ## 검사
 
 - 단위 테스트 `Tests/McpTests.cpp`: 줄 나누기(CRLF, 마지막 줄), initialize·버전 협상, 알림 무응답, 오류 코드, 배치, Base64, 모든 도구의 `bdg` 인자(가짜 `bdg`), dry_run, 라이브 전달과 되돌아감, 리소스.
+- `BDG_MCP_LIVE_TEST`(CI): 에디터 안의 클라이언트 스레드가 `bdg mcp`처럼 `editor.json`을 읽고 이름 바꾸기·dry run·view를 보냄 → `mcp live test: file=1 set=1 dry=1 view=1 undo=1`, 끝나면 `editor.json` 없음.
 - CI: 한글 폴더의 새 프로젝트에 `initialize` → `tools/list` → `scene_view` → `set`(dry_run) → `shot`을 파이프로 넣고 답 5줄·장면 불변·PNG 이미지 블록 확인.

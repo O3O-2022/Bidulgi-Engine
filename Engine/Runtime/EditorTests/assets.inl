@@ -1403,3 +1403,82 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
   }
 }
 BDG_EDITOR_TEST("BDG_NET_TEST", InjectNetTest, nullptr)
+
+// ---- AI-4 live link for `bdg mcp` (Tools/LiveLink.h): always on in a normal editor session (not in automated or
+// hidden runs, so `bdg shot` / `bdg check` editors never take over .cache/editor.json from the one the user has open).
+// Requests run here on the main thread: the open scene, its command bus (one undo step each), nothing saved.
+#include "Tools/Cli.h"
+#include "Tools/LiveLink.h"
+#include <SDL3/SDL_events.h>
+
+bdg::live::Server& LiveLinkServer() {
+  static bdg::live::Server server;
+  return server;
+}
+void TickLiveLink(bdg_engine* e, int, float) {
+  static bool tried = false;
+  bdg::live::Server& server = LiveLinkServer();
+  if (!tried && e->model) {
+    tried = true;
+    if (!std::getenv("BDG_MCP_LIVE_TEST") && (e->prefsPath.empty() || std::getenv("BDG_HIDDEN"))) return;
+    server.wake = [] { // any SDL event wakes the editor's event loop (safe even after the window is gone)
+      SDL_Event ev{};
+      ev.type = SDL_EVENT_USER;
+      SDL_PushEvent(&ev);
+    };
+    std::string err;
+    if (server.Start(std::filesystem::current_path(), &err)) bdg::LogInfo("live link: 127.0.0.1:{} (.cache/editor.json, bdg mcp)", server.Port());
+    else bdg::LogWarn("live link: {}", err);
+  }
+  if (!server.Running() || !e->model) return;
+  server.Serve([e](const std::vector<std::string>& cli) {
+    if (e->play.Playing())
+      return std::string(R"({"ok":false,"exit":1,"command":"live","output":[],"error":{"code":"playing","message":"에디터가 Play 중: Stop한 뒤 다시"}})");
+    std::string out, err;
+    bdg::EditorModel& m = *e->model;
+    bdg::RunCliLive(cli, m.scene, m.bus, m.sceneName, m.scenePath, out, err, std::filesystem::current_path());
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+  });
+}
+BDG_EDITOR_SERVICE(TickLiveLink)
+
+// Scripted check of the live link (BDG_MCP_LIVE_TEST=1, --frames 90): a client thread does what `bdg mcp` does —
+// reads .cache/editor.json, renames the first object (set), a dry run, a view — while the editor keeps drawing; then
+// the rename is in the open scene, one Ctrl+Z restores it, the dry run changed nothing, the view saw the new name.
+void InjectMcpLiveTest(bdg_engine* e, int frame, float) {
+  static std::thread client;
+  static std::atomic<bool> done{false};
+  static std::string answers[3];
+  static std::string id, oldName;
+  static bool checked = false;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || checked) return;
+  if (frame == 3 && !client.joinable()) {
+    if (m->scene.Roots().empty()) { bdg::LogError("mcp live test: empty scene"); checked = true; return; }
+    id = m->scene.Roots()[0];
+    oldName = m->scene.Find(id)->name;
+    client = std::thread([] {
+      const std::filesystem::path root = std::filesystem::current_path();
+      answers[0] = bdg::live::Forward(root, std::format(R"({{"cli":["set","{}","name=LiveRenamed"]}})", id));
+      answers[1] = bdg::live::Forward(root, std::format(R"({{"cli":["set","{}","name=DryOnly","--dry-run"]}})", id));
+      answers[2] = bdg::live::Forward(root, R"({"cli":["view"]})");
+      done = true;
+    });
+  }
+  if (!done) return;
+  client.join();
+  checked = true;
+  const bdg::SceneObject* o = m->scene.Find(id);
+  std::error_code ec;
+  const bool file = std::filesystem::exists(std::filesystem::current_path() / ".cache" / "editor.json", ec);
+  const bool set = answers[0].find(R"("ok":true)") != std::string::npos && o && o->name == "LiveRenamed" && m->Dirty();
+  const bool dry = answers[1].find(R"("ok":true)") != std::string::npos && answers[1].find("DryOnly") != std::string::npos && o && o->name == "LiveRenamed";
+  const bool view = answers[2].find("LiveRenamed") != std::string::npos;
+  std::string err;
+  const bool undo = m->bus.Undo(&err) && m->scene.Find(id) && m->scene.Find(id)->name == oldName;
+  if (!set || !dry || !view) bdg::LogError("mcp live test answers: {} | {} | {}", answers[0], answers[1], answers[2].substr(0, 300));
+  bdg::LogInfo("mcp live test: file={} set={} dry={} view={} undo={}", file ? 1 : 0, set ? 1 : 0, dry ? 1 : 0, view ? 1 : 0, undo ? 1 : 0);
+  e->quitNow = true;
+}
+BDG_EDITOR_TEST("BDG_MCP_LIVE_TEST", InjectMcpLiveTest, nullptr)

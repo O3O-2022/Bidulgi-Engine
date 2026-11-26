@@ -614,6 +614,11 @@ jobs:
           if (((& $bdg view) -join "`n") -notmatch 'intensity=5') { $errors += 'bdg mcp: set with dry_run changed the scene' }
           Remove-Item -Recurse -Force '.cache', 'Bidulgi.log', $mcpIn, $mcpOut -ErrorAction SilentlyContinue
           Pop-Location
+          # AI-4 live link: the editor listens (.cache/editor.json); a client renames an object through it (the open
+          # scene, one undo step), a dry run changes nothing, a view sees the new name; the file goes when the editor ends
+          $log = Invoke-Editor 'Release' @{ BDG_MCP_LIVE_TEST = '1' } 90
+          if ($log -notmatch 'mcp live test: file=1 set=1 dry=1 view=1 undo=1') { $errors += 'bdg mcp live editor link failed' }
+          if (Test-Path '.cache/editor.json') { $errors += 'the editor left .cache/editor.json behind' }
 
           # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)
           $log = Invoke-Editor 'Release' @{ BDG_CSHARP_TEST = '1' } 8

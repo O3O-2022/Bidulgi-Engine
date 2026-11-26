@@ -116,10 +116,20 @@ std::string Alias(const std::string& path) {
   return path;
 }
 
+// Live mode (RunCliLive): the commands work on an open editor's scene and command bus instead of a scene file.
+struct Live {
+  Scene* scene;
+  CommandBus* bus;
+  std::string name, path;
+};
+thread_local Live* g_live = nullptr;
+
 struct Project {
+  Project() : scene(g_live ? *g_live->scene : own) {}
   fs::path root;
   fs::path scenePath;
-  Scene scene;
+  Scene own;
+  Scene& scene; // the loaded file, or the editor's scene in live mode
   std::string sceneName;
   std::vector<std::string> warnings;
 };
@@ -151,6 +161,11 @@ fs::path ScenePath(const Ctx& c, const fs::path& root, const std::string& arg) {
 }
 bool Load(Ctx& c, Project& pr, const std::string& sceneArg) {
   pr.root = ProjectRoot(c);
+  if (g_live) { // already loaded: the open editor's scene
+    pr.scenePath = g_live->path.empty() ? ScenePath(c, pr.root, sceneArg) : U8(g_live->path);
+    pr.sceneName = g_live->name;
+    return true;
+  }
   pr.scenePath = ScenePath(c, pr.root, sceneArg);
   std::string error;
   if (!fs::exists(pr.scenePath)) {
@@ -232,6 +247,7 @@ bool Save(Ctx& c, Project& pr, CommandBus& bus, const std::string& before) {
     c.out += "(--dry-run: 저장하지 않음)\n";
     return true;
   }
+  if (g_live) return true; // the editor's command bus has it (one undo step); the editor saves
   std::string error;
   if (!SaveSceneFile(pr.scene, pr.sceneName, Utf8(pr.scenePath), &error)) {
     c.err += "오류: " + error + "\n";
@@ -377,7 +393,8 @@ int CmdSet(Ctx& c) {
   const std::vector<std::string> ids = Match(pr.scene, c.pos[0]);
   if (ids.empty()) { c.err += std::format("오류: '{}'에 맞는 물체가 없음 → `bdg outline`으로 id를 확인하세요\n", c.pos[0]); return 1; }
   const std::string before = WriteSceneText(pr.scene, pr.sceneName);
-  CommandBus bus(pr.scene);
+  CommandBus ownBus(pr.scene);
+  CommandBus& bus = g_live ? *g_live->bus : ownBus;
   bus.BeginGroup("bdg set " + c.pos[0], "terminal");
   bool ok = true;
   for (const std::string& id : ids)
@@ -401,7 +418,8 @@ int CmdAdd(Ctx& c) {
   Project pr;
   if (!Load(c, pr, "")) return 1;
   const std::string before = WriteSceneText(pr.scene, pr.sceneName);
-  CommandBus bus(pr.scene);
+  CommandBus ownBus(pr.scene);
+  CommandBus& bus = g_live ? *g_live->bus : ownBus;
   bus.BeginGroup("bdg add " + c.pos[0], "terminal");
   const std::string id = c.pos[0], parent = c.Opt("parent");
   std::string args = std::format(R"({{"id":{},"name":{})", Q(id), Q(c.Opt("name", id)));
@@ -424,7 +442,8 @@ int CmdSimple(Ctx& c, const char* name) { // del <id>... / addcomp <id> <Type> /
   Project pr;
   if (!Load(c, pr, "")) return 1;
   const std::string before = WriteSceneText(pr.scene, pr.sceneName);
-  CommandBus bus(pr.scene);
+  CommandBus ownBus(pr.scene);
+  CommandBus& bus = g_live ? *g_live->bus : ownBus;
   bus.BeginGroup(std::string("bdg ") + name, "terminal");
   bool ok = true;
   if (comp) ok = Exec(c, bus, name, c.pos[0], std::format(R"({{"type":{}}})", Q(c.pos[1])));
@@ -558,7 +577,8 @@ int CmdCall(Ctx& c) {
   std::vector<std::string> args;
   for (size_t i = 2; i < c.pos.size(); ++i) args.push_back(ToJsonValue(c.pos[i]));
   const std::string before = WriteSceneText(pr.scene, pr.sceneName);
-  CommandBus bus(pr.scene);
+  CommandBus ownBus(pr.scene);
+  CommandBus& bus = g_live ? *g_live->bus : ownBus;
   std::string result, error;
   if (!RunGraphNode(bus, pr.scene, *node, c.pos[0], args, &result, &error)) { c.err += "오류: " + error + "\n"; return 1; }
   if (!result.empty()) c.out += result + "\n";
@@ -933,6 +953,27 @@ static int Dispatch(Ctx& c, const std::string& cmd) {
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;
+}
+
+int RunCliLive(const std::vector<std::string>& args, Scene& scene, CommandBus& bus, const std::string& sceneName, const std::string& scenePath,
+               std::string& out, std::string& err, const fs::path& root) {
+  std::vector<std::string> a = args;
+  const bool dry = std::find(a.begin(), a.end(), "--dry-run") != a.end();
+  const bool otherScene = std::find(a.begin(), a.end(), "--scene") != a.end();
+  a.insert(a.end(), {"--project", Utf8(root), "--json"});
+  if (otherScene) return RunCli(a, out, err, root); // another scene: its file
+  Scene copy;
+  CommandBus copyBus(copy);
+  Live live{&scene, &bus, sceneName, scenePath};
+  if (dry) { // a dry run changes a copy of the open scene
+    ReadSceneText(copy, WriteSceneText(scene, sceneName));
+    live.scene = &copy;
+    live.bus = &copyBus;
+  }
+  g_live = &live;
+  const int code = RunCli(a, out, err, root);
+  g_live = nullptr;
+  return code;
 }
 
 } // namespace bdg

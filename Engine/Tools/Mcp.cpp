@@ -1,5 +1,6 @@
 #include "Tools/Mcp.h"
 #include "Tools/Cli.h"
+#include "Tools/LiveLink.h"
 #include <yyjson.h>
 #include <algorithm>
 #include <cstdlib>
@@ -352,8 +353,10 @@ std::string McpServer::ToolCall(const std::string& params, std::string& error) {
   }
   if (!scene.empty()) args.insert(args.end(), {"--scene", scene});
   if (tool->edits && Bool(a, "dry_run")) args.push_back("--dry-run");
-  // live editor: edits go to the open editor (its command bus, its undo), files stay as the editor saves them
-  if (tool->edits && live) {
+  // live editor: the open scene's tools go to the editor (its command bus, its undo, its unsaved state); the files
+  // stay as the editor saves them. Another scene, validate, shot, build, check: files.
+  const bool sceneTool = tool->edits || name == "scene_view" || name == "scene_outline" || name == "query";
+  if (sceneTool && scene.empty() && live) {
     std::string req = "[";
     for (size_t i = 0; i < args.size(); ++i) req += (i ? "," : "") + Q(args[i]);
     const std::string answer = live(std::format(R"({{"cli":{}]}})", req));
@@ -451,6 +454,7 @@ int RunMcp(const std::vector<std::string>& args, const fs::path& cwd) {
   _setmode(_fileno(stdout), _O_BINARY);
 #endif
   McpServer server(project, cwd);
+  server.live = [project](const std::string& request) { return live::Forward(project, request); };
   return server.RunStdio(stdin, stdout);
 }
 

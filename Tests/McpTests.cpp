@@ -99,7 +99,7 @@ TEST_CASE("mcp: tools/list and tools/call dispatch to bdg commands (AI-4)") {
   const std::string bad = f.Call("set", R"({"target":"missing","values":{"x":1}})");
   CHECK(Has(bad, R"("isError":true)") && Has(bad, "not_found"));
 
-  // live editor: edits go there (as a command line) while it answers; reads stay on files
+  // live editor: the open scene's tools go there (as a command line) while it answers
   std::string sent;
   f.server.live = [&](const std::string& req) {
     sent = req;
@@ -109,11 +109,14 @@ TEST_CASE("mcp: tools/list and tools/call dispatch to bdg commands (AI-4)") {
   const std::string live = f.Call("set", R"({"target":"Player","values":{"Health.hp":5}})");
   CHECK_EQ(sent, std::string(R"({"cli":["set","Player","Health.hp=5"]})"));
   CHECK(Has(live, R"("output":["live"])") && Has(live, R"("isError":false)") && f.calls.size() == before);
-  f.Call("scene_view", "{}");
-  CHECK(f.calls.size() == before + 1);
+  f.Call("scene_view", "{}"); // the open scene's reads go there too
+  CHECK(f.calls.size() == before && sent == R"({"cli":["view"]})");
+  f.Call("validate", "{}"); // files: validate, shot, build, check
+  f.Call("set", R"({"target":"Player","values":{"Health.hp":5},"scene":"Level2"})"); // another scene: its file
+  CHECK(f.calls.size() == before + 2 && f.calls.back()[0] == "set");
   f.server.live = [](const std::string&) { return std::string(); }; // editor gone: files again
   f.Call("set", R"({"target":"Player","values":{"Health.hp":5}})");
-  CHECK(f.calls.size() == before + 2);
+  CHECK(f.calls.size() == before + 3);
 
   const std::string res = f.server.Handle(R"({"jsonrpc":"2.0","id":9,"method":"resources/list"})");
   CHECK(Has(res, "bidulgi://docs/llms.txt") && Has(res, "bidulgi://schema/components"));
