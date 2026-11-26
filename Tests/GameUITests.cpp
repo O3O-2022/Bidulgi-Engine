@@ -39,6 +39,15 @@ TEST_CASE("game ui: anchors, stretch, nesting, scaling and order; buttons click 
   CHECK(ui.ElementRect("c", r) && Near(r.x + r.w / 2, 1000) && Near(r.y + r.h / 2, 500) && Near(r.w, 40));
   CHECK(ui.ElementRect("st", r) && Near(r.x, 10) && Near(r.y, 10) && Near(r.w, 2000 - 20) && Near(r.h, 1000 - 20));
   CHECK(ui.ElementRect("btn", r) && Near(r.x + r.w / 2, 1000) && Near(r.w, 200)); // inside its parent element
+  { // the placement the UI designer turns dragged rects back with: parent rect, parent, canvas, scale
+    bool found = false;
+    for (const GameUI::Placed& p : ui.Placement())
+      if (p.object == "btn") {
+        found = true;
+        CHECK(p.parent == "st" && p.canvas == "hud" && Near(p.parentRect.x, 10) && Near(p.parentRect.w, 2000 - 20) && Near(p.scale, 2));
+      }
+    CHECK(found && ui.Placement().size() == ui.Elements());
+  }
   CHECK(!ui.ElementRect("hid", r) && !ui.ElementRect("hidkid", r));
   // a wider screen with matchHeight 1: the height decides the scale
   ui.Layout(s, {0, 0, 3000, 1000});

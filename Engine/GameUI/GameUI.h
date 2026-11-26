@@ -27,6 +27,10 @@ public:
   void Draw(Scene& scene, Batch2D& batch, Font* font, RHI& rhi, const Rect& view, const std::string& assetsDir);
   void Shutdown(RHI& rhi); // the images it loaded
   bool ElementRect(const std::string& objectId, Rect& out) const; // after Layout (tests, tools)
+  // Where each element was placed by the last Layout, in drawing order (the UI designer turns dragged rects back
+  // into anchor / position / size with the parent's rect and the canvas scale).
+  struct Placed { std::string object, parent, canvas; Rect r, parentRect; float scale = 1; };
+  std::vector<Placed> Placement() const;
   size_t Elements() const { return layout_.size(); }
   int Clicks() const { return clicks_; } // clicks seen since the view started (tests)
 
@@ -37,6 +41,8 @@ private:
     Rect r;
     float scale = 1;
     int order = 0;
+    std::string parent, canvas; // parent element or canvas object, the canvas object
+    Rect parentRect;
   };
   std::vector<Item> layout_; // drawing order
   std::map<std::string, TextureHandle> images_;
