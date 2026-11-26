@@ -478,7 +478,7 @@ Get-Content .\Bidulgi.log | Select-String "ui:|error|warn"
 - [x] **AI-1. `bdg shot`** (2026-11-25) — 명령 하나로 장면 사진: 에디터 화면 전체, 카메라 지정(`--camera yaw,pitch,dist[,x,y,z]`), 북마크마다(`--bookmarks`), 품질 단계(`--quality`). 결과 파일 경로를 출력 — 허브
 - [x] **AI-2. API 레퍼런스 자동 생성 + `llms.txt`** (2026-11-25, `python tools/gen_llms.py` — 컴포넌트·`bdg` 명령·C# API를 바꾸면 다시 돌릴 것, CI가 확인) — 리플렉션 스키마(컴포넌트·필드·타입·기본값), `bdg` 명령, C# 게임 API를 한 파일(`Docs/llms.txt`, `Docs/api/`)로. CI가 최신인지 확인 — 허브
 - [x] **AI-3. `--json` 구조화 출력** (2026-11-25) — 모든 `bdg` 명령이 `--json`이면 결과·오류를 JSON 한 개로(`{"ok":false,"error":{"code":..,"message":..,"hint":..}}`) — 허브
-- [ ] **AI-4. MCP 서버** — 실행 중인 에디터에 AI가 직접 붙음: 장면 조회·명령 실행(실행 취소 가능)·스크린샷·검사 실행·로그 읽기. `bdg mcp`(stdio) — 레인 배정 예정
+- [x] **AI-4. MCP 서버** — 실행 중인 에디터에 AI가 직접 붙음: 장면 조회·명령 실행(실행 취소 가능)·스크린샷·검사 실행·로그 읽기. `bdg mcp`(stdio) — 레인 B 완료(2026-11-26): 도구 16개(dry_run, shot은 PNG 이미지), 리소스, `bdg check`, 라이브 에디터 링크(`.cache/editor.json`, 명령 버스·Ctrl+Z), 단위 테스트 + CI. [features/mcp.md](features/mcp.md)
 
 ## 나중 — 게임 모드 지원 (사용자 계획, 2026-11-25)
 

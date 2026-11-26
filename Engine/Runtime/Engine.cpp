@@ -1230,7 +1230,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
   e->quitTest = std::getenv("BDG_QUIT_TEST") != nullptr;
   e->settingsTest = std::getenv("BDG_SETTINGS_TEST") != nullptr;
   for (const bdg::edtest::Test& t : bdg::edtest::All())
-    if (std::getenv(t.env)) e->activeTests.push_back(&t);
+    if (!t.env || std::getenv(t.env)) e->activeTests.push_back(&t); // no variable: an always-on service
   e->blockoutTest = std::getenv("BDG_BLOCKOUT_TEST") != nullptr;
   e->materialTest = std::getenv("BDG_MATERIAL_TEST") != nullptr;
   e->qualityTest = std::getenv("BDG_QUALITY_TEST") != nullptr;

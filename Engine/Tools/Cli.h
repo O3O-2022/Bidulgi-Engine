@@ -21,6 +21,13 @@
 #include <vector>
 
 namespace bdg {
+class Scene;
+class CommandBus;
 // args without the program name. Returns the exit code: 0 done, 1 problems found / command failed, 2 bad usage.
 int RunCli(const std::vector<std::string>& args, std::string& out, std::string& err, const std::filesystem::path& cwd);
+// The same commands on an open editor's scene and command bus (live `bdg mcp`, AI-4): an edit is one undo step there
+// and nothing is saved; --dry-run changes a copy; reads see the unsaved scene; --scene <other> uses that file. The
+// answer is the --json form.
+int RunCliLive(const std::vector<std::string>& args, Scene& scene, CommandBus& bus, const std::string& sceneName, const std::string& scenePath,
+               std::string& out, std::string& err, const std::filesystem::path& root);
 }

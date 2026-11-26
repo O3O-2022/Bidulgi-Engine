@@ -14,6 +14,8 @@ bdg — 비둘기 엔진 명령줄 (에디터와 같은 명령 버스)
   table import <csv> [out] | export <table.jsonl> [out] | check <file>  (데이터 테이블)
   build [--check] [--out <dir>] [--config Debug|Development|Shipping] [--zip] [--scripts a.dll;b.dll]  (게임 빌드)
   nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]
+  check <BDG_..._TEST> [--frames N] [--env 이름=값]...  (에디터 자동 검사 하나, 결과 줄 출력)
+  mcp [--project <dir>]  (MCP 서버: AI 에이전트가 stdio로 붙음 — Docs/features/mcp.md)
   shot [scene] [--bookmarks] [--camera yaw,pitch,dist[,x,y,z]] [--quality 최소|낮음|보통|높음|최고] [--out <dir>] [--frames N]  (장면 사진, 파일 경로 출력)
 공통: --project <dir> --scene <이름 또는 경로> --json (결과·오류를 JSON 한 개로)
 ```
