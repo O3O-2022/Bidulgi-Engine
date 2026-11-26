@@ -151,7 +151,39 @@ bdg::QualityTier TierOf(bdg::StartQuality q) {
 // (Ctrl+C / the console closing) or --frames.
 static volatile bool g_serverQuit = false;
 static std::string g_sceneOverride; // --scene: play this scene file instead of the project's start scene
-static double g_quitAfter = 0;      // --quit-after: seconds (wall clock), then a normal exit (tests)
+// When to end by itself (tests, CI, scripted matches), all optional. Slow machines (software OpenGL takes seconds to
+// start) must not cut a match short, so the clock starts at the event that matters, not at the process start:
+//   --quit-after S      S seconds after the join (client), after --expect-players joined (server), else after start
+//   --expect-players N  server: the --quit-after clock starts once N players have joined
+//   --quit-file P       leave (politely) as soon as the file P exists
+//   --timeout S         a hard limit from the start, whatever happens (logged as a timeout)
+static double g_quitAfter = 0, g_timeout = 0;
+static int g_expectPlayers = 0;
+static std::string g_quitFile;
+struct QuitClock {
+  using clock = std::chrono::steady_clock;
+  clock::time_point started = clock::now(), armedAt{};
+  bool armed = false;
+  // networked: the game plays online; ready: the client has the world / the server has the expected players
+  bool Due(bool networked, bool ready) {
+    const auto now = clock::now();
+    if (g_timeout > 0 && std::chrono::duration<double>(now - started).count() >= g_timeout) {
+      bdg::LogWarn("player: --timeout {} s reached", g_timeout);
+      return true;
+    }
+    std::error_code ec;
+    if (!g_quitFile.empty() && fs::exists(bdg::PathU8(g_quitFile), ec)) {
+      bdg::LogInfo("player: {} exists, leaving", g_quitFile);
+      return true;
+    }
+    if (g_quitAfter <= 0) return false;
+    if (!armed && (!networked || ready)) {
+      armed = true;
+      armedAt = now;
+    }
+    return armed && std::chrono::duration<double>(now - armedAt).count() >= g_quitAfter;
+  }
+};
 #ifdef _WIN32
 static BOOL WINAPI ServerCtrl(DWORD) { g_serverQuit = true; return TRUE; }
 #endif
@@ -195,9 +227,8 @@ static int RunDedicatedServer(const fs::path& content, const bdg::ProjectSetting
   auto last = clock::now();
   int frames = 0;
   size_t mostPlayers = 0;
-  const auto startedAt = clock::now();
-  while (!g_serverQuit && (maxFrames <= 0 || frames < maxFrames) &&
-         (g_quitAfter <= 0 || std::chrono::duration<double>(clock::now() - startedAt).count() < g_quitAfter)) {
+  QuitClock quit;
+  while (!g_serverQuit && (maxFrames <= 0 || frames < maxFrames) && !quit.Due(true, (int)mostPlayers >= std::max(g_expectPlayers, 1))) {
     const auto start = clock::now();
     const double dt = std::clamp(std::chrono::duration<double>(start - last).count(), 0.0, 0.1);
     last = start;
@@ -237,6 +268,9 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     else if (!std::strcmp(argv[i], "--log") && more) logFile = argv[++i];
     else if (!std::strcmp(argv[i], "--scene") && more) g_sceneOverride = argv[++i];
     else if (!std::strcmp(argv[i], "--quit-after") && more) g_quitAfter = std::atof(argv[++i]);
+    else if (!std::strcmp(argv[i], "--expect-players") && more) g_expectPlayers = std::atoi(argv[++i]);
+    else if (!std::strcmp(argv[i], "--quit-file") && more) g_quitFile = argv[++i];
+    else if (!std::strcmp(argv[i], "--timeout") && more) g_timeout = std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-latency") && more) net.sim.latencyMs = (float)std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-jitter") && more) net.sim.jitterMs = (float)std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-loss") && more) net.sim.lossPercent = (float)std::atof(argv[++i]);
@@ -347,7 +381,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   bdg::Widget area;
   int32_t shotW = 0, shotH = 0;
   std::vector<uint8_t> shotPixels;
-  const auto startedAt = clock::now();
+  QuitClock quit;
   while (window.PumpEvents(0)) {
     const auto start = clock::now();
     double dt = std::chrono::duration<double>(start - last).count();
@@ -398,7 +432,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     window.Present();
     ++frames;
     if (maxFrames > 0 && frames >= maxFrames) break;
-    if (g_quitAfter > 0 && std::chrono::duration<double>(clock::now() - startedAt).count() >= g_quitAfter) break;
+    if (quit.Due(play.Net().Active(), play.Net().Joined())) break;
     if (period > 0) {
       const double ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();
       if (ms < period) bdg::Window::SleepPrecise(period - ms);

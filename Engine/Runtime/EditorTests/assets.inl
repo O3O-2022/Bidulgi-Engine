@@ -1293,15 +1293,18 @@ BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)
 // small project): the editor plays as a Listen Server through the Play options (2 players, 10 % loss): one client
 // process joins, a second one joins late; the C# NetProbe checks spawns, the owner's predicted moves reaching the
 // server, a [Replicated] field with OnRep on the clients, [Server] / [Client] / [Multicast] calls, the late joiner
-// getting the world, and the first client's leaving cleaning up its player everywhere. Time-based (about 12 s); the
-// editor quits when done. Run with --frames 3000 (a ceiling).
+// getting the world, and the first client's leaving cleaning up its player everywhere. Every stage waits for what it
+// needs (a join, a move, the late joiner's world, the goodbye) with a generous time limit, so slow machines (software
+// OpenGL: clients take seconds to start) pass the same way; client 1 leaves when the check writes its --quit-file.
+// The editor quits when done. Run with --frames 6000 (a ceiling).
 void InjectNetTest(bdg_engine* e, int frame, float) {
   bdg::EditorModel* m = e->model.get();
   if (!m) return;
   namespace fs = std::filesystem;
   using clock = std::chrono::steady_clock;
   static std::vector<std::string> lines; // the editor's (server's) own log
-  static clock::time_point started, joined1, joined2;
+  static clock::time_point started, joined1, launched2, joined2, leaveAt;
+  static std::string quitFile, c2log;
   static int stage = 0;
   static float p1x0 = 0, p1x1 = 0;
   static std::string dir, p1;
@@ -1349,31 +1352,45 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     ps.options.port = 0;
     ps.options.lossPercent = 10;
     ps.options.projectDir = dir;
-    ps.options.extraArgs = {"--quit-after", "9"}; // the first client leaves by itself (a polite goodbye)
+    quitFile = (fs::path(dir) / ".cache" / "net" / "leave-client1").string();
+    fs::remove(fs::path(quitFile), ec);
+    ps.options.extraArgs = {"--quit-file", quitFile}; // the first client leaves when told (a polite goodbye)
   }
   if (frame == 3) {
     TogglePlay(e); // the editor hosts; the Play options start "Client 1"
     started = clock::now();
     stage = 1;
   }
-  if (stage == 1 && (byName("Player 1").size() || seconds(started) > 20)) { // client 1 is in
+  auto client2Has = [&](const char* s) { // read again every 10 frames (small file)
+    if (frame % 10 == 0) bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 2.log").string(), c2log);
+    return c2log.find(s) != std::string::npos;
+  };
+  if (stage == 1 && (byName("Player 1").size() || seconds(started) > 120)) { // client 1 is in
     p1 = byName("Player 1");
     p1x0 = x(p1);
     joined1 = clock::now();
     stage = 2;
   }
-  if (stage == 2 && seconds(joined1) > 3) { // a late joiner (stays until Stop)
+  if (stage == 2 && seconds(joined1) > 1 && (x(p1) > p1x0 + 1.5f || seconds(joined1) > 30)) { // its moves arrive; now a late joiner
     p1x1 = x(p1);
-    ps.options.extraArgs.clear();
+    ps.options.extraArgs.clear(); // client 2 stays until Stop
     ps.LaunchClient("Client 2");
+    launched2 = clock::now();
     stage = 3;
   }
-  if (stage == 3 && (byName("Player 2").size() || seconds(joined1) > 25)) {
-    joined2 = clock::now();
+  if (stage == 3 && ((byName("Player 2").size() && client2Has("net probe: start player Player 1")) || seconds(launched2) > 120)) {
+    joined2 = clock::now(); // client 2 is in and has the world: client 1 may go
+    std::ofstream(fs::path(quitFile), std::ios::binary) << "leave";
+    leaveAt = clock::now();
     stage = 4;
   }
-  if (stage == 4 && ((!ps.Running(0) && seconds(joined2) > 2) || seconds(joined2) > 25)) { // client 1 has left; let it settle
-    stage = 5;
+  auto onreps2 = [&] { // [Replicated] updates the late joiner has seen
+    int n = 0;
+    for (size_t at = c2log.find("net probe: onrep score="); at != std::string::npos; at = c2log.find("net probe: onrep score=", at + 1)) ++n;
+    return n;
+  };
+  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 60)) {
+    stage = 5; // client 1 has left, the server and client 2 cleaned up
   }
   if (stage == 5) {
     const bool p1Gone = !m->scene.Find(p1);
@@ -1382,6 +1399,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     std::string c1, c2;
     bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 1.log").string(), c1);
     bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 2.log").string(), c2);
+    std::error_code rmErr;
+    fs::remove(fs::path(quitFile), rmErr);
     auto has = [&](const std::string& s) { return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(s) != std::string::npos; }); };
     auto count = [](const std::string& text, const std::string& s) {
       int n = 0;

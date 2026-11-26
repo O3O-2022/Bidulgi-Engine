@@ -668,7 +668,7 @@ jobs:
           $nt = Join-Path $env:RUNNER_TEMP 'bdg-net'
           Remove-Item -Recurse -Force $nt -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $nt | Out-Null
-          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 3000
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 6000
           if ($log -notmatch 'net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1') {
             $errors += 'multiplayer test failed'
             Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }
@@ -846,7 +846,8 @@ jobs:
 
           # Round 7 multiplayer arena template: bdg new --template arena -> bdg build -> the built game as a dedicated server
           # (--server, no window) and two clients (--connect, 5 % loss): both join, get their players, and the server's
-          # replicated round clock reaches them
+          # replicated round clock reaches them. The quit clocks start at the join (clients) and when both players are in
+          # (server: --expect-players), so slow software-GL starts cannot end the match early; --timeout is the hard limit
           $ar = Join-Path $env:RUNNER_TEMP 'bdg-arena'
           Remove-Item -Recurse -Force $ar -ErrorAction SilentlyContinue
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $ar --template arena --name 'Arena Test' | Out-String | Write-Host
@@ -858,11 +859,11 @@ jobs:
           Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$ar/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $aexe = "$ar/Builds/Windows-Development/Arena Test.exe"
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-arena-cache'; $env:BDG_PLAYER_QUIET = '1'; $env:BDG_HIDDEN = '1'; $env:BDG_AUDIO_NULL = '1'
-          $srv = Start-Process $aexe -ArgumentList '--server', '--port', 47811, '--quit-after', 20, '--log', "$ar/server.log" -PassThru
+          $srv = Start-Process $aexe -ArgumentList '--server', '--port', 47811, '--expect-players', 2, '--quit-after', 8, '--timeout', 170, '--log', "$ar/server.log" -PassThru
           Start-Sleep -Seconds 3
-          $c1 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Ann', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client1.log" -PassThru
-          $c2 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Bo', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client2.log" -PassThru
-          $srv, $c1, $c2 | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
+          $c1 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Ann', '--sim-loss', 5, '--quit-after', 8, '--timeout', 160, '--log', "$ar/client1.log" -PassThru
+          $c2 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Bo', '--sim-loss', 5, '--quit-after', 8, '--timeout', 160, '--log', "$ar/client2.log" -PassThru
+          $srv, $c1, $c2 | Wait-Process -Timeout 200 -ErrorAction SilentlyContinue
           $srv, $c1, $c2 | Where-Object { -not $_.HasExited } | Stop-Process -Force
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_HIDDEN, Env:BDG_AUDIO_NULL
           $slog = Get-Content "$ar/server.log" -Raw -Encoding utf8
