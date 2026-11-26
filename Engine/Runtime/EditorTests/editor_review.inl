@@ -661,13 +661,13 @@ void InjectNarrowTest(bdg_engine* e, int frame, float scale) {
     a = kept && rowW < 220 && cut.ends_with("…") && ui.Measure(12.5f, cut) <= 40 ? "1"
         : std::format("0(hier {} insp {} row {} cut '{}')", hier ? hier->w : 0, insp ? insp->w : 0, rowW, cut);
     b = stackedVector() ? "1" : "0";
-    bool wrapped = false; // a wrapping button row on two lines
+    bool wrapped = true; // every wrapping row keeps its buttons inside (on more lines when needed)
     if (insp)
       walk(*insp, [&](bdg::Widget& w) {
         if (!w.wrap || w.children.size() < 2) return;
-        const float y0 = w.children.front()->y;
         for (auto& ch : w.children)
-          if (!ch->hidden && ch->y > y0 + 4) wrapped = true;
+          if (!ch->hidden && ch->x + ch->w > w.x + w.w + 0.5f) wrapped = false;
+
       });
     c = wrapped ? "1" : "0";
   }
