@@ -38,7 +38,9 @@ public class Player : Behaviour {
 | Dedicated Server | 창 없는 서버: 빌드한 게임 `"My Game.exe" --server --port 7777` (60틱, Ctrl+C로 끝) |
 | Client | 서버에 접속: `--connect 192.168.0.5:7777`, C# `Net.Join("192.168.0.5")` |
 
-플레이어 exe 옵션: `--server`, `--listen`, `--connect host[:port]`, `--port`, `--name`, `--title`(창 제목), `--log`(로그 파일), `--scene`(시작 장면 대신), `--sim-latency` / `--sim-jitter`(ms), `--sim-loss`(%), `--quit-after`(초).
+플레이어 exe 옵션: `--server`, `--listen`, `--connect host[:port]`, `--port`, `--name`, `--title`(창 제목), `--log`(로그 파일), `--scene`(시작 장면 대신), `--sim-latency` / `--sim-jitter`(ms), `--sim-loss`(%).
+
+자동 종료(테스트·CI·정해진 시간의 경기): `--quit-after 초`는 **접속한 뒤부터**(클라이언트) / `--expect-players N`명이 모인 뒤부터(서버) / 시작부터(네트워크 없음) 셉니다. 느린 PC(소프트웨어 OpenGL은 시작에 몇 초)가 경기를 일찍 끝내지 않게 하려는 것입니다. `--quit-file 경로`는 그 파일이 생기면 인사하고 나감, `--timeout 초`는 시작부터의 최대 시간(무슨 일이 있어도).
 
 ## 복제 (어떻게 맞추나)
 

@@ -138,8 +138,9 @@ public:
   float ClickX() const { return clickX_; }               // UI units, of the click being handled
   bool OnTreeArrow(const Widget& row, float x) const;    // x is on a tree row's fold arrow (E-2)
   // Popup menu (E-4): drawn above everything at (x, y); a click on an item runs it, a click elsewhere or Esc closes.
-  // keys: the item's shortcut, shown dimmed at the right ("Ctrl+S"); "" = none
-  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; bool checked = false; std::string keys = {}; };
+  // keys: the item's shortcut, shown dimmed at the right ("Ctrl+S"); "" = none. header: a group title row (caption
+  // style, not an item; hidden while a search filter is typed).
+  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; bool checked = false; std::string keys = {}; bool header = false; };
   // search: a filter box on top (type to narrow the list; Up/Down/Enter pick). Long combo lists use it.
   void OpenMenu(float x, float y, std::vector<MenuItem> items, bool search = false);
   void CloseMenu() { menu_.clear(); menuAll_.clear(); menuFilter_.clear(); }
@@ -252,6 +253,9 @@ private:
   void ScrubTo(float x, bool fine);
   float menuX_ = 0, menuY_ = 0, menuW_ = 0;
   int menuHot_ = -1, menuPressed_ = -1;
+  int menuTop_ = 0, menuRows_ = 0; // first row shown and how many fit (long menus scroll: wheel, arrow keys)
+  void MenuKeepHotVisible();
+  Widget* ContextHit(Widget& w, float x, float y);
   bool MenuEvent(const InputEvent& e); // true: the open menu used it
   void DrawMenu();
   void FilterMenu();
