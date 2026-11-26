@@ -378,6 +378,12 @@ jobs:
           # (one undo step) and Edit > Undo, Window > Open panel > Console, Component > Add (searched) > AudioSource
           $log = Invoke-Editor 'Release' @{ BDG_MENUBAR_TEST = '1' } 57
           if ($log -notmatch 'menubar test: open=1 keys=1 create=1 undo=1 panel=1 component=1') { $errors += 'menu bar test failed' }
+          # UI review B4: no project -> the Project panel's empty state; Graph / Animation / Scripting say "not ready" in the
+          # Scene panel and its button goes back to Level (real clicks); New project (a real click, the folder picker answered
+          # by BDG_DIALOG_ANSWER) makes Assets / Scenes in an empty folder and opens it
+          $newproj = "$env:RUNNER_TEMP/bdg-newproj"; Remove-Item -Recurse -Force $newproj -ErrorAction SilentlyContinue; New-Item -ItemType Directory $newproj | Out-Null
+          $log = Invoke-Editor 'Release' @{ BDG_EMPTYWS_TEST = '1'; BDG_DIALOG_ANSWER = $newproj } 22
+          if ($log -notmatch 'emptyws test: empty=1 tabs=1 back=1 project=1') { $errors += 'empty workspace test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

@@ -2,6 +2,7 @@
 #include "Core/Log.h"
 #include <SDL3/SDL.h>
 #include <cctype>
+#include <cstdlib>
 
 namespace bdg {
 bool Window::HasFocus() const { return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_INPUT_FOCUS) != 0; }
@@ -168,6 +169,21 @@ bool Window::PumpEvents(int32_t waitMs) {
     }
     dialogFiles_.clear();
   }
+  std::function<void(const std::string&)> folderDone; // the folder picker's answer, run outside the lock
+  std::string folder;
+  {
+    std::lock_guard<std::mutex> lock(dialogMutex_);
+    if (folderAnswered_) {
+      folderAnswered_ = false;
+      folder = std::move(folderAnswer_);
+      folderDone = std::move(folderDone_);
+      folderDone_ = nullptr;
+    }
+  }
+  if (folderDone) {
+    hadEvents_ = true;
+    folderDone(folder);
+  }
   return true;
 }
 
@@ -179,6 +195,35 @@ void Window::DialogDone(void* self, const char* const* files, int) {
     for (; *files; ++files) w->dialogFiles_.push_back(*files);
   }
   w->Wake();
+}
+
+void Window::FolderDone(void* self, const char* const* files, int) {
+  if (!self || !files || !*files) return; // cancelled or failed
+  Window* w = static_cast<Window*>(self);
+  {
+    std::lock_guard<std::mutex> lock(w->dialogMutex_);
+    w->folderAnswer_ = *files;
+    w->folderAnswered_ = true;
+  }
+  w->Wake();
+}
+
+void Window::OpenFolderDialog(std::function<void(const std::string&)> done) {
+  {
+    std::lock_guard<std::mutex> lock(dialogMutex_);
+    folderDone_ = std::move(done);
+  }
+  if (hidden_ || !window_) {
+    if (const char* answer = std::getenv("BDG_DIALOG_ANSWER")) { // automated checks: as if that folder was chosen
+      std::lock_guard<std::mutex> lock(dialogMutex_);
+      folderAnswer_ = answer;
+      folderAnswered_ = true;
+      return;
+    }
+    LogInfo("folder dialog: not shown (hidden window)");
+    return;
+  }
+  SDL_ShowOpenFolderDialog(&Window::FolderDone, this, window_, nullptr, false);
 }
 
 void Window::OpenFileDialog() {

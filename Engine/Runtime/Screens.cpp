@@ -115,97 +115,13 @@ void DrawSceneViewV2(Widget& w, UIContext& ui) {
   ui.Text(ax - 3, ay - 31, 10, t.C("axis-y"), "Y");
 }
 
-// File-type icon: page with a coloured language strip, or a thumbnail-like swatch for assets.
-void DrawFileIcon(UIContext& ui, float x, float y, float s, const std::string& name) {
-  if (ui.Icon(FileIconName(name), x + s * 0.08f, y + s * 0.08f, s * 0.84f)) return; // PhotoCraft icon set (Assets/Icons)
-  const Theme& t = ui.Tokens();
-  Batch2D& b = ui.Batch();
-  std::string ext = name.substr(name.find_last_of('.') == std::string::npos ? name.size() : name.find_last_of('.') + 1);
-  struct Kind { const char* ext; const char* token; const char* tag; };
-  static const Kind code[] = {{"cpp", "lang-cpp", ".CPP"}, {"h", "lang-cpp", ".H"}, {"cs", "lang-cs", "C#"},
-                              {"lua", "lang-lua", "LUA"}, {"py", "lang-py", "PY"}, {"graph", "lang-graph", "G"},
-                              {"animgraph", "lang-anim", "AG"}};
-  for (const Kind& k : code) {
-    if (ext != k.ext) continue;
-    b.Rect(x + s * 0.18f, y + s * 0.08f, s * 0.64f, s * 0.84f, t.C("raise"), 4, 1, t.C("line-strong"));
-    b.Rect(x + s * 0.18f, y + s * 0.62f, s * 0.64f, s * 0.2f, t.C(k.token), 2);
-    ui.Text(x + s * 0.5f - ui.Measure(10, k.tag) * 0.5f, y + s * 0.645f, 10, {1, 1, 1, 1}, k.tag);
-    for (int i = 0; i < 3; ++i) b.Rect(x + s * 0.28f, y + s * (0.24f + i * 0.1f), s * (0.44f - i * 0.08f), 2, t.C("fg-faint"), 1);
-    return;
-  }
-  if (ext.empty()) { // folder
-    b.Rect(x + s * 0.1f, y + s * 0.22f, s * 0.36f, s * 0.14f, Hex(0xc9a35a), 3);
-    b.Rect(x + s * 0.1f, y + s * 0.3f, s * 0.8f, s * 0.5f, Hex(0xe0bd73), 4);
-    return;
-  }
-  Color c = ext == "prefab" ? t.C("prefab") : ext == "mat" ? t.C("accent") : ext == "scene" ? t.C("ok") : t.C("fg-faint");
-  b.Rect(x + s * 0.1f, y + s * 0.1f, s * 0.8f, s * 0.8f, Alpha(c, 0.22f), 6, 1, Alpha(c, 0.7f));
-  if (ext == "mat") b.Rect(x + s * 0.28f, y + s * 0.28f, s * 0.44f, s * 0.44f, c, s * 0.22f);
-  else if (ext == "prefab") b.Rect(x + s * 0.3f, y + s * 0.3f, s * 0.4f, s * 0.4f, c, 4);
-  else if (ext == "wav") for (int i = 0; i < 9; ++i) { float hgt = s * (0.1f + 0.08f * ((i * 7) % 5)); b.Rect(x + s * (0.2f + i * 0.07f), y + s * 0.5f - hgt * 0.5f, 2.5f, hgt, c, 1); }
-  else { b.Line(x + s * 0.2f, y + s * 0.7f, x + s * 0.45f, y + s * 0.4f, 2, c); b.Line(x + s * 0.45f, y + s * 0.4f, x + s * 0.8f, y + s * 0.7f, 2, c); }
-}
-
-// Bottom dock: Project / Console / Build Log / Profiler in one panel (tab index picks the view).
+// Bottom dock: Console / Build Log / Profiler in one panel (tab index picks the view).
 void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
   const Theme& t = ui.Tokens();
   Batch2D& b = ui.Batch();
   int tab = panel ? panel->selectedIndex : 0;
   float cap = t.FontSize("caption", 10.5f), body = t.FontSize("label", 12);
-  if (tab == 0) { // Project: folder tree + tiles
-    float tw = 180;
-    b.Rect(w.x, w.y, tw, w.h, t.C("win"));
-    const char* tree[] = {"★ Favorites", "  All Prefabs", "  All Scripts", "▼ Assets", "  ▶ Characters", "  ▶ Scenes", "  ▶ Scripts", "  ▶ Materials", "▶ Packages"};
-    for (int i = 0; i < 9; ++i) {
-      if (i == 6) b.Rect(w.x, w.y + 6 + i * 20.f, tw, 20, t.C("selection"));
-      ui.Text(w.x + 10, w.y + 9 + i * 20.f, body, i == 6 ? t.C("fg") : t.C("fg-dim"), tree[i]);
-    }
-    // C++ header + source with the same name are shown as ONE linked "C++ class" tile (like Rider / Visual Studio).
-    std::vector<std::string> files = {"Characters", "Weapon.cpp", "Weapon.h", "Health.h", "Health.cpp", "PlayerMove.cs",
-                                      "quest.lua", "level_tools.py", "Door.graph", "AG_Knight.animgraph", "Knight.prefab",
-                                      "M_Gold.mat", "forest.scene", "hit.wav", "Utils.h"};
-    auto stem = [](const std::string& f) { size_t d = f.find_last_of('.'); return d == std::string::npos ? f : f.substr(0, d); };
-    auto extOf = [](const std::string& f) { size_t d = f.find_last_of('.'); return d == std::string::npos ? std::string() : f.substr(d + 1); };
-    struct Entry { std::string name; bool pair; };
-    std::vector<Entry> entries;
-    for (const std::string& f : files) {
-      std::string e = extOf(f);
-      if (e == "h" || e == "cpp") {
-        std::string other = stem(f) + (e == "h" ? ".cpp" : ".h");
-        bool hasOther = std::find(files.begin(), files.end(), other) != files.end();
-        if (hasOther) {
-          bool seen = false;
-          for (auto& en : entries) seen |= en.pair && en.name == stem(f);
-          if (!seen) entries.push_back({stem(f), true});
-          continue;
-        }
-      }
-      entries.push_back({f, false});
-    }
-    float x = w.x + tw + 14, y = w.y + 10, s = 64;
-    for (const Entry& en : entries) {
-      float tileW = en.pair ? s * 2 + 10 : s;
-      if (x + tileW > w.x + w.w) { x = w.x + tw + 14; y += s + 28; }
-      if (y + s > w.y + w.h) break;
-      std::string label = en.name;
-      if (en.pair) {
-        Color cpp = t.C("lang-cpp"), soft = cpp;
-        soft.a = 0.12f;
-        b.Rect(x - 4, y - 2, tileW + 8, s + 4, soft, 8, 1, Alpha(cpp, 0.55f));     // shared frame = one class
-        DrawFileIcon(ui, x, y, s, en.name + ".h");
-        DrawFileIcon(ui, x + s + 10, y, s, en.name + ".cpp");
-        float ly = y + s * 0.42f;                                               // link between the two files
-        b.Line(x + s * 0.82f, ly, x + s + 10 + s * 0.18f, ly, 2, cpp);
-        b.Rect(x + s + 5 - 4, ly - 4, 8, 8, cpp, 4);
-        label = en.name + "  · C++ class";
-      } else {
-        DrawFileIcon(ui, x, y, s, en.name);
-      }
-      while (ui.Measure(cap, label) > tileW + 14 && label.size() > 4) label = label.substr(0, label.size() - 4) + "…";
-      ui.Text(x + tileW * 0.5f - ui.Measure(cap, label) * 0.5f, y + s + 4, cap, en.pair ? t.C("fg") : t.C("fg-dim"), label);
-      x += tileW + 22;
-    }
-  } else if (tab == 1 || tab == 2) { // Console / Build Log
+  if (tab == 1 || tab == 2) { // Console / Build Log
     struct Line { const char* lvl; const char* text; };
     static const Line console[] = {{"info", "Bidulgi Engine 0.0.1"}, {"info", "rhi: OpenGL 4.5 · NVIDIA GeForce RTX 5070 Ti"},
                                    {"info", "font: Pretendard (SDF atlas 2048)"}, {"info", "tokens: 40 colors, 18 sizes, 12 type styles"},
@@ -343,10 +259,22 @@ std::unique_ptr<Widget> BuildEditorScreen() {
     auto tab = std::make_shared<Widget>();
     tab->selectedIndex = i;
     auto draw = [tab](Widget& w, UIContext& ui) { DrawBottomDock(w, ui, tab.get()); };
-    if (i == 0) { // Project: the real asset folder when one is open (EditorModel), else the sample drawing
+    if (i == 0) { // Project: the real asset folder when one is open (EditorModel fills it), else an empty state (UI review U21)
       auto& project = dock.Add(MakeBox(Axis::Column));
       project.id = "project";
-      project.Add(MakeCustom("project.sample", draw)).height = Length::Fill();
+      auto& empty = project.Add(MakeBox(Axis::Column, 8)); // buttons: Engine.cpp SetupProjectButtons
+      empty.id = "project.empty";
+      empty.height = Length::Fill();
+      empty.crossAlign = Align::Center;
+      empty.Add(MakeBox(Axis::Column)).height = Length::Fill();
+      auto& title = empty.Add(MakeLabel("열린 프로젝트가 없습니다"));
+      title.fontSize = 16;
+      empty.Add(DimLabel("프로젝트 폴더를 열거나 새로 만들면 여기에 에셋이 보입니다"));
+      auto& row = empty.Add(MakeBox(Axis::Row, 8));
+      row.padT = 6;
+      row.Add(MakeButton("project.open", "프로젝트 열기…", true)).tooltip = "프로젝트 폴더(Assets가 있는 곳)를 고릅니다";
+      row.Add(MakeButton("project.new", "새 프로젝트…")).tooltip = "빈 폴더를 고르면 Assets·Scenes를 만들고 엽니다";
+      empty.Add(MakeBox(Axis::Column)).height = Length::Fill();
       continue;
     }
     dock.Add(MakeCustom(bottom[i], draw));
