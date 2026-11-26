@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,6 +69,9 @@ public:
   void SetTextInputArea(float x, float y, float w, float h, int cursorOffsetPx);
   std::string GetClipboardText() const;
   bool OpenURL(const std::string& url); // default browser / file explorer (file:///)
+  // The system's file picker (several files): the chosen files arrive as DropFile events on a later PumpEvents, as
+  // if dropped from Explorer (x = y = -1). Not shown in hidden (automated) windows.
+  void OpenFileDialog();
   void* NativeHandle() const;           // HWND on Windows (accessibility bridge)
   void SetClipboardText(const std::string& text);
 
@@ -82,5 +86,8 @@ private:
   bool hadEvents_ = false;
   bool relative_ = false;
   float relMouse_[2] = {0, 0}; // the relative mouse's made-up position
+  std::mutex dialogMutex_;     // the file picker answers on another thread
+  std::vector<std::string> dialogFiles_;
+  static void DialogDone(void* self, const char* const* files, int filter);
 };
 }
