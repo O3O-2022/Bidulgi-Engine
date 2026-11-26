@@ -650,6 +650,7 @@ void UIContext::DrawWidget(Widget& w) {
         float sx = tx + Measure(fs, v.substr(0, a)), ex = tx + Measure(fs, v.substr(0, z));
         b.Rect(sx, iy + 3, ex - sx, ih - 6, t.C("accent-soft"));
       }
+      if (v.empty() && w.composing.empty() && !w.placeholder.empty()) Text(tx, ty, fs, t.C("fg-faint"), w.placeholder); // the hint
       std::string before = focus ? v.substr(0, w.cursor) : v, after = focus ? v.substr(w.cursor) : "";
       float px = tx + Text(tx, ty, fs, t.C("fg"), before);
       float caretX = px;
@@ -1330,6 +1331,17 @@ void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
 void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
   if (!root_) return;
   for (const InputEvent& e : events) {
+    // typing into a field with onEdit (search boxes): tell it after the event when its text changed
+    Widget* const editing = focused_ && focused_->kind == WidgetKind::Field && focused_->onEdit ? focused_ : nullptr;
+    const std::string before = editing ? editing->text2 : std::string();
+    struct AfterEvent {
+      UIContext& ui;
+      Widget* w;
+      const std::string& before;
+      ~AfterEvent() {
+        if (w && ui.focused_ == w && w->text2 != before) w->onEdit(*w);
+      }
+    } after{*this, editing, before};
     if (DialogEvent(e)) continue; // a modal dialog takes everything
     if (MenuEvent(e)) continue; // an open popup menu takes the mouse (and Esc)
     bool mouse = e.type == InputEvent::Type::MouseMove || e.type == InputEvent::Type::MouseDown || e.type == InputEvent::Type::MouseUp;
@@ -1629,9 +1641,10 @@ void UIContext::ScrubTo(float x, bool fine) {
 
 void UIContext::FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const {
   const Theme& t = theme_;
-  float labelW = std::max(80.f, f.w * 0.4f);
+  const bool noLabel = f.text.empty(); // a bare input (search boxes): the whole width
+  float labelW = noLabel ? 0.f : std::max(80.f, f.w * 0.4f);
   h = t.N("size-row", 22);
-  x = f.x + t.N("space-6", 12) + labelW + t.N("space-4", 8);
+  x = noLabel ? f.x + 2 : f.x + t.N("space-6", 12) + labelW + t.N("space-4", 8);
   y = f.y + (f.h - h) * 0.5f;
   w = f.x + f.w - t.N("space-5", 10) - x;
 }

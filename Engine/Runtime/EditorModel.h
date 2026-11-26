@@ -152,6 +152,11 @@ public:
   // BPROPERTY(ShowIf = ...): "flag", "!flag", "field == Value", "field != Value" (values as the Inspector shows them)
   static bool ShowIfPasses(const Component& c, const std::string& condition);
 
+  // Search boxes (UI review B8): the Hierarchy (name, or t:Component), the Inspector (field names, English or Korean)
+  // and the Project panel (file names in every folder, t:type) show only what matches.
+  std::string hierarchySearch, inspectorSearch, projectSearch;
+  static bool SearchMatches(const std::string& query, std::initializer_list<std::string_view> texts); // case-insensitive, every word
+
 private:
   uint64_t savedRevision_ = 0;
   void BuildSampleScene();

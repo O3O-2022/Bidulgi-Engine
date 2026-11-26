@@ -7,6 +7,7 @@
 #include "Runtime/EditorModel.h"
 #include "Render2D/Batch2D.h"
 #include "UI/Theme.h"
+#include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -126,26 +127,46 @@ void EditorModel::RebuildProject() {
   auto& bar = right.Add(MakeBox(Axis::Row, 6));
   bar.padL = 8; bar.padT = 4; bar.padB = 4; bar.padR = 8;
   bar.crossAlign = Align::Center;
+  // UI review B8 (U6): the folder, up, a search box that gets the room, and a ⋯ menu for the views; the selected
+  // item's actions (rename, open, references, delete) on a second row while something is selected
   bar.Add(MakeLabel("Assets" + (projectFolder_.empty() ? "" : "/" + projectFolder_))).variant = 1;
   bar.Add(MakeButton("p.up", "위로")).onClick = [this](Widget&) { projectFolder_ = Folder(projectFolder_); projectSelected_.clear(); needProject_ = true; };
-  auto& name = bar.Add(MakeField("p.name", "이름", projectSelected_.empty() ? "" : FileName(projectSelected_)));
-  name.width = Length::Fill();
-  name.onCommit = [this](Widget& w) { RenameProjectItem(w.text2); };
-  bar.Add(MakeButton("p.open", "열기")).onClick = [this](Widget&) { OpenProjectItem(); };
-  // 2-5b: where is it used, what is not used, delete with a warning, replace by another asset
-  bar.Add(MakeButton("p.refs", "참조", projectView == ProjectView::References)).onClick = [this](Widget&) {
-    ShowProjectView(projectView == ProjectView::References ? ProjectView::Files : ProjectView::References);
+  auto& search = bar.Add(MakeField("p.search", "", projectSearch));
+  search.placeholder = "검색…";
+  search.width = Length::Fill();
+  search.cursor = search.anchor = projectSearch.size();
+  search.tooltip = "모든 폴더에서 파일 이름으로 찾기, t:texture 처럼 종류로 찾기";
+  search.onEdit = search.onCommit = [this](Widget& w) {
+    if (w.text2 != projectSearch) { projectSearch = w.text2; needProject_ = true; }
   };
-  bar.Add(MakeButton("p.unused", "안 쓰는 것", projectView == ProjectView::Unused)).onClick = [this](Widget&) {
-    ShowProjectView(projectView == ProjectView::Unused ? ProjectView::Files : ProjectView::Unused);
+  auto& more = bar.Add(MakeButton("p.more", "⋯"));
+  more.width = Length::Px(28);
+  more.tooltip = "보기: 안 쓰는 것, 규칙, 목록/타일";
+  more.onClick = [this](Widget& w) {
+    if (!ui_) return;
+    std::vector<UIContext::MenuItem> items;
+    items.push_back({"안 쓰는 것", [this] { ShowProjectView(projectView == ProjectView::Unused ? ProjectView::Files : ProjectView::Unused); }, true,
+                     projectView == ProjectView::Unused});
+    items.push_back({"규칙", [this] { ShowProjectView(projectView == ProjectView::Rules ? ProjectView::Files : ProjectView::Rules); }, true,
+                     projectView == ProjectView::Rules});
+    items.push_back({projectTiles ? "목록으로 보기" : "타일로 보기", [this] { SetProjectTiles(!projectTiles); }}); // E-1
+    ui_->OpenMenu(w.x, w.y + w.h + 2, std::move(items));
   };
-  bar.Add(MakeButton("p.layout", projectTiles ? "목록" : "타일")).onClick = [this](Widget&) { SetProjectTiles(!projectTiles); }; // E-1
-  bar.Add(MakeButton("p.rules", "규칙", projectView == ProjectView::Rules)).onClick = [this](Widget&) { // 2-5d
-    ShowProjectView(projectView == ProjectView::Rules ? ProjectView::Files : ProjectView::Rules);
-  };
-  bar.Add(MakeButton("p.delete", deleteWarning_.empty() || deleteWarning_ != projectSelected_ ? "지우기" : "그래도 지우기",
-                     !deleteWarning_.empty() && deleteWarning_ == projectSelected_))
-      .onClick = [this](Widget&) { DeleteProjectItem(!deleteWarning_.empty() && deleteWarning_ == projectSelected_); };
+  if (!projectSelected_.empty()) { // the selected item: rename, open, where it is used (2-5b), delete with a warning
+    auto& sel = right.Add(MakeBox(Axis::Row, 6));
+    sel.padL = 8; sel.padB = 4; sel.padR = 8;
+    sel.crossAlign = Align::Center;
+    auto& name = sel.Add(MakeField("p.name", "이름", FileName(projectSelected_)));
+    name.width = Length::Fill();
+    name.onCommit = [this](Widget& w) { RenameProjectItem(w.text2); };
+    sel.Add(MakeButton("p.open", "열기")).onClick = [this](Widget&) { OpenProjectItem(); };
+    sel.Add(MakeButton("p.refs", "참조", projectView == ProjectView::References)).onClick = [this](Widget&) {
+      ShowProjectView(projectView == ProjectView::References ? ProjectView::Files : ProjectView::References);
+    };
+    sel.Add(MakeButton("p.delete", deleteWarning_.empty() || deleteWarning_ != projectSelected_ ? "지우기" : "그래도 지우기",
+                       !deleteWarning_.empty() && deleteWarning_ == projectSelected_))
+        .onClick = [this](Widget&) { DeleteProjectItem(!deleteWarning_.empty() && deleteWarning_ == projectSelected_); };
+  }
   if (!deleteWarning_.empty() && deleteWarning_ != projectSelected_) deleteWarning_.clear();
   if (projectView == ProjectView::References && !projectSelected_.empty()) {
     auto& rep = right.Add(MakeBox(Axis::Row, 6));
@@ -204,13 +225,23 @@ void EditorModel::RebuildProject() {
   // the type icon over the name, as many per row as the panel is wide; list: one row each.
   struct Item { std::string key, name, type, icon; std::function<void()> click; int indent = 0; bool selected = false; };
   std::vector<Item> items;
-  for (const std::string& f : folders)
-    if (Folder(f) == projectFolder_)
-      items.push_back({"p.item." + f, FileName(f), "Folder", "folder", [this, f] { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }});
+  const bool searching = !projectSearch.empty() && projectSearch.find_first_not_of(' ') != std::string::npos;
+  std::string nameQuery, typeQuery; // "t:texture" asks for a kind
+  if (searching) {
+    std::istringstream in(projectSearch);
+    for (std::string w; in >> w;) (w.rfind("t:", 0) == 0 ? typeQuery : nameQuery) += (w.rfind("t:", 0) == 0 ? w.substr(2) : w) + " ";
+  }
+  auto found = [&](const AssetRecord& r) {
+    return SearchMatches(nameQuery, {FileName(r.path)}) && (typeQuery.empty() || SearchMatches(typeQuery, {r.importer, TypeLabel(r), Ext(r.path)}));
+  };
+  if (!searching)
+    for (const std::string& f : folders)
+      if (Folder(f) == projectFolder_)
+        items.push_back({"p.item." + f, FileName(f), "Folder", "folder", [this, f] { projectFolder_ = f; projectSelected_.clear(); needProject_ = true; }});
   std::map<std::string, std::vector<const AssetRecord*>> pairs; // stem -> header/source files
   std::vector<const AssetRecord*> files;
   for (const AssetRecord* r : all) {
-    if (Folder(r->path) != projectFolder_) continue;
+    if (searching ? !found(*r) : Folder(r->path) != projectFolder_) continue; // searching: every folder
     std::string e = Ext(r->path);
     if (IsHeader(e) || IsSource(e)) pairs[Stem(FileName(r->path))].push_back(r);
     else files.push_back(r);
@@ -228,8 +259,9 @@ void EditorModel::RebuildProject() {
         items.push_back({"p.item." + r->path, FileName(r->path), IsHeader(Ext(r->path)) ? "Header" : "Source", IconFor(r, false, false), pick(r->path), 1,
                          r->path == projectSelected_});
   }
-  for (const AssetRecord* r : files)
-    items.push_back({"p.item." + r->path, FileName(r->path), TypeLabel(*r), IconFor(r, false, false), pick(r->path), 0, r->path == projectSelected_});
+  for (const AssetRecord* r : files) // searching: the folder next to the type
+    items.push_back({"p.item." + r->path, FileName(r->path), searching && !Folder(r->path).empty() ? TypeLabel(*r) + " · " + Folder(r->path) : TypeLabel(*r),
+                     IconFor(r, false, false), pick(r->path), 0, r->path == projectSelected_});
 
   // 6-1: an object dragged here from the Hierarchy becomes a prefab in this folder
   auto takeObject = [this](Widget& dropped) {

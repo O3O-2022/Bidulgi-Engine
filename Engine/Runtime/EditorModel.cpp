@@ -15,6 +15,7 @@
 #include <format>
 #include <algorithm>
 #include <map>
+#include <sstream>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -50,6 +51,8 @@ std::string Trim(const std::string& s) {
   size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
   return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
+
+Widget& AddSearchBox(Widget& row, const std::string& id, const std::string& text, std::function<void(const std::string&)> changed); // B8
 
 bool IsVectorLike(FieldType t) {
   return t == FieldType::Vec2 || t == FieldType::Vec3 || t == FieldType::Vec4 || t == FieldType::Quat || t == FieldType::Color;
@@ -723,6 +726,12 @@ void EditorModel::Rebuild() {
   create.tooltip = shortcuts && !shortcuts->KeysOf("edit.createEmpty").empty()
                        ? std::format("만들기 (빈 오브젝트: {})", shortcuts->KeysOf("edit.createEmpty")) : std::string("만들기");
   create.onClick = [this](Widget& w) { OpenCreateMenu(w.x, w.y + w.h + 2, selected_); };
+  hierTools.crossAlign = Align::Center;
+  hierTools.padR = 6;
+  auto& hs = AddSearchBox(hierTools, "h.search", hierarchySearch, [this](const std::string& q) {
+    if (q != hierarchySearch) { hierarchySearch = q; needRebuild_ = true; }
+  });
+  hs.tooltip = "이름으로 찾기, t:Light 처럼 컴포넌트로 찾기 (여러 낱말은 모두 맞아야 함)";
   auto& sceneRow = hierarchy_->Add(MakeListRow("h.scene", "Main", "Scene"));
   sceneRow.onDrop = [this](Widget& w) { // drop on the scene row: back to the top level
     if (w.id.rfind("h.", 0) == 0) { moveSource_ = w.id.substr(2); moveTarget_.clear(); pendingMove_ = true; }
@@ -761,7 +770,35 @@ void EditorModel::Rebuild() {
     next.push_back(last ? 0 : 1);
     for (size_t i = 0; i < o->children.size(); ++i) addRow(o->children[i], depth + 1, next, i + 1 == o->children.size());
   };
-  for (size_t i = 0; i < scene.Roots().size(); ++i) addRow(scene.Roots()[i], 1, {}, i + 1 == scene.Roots().size());
+  if (Trim(hierarchySearch).empty()) {
+    for (size_t i = 0; i < scene.Roots().size(); ++i) addRow(scene.Roots()[i], 1, {}, i + 1 == scene.Roots().size());
+  } else { // searching: every matching object as one flat row (its parent path at the right), in tree order
+    std::vector<std::string> words, comps; // "t:Light" asks for a component
+    std::istringstream in(hierarchySearch);
+    for (std::string w; in >> w;) (w.rfind("t:", 0) == 0 && w.size() > 2 ? comps : words).push_back(w.rfind("t:", 0) == 0 ? w.substr(2) : w);
+    std::string nameQuery;
+    for (const std::string& w : words) nameQuery += w + " ";
+    std::function<void(const std::string&, const std::string&)> visit = [&](const std::string& id, const std::string& path) {
+      SceneObject* o = scene.Find(id);
+      if (!o) return;
+      bool hit = SearchMatches(nameQuery, {o->name, o->id});
+      for (const std::string& c : comps) {
+        bool any = false;
+        for (const Component& comp : o->components) any = any || SearchMatches(c, {comp.type->name});
+        hit = hit && any;
+      }
+      if (hit) {
+        auto& row = hierarchy_->Add(MakeListRow("h." + id, o->name, path.empty() ? std::string() : path, 0));
+        row.selected = std::find(selection_.begin(), selection_.end(), id) != selection_.end();
+        row.onClick = [this, id](Widget&) { pendingSelect_ = id; pendingSelectMode_ = ui_ && ui_->ClickCtrl() ? 1 : ui_ && ui_->ClickShift() ? 2 : 0; };
+        row.onContext = [this, id](Widget&, float x, float y) { OpenHierarchyMenu(id, x, y); };
+        row.draggable = true;
+      }
+      for (const std::string& c : o->children) visit(c, path.empty() ? o->name : path + "/" + o->name);
+    };
+    for (const std::string& r : scene.Roots()) visit(r, {});
+    if (hierarchy_->children.size() == 2) hierarchy_->Add(MakeLabel("맞는 오브젝트가 없습니다")).variant = 1; // tools + scene row only
+  }
 
   // Inspector: one card per component, one field per editable property. With several objects selected only
   // the components they all have are shown; a field whose values differ shows "—"; an edit sets it on every
@@ -776,6 +813,12 @@ void EditorModel::Rebuild() {
     inspector_->Add(MakeLabel("선택한 것이 없습니다")).variant = 1;
   } else {
     bool multi = targets.size() > 1;
+    auto& searchRow = inspector_->Add(MakeBox(Axis::Row, 8));
+    searchRow.padR = 10; searchRow.padT = 4; searchRow.padL = 2;
+    auto& is = AddSearchBox(searchRow, "insp.search", inspectorSearch, [this](const std::string& q) {
+      if (q != inspectorSearch) { inspectorSearch = q; needRebuild_ = true; }
+    });
+    is.tooltip = "필드 찾기: 영어 이름이나 한국어 이름 (컴포넌트 이름이면 그 컴포넌트 전체)";
     auto& nameRow = inspector_->Add(MakeBox(Axis::Row, 8));
     nameRow.padR = 10; nameRow.padT = 2; nameRow.padB = 2;
     nameRow.crossAlign = Align::Center;
@@ -832,15 +875,25 @@ void EditorModel::Rebuild() {
       bool everywhere = true;
       for (auto& id : targets) everywhere = everywhere && scene.Find(id)->Find(t.name);
       if (!everywhere) continue; // not common to the whole selection
+      const bool searching = !Trim(inspectorSearch).empty();
+      const bool wholeCard = !searching || SearchMatches(inspectorSearch, {t.name, Pretty(t.name), KoreanName(t.name)});
+      if (searching && !wholeCard) { // only cards with a matching field
+        bool any = false;
+        for (const TypeInfo* x = &t; x && !any; x = x->base)
+          for (const FieldInfo& f : x->fields)
+            any = any || ((f.flags & kEdit) && SearchMatches(inspectorSearch, {f.name, Pretty(f.name), KoreanName(t.name + "." + f.name)}));
+        if (!any) continue;
+      }
       auto& card = inspector_->Add(MakeCard("c." + t.name, Pretty(t.name), LanguageBadge(t)));
-      card.collapsed = collapsed_.count(t.name) ? collapsed_[t.name] : false;
+      card.collapsed = searching ? false : collapsed_.count(t.name) ? collapsed_[t.name] : false;
       card.tooltip = TermTooltip(t.name, {}); // the Korean name (U12: the title stays the engine term)
       std::vector<const TypeInfo*> chain;
       for (const TypeInfo* x = &t; x; x = x->base) chain.insert(chain.begin(), x);
       for (const TypeInfo* x : chain)
         for (const FieldInfo& f : x->fields) {
           if (!(f.flags & kEdit)) continue;
-          if (!f.meta.header.empty()) card.Add(MakeLabel(f.meta.header)).variant = 3; // section caption
+          if (!wholeCard && !SearchMatches(inspectorSearch, {f.name, Pretty(f.name), KoreanName(t.name + "." + f.name)})) continue; // searching
+          if (!f.meta.header.empty() && wholeCard) card.Add(MakeLabel(f.meta.header)).variant = 3; // section caption
           if (!ShowIfPasses(c, f.meta.showIf)) continue;                                // hidden until its condition holds
           std::string path = t.name + "." + f.name;
           FieldType type = f.value.type;
@@ -1054,6 +1107,31 @@ void EditorModel::Rebuild() {
   if (ui_) ui_->ForgetRemovedWidgets();
   RebuildHistory();
 }
+
+// ---- Search (UI review B8) -----------------------------------------------------------------------------------------
+bool EditorModel::SearchMatches(const std::string& query, std::initializer_list<std::string_view> texts) {
+  auto lower = [](std::string_view v) { std::string o(v); for (char& c : o) c = (char)std::tolower((unsigned char)c); return o; };
+  std::string all;
+  for (std::string_view t : texts) all += lower(t) + "\n";
+  std::istringstream words(lower(query));
+  for (std::string w; words >> w;)
+    if (all.find(w) == std::string::npos) return false;
+  return true;
+}
+
+namespace {
+// A search box for a panel: the text stays while typing (the panel rebuilds around it; the cursor stays at the end).
+Widget& AddSearchBox(Widget& row, const std::string& id, const std::string& text, std::function<void(const std::string&)> changed) {
+  auto& f = row.Add(MakeField(id, "", text));
+  f.placeholder = "검색…";
+  f.width = Length::Fill();
+  f.cursor = f.anchor = text.size();
+  f.tooltip = "이름으로 거르기 (여러 낱말은 모두 맞아야 함)";
+  f.onEdit = [changed](Widget& w) { changed(w.text2); };
+  f.onCommit = [changed](Widget& w) { changed(w.text2); };
+  return f;
+}
+} // namespace
 
 // ---- Making objects, adding components (UI review B1) ---------------------------------------------------------
 const std::vector<EditorModel::CreateKind>& EditorModel::CreateKinds() {
