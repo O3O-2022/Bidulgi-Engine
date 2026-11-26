@@ -12,6 +12,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
+#include "Net/PlaySession.h"
 #include "Runtime/AssetPreviews.h"
 #include "Scene/GraphLibrary.h"
 #include "Scripting/DotNetHost.h"
@@ -1100,9 +1101,12 @@ void TogglePlay(bdg_engine* e) {
   if (!e->play.Playing()) {
     e->play.DiscardPending();
     if (banner) banner->hidden = true;
+    bdg::PlaySession::Instance().BeforePlay(e->play, *m); // round 7: net mode, other players
     e->play.Start(*m);
+    bdg::PlaySession::Instance().AfterPlay(e->play);
     if (dw && dw->dock) dw->dock->SelectPanel("game");
   } else {
+    bdg::PlaySession::Instance().Stop(); // the other players' processes
     e->play.Stop(*m);
     if (dw && dw->dock) dw->dock->SelectPanel("scene");
     const auto& pending = e->play.Pending();
@@ -1358,6 +1362,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
           DrawGameViewUI(e, w, ui); // the game's own UI over it (7-3)
         };
       if (bdg::Widget* b = e->editor->Find("tool.play")) b->onClick = [e](bdg::Widget&) { TogglePlay(e); };
+      if (bdg::Widget* b = e->editor->Find("tool.playopts")) // round 7: multiplayer Play options
+        b->onClick = [e](bdg::Widget& w) { bdg::PlaySession::Instance().OpenMenu(*e->editor, w); };
       if (bdg::Widget* b = e->editor->Find("tool.pause")) b->onClick = [e](bdg::Widget&) { SetPlayPaused(e, !e->play.Paused()); };
       if (bdg::Widget* b = e->editor->Find("tool.step")) b->onClick = [e](bdg::Widget&) { StepPlay(e); };
       if (bdg::Widget* f = e->editor->Find("tool.timescale")) {

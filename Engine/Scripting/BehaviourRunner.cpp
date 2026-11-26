@@ -81,6 +81,16 @@ void BehaviourRunner::SendEvent(const std::string& object, const char* method, c
     if (i.object == object && i.enabled) DotNetHost::Instance().SendBehaviourEvent(i.handle, method, json);
 }
 
+void BehaviourRunner::InvokeRpc(const std::string& object, const std::string& type, const std::string& method, const std::string& args) {
+  for (const Inst& i : insts_)
+    if (i.object == object && i.type == type && i.enabled) DotNetHost::Instance().SendBehaviourEvent(i.handle, ("rpc:" + method).c_str(), args);
+}
+
+void BehaviourRunner::Broadcast(const char* method, const std::string& json) {
+  for (const Inst& i : insts_)
+    if (i.enabled) DotNetHost::Instance().SendBehaviourEvent(i.handle, method, json);
+}
+
 void BehaviourRunner::Pull(Scene& scene, CommandBus& bus) {
   DotNetHost& host = DotNetHost::Instance();
   for (Inst& i : insts_) {

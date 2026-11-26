@@ -90,8 +90,24 @@ struct NetWorld::Client {
 NetWorld::NetWorld() = default;
 NetWorld::~NetWorld() { Stop(); }
 NetWorld* NetWorld::Current() { return g_current; }
+namespace {
+NetWorld* g_game = nullptr;
+std::function<bool(const NetSettings&, std::string*)> g_restart;
+} // namespace
+NetWorld* NetWorld::Game() { return g_game; }
+void NetWorld::SetGame(NetWorld* world, std::function<bool(const NetSettings&, std::string*)> restart) {
+  g_game = world;
+  g_restart = std::move(restart);
+}
+bool NetWorld::RestartGame(const NetSettings& s, std::string* error) {
+  if (!g_restart) {
+    if (error) *error = "no game is running (Play first)";
+    return false;
+  }
+  return g_restart(s, error);
+}
 
-bool NetWorld::Start(Scene& scene, CommandBus&, const NetSettings& s, std::string* error) {
+bool NetWorld::Start(Scene& scene, CommandBus& bus, const NetSettings& s, std::string* error) {
   Stop();
   settings_ = s;
   transport_.sim = s.sim;
@@ -109,7 +125,13 @@ bool NetWorld::Start(Scene& scene, CommandBus&, const NetSettings& s, std::strin
       }
     for (auto& [object, id] : netIds_)
       for (const Component& c : scene.Find(object)->components) fieldsSent_[object + "|" + c.type->name] = FieldsOf(scene, object, c.type->name);
-    if (s.mode == NetMode::ListenServer) players_.push_back({0, s.playerName});
+    if (s.mode == NetMode::ListenServer) { // the host plays too: its player (owner 0) when the GameMode says so
+      bool hostPlayer = false;
+      for (SceneObject* o : AllObjects(scene))
+        if (const GameMode* g = Comp<GameMode>(o, GameMode::StaticType())) hostPlayer = g->hostHasPlayer;
+      if (hostPlayer) SpawnPlayer(scene, bus, 0);
+      players_.push_back({0, s.playerName});
+    }
     LogInfo("net: {} on port {}", NetModeName(s.mode), transport_.Port());
   } else {
     if (!transport_.Connect(s.address, s.port, error)) return false;
@@ -147,12 +169,14 @@ void NetWorld::Stop() {
   players_.clear();
   joined_ = helloSent_ = haveOffset_ = false;
   nextNetId_ = 1;
+  spawnCount_ = 0;
   snapshotSeq_ = lastSeq_ = 0;
   sendAcc_ = 0;
   localId_ = 0;
 }
 
 bool NetWorld::IsOwner(const Scene& scene, const std::string& object) const {
+  if (IsClient() && !joined_) return false; // nothing is ours before the server's world arrives
   const NetworkObject* no = Comp<NetworkObject>(scene.Find(object), NetworkObject::StaticType());
   return no ? (uint32_t)no->owner == localId_ : settings_.mode != NetMode::Client;
 }
@@ -462,7 +486,9 @@ void NetWorld::HandleClient(Scene& scene, CommandBus& bus, const net::Event& e, 
           if (auto o = objectOf_.find(netId); o != objectOf_.end())
             if (Transform* tr = Comp<Transform>(scene.Find(o->second), Transform::StaticType())) {
               const glm::vec3 p = own->second.prediction.Position();
-              tr->position = {p.x, p.y, p.z};
+              // what moved here since the last move was sent (not in the prediction yet) stays on top
+              const glm::vec3 unsent = glm::vec3(tr->position.x, tr->position.y, tr->position.z) - own->second.last;
+              tr->position = {p.x + unsent.x, p.y + unsent.y, p.z + unsent.z};
               own->second.last = p;
             }
           reconciled = true;
@@ -625,7 +651,9 @@ void NetWorld::ClientSend(Scene& scene, CommandBus&, double now, double) {
         continue;
       }
       const glm::vec3 delta = p - own.last;
-      if (glm::length(delta) < 1e-5f) continue;
+      // moves go out at the object's send rate (what happened since the last one, as one move)
+      if (glm::length(delta) < 1e-5f || now - own.sentAt < 1.0 / std::max(nt->sendRate, 1.f)) continue;
+      own.sentAt = now;
       const uint32_t seq = own.prediction.Add(delta);
       own.last = p;
       BitWriter w;
@@ -667,7 +695,8 @@ void NetWorld::SpawnPlayer(Scene& scene, CommandBus& bus, uint32_t player) {
     else if (o->name.rfind("PlayerStart", 0) == 0) starts.push_back({1000, o->id});
   std::stable_sort(starts.begin(), starts.end(), [](auto& a, auto& b) { return a.first < b.first; });
   glm::vec3 at(0);
-  if (!starts.empty()) at = glm::vec3(scene.WorldMatrix(starts[(players_.size()) % starts.size()].second)[3]);
+  if (!starts.empty()) at = glm::vec3(scene.WorldMatrix(starts[(size_t)spawnCount_ % starts.size()].second)[3]);
+  ++spawnCount_;
   std::string source;
   if (!gm->playerPrefab.ends_with(".prefab"))
     for (SceneObject* o : AllObjects(scene))

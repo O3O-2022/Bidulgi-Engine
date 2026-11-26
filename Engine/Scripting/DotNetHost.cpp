@@ -251,6 +251,7 @@ void DotNetHost::BuildScriptFields(TypeInfo& t, void* defsRef, yyjson_val* field
     FieldInfo x;
     x.name = fname;
     x.flags = kEdit | kSave;
+    if (yyjson_get_bool(yyjson_obj_get(fv, "replicated"))) x.flags |= kReplicated; // C# [Replicated] (round 7)
     x.meta.tooltip = str("tooltip");
     x.meta.header = str("header");
     if (yyjson_val* mn = yyjson_obj_get(fv, "min"), *mx = yyjson_obj_get(fv, "max"); yyjson_is_num(mn) && yyjson_is_num(mx)) {

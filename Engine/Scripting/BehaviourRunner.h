@@ -30,6 +30,10 @@ public:
   int FixedStepsLastFrame() const { return lastFixed_; }
   // Calls `method` (OnCollisionEnter, OnTriggerEnter, ...) on the enabled behaviours of `object` (6-2).
   void SendEvent(const std::string& object, const char* method, const std::string& json);
+  // Round 7 multiplayer: a network call to the behaviour `type` on `object` (args: a JSON array), and an event to every
+  // enabled behaviour (OnPlayerJoined / OnPlayerLeft).
+  void InvokeRpc(const std::string& object, const std::string& type, const std::string& method, const std::string& argsJson);
+  void Broadcast(const char* method, const std::string& json);
 
 private:
   struct Inst {

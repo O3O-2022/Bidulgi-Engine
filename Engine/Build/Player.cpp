@@ -24,6 +24,7 @@
 #include "Render3D/Renderer3D.h"
 #include "Runtime/EditorModel.h"
 #include "Runtime/MaterialLibrary.h"
+#include "Net/NetWorld.h"
 #include "Runtime/PlayMode.h"
 #include "Runtime/SceneView.h"
 #include "Scripting/DataTable.h"
@@ -146,13 +147,101 @@ bdg::QualityTier TierOf(bdg::StartQuality q) {
 }
 } // namespace
 
+// A dedicated server (round 7, --server): the game without a window or graphics, 60 ticks a second until closed
+// (Ctrl+C / the console closing) or --frames.
+static volatile bool g_serverQuit = false;
+static std::string g_sceneOverride; // --scene: play this scene file instead of the project's start scene
+static double g_quitAfter = 0;      // --quit-after: seconds (wall clock), then a normal exit (tests)
+#ifdef _WIN32
+static BOOL WINAPI ServerCtrl(DWORD) { g_serverQuit = true; return TRUE; }
+#endif
+static int RunDedicatedServer(const fs::path& content, const bdg::ProjectSettings& settings, const std::vector<fs::path>& dlls, const fs::path& managed,
+                       const bdg::NetSettings& net, int maxFrames) {
+#ifdef _WIN32
+  SetConsoleCtrlHandler(ServerCtrl, TRUE);
+#endif
+  std::error_code ec;
+  fs::current_path(content, ec);
+  bdg::SetDataFolders({});
+  bdg::AssetDatabase assets;
+  bool haveAssets = false;
+  if (fs::exists(content / "Assets", ec)) {
+    std::string err;
+    haveAssets = assets.Open(U(content / "Assets"), &err, U(content / ".cache" / "assetdb.jsonl"));
+    if (!haveAssets) bdg::LogWarn("server: assets: {}", err);
+  }
+  LoadScripts(dlls, managed);
+  bdg::EditorModel model;
+  model.assets = haveAssets ? &assets : nullptr;
+  const fs::path scene = g_sceneOverride.empty() ? content / bdg::PathU8(settings.maps.gameStartScene) : bdg::PathU8(g_sceneOverride);
+  if (!fs::exists(scene, ec) || !model.OpenScene(U(scene))) {
+    bdg::LogError("server: cannot open the start scene {}", settings.maps.gameStartScene);
+    return 1;
+  }
+  bdg::PlayMode play;
+  play.Scripts().fixedStep = settings.physics.fixedTimestep;
+  play.Scripts().maxFixedSteps = settings.physics.maxFixedSteps;
+  play.physicsSettings.gravity = {settings.physics.gravity.x, settings.physics.gravity.y, settings.physics.gravity.z};
+  play.physicsSettings.gravity2D = {settings.physics.gravity2D.x, settings.physics.gravity2D.y};
+  play.netSettings = net;
+  play.Start(model);
+  if (!play.Net().Active()) {
+    bdg::LogError("server: the network could not be started (port {} in use?)", net.port);
+    play.Stop(model);
+    return 1;
+  }
+  bdg::LogInfo("server: {} on port {}, scene {}", settings.description.name, play.Net().Port(), settings.maps.gameStartScene);
+  using clock = std::chrono::steady_clock;
+  auto last = clock::now();
+  int frames = 0;
+  size_t mostPlayers = 0;
+  const auto startedAt = clock::now();
+  while (!g_serverQuit && (maxFrames <= 0 || frames < maxFrames) &&
+         (g_quitAfter <= 0 || std::chrono::duration<double>(clock::now() - startedAt).count() < g_quitAfter)) {
+    const auto start = clock::now();
+    const double dt = std::clamp(std::chrono::duration<double>(start - last).count(), 0.0, 0.1);
+    last = start;
+    play.Tick(model, maxFrames > 0 ? 1.0 / 60.0 : dt);
+    mostPlayers = std::max(mostPlayers, play.Net().Players().size());
+    ++frames;
+    const double ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();
+    if (ms < 1000.0 / 60.0) bdg::Window::SleepPrecise(1000.0 / 60.0 - ms);
+  }
+  bdg::LogInfo("server: {} ticks, {} player(s) at most, {}", frames, mostPlayers, play.Net().Describe());
+  play.Stop(model);
+  return 0;
+}
+
 extern "C" int bdg_player_main(int argc, const char* const* argv) {
   int maxFrames = 0;
-  std::string project;
+  std::string project, title, logFile;
+  // multiplayer (round 7): --server (a dedicated server: no window), --listen (host and play), --connect host[:port],
+  // --port, --name, --title (window title: "Client 1"), --log (several games in one folder), --sim-latency / -jitter (ms),
+  // --sim-loss (%)
+  bdg::NetSettings net;
+  auto hostPort = [&](const std::string& a) {
+    const size_t colon = a.rfind(':');
+    net.address = colon == std::string::npos ? a : a.substr(0, colon);
+    if (colon != std::string::npos) net.port = (uint16_t)std::atoi(a.c_str() + colon + 1);
+  };
   for (int i = 1; i < argc; ++i) {
-    if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) maxFrames = std::atoi(argv[++i]);
-    else if (!std::strcmp(argv[i], "--project") && i + 1 < argc) project = argv[++i];
+    const bool more = i + 1 < argc;
+    if (!std::strcmp(argv[i], "--frames") && more) maxFrames = std::atoi(argv[++i]);
+    else if (!std::strcmp(argv[i], "--project") && more) project = argv[++i];
+    else if (!std::strcmp(argv[i], "--server")) { net.mode = bdg::NetMode::DedicatedServer; net.address = ""; }
+    else if (!std::strcmp(argv[i], "--listen")) { net.mode = bdg::NetMode::ListenServer; net.address = ""; }
+    else if (!std::strcmp(argv[i], "--connect") && more) { net.mode = bdg::NetMode::Client; hostPort(argv[++i]); }
+    else if (!std::strcmp(argv[i], "--port") && more) net.port = (uint16_t)std::atoi(argv[++i]);
+    else if (!std::strcmp(argv[i], "--name") && more) net.playerName = argv[++i];
+    else if (!std::strcmp(argv[i], "--title") && more) title = argv[++i];
+    else if (!std::strcmp(argv[i], "--log") && more) logFile = argv[++i];
+    else if (!std::strcmp(argv[i], "--scene") && more) g_sceneOverride = argv[++i];
+    else if (!std::strcmp(argv[i], "--quit-after") && more) g_quitAfter = std::atof(argv[++i]);
+    else if (!std::strcmp(argv[i], "--sim-latency") && more) net.sim.latencyMs = (float)std::atof(argv[++i]);
+    else if (!std::strcmp(argv[i], "--sim-jitter") && more) net.sim.jitterMs = (float)std::atof(argv[++i]);
+    else if (!std::strcmp(argv[i], "--sim-loss") && more) net.sim.lossPercent = (float)std::atof(argv[++i]);
   }
+  if (!logFile.empty()) bdg::SetLogFile(fs::absolute(bdg::PathU8(logFile)).string());
   const fs::path exeDir = ExeDir();
   std::error_code ec;
   fs::current_path(exeDir, ec); // Bidulgi.log goes next to the exe (opened by the first log line)
@@ -182,7 +271,8 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   }
   const bdg::ProjectDisplay& d = settings.display;
   bdg::LogInfo("player: {} {} by {} — content {}", settings.description.name, settings.description.version, settings.description.company, U(content));
-
+  if (net.mode == bdg::NetMode::DedicatedServer) return RunDedicatedServer(content, settings, dlls, managed, net, maxFrames);
+  if (!title.empty()) settings.description.name += " — " + title;
   const bool hidden = (maxFrames > 0 && !std::getenv("BDG_SHOW_WINDOW")) || std::getenv("BDG_HIDDEN") != nullptr;
   bdg::Window window;
   if (!window.Create(settings.description.name.c_str(), std::max(d.width, 320), std::max(d.height, 240), hidden)) {
@@ -235,7 +325,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
 
   bdg::EditorModel model;
   model.assets = haveAssets ? &assets : nullptr; // physics reads mesh colliders from the assets
-  const fs::path scene = content / bdg::PathU8(settings.maps.gameStartScene);
+  const fs::path scene = g_sceneOverride.empty() ? content / bdg::PathU8(settings.maps.gameStartScene) : bdg::PathU8(g_sceneOverride);
   if (!fs::exists(scene, ec) || !model.OpenScene(U(scene))) {
     ShowError("시작 장면을 열 수 없습니다: " + settings.maps.gameStartScene);
     return 1;
@@ -246,15 +336,18 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
   play.Scripts().maxFixedSteps = settings.physics.maxFixedSteps;
   play.physicsSettings.gravity = {settings.physics.gravity.x, settings.physics.gravity.y, settings.physics.gravity.z};
   play.physicsSettings.gravity2D = {settings.physics.gravity2D.x, settings.physics.gravity2D.y};
+  play.netSettings = net;
   play.Start(model);
 
   using clock = std::chrono::steady_clock;
   auto last = clock::now();
-  const double period = d.frameLimit > 0 ? 1000.0 / d.frameLimit : 0.0;
+  // a frame limit; a hidden window (tests, extra Play players) has no vsync: 60 fps keeps it from spinning
+  const double period = d.frameLimit > 0 ? 1000.0 / d.frameLimit : hidden && maxFrames <= 0 ? 1000.0 / 60.0 : 0.0;
   int frames = 0;
   bdg::Widget area;
   int32_t shotW = 0, shotH = 0;
   std::vector<uint8_t> shotPixels;
+  const auto startedAt = clock::now();
   while (window.PumpEvents(0)) {
     const auto start = clock::now();
     double dt = std::chrono::duration<double>(start - last).count();
@@ -303,6 +396,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     window.Present();
     ++frames;
     if (maxFrames > 0 && frames >= maxFrames) break;
+    if (g_quitAfter > 0 && std::chrono::duration<double>(clock::now() - startedAt).count() >= g_quitAfter) break;
     if (period > 0) {
       const double ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();
       if (ms < period) bdg::Window::SleepPrecise(period - ms);

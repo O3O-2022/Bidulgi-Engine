@@ -61,6 +61,11 @@ public:
   NetWorld();
   ~NetWorld();
   static NetWorld* Current(); // the game's (scripts); the last one started that is still running
+  // The running game's world even while standalone (play mode sets it), and how scripts start / leave a session
+  // (C# Net.Host / Join / Leave): the game restarts its NetWorld with these settings.
+  static NetWorld* Game();
+  static void SetGame(NetWorld* world, std::function<bool(const NetSettings&, std::string*)> restart);
+  static bool RestartGame(const NetSettings& settings, std::string* error);
 
   bool Start(Scene& scene, CommandBus& bus, const NetSettings& settings, std::string* error = nullptr);
   void Stop();
@@ -122,6 +127,7 @@ private:
   std::map<std::string, uint32_t> netIds_;          // object id -> net id
   std::map<std::string, std::string> fieldsSent_;   // "object|type" -> replicated fields as last sent
   uint32_t nextNetId_ = 1;
+  int spawnCount_ = 0; // players spawned: which PlayerStart is next
   uint32_t snapshotSeq_ = 0;
   double sendAcc_ = 0;
   std::vector<uint32_t> pendingJoins_;
@@ -132,7 +138,7 @@ private:
   uint32_t lastSeq_ = 0;
   double timeOffset_ = 0;
   bool haveOffset_ = false;
-  struct Owned { net::Prediction prediction; glm::vec3 last{0}; bool started = false; };
+  struct Owned { net::Prediction prediction; glm::vec3 last{0}; bool started = false; double sentAt = -1e9; };
   std::map<uint32_t, Owned> owned_;
   double clock_ = 0;
 };

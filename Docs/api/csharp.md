@@ -310,6 +310,43 @@ Entry points the engine calls (UnmanagedCallersOnly: plain C function pointers).
 - `public static T Value<T>(string action)`
 - `public static void EnableContext(string name, bool on = true)` — Turns a mapping context (Input/Contexts/<file>.jsonl, by its "context" name) on or off.
 
+## Net.cs
+
+
+### `public sealed class ReplicatedAttribute : Attribute`
+
+
+### `public sealed class ServerAttribute : Attribute`
+
+
+### `public sealed class ClientAttribute : Attribute`
+
+
+### `public sealed class MulticastAttribute : Attribute`
+
+
+### `public sealed record NetPlayerInfo(int Id, string Name)`
+
+
+### `public sealed record NetStats(float Ping, float Loss, float SendKbps, float ReceiveKbps)`
+
+
+### `public static class Net`
+
+- `public static string Mode`
+- `public static bool IsServer`
+- `public static bool IsClient`
+- `public static bool IsNetworked`
+- `public static int LocalPlayer`
+- `public static List<NetPlayerInfo> Players`
+- `public static NetStats Stats`
+- `public static bool Host(int port = 7777, string name = "Host")` — Becomes a listen server (this game hosts and plays) / joins a server (the world is replaced by the server's).
+- `public static bool Join(string address, int port = 7777, string name = "Player")`
+- `public static void Leave()`
+
+### `public abstract partial class Behaviour`
+
+
 ## Physics.cs
 
 
