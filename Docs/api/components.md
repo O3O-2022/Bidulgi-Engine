@@ -365,6 +365,9 @@
 | `color` | color | `0,0,0,0` |
 | `fillColor` | color | `0.35,0.8,0.4,1` |
 | `value` | float | `1` |
+| `placeholder` | string | — |
+| `options` | string | — |
+| `scroll` | vec2 | `0,0` |
 | `image` | string | — |
 | `cornerRadius` | float | `8` |
 | `visible` | bool | `true` |

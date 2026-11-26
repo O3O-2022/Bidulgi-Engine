@@ -6,9 +6,14 @@
 // drag moves it by the dragged amount in reference pixels, the bottom-right handle resizes it, a drag near the
 // screen's left edge snaps onto it (a guide is shown); the anchor picker turns the title's anchor to bottom right
 // and it stays where it is on screen; Ctrl+Z puts the anchor back in one step; the phone portrait preset keeps the
-// button at its distance from the bottom-right corner and the panel at its top-left offset.
+// button at its distance from the bottom-right corner and the panel at its top-left offset. The palette: a Slider
+// dragged onto the screen lands centred on the drop point, selected, one undo step (Ctrl+Z takes it away); a click on
+// Toggle adds one in the middle. Preview: a click flips the toggle as in the game; leaving the preview puts it back
+// (no undo steps).
 namespace uidesignertest {
-std::string tab = "-", select = "-", move = "-", resize = "-", snap = "-", anchor = "-", undo = "-", resolution = "-";
+std::string tab = "-", select = "-", move = "-", resize = "-", snap = "-", anchor = "-", undo = "-", resolution = "-", palette = "-", preview = "-";
+std::string added;
+float dropX = 0, dropY = 0;
 bdg::GameUI::Rect r0, title0;
 float btnRight = 0, btnBottom = 0, scale0 = 1;
 size_t depth0 = 0;
@@ -148,10 +153,60 @@ void InjectUIDesignerTest(bdg_engine* e, int frame, float scale) {
       bdg::WritePNG(dump, w, h, px.data(), true);
     }
   }
+  if (frame == 26) d.preset = 0; // 16:9 again
+  if (frame == 28) { // drag a Slider from the palette onto the screen
+    depth0 = m->bus.UndoDepth();
+    const bdg::GameUI::Rect sr = d.Screen();
+    dropX = sr.x + sr.w * 0.3f;
+    dropY = sr.y + sr.h * 0.78f;
+    float x, y;
+    if (d.ControlCenter("pal.Slider", x, y)) drag(x, y, dropX - x, dropY - y);
+  }
+  if (frame == 30) {
+    added = m->Selected();
+    bdg::UIElement* s = element(added.c_str());
+    bdg::GameUI::Rect r;
+    const bool placed = s && s->kind == bdg::UIKind::Slider && d.ElementRect(added, r) && approx(r.x + r.w * 0.5f, dropX, 1.f) && approx(r.y + r.h * 0.5f, dropY, 1.f);
+    palette = placed && m->bus.UndoDepth() == depth0 + 1 ? "" : std::format("0(added '{}' placed {} undo {}->{})", added, placed, depth0, m->bus.UndoDepth());
+    bdg::InputEvent z{T::KeyDown};
+    z.key = bdg::Key::Z;
+    z.ctrl = true;
+    e->window.InjectEvent(z);
+  }
+  if (frame == 32) {
+    if (palette.empty()) palette = !m->scene.Find(added) ? "" : "0(undo left it)";
+    float x, y;
+    if (d.ControlCenter("pal.Toggle", x, y)) click(x, y); // a click: in the screen's middle
+  }
+  if (frame == 34) {
+    added = m->Selected();
+    bdg::UIElement* t = element(added.c_str());
+    bdg::GameUI::Rect r;
+    const bdg::GameUI::Rect sr = d.Screen();
+    if (palette.empty())
+      palette = t && t->kind == bdg::UIKind::Toggle && t->value == 1.f && d.ElementRect(added, r) && approx(r.x + r.w * 0.5f, sr.x + sr.w * 0.5f, 1.f) ? "1" : "0(toggle)";
+    depth0 = m->bus.UndoDepth();
+    float x, y;
+    if (d.ControlCenter("preview", x, y)) click(x, y);
+  }
+  if (frame == 36) {
+    bdg::GameUI::Rect r;
+    if (d.ElementRect(added, r)) click(r.x + 20, r.y + r.h * 0.5f); // on the toggle, running
+  }
+  if (frame == 38) {
+    bdg::UIElement* t = element(added.c_str());
+    preview = d.preview && t && t->value == 0.f ? "" : std::format("0(preview {} value {})", d.preview, t ? t->value : -1);
+    float x, y;
+    if (d.ControlCenter("preview", x, y)) click(x, y); // off: the toggle as it was
+  }
+  if (frame == 40) {
+    bdg::UIElement* t = element(added.c_str());
+    if (preview.empty()) preview = !d.preview && t && t->value == 1.f && m->bus.UndoDepth() == depth0 ? "1" : std::format("0(after: value {} undo {}->{})", t ? t->value : -1, depth0, m->bus.UndoDepth());
+  }
 }
 void ReportUIDesignerTest(bdg_engine*) {
   using namespace uidesignertest;
-  bdg::LogInfo("uidesigner test: tab={} select={} move={} resize={} snap={} anchor={} undo={} resolution={}", tab, select, move, resize, snap, anchor, undo,
-               resolution);
+  bdg::LogInfo("uidesigner test: tab={} select={} move={} resize={} snap={} anchor={} undo={} resolution={} palette={} preview={}", tab, select, move,
+               resize, snap, anchor, undo, resolution, palette, preview);
 }
 BDG_EDITOR_TEST("BDG_UIDESIGNER_TEST", InjectUIDesignerTest, ReportUIDesignerTest)

@@ -86,6 +86,10 @@ public:
   // The mouse as the game got it (game UI buttons, 7-3): position in the fed events' units, button 1 left 2 middle 3 right.
   glm::vec2 MousePosition() const { return lastMouse_; }
   bool MouseButton(int button) const { return button >= 0 && button < 4 && mouse_[button]; }
+  // For the game UI's input fields and scroll views (7-3): what was typed, Backspaces, Enter, wheel notches since
+  // the last call (then cleared).
+  struct UIKeys { std::string text; int backspaces = 0; bool enter = false; float wheel = 0; };
+  UIKeys TakeUIKeys();
 
 private:
   float KeyValue(const std::string& key, const GamepadState& pad) const; // a button / axis source, 0..1 (sticks: magnitude)
@@ -100,5 +104,6 @@ private:
   glm::vec2 mouseDelta_{0}, lastMouse_{0};
   bool haveMouse_ = false;
   float wheel_ = 0;
+  UIKeys uiKeys_;
 };
 }

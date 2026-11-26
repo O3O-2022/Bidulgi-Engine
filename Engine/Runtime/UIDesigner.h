@@ -9,6 +9,8 @@
 //     parent's and the siblings' (guide lines), Ctrl turns snapping off; arrow keys nudge (Shift x10). The anchor
 //     picker (9 points + stretch) changes the anchor and keeps the element where it is on screen. Two or more
 //     selected: align left / centre / right / top / middle / bottom, distribute across / down.
+//   - Palette (left): drag an element kind onto the screen (or click it: the screen's middle) to add it there, inside
+//     the panel or canvas under the drop point; with no canvas in the scene one is made first. One undo step.
 //   - Every edit is "set UIElement.*" commands, one command group per drag or click: one undo step each.
 #include "GameUI/GameUI.h"
 #include "Platform/Window.h"
@@ -35,6 +37,7 @@ public:
   void HandleEvents(std::vector<InputEvent>& events, const Widget& view, EditorModel& model, UIContext& ui);
   void Draw(Widget& view, UIContext& ui, EditorModel& model, Font* font, RHI& rhi, const std::string& assetsDir);
   void Shutdown(RHI& rhi) { game_.Shutdown(rhi); }
+  const GameUI& Running() const { return game_; } // the preview's UI (tests: dropdown rows)
 
   // Test hooks (UI units, the last Draw)
   GameUI::Rect Screen() const { return screen_; }
@@ -43,11 +46,15 @@ public:
   bool ControlCenter(const std::string& name, float& x, float& y) const; // toolbar controls ("preset", "anchor", ...)
   int Guides() const { return (int)guides_.size(); }      // snap guide lines shown by the last drag step
   void SetAnchor(EditorModel& model, int anchor);         // what the anchor picker does (0..8, 9 = stretch)
+  // What dropping a palette item does: adds a `kind` element (UIKind name) centred on the UI point; returns its id.
+  std::string AddElement(EditorModel& model, const std::string& kind, float x, float y);
+  static const std::vector<std::string>& PaletteKinds();
 
 private:
   struct Control { std::string name; float x, y, w, h; };
   struct Guide { bool vertical; float at, from, to; };
-  enum class Drag { None, Move, Resize, Pan };
+  enum class Drag { None, Move, Resize, Pan, Place };
+  std::string placeKind_; // palette item being dragged
   GameUI game_;
   GameUI::Rect screen_{}, view_{};
   std::vector<GameUI::Placed> placed_;
@@ -61,6 +68,10 @@ private:
   bool anchorOpen_ = false, spaceHeld_ = false, mouseDown_ = false;
   float mouseX_ = 0, mouseY_ = 0;
   UIContext* ui_ = nullptr;
+  GameUI::Pointer previewKeys_; // preview: wheel / typing since the last Draw
+  struct Kept { std::string id; float value; std::string text; Vec2 scroll; int32_t clicks; };
+  std::vector<Kept> kept_;      // the values the preview may change, put back when it ends
+  bool previewWas_ = false;
 
   const GameUI::Placed* Find(const std::string& id) const;
   void Layout(const Widget& view, EditorModel& model);

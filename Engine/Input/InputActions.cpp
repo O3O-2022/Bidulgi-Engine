@@ -188,7 +188,12 @@ void InputSystem::Feed(const InputEvent& ev) {
   ctrl_ = ev.ctrl;
   alt_ = ev.alt;
   switch (ev.type) {
-    case T::KeyDown: if (ev.key != Key::None) keys_.insert(ev.key); break;
+    case T::KeyDown:
+      if (ev.key != Key::None) keys_.insert(ev.key);
+      if (ev.key == Key::Backspace) ++uiKeys_.backspaces;
+      if (ev.key == Key::Enter) uiKeys_.enter = true;
+      break;
+    case T::Text: uiKeys_.text += ev.text; break;
     case T::KeyUp: keys_.erase(ev.key); break;
     case T::MouseDown: if (ev.button >= 1 && ev.button <= 3) mouse_[ev.button] = true; break;
     case T::MouseUp: if (ev.button >= 1 && ev.button <= 3) mouse_[ev.button] = false; break;
@@ -197,9 +202,18 @@ void InputSystem::Feed(const InputEvent& ev) {
       lastMouse_ = {ev.x, ev.y};
       haveMouse_ = true;
       break;
-    case T::Wheel: wheel_ += ev.wheel; break;
+    case T::Wheel:
+      wheel_ += ev.wheel;
+      uiKeys_.wheel += ev.wheel;
+      break;
     default: break;
   }
+}
+
+InputSystem::UIKeys InputSystem::TakeUIKeys() {
+  UIKeys k = std::move(uiKeys_);
+  uiKeys_ = {};
+  return k;
 }
 
 void InputSystem::ReleaseAll() {

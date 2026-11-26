@@ -1082,8 +1082,10 @@ bdg::GameUI& GameViewUI() {
 void DrawGameViewUI(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
   if (!e->model) return;
   const bdg::GameUI::Rect r{w.x, w.y, w.w, w.h};
-  const bdg::InputSystem& in = bdg::InputSystem::Instance();
-  if (e->play.Playing() && in.gameFocused) GameViewUI().Input(e->model->scene, r, in.MousePosition().x, in.MousePosition().y, in.MouseButton(1));
+  bdg::InputSystem& in = bdg::InputSystem::Instance();
+  const bdg::InputSystem::UIKeys keys = in.TakeUIKeys(); // typed text, Backspace, Enter, wheel (input fields, scroll views)
+  if (e->play.Playing() && in.gameFocused)
+    GameViewUI().Input(e->model->scene, r, {in.MousePosition().x, in.MousePosition().y, in.MouseButton(1), keys.wheel, keys.text, keys.backspaces, keys.enter});
   const std::string assets = e->assetsOpen ? e->assets.Root() : (std::filesystem::current_path() / "Assets").string();
   GameViewUI().Draw(e->model->scene, ui.Batch(), e->hasFont ? &e->font : nullptr, e->rhi, r, assets);
 }
@@ -1373,6 +1375,8 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
           if (e->model && dropped.id.starts_with("p.item.") && dropped.id.ends_with(".prefab")) e->sceneView->PlacePrefab(*e->model, dropped.id.substr(7));
         };
       }
+      if (const char* ws = std::getenv("BDG_WORKSPACE")) // the workspace tab to start in (screenshots): 3 = UI Designer
+        if (bdg::Widget* tabs = e->editor->Find("ws.tabs")) tabs->selectedIndex = std::clamp(std::atoi(ws), 0, (int)tabs->items.size() - 1);
       if (bdg::Widget* game = e->editor->Find("game")) // the scene from its camera (3-6)
         game->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) {
           e->sceneView->DrawGame(w, ui, e->play.Playing() ? e->play.Time() : -1.0);
