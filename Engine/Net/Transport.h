@@ -54,7 +54,9 @@ public:
   bool Listen(uint16_t port, int maxClients, std::string* error = nullptr, const std::string& bindAddress = {});
   bool Connect(const std::string& host, uint16_t port, std::string* error = nullptr); // Connected arrives through Poll
   void Disconnect(uint32_t peer = 0);  // 0 = everyone (server) / the server (client); polite, Disconnected follows
-  void Close();                        // at once, no goodbye (the other end times out)
+  // At once. goodbye: peers still connected get a last unacknowledged "goodbye" (so they need not time out, e.g. when
+  // a polite Disconnect could not finish); false = vanish like a crash (the other end times out: tests).
+  void Close(bool goodbye = true);
   void Send(uint32_t peer, Channel channel, const void* data, size_t size);
   void Broadcast(Channel channel, const void* data, size_t size); // server: every connected client
   // Services the network for `now` (seconds, any steady clock) and appends what happened. Call every frame.

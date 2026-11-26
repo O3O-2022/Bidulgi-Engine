@@ -71,6 +71,8 @@ struct Widget {
   std::string composing;                      // IME composition shown at the cursor, not yet committed
   std::vector<std::string> undoStack, redoStack;
   std::function<void(Widget&)> onCommit;      // Enter pressed or focus left after edits
+  std::function<void(Widget&)> onEdit;        // the text changed while typing (each key: live search boxes)
+  std::string placeholder;                    // Field: shown dimmed while empty ("검색…"); a Field without a label uses its whole width
   // Field as a slider (BPROPERTY Range): drag inside the box sets the value; typing still works.
   bool slider = false, sliderInteger = false;
   bool marked = false; // Field: changed while playing (3-6b): accent label and a dot

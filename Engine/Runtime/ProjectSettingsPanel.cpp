@@ -59,6 +59,15 @@ void ProjectSettingsPanel::Build(Widget& parent, UIContext& ui, ProjectSettings&
   auto& saveBtn = head.Add(MakeButton("ps.save", "저장", true));
   saveBtn.tooltip = "ProjectSettings/Project.json에 저장 (기본값과 다른 값만)";
   saveBtn.onClick = [save](Widget&) { if (save) save(); };
+  // UI review B8 (U17): a search box: the rows whose name, key or help matches stay, their cards open
+  auto& searchRow = parent.Add(MakeBox(Axis::Row, 8));
+  searchRow.padL = 10; searchRow.padR = 10; searchRow.padB = 2;
+  auto& search = searchRow.Add(MakeField("ps.search", "", ""));
+  search.placeholder = "검색…";
+  search.width = Length::Fill();
+  search.tooltip = "설정 찾기: 이름(중력), 키(physics.gravity) 또는 설명";
+  Widget* panel = &parent;
+  search.onEdit = search.onCommit = [panel](Widget& w) { Filter(*panel, w.text2); };
   auto& issues = parent.Add(MakeBox(Axis::Column, 2));
   issues.id = "ps.issues";
   issues.padL = 12;
@@ -113,6 +122,28 @@ void ProjectSettingsPanel::Build(Widget& parent, UIContext& ui, ProjectSettings&
     }
   }
   ui.ForgetRemovedWidgets();
+}
+
+void ProjectSettingsPanel::Filter(Widget& parent, const std::string& query) {
+  const bool searching = query.find_first_not_of(' ') != std::string::npos;
+  for (auto& card : parent.children) {
+    if (card->kind != WidgetKind::Card || card->id.rfind("ps.", 0) != 0) continue;
+    if (!searching) { // back as built: every row, the first card open
+      for (auto& row : card->children) row->hidden = false;
+      card->hidden = false;
+      card->collapsed = card->id != "ps.description";
+      continue;
+    }
+    bool any = false;
+    for (auto& row : card->children) {
+      const bool isRow = row->id.rfind("ps.", 0) == 0;
+      const bool hit = isRow && EditorModel::SearchMatches(query, {row->text, row->id.substr(3), row->tooltip});
+      row->hidden = !hit; // captions hide while searching
+      any = any || hit;
+    }
+    card->hidden = !any;
+    card->collapsed = !any;
+  }
 }
 
 void ProjectSettingsPanel::Refresh(UIContext& ui, const ProjectSettings& s, bool dirty) {

@@ -226,6 +226,17 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_LANG_TEST = '1' } 30
           if ($log -notmatch 'lang test: names=1 tooltip=1 card=1 mixed=1 search=1') { $errors += 'language rule test (U12) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # UI review B8: search boxes with real clicks and typing: Hierarchy (name, t:Light), Inspector (the Korean field name),
+          # Project (every folder, t:texture; the ⋯ view menu), Project Settings (중력 opens the physics card)
+          $sa = Join-Path $PWD 'ci-search'
+          Remove-Item -Recurse -Force $sa -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$sa/Icons" | Out-Null
+          Copy-Item Assets/Icons/*.png "$sa/Icons/"
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_SEARCH_TEST = '1'; BDG_ASSETS = $sa } 60
+          if ($log -notmatch 'search test: hierarchy=1 types=1 back=1 inspector=1 project=1 kind=1 more=1 settings=1') { $errors += 'search boxes test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $sa -ErrorAction SilentlyContinue
 
           # 17) Project panel (queue 2-5): real asset folder, C++ .h/.cpp shown as one class item, renamed together
           $proj = "$PWD/ci-project/Assets"
@@ -701,12 +712,17 @@ jobs:
           $nt = Join-Path $env:RUNNER_TEMP 'bdg-net'
           Remove-Item -Recurse -Force $nt -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $nt | Out-Null
-          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 6000
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 100000
           if ($log -notmatch 'net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1') {
             $errors += 'multiplayer test failed'
             Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }
           }
           if ($log -match '(net test: [^\r\n]*)') { Write-Host "::notice::$($Matches[1])" }
+          # the editor ending while it plays (frames run out mid-test) takes its client windows with it (a Windows job)
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 300
+          Start-Sleep -Seconds 2
+          $orphans = @(Get-Process BidulgiPlayer -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$PWD*" })
+          if ($orphans.Count -gt 0) { $errors += "the editor left $($orphans.Count) player process(es) running"; $orphans | Stop-Process -Force }
           # 6-VFX P-1 particles: a ParticleSystem flame in front of the game camera: live count = rate x time, then rate x
           # lifetime, particles die, the Game view is brighter with them (pixels); a 3000 burst is cut to 500 at potato,
           # whole at ultra; Stop clears all

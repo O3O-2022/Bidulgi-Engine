@@ -206,7 +206,7 @@ void InjectPreviewTest(bdg_engine* e, int frame) {
   }
   if (ready && frame == ready + 9) {
     v[6] = std::format("{}", m->InspectedAsset().empty() && !e->editor->Find("insp.preview") && m->Selected() == "g8" ? 1 : 0);
-    click("p.layout");
+    m->SetProjectTiles(!m->projectTiles); // the view button is in the Project ⋯ menu now (UI review B8; BDG_SEARCH_TEST clicks it)
   }
   if (ready && frame == ready + 12) {
     bdg::Widget* row = e->editor->Find("p.item.T_Red.png");
@@ -376,7 +376,7 @@ void InjectRefsTest(bdg_engine* e, int frame) {
   }
   if (frame == 8) {
     v[1] = std::format("{}", m->Selected() == "g6" ? 1 : 0);
-    click("p.unused");
+    m->ShowProjectView(bdg::EditorModel::ProjectView::Unused); // in the Project ⋯ menu now (UI review B8)
   }
   if (frame == 10) {
     const auto unused = m->FindUnused();
@@ -1296,7 +1296,7 @@ BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)
 // getting the world, and the first client's leaving cleaning up its player everywhere. Every stage waits for what it
 // needs (a join, a move, the late joiner's world, the goodbye) with a generous time limit, so slow machines (software
 // OpenGL: clients take seconds to start) pass the same way; client 1 leaves when the check writes its --quit-file.
-// The editor quits when done. Run with --frames 6000 (a ceiling).
+// The editor quits when done (at most 400 s). Run with --frames 100000: a ceiling that is never what ends it.
 void InjectNetTest(bdg_engine* e, int frame, float) {
   bdg::EditorModel* m = e->model.get();
   if (!m) return;
@@ -1351,6 +1351,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     ps.options.players = 2;
     ps.options.port = 0;
     ps.options.lossPercent = 10;
+    // a starved frame on software GL (three processes on a small CI machine) must not drop peers: 30 s, not 5 s
+    ps.options.timeoutMs = std::getenv("BDG_NET_TEST_TIMEOUT") ? (uint32_t)std::atoi(std::getenv("BDG_NET_TEST_TIMEOUT")) : 30000u; // ms
     ps.options.projectDir = dir;
     quitFile = (fs::path(dir) / ".cache" / "net" / "leave-client1").string();
     fs::remove(fs::path(quitFile), ec);
@@ -1380,6 +1382,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
   }
   if (stage == 3 && ((byName("Player 2").size() && client2Has("net probe: start player Player 1")) || seconds(launched2) > 120)) {
     joined2 = clock::now(); // client 2 is in and has the world: client 1 may go
+    if (const char* stall = std::getenv("BDG_NET_TEST_STALL")) // a starved frame (software GL on a busy CI machine), seconds
+      std::this_thread::sleep_for(std::chrono::milliseconds((int)(std::atof(stall) * 1000)));
     std::ofstream(fs::path(quitFile), std::ios::binary) << "leave";
     leaveAt = clock::now();
     stage = 4;
@@ -1389,8 +1393,12 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     for (size_t at = c2log.find("net probe: onrep score="); at != std::string::npos; at = c2log.find("net probe: onrep score=", at + 1)) ++n;
     return n;
   };
-  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 60)) {
+  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 90)) {
     stage = 5; // client 1 has left, the server and client 2 cleaned up
+  }
+  if (stage >= 1 && stage < 5 && seconds(started) > 400) { // the overall wall-clock limit (the stages have their own)
+    bdg::LogError("net test: stage {} still waiting after {:.0f} s", stage, seconds(started));
+    stage = 5;
   }
   if (stage == 5) {
     const bool p1Gone = !m->scene.Find(p1);
@@ -1700,3 +1708,117 @@ void InjectLangTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_LANG_TEST", InjectLangTest, nullptr)
+
+// Scripted check of UI review B8 (BDG_SEARCH_TEST=1 with BDG_ASSETS = a copy of Assets/Icons in an Icons folder, --frames
+// 60): real clicks and typing in the four search boxes. Hierarchy: "main cam" leaves Main Camera, "t:Light" only the
+// lights, empty brings the tree back. Inspector (Sun): the Korean "강도" leaves Light's Intensity. Project (at the
+// Assets root): "light" finds the icons in Icons/ (every folder), "t:texture camera" narrows to comp-camera.png; the
+// ⋯ menu switches tiles / list. Project Settings: "중력" opens the physics card on its gravity rows, hides the rest.
+namespace searchtest {
+std::string hier = "-", types = "-", back = "-", insp = "-", proj = "-", kind = "-", more = "-", settings = "-";
+bool tiles0 = false;
+}
+void InjectSearchTest(bdg_engine* e, int frame, float scale) {
+  using namespace searchtest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  auto clickAt = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+  };
+  auto click = [&](const char* id) {
+    bdg::Widget* w = ui.Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("search test: {} is not on screen", id); return; }
+    clickAt(w->x + w->w * 0.5f, w->y + w->h * 0.5f);
+  };
+  auto type = [&](const std::string& text) { // select all, then type (an empty text clears)
+    bdg::InputEvent a{T::KeyDown};
+    a.key = bdg::Key::A;
+    a.ctrl = true;
+    e->window.InjectEvent(a);
+    if (text.empty()) {
+      bdg::InputEvent b{T::KeyDown};
+      b.key = bdg::Key::Backspace;
+      e->window.InjectEvent(b);
+    } else {
+      bdg::InputEvent t{T::Text};
+      t.text = text;
+      e->window.InjectEvent(t);
+    }
+  };
+  auto rows = [&] { // the object ids the Hierarchy lists
+    std::vector<std::string> ids;
+    if (bdg::Widget* h = ui.Find("hierarchy"))
+      for (auto& c : h->children)
+        if (c->kind == bdg::WidgetKind::ListRow && c->id.rfind("h.", 0) == 0 && c->id != "h.scene") ids.push_back(c->id.substr(2));
+    return ids;
+  };
+  if (frame == 2)
+    if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) dw->dock->SelectPanel("project");
+  if (frame == 4) click("h.search");
+  if (frame == 6) type("main cam");
+  if (frame == 9) {
+    const auto ids = rows();
+    hier = ids.size() == 1 && m->scene.Find(ids[0]) && m->scene.Find(ids[0])->name == "Main Camera" ? "1" : std::format("0({} rows)", ids.size());
+    type("t:Light");
+  }
+  if (frame == 12) {
+    const auto ids = rows();
+    bool lights = ids.size() >= 2;
+    for (const std::string& id : ids) lights = lights && m->scene.Find(id) && m->scene.Find(id)->Find("Light");
+    types = lights ? "1" : std::format("0({} rows)", ids.size());
+    type("");
+  }
+  if (frame == 15) {
+    back = rows().size() >= 8 ? "1" : std::format("0({} rows)", rows().size());
+    std::string sun;
+    for (const std::string& r : m->scene.Roots())
+      if (m->scene.Find(r)->name == "Sun") sun = r;
+    click(("h." + sun).c_str());
+  }
+  if (frame == 18) click("insp.search");
+  if (frame == 20) type("강도");
+  if (frame == 23) {
+    insp = ui.Find("f.Light.intensity") && !ui.Find("f.Light.color") && !ui.Find("f.Transform.position") ? "1" : "0";
+    click("p.search");
+  }
+  if (frame == 25) type("light");
+  if (frame == 28) {
+    proj = ui.Find("p.item.Icons/comp-light.png") && ui.Find("p.item.Icons/comp-light-probe.png") && !ui.Find("p.item.Icons/comp-camera.png") &&
+                   !ui.Find("p.item.Icons") ? "1" : "0";
+    type("t:texture camera");
+  }
+  if (frame == 31) {
+    kind = ui.Find("p.item.Icons/comp-camera.png") && !ui.Find("p.item.Icons/comp-light.png") ? "1" : "0";
+    tiles0 = m->projectTiles;
+    click("p.more");
+  }
+  if (frame == 33) { // the ⋯ menu: tiles / list
+    const auto& items = ui.Menu();
+    for (size_t i = 0; i < items.size(); ++i)
+      if (items[i].label == "목록으로 보기" || items[i].label == "타일로 보기") {
+        float x, y, w, h;
+        if (ui.MenuItemRect(i, x, y, w, h)) clickAt(x + w * 0.5f, y + h * 0.5f);
+      }
+  }
+  if (frame == 36) {
+    more = m->projectTiles != tiles0 ? "1" : "0";
+    if (bdg::Widget* dw = ui.Find("dock"); dw && dw->dock) dw->dock->SelectPanel("settings");
+  }
+  if (frame == 38) click("ps.search");
+  if (frame == 40) type("중력");
+  if (frame == 43) {
+    bdg::Widget* physics = ui.Find("ps.physics");
+    bdg::Widget* gravity = ui.Find("ps.physics.gravity");
+    bdg::Widget* fixed = ui.Find("ps.physics.fixedTimestep");
+    bdg::Widget* desc = ui.Find("ps.description");
+    settings = physics && !physics->hidden && !physics->collapsed && gravity && !gravity->hidden && fixed && fixed->hidden && desc && desc->hidden ? "1" : "0";
+    bdg::LogInfo("search test: hierarchy={} types={} back={} inspector={} project={} kind={} more={} settings={}", hier, types, back, insp, proj, kind,
+                 more, settings);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_SEARCH_TEST", InjectSearchTest, nullptr)

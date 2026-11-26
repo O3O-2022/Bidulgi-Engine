@@ -16,6 +16,8 @@ struct ProjectSettingsPanel {
                     std::function<void()> save);
   // After a change or a save: the unsaved badge and the problems list.
   static void Refresh(UIContext& ui, const ProjectSettings& settings, bool dirty);
+  // The search box (UI review B8): rows whose label, key or help match stay (their cards open); "" shows all again.
+  static void Filter(Widget& parent, const std::string& query);
 };
 
 } // namespace bdg

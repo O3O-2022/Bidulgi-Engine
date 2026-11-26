@@ -86,6 +86,7 @@ void PlaySession::BeforePlay(PlayMode& play, const EditorModel& model) {
   s.sim.latencyMs = options.latencyMs;
   s.sim.jitterMs = options.jitterMs;
   s.sim.lossPercent = options.lossPercent;
+  s.timeoutMs = options.timeoutMs;
   NetMode mode = options.mode;
   if (mode == NetMode::Standalone && options.players > 1) mode = NetMode::ListenServer;
   s.mode = mode;
@@ -133,6 +134,7 @@ bool PlaySession::Launch(const std::string& title, std::vector<std::string> args
   if (options.latencyMs > 0) args.insert(args.end(), {"--sim-latency", std::format("{}", options.latencyMs)});
   if (options.jitterMs > 0) args.insert(args.end(), {"--sim-jitter", std::format("{}", options.jitterMs)});
   if (options.lossPercent > 0) args.insert(args.end(), {"--sim-loss", std::format("{}", options.lossPercent)});
+  if (options.timeoutMs != 5000) args.insert(args.end(), {"--net-timeout", std::format("{}", options.timeoutMs / 1000.0)});
   args.insert(args.end(), options.extraArgs.begin(), options.extraArgs.end());
   const fs::path exe = PlayerExe();
   std::wstring cmd = Quote(exe.wstring());
@@ -140,10 +142,19 @@ bool PlaySession::Launch(const std::string& title, std::vector<std::string> args
   STARTUPINFOW si{};
   si.cb = sizeof si;
   PROCESS_INFORMATION pi{};
-  if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, exe.parent_path().c_str(), &si, &pi)) {
+  if (!job_) { // every player this editor starts lives in one job that dies with the editor (closed or crashed)
+    job_ = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (job_) SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+  }
+  // started suspended so it is in the job before it runs a single instruction
+  if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED, nullptr, exe.parent_path().c_str(), &si, &pi)) {
     LogError("play: cannot start {} ({}): error {}", title, U(exe), GetLastError());
     return false;
   }
+  if (job_ && !AssignProcessToJobObject(job_, pi.hProcess)) LogWarn("play: {} is not tied to the editor (error {})", title, GetLastError());
+  ResumeThread(pi.hThread);
   CloseHandle(pi.hThread);
   procs_.push_back({title, U(log), pi.hProcess});
   LogInfo("play: started {} (process {})", title, pi.dwProcessId);

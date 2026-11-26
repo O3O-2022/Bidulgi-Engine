@@ -126,8 +126,12 @@ void Transport::Disconnect(uint32_t peer) {
   enet_host_flush(host_);
 }
 
-void Transport::Close() {
+void Transport::Close(bool goodbye) {
   if (!host_) return;
+  // a goodbye that has not gone through (the other end did not answer in time, e.g. a stalled frame): say it once more
+  // without waiting, so the other end learns it the moment it reads its socket instead of after its whole timeout
+  for (auto& [id, p] : peers_)
+    if (goodbye && p->state != ENET_PEER_STATE_DISCONNECTED && p->state != ENET_PEER_STATE_ZOMBIE) enet_peer_disconnect_now(p, 1);
   Hosts().erase(host_);
   enet_host_destroy(host_);
   host_ = nullptr;

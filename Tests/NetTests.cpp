@@ -116,7 +116,7 @@ TEST_CASE("net transport: connect, reliable order under loss, unreliable, latenc
   CHECK(c2.Connect("127.0.0.1", s2.Port(), &err));
   std::vector<Event> e2s, e2c;
   CHECK(Pump(s2, c2, e2s, e2c, 3, [&] { return Count(e2s, Event::Type::Connected) == 1; }));
-  c2.Close();
+  c2.Close(false); // vanishes like a crash: no goodbye
   bool timedOut = false;
   std::vector<Event> none;
   Transport idle;

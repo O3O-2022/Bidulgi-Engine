@@ -171,7 +171,10 @@ TEST_CASE("net world: server + 2 clients in one process with loss: spawn, sync, 
 
   // the first player leaves: its player goes on the server and on the other client
   a.net.Stop();
-  frames(60);
+  // until the goodbye (or, if it was lost, the 5 s transport timeout) has gone through on the server and on client b: up to 10 s
+  // (a fixed 60 frames, ~0.5 s, failed about 1 run in 3 under 10 % loss)
+  auto gone = [&] { return !s.scene.Find(p1) && !b.scene.Find(p1) && s.net.Players().size() == 1 && b.net.Players().size() == 1; };
+  for (const double end = now() + 10; now() < end && !gone();) frames(1);
   CHECK(!s.scene.Find(p1) && !b.scene.Find(p1) && s.net.Players().size() == 1 && b.net.Players().size() == 1 && b.scene.Find(p2));
   CHECK(s.net.Count().spawned >= 3 && s.net.Transport().Stats(2).bytesSent > 0);
   b.net.Stop();

@@ -274,6 +274,7 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     else if (!std::strcmp(argv[i], "--sim-latency") && more) net.sim.latencyMs = (float)std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-jitter") && more) net.sim.jitterMs = (float)std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sim-loss") && more) net.sim.lossPercent = (float)std::atof(argv[++i]);
+    else if (!std::strcmp(argv[i], "--net-timeout") && more) net.timeoutMs = (uint32_t)(std::atof(argv[++i]) * 1000); // seconds
   }
   if (!logFile.empty()) bdg::SetLogFile(bdg::PathToU8(fs::absolute(bdg::PathU8(logFile))));
   const fs::path exeDir = ExeDir();
