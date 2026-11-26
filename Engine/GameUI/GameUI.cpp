@@ -41,6 +41,11 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
   // scroll and clipped to it
   auto place = [&](auto&& self, const SceneObject& o, const Rect& parent, float s, bool clipped, const Rect& clip, std::vector<Item>& out) -> float {
     float bottom = 0; // the lowest child edge below the parent's top (reference pixels): a scroll view's content height
+    const Component* oc = const_cast<SceneObject&>(o).Find("UIElement"); // (Find is not const)
+    const UIElement* group = oc ? static_cast<const UIElement*>(oc->data) : nullptr;
+    const UILayout layout = group ? group->layout : UILayout::None;
+    float cursor = 0; // layout: where the next child goes (reference pixels from the padded edge)
+    int slot = 0;     // grid: the next cell
     for (const std::string& id : o.children) {
       SceneObject* c = scene.Find(id);
       if (!c) continue;
@@ -49,7 +54,23 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
       auto* e = static_cast<UIElement*>(comp->data);
       if (!e->visible) continue; // hidden with its children
       Rect r;
-      if (e->anchor == UIAnchor::Stretch) {
+      const bool laidOut = layout != UILayout::None;
+      if (laidOut) { // the parent's layout group places it
+        const float pad = group->padding, gap = group->spacing;
+        if (layout == UILayout::Horizontal) {
+          r = {parent.x + (pad + cursor) * s, parent.y + pad * s, e->size.x * s, e->size.y * s};
+          cursor += e->size.x + gap;
+        } else if (layout == UILayout::Vertical) {
+          r = {parent.x + pad * s, parent.y + (pad + cursor) * s, e->size.x * s, e->size.y * s};
+          cursor += e->size.y + gap;
+        } else { // grid: as many cells across as fit
+          const Vec2 cell{std::max(group->cellSize.x, 1.f), std::max(group->cellSize.y, 1.f)};
+          const int cols = std::max(1, (int)std::floor((parent.w / std::max(s, 1e-6f) - 2 * pad + gap) / (cell.x + gap)));
+          const int col = slot % cols, row = slot / cols;
+          r = {parent.x + (pad + col * (cell.x + gap)) * s, parent.y + (pad + row * (cell.y + gap)) * s, cell.x * s, cell.y * s};
+          ++slot;
+        }
+      } else if (e->anchor == UIAnchor::Stretch) {
         r = {parent.x + e->position.x * s, parent.y + e->position.y * s, parent.w - (e->position.x + e->size.x) * s,
              parent.h - (e->position.y + e->size.y) * s};
       } else {
@@ -61,7 +82,7 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
         r.y = parent.y + ay * parent.h + e->position.y * s - ay * r.h;
       }
       bottom = std::max(bottom, (r.y + r.h - parent.y) / std::max(s, 1e-6f));
-      out.push_back({c->id, e, r, s, 0, o.id, canvasId, parent, clipped, clip, 0});
+      out.push_back({c->id, e, r, s, 0, o.id, canvasId, parent, clipped, clip, 0, laidOut});
       const size_t self_ = out.size() - 1;
       if (e->kind == UIKind::ScrollView) { // the content moves up by the scroll and is cut at the view's edges
         Rect inner = r;
@@ -259,7 +280,7 @@ void GameUI::Draw(Scene& scene, Batch2D& b, Font* font, RHI& rhi, const Rect& vi
       case UIKind::Image: {
         auto it = images_.find(e.image);
         if (it == images_.end()) {
-          TextureHandle t{};
+          Image t{};
           int32_t w = 0, h = 0;
           std::vector<uint8_t> rgba;
           const std::filesystem::path p = PathU8(assetsDir) / PathU8(e.image);
@@ -268,14 +289,24 @@ void GameUI::Draw(Scene& scene, Batch2D& b, Font* font, RHI& rhi, const Rect& vi
             d.w = w;
             d.h = h;
             d.mipmaps = true;
-            t = rhi.CreateTexture(d, rgba.data());
+            t = {rhi.CreateTexture(d, rgba.data()), w, h};
           } else if (!e.image.empty()) {
             LogWarn("ui: image {} not found under {}", e.image, assetsDir);
           }
           it = images_.emplace(e.image, t).first;
         }
-        if (it->second.Valid()) b.Image(i.r.x, i.r.y, i.r.w, i.r.h, it->second, 0, 0, 1, 1, e.color.a > 0 ? e.color : Color{1, 1, 1, 1});
-        else if (e.color.a > 0) b.Rect(i.r.x, i.r.y, i.r.w, i.r.h, e.color, rad);
+        const Color tint = e.color.a > 0 ? e.color : Color{1, 1, 1, 1};
+        if (it->second.t.Valid() && e.slice > 0) { // 9-slice: corners keep their size
+          Rect parts[9];
+          float uv[9][4];
+          NineSlice(i.r, e.slice * s, e.slice, it->second.w, it->second.h, parts, uv);
+          for (int k = 0; k < 9; ++k)
+            if (parts[k].w > 0 && parts[k].h > 0) b.Image(parts[k].x, parts[k].y, parts[k].w, parts[k].h, it->second.t, uv[k][0], uv[k][1], uv[k][2], uv[k][3], tint);
+        } else if (it->second.t.Valid()) {
+          b.Image(i.r.x, i.r.y, i.r.w, i.r.h, it->second.t, 0, 0, 1, 1, tint);
+        } else if (e.color.a > 0) {
+          b.Rect(i.r.x, i.r.y, i.r.w, i.r.h, e.color, rad);
+        }
         break;
       }
       case UIKind::Button: {
@@ -374,14 +405,30 @@ void GameUI::Draw(Scene& scene, Batch2D& b, Font* font, RHI& rhi, const Rect& vi
 
 void GameUI::Shutdown(RHI& rhi) {
   for (auto& [path, t] : images_)
-    if (t.Valid()) rhi.DestroyTexture(t);
+    if (t.t.Valid()) rhi.DestroyTexture(t.t);
   images_.clear();
+}
+
+void GameUI::NineSlice(const Rect& r, float border, float slicePx, int texW, int texH, Rect out[9], float uv[9][4]) {
+  const float bx = std::clamp(border, 0.f, r.w * 0.5f), by = std::clamp(border, 0.f, r.h * 0.5f);
+  const float ux = texW > 0 ? std::clamp(slicePx / (float)texW, 0.f, 0.5f) : 0.f, vy = texH > 0 ? std::clamp(slicePx / (float)texH, 0.f, 0.5f) : 0.f;
+  const float xs[4] = {r.x, r.x + bx, r.x + r.w - bx, r.x + r.w}, ys[4] = {r.y, r.y + by, r.y + r.h - by, r.y + r.h};
+  const float us[4] = {0, ux, 1 - ux, 1}, vs[4] = {0, vy, 1 - vy, 1};
+  for (int row = 0; row < 3; ++row)
+    for (int col = 0; col < 3; ++col) {
+      const int k = row * 3 + col;
+      out[k] = {xs[col], ys[row], xs[col + 1] - xs[col], ys[row + 1] - ys[row]};
+      uv[k][0] = us[col];
+      uv[k][1] = vs[row];
+      uv[k][2] = us[col + 1];
+      uv[k][3] = vs[row + 1];
+    }
 }
 
 std::vector<GameUI::Placed> GameUI::Placement() const {
   std::vector<Placed> out;
   out.reserve(layout_.size());
-  for (const Item& i : layout_) out.push_back({i.object, i.parent, i.canvas, i.r, i.parentRect, i.scale, i.clipped, i.clip});
+  for (const Item& i : layout_) out.push_back({i.object, i.parent, i.canvas, i.r, i.parentRect, i.scale, i.clipped, i.clip, i.laidOut});
   return out;
 }
 

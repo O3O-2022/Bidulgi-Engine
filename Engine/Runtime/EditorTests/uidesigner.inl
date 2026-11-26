@@ -210,3 +210,39 @@ void ReportUIDesignerTest(bdg_engine*) {
                resize, snap, anchor, undo, resolution, palette, preview);
 }
 BDG_EDITOR_TEST("BDG_UIDESIGNER_TEST", InjectUIDesignerTest, ReportUIDesignerTest)
+
+// BDG_UICSHARP_TEST=1 (BDG_SCRIPT_ASSEMBLIES = the samples): the C# UIProbe drives a toggle, slider, input field,
+// dropdown and scroll view through UI.Toggle / Slider / Input / Dropdown / ScrollView while playing: reading, setting,
+// OnChanged once per change, a missing element as a stand-in.
+namespace uicsharptest {
+std::string probe;
+}
+void InjectUICSharpTest(bdg_engine* e, int frame, float) {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return;
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) gfxtest::Run(m, "del", id, "{}");
+    bdg::SetLogHook([](bdg::LogLevel, std::string_view l) { if (l.rfind("ui probe: ", 0) == 0) uicsharptest::probe = l; });
+    gfxtest::Run(m, "add", "", R"({"id":"pcan","name":"HUD"})");
+    gfxtest::Run(m, "addcomp", "pcan", R"({"type":"UICanvas"})");
+    const char* controls[][2] = {{"probe_sound", R"("kind":"Toggle","value":1,"text":"Sound")"},
+                                 {"probe_volume", R"("kind":"Slider","position":[0,80],"value":0.5)"},
+                                 {"probe_name", R"("kind":"InputField","position":[0,160],"placeholder":"Name")"},
+                                 {"probe_quality", R"("kind":"Dropdown","position":[0,240],"options":"Low|Mid|High","value":0)"},
+                                 {"probe_list", R"("kind":"ScrollView","position":[400,0],"size":[300,200])"}};
+    for (auto& c : controls) {
+      gfxtest::Run(m, "add", "", std::format(R"({{"id":"{}","name":"{}","parent":"pcan"}})", c[0], c[0]));
+      gfxtest::Run(m, "addcomp", c[0], std::format(R"({{"type":"UIElement","value":{{{}}}}})", c[1]));
+    }
+    gfxtest::Run(m, "add", "", R"({"id":"pdrv","name":"Driver"})");
+    gfxtest::Run(m, "addcomp", "pdrv", R"({"type":"UIProbe"})");
+  }
+  if (frame == 4) TogglePlay(e);
+  if (frame == 20) TogglePlay(e);
+}
+void ReportUICSharpTest(bdg_engine*) {
+  bdg::SetLogHook({});
+  bdg::LogInfo("uicsharp test: {}", uicsharptest::probe.empty() ? std::string("(no probe line)") : uicsharptest::probe);
+}
+BDG_EDITOR_TEST("BDG_UICSHARP_TEST", InjectUICSharpTest, ReportUICSharpTest)

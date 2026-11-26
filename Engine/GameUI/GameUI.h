@@ -43,13 +43,18 @@ public:
   bool ElementRect(const std::string& objectId, Rect& out) const; // after Layout (tests, tools)
   // Where each element was placed by the last Layout, in drawing order (the UI designer turns dragged rects back
   // into anchor / position / size with the parent's rect and the canvas scale).
-  struct Placed { std::string object, parent, canvas; Rect r, parentRect; float scale = 1; bool clipped = false; Rect clip; }; // clip: inside a scroll view
+  // clip: inside a scroll view; laidOut: placed by its parent's layout group (its position is not used)
+  struct Placed { std::string object, parent, canvas; Rect r, parentRect; float scale = 1; bool clipped = false; Rect clip; bool laidOut = false; };
   std::vector<Placed> Placement() const;
   size_t Elements() const { return layout_.size(); }
   int Clicks() const { return clicks_; } // clicks seen since the view started (tests)
   const std::string& Focused() const { return focused_; } // the input field that has the keyboard ("" = none)
   // A dropdown's open list: the row rect of option `index` (after Draw / Input); false when that list is not open.
   bool DropdownRow(const std::string& objectId, int index, Rect& out) const;
+  // 9-slice: the rect cut into 3 x 3 parts with `border` (in the rect's units, at most half of it) and the matching
+  // texture coordinates for a texW x texH image whose border is `slicePx` image pixels. Fills 9 (x, y, w, h) and
+  // (u0, v0, u1, v1), row by row from the top left.
+  static void NineSlice(const Rect& r, float border, float slicePx, int texW, int texH, Rect out[9], float uv[9][4]);
 
 private:
   struct Item {
@@ -63,11 +68,13 @@ private:
     bool clipped = false;       // inside a scroll view: drawn and hit only within `clip`
     Rect clip;
     float contentH = 0;         // scroll views: how tall their content is (reference pixels)
+    bool laidOut = false;       // placed by the parent's layout group
   };
   const Item* Hit(float x, float y, bool controlsOnly) const;
   std::vector<std::string> Options(const UIElement& e) const;
   std::vector<Item> layout_; // drawing order
-  std::map<std::string, TextureHandle> images_;
+  struct Image { TextureHandle t; int w = 0, h = 0; };
+  std::map<std::string, Image> images_;
   std::string pressedOn_;    // object id of the control the press started on
   std::string sliding_;      // slider being dragged
   std::string focused_;      // input field with the keyboard

@@ -7,6 +7,9 @@
 // Controls (round 7): Toggle (value 0 / 1, a click flips it), Slider (value 0..1, dragged), InputField (text typed
 // after a click; placeholder while empty), ScrollView (clips its children; the wheel scrolls them), Dropdown
 // (options "A|B|C", value = the chosen index; a click opens the list).
+// Layout groups: an element with a layout places its children in a row, a column or a grid (their own anchor and
+// position are not used; their size is, or the grid's cell size). Images with a slice border draw 9-sliced: the
+// corners keep their size, the edges stretch one way, the middle both (panels and buttons from one small image).
 #include "Core/Reflection.h"
 #include <string>
 
@@ -18,6 +21,8 @@ BENUM()
 enum class UIKind { Panel, Text, Image, Button, ProgressBar, Toggle, Slider, InputField, ScrollView, Dropdown };
 BENUM()
 enum class UITextAlign { Left, Center, Right };
+BENUM()
+enum class UILayout { None, Horizontal, Vertical, Grid };
 
 BCLASS(Component)
 struct UICanvas {
@@ -49,6 +54,11 @@ public:
   BPROPERTY(Edit, Tooltip = "Scroll view: how far its content is scrolled (reference pixels, +y down)") Vec2 scroll;
   BPROPERTY(Edit, Tooltip = "Image file (Assets-relative): PNG, JPG") std::string image;
   BPROPERTY(Edit, Range = "0,200") float cornerRadius = 8.f;
+  BPROPERTY(Edit, Range = "0,512", Tooltip = "Image: border kept unstretched, in the image's pixels (9-slice); 0 = stretched whole") float slice = 0.f;
+  BPROPERTY(Edit, Header = "Layout", Tooltip = "Places the children in a row, a column or a grid (their anchor and position are not used)") UILayout layout = UILayout::None;
+  BPROPERTY(Edit, Range = "0,1000", Tooltip = "Layout: gap between children (reference pixels)") float spacing = 8.f;
+  BPROPERTY(Edit, Range = "0,1000", Tooltip = "Layout: space inside the edges (reference pixels)") float padding = 0.f;
+  BPROPERTY(Edit, Tooltip = "Grid layout: each child's cell (reference pixels)") Vec2 cellSize{100, 100};
   BPROPERTY(Edit) bool visible = true;
   BPROPERTY(Edit, Tooltip = "Buttons react to the mouse") bool interactable = true;
   BPROPERTY(ReadOnly, Tooltip = "Times this button was clicked while playing (scripts read it)") int32_t clicks = 0;

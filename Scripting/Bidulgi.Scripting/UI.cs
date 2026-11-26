@@ -6,6 +6,8 @@
 //   if (UI.Button("restart").clicked) Restart();          // true once per click
 //   UI.Button("restart").OnClick(Restart);                  // or: called on each click while this behaviour runs
 //   UI.Image("crosshair").visible = aiming;
+//   UI.Toggle("sound").OnChanged(on => Audio.SetGroupVolume("Music", on ? 1 : 0));
+//   float v = UI.Slider("volume").value;  string who = UI.Input("name").text;  int q = UI.Dropdown("quality").index;
 //
 // A missing element is a warning and a stand-in that ignores everything (no exception), like Find.
 using System;
@@ -63,6 +65,42 @@ public sealed class UIButton : UIWidget {
   public Timer OnClick(Action action) => Game.Every(1e-4f, () => { while (clicked) action(); }, first: 0);
 }
 
+// Controls (round 7). Each OnChanged calls `action` with the new value whenever it changes (a click, a drag, typing
+// or a script), while the calling behaviour runs (cancelled with it, like After / Every).
+public sealed class UIToggle : UIWidget {
+  internal UIToggle(GameObject go) : base(go) {}
+  public bool on { get => (Element?.Value ?? 0) >= 0.5f; set { if (Element != null && on != value) Element.Value = value ? 1 : 0; } }
+  public Timer OnChanged(Action<bool> action) => UI.Watch(() => on, action);
+}
+public sealed class UISlider : UIWidget {
+  internal UISlider(GameObject go) : base(go) {}
+  // 0..1
+  public float value { get => Element?.Value ?? 0; set { float v = Math.Clamp(value, 0, 1); if (Element != null && MathF.Abs(Element.Value - v) > 1e-4f) Element.Value = v; } }
+  public Timer OnChanged(Action<float> action) => UI.Watch(() => value, action);
+}
+public sealed class UIInput : UIWidget {
+  internal UIInput(GameObject go) : base(go) {}
+  public string placeholder { get => Element?.Placeholder ?? ""; set { if (Element != null) Element.Placeholder = value; } }
+  public Timer OnChanged(Action<string> action) => UI.Watch(() => text, action);
+}
+public sealed class UIDropdown : UIWidget {
+  internal UIDropdown(GameObject go) : base(go) {}
+  // The chosen option, 0 = the first.
+  public int index { get => (int)MathF.Round(Element?.Value ?? 0); set { if (Element != null && index != value) Element.Value = value; } }
+  public string[] options {
+    get => (Element?.Options ?? "").Split('|', StringSplitOptions.RemoveEmptyEntries);
+    set { if (Element != null) Element.Options = string.Join("|", value); }
+  }
+  // The chosen option's text ("" when the index is outside the options).
+  public string selected { get { string[] o = options; int i = index; return i >= 0 && i < o.Length ? o[i] : ""; } }
+  public Timer OnChanged(Action<int> action) => UI.Watch(() => index, action);
+}
+public sealed class UIScrollView : UIWidget {
+  internal UIScrollView(GameObject go) : base(go) {}
+  // How far the content is scrolled down (reference pixels).
+  public float scroll { get => Element?.Scroll.Y ?? 0; set { if (Element != null) Element.Scroll = new Vector2(Element.Scroll.X, MathF.Max(value, 0)); } }
+}
+
 public static class UI {
   static readonly Dictionary<string, GameObject> s_byName = new();
   static readonly Dictionary<string, int> s_seen = new();
@@ -72,6 +110,22 @@ public static class UI {
   public static UIImage Image(string name) => new(Get(name));
   public static UIPanel Panel(string name) => new(Get(name));
   public static UIBar Bar(string name) => new(Get(name));
+  public static UIToggle Toggle(string name) => new(Get(name));
+  public static UISlider Slider(string name) => new(Get(name));
+  public static UIInput Input(string name) => new(Get(name));
+  public static UIDropdown Dropdown(string name) => new(Get(name));
+  public static UIScrollView ScrollView(string name) => new(Get(name));
+
+  // Calls `action` with the value each time it differs from the last one seen (checked every frame).
+  internal static Timer Watch<T>(Func<T> read, Action<T> action) {
+    T last = read();
+    return Game.Every(1e-4f, () => {
+      T now = read();
+      if (EqualityComparer<T>.Default.Equals(now, last)) return;
+      last = now;
+      action(now);
+    }, first: 0);
+  }
 
   static GameObject Get(string name) {
     if (s_byName.TryGetValue(name, out GameObject? g) && g.IsValid) return g;
