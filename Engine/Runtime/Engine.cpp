@@ -1067,72 +1067,6 @@ void SetupShortcuts(bdg_engine* e) {
 // File, Edit, Assets, GameObject, Component, Build, Window, Help open lists of what the editor can do; an item with
 // a shortcut shows it at the right (from the shortcut table, so a changed binding shows its new keys).
 namespace {
-// A new object of a kind ("empty", "cube", "light.point", "camera", "ui.button", ...) at the Scene view's pivot (UI
-// elements in the first canvas, a canvas made when there is none), under `parent` when given; one undo step,
-// selected. Returns its id ("" = unknown kind).
-std::string CreateObject(bdg_engine* e, const std::string& kind, const std::string& parent = "") {
-  bdg::EditorModel* m = e->model.get();
-  if (!m) return "";
-  struct Kind { const char* id; const char* name; };
-  static const Kind kinds[] = {{"empty", "GameObject"}, {"cube", "Cube"}, {"sphere", "Sphere"}, {"plane", "Plane"}, {"cylinder", "Cylinder"},
-                               {"cone", "Cone"}, {"light.directional", "Directional Light"}, {"light.point", "Point Light"},
-                               {"light.spot", "Spot Light"}, {"camera", "Camera"}, {"ui.canvas", "Canvas"}, {"ui.text", "Text"},
-                               {"ui.button", "Button"}, {"ui.image", "Image"}, {"ui.panel", "Panel"}};
-  const Kind* k = nullptr;
-  for (const Kind& c : kinds)
-    if (kind == c.id) k = &c;
-  if (!k) return "";
-  auto unique = [&](std::string base) {
-    for (char& c : base) c = c == ' ' ? '_' : (char)std::tolower((unsigned char)c);
-    std::string id = base;
-    for (int n = 2; m->scene.Find(id); ++n) id = std::format("{}{}", base, n);
-    return id;
-  };
-  auto run = [&](const char* name, const std::string& target, const std::string& args) {
-    bdg::Command c;
-    c.name = name;
-    c.target = target;
-    c.args = args;
-    std::string err;
-    if (!m->bus.Execute(c, &err)) bdg::LogWarn("create: {} {}: {}", name, target, err);
-  };
-  m->bus.BeginGroup(std::string("Create ") + k->name, "ui");
-  std::string under = parent;
-  const bool ui = kind.starts_with("ui.") && kind != "ui.canvas";
-  if (ui && under.empty()) { // UI elements live under a canvas
-    for (const std::string& r : m->scene.Roots())
-      if (bdg::SceneObject* o = m->scene.Find(r); o && o->Find("UICanvas")) { under = r; break; }
-    if (under.empty()) {
-      under = unique("Canvas");
-      run("add", "", std::format(R"({{"id":"{}","name":"Canvas"}})", under));
-      run("addcomp", under, R"({"type":"UICanvas"})");
-    }
-  }
-  const std::string id = unique(k->name);
-  run("add", "", std::format(R"({{"id":"{}","name":"{}","parent":"{}"}})", id, k->name, under));
-  if (!kind.starts_with("ui.") && e->sceneView && under.empty()) {
-    const glm::vec3 p = e->sceneView->camera.pivot;
-    run("set", id, std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", p.x, p.y, p.z));
-  }
-  if (kind == "cube" || kind == "sphere" || kind == "plane" || kind == "cylinder" || kind == "cone")
-    run("addcomp", id, std::format(R"({{"type":"MeshRenderer","value":{{"mesh":"{}"}}}})", k->name));
-  else if (kind == "light.directional") {
-    run("set", id, R"({"path":"Transform.rotation","value":[-50,30,0]})");
-    run("addcomp", id, R"({"type":"Light","value":{"type":"Directional"}})");
-  } else if (kind == "light.point") run("addcomp", id, R"({"type":"Light","value":{"type":"Point"}})");
-  else if (kind == "light.spot") run("addcomp", id, R"({"type":"Light","value":{"type":"Spot"}})");
-  else if (kind == "camera") run("addcomp", id, R"({"type":"Camera"})");
-  else if (kind == "ui.canvas") run("addcomp", id, R"({"type":"UICanvas"})");
-  else if (kind == "ui.text") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Text","anchor":"Center","size":[320,60],"text":"Text"}})");
-  else if (kind == "ui.button") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Button","anchor":"Center","size":[280,72],"text":"Button"}})");
-  else if (kind == "ui.image") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Image","anchor":"Center","size":[200,200],"color":[1,1,1,1]}})");
-  else if (kind == "ui.panel") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Panel","anchor":"Center","size":[400,300],"color":[0.15,0.17,0.22,0.9]}})");
-  m->bus.EndGroup();
-  m->Select(id);
-  bdg::LogInfo("create: {} ({})", id, k->name);
-  return id;
-}
-
 // A new file in the Project panel's current folder (unique name), then selected there.
 void NewAssetFile(bdg_engine* e, const std::string& stem, const std::string& ext, const std::string& content) {
   if (!e->assetsOpen || !e->model) return;
@@ -1313,36 +1247,22 @@ void SetupMenuBar(bdg_engine* e) {
             {"새 폴더", [e] { NewAssetFile(e, "New Folder", "", ""); }, open},
             {"새 C# 스크립트", [e] { NewAssetFile(e, "NewBehaviour", ".cs", "using Bidulgi;\n\npublic class NewBehaviour : Behaviour {\n  void Update() {\n  }\n}\n"); }, open},
             {"새 머티리얼", [e] { NewAssetFile(e, "NewMaterial", ".material", bdg::SaveMaterial(bdg::MaterialDef{})); }, open}};
-    } else if (name == "gameobject") {
-      auto make = [e](const char* kind) { return [e, kind] { CreateObject(e, kind); }; };
-      it = {{"빈 오브젝트", make("empty"), true, false, has("edit.createEmpty") ? keys("edit.createEmpty") : std::string()},
-            {"3D 도형 ▸", sub(x, y, {{"Cube", make("cube")}, {"Sphere", make("sphere")}, {"Plane", make("plane")}, {"Cylinder", make("cylinder")}, {"Cone", make("cone")}})},
-            {"라이트 ▸", sub(x, y, {{"Directional Light", make("light.directional")}, {"Point Light", make("light.point")}, {"Spot Light", make("light.spot")}})},
-            {"카메라", make("camera")},
-            {"UI ▸", sub(x, y, {{"Canvas", make("ui.canvas")}, {"Text", make("ui.text")}, {"Button", make("ui.button")}, {"Image", make("ui.image")}, {"Panel", make("ui.panel")}})}};
-    } else if (name == "component") {
-      // every component type, searchable, read when the item is picked (the selection then); the ones the
-      // selection has are greyed
-      it = {{"컴포넌트 추가… ▸", [ui, x, y, e] {
-               bdg::EditorModel* em = e->model.get();
-               bdg::SceneObject* o = em ? em->scene.Find(em->Selected()) : nullptr;
-               if (!o) return;
-               std::vector<Item> comps;
-               for (const bdg::TypeInfo* t : bdg::Registry::Instance().Types()) {
-                 if (std::find(t->tags.begin(), t->tags.end(), "Component") == t->tags.end() || t->name == "Transform") continue;
-                 const std::string type = t->name, target = o->id;
-                 comps.push_back({type, [em, type, target] {
-                                    bdg::Command c;
-                                    c.name = "addcomp";
-                                    c.target = target;
-                                    c.args = std::format(R"({{"type":"{}"}})", type);
-                                    std::string err;
-                                    if (!em->bus.Execute(c, &err)) bdg::LogWarn("add component: {}", err);
-                                  }, o->Find(t->name) == nullptr});
-               }
-               std::sort(comps.begin(), comps.end(), [](const Item& l, const Item& r) { return l.label < r.label; });
-               ui->OpenMenu(x, y, comps, true);
-             }, selected}};
+    } else if (name == "gameobject") { // the kinds of the Hierarchy's "+" menu (EditorModel), a submenu per group
+      std::vector<Item> groups;
+      std::vector<std::pair<std::string, std::vector<Item>>> byGroup;
+      for (const bdg::EditorModel::CreateKind& k : bdg::EditorModel::CreateKinds()) {
+        Item item{k.label, [m, key = std::string(k.key)] { if (m) m->CreateObject(key); }, m != nullptr};
+        if (std::string_view(k.key) == "empty") item.keys = keys("edit.createEmpty");
+        if (!*k.group) {
+          it.push_back(std::move(item));
+          continue;
+        }
+        if (byGroup.empty() || byGroup.back().first != k.group) byGroup.push_back({k.group, {}});
+        byGroup.back().second.push_back(std::move(item));
+      }
+      for (auto& [group, items] : byGroup) it.push_back({group + " ▸", sub(x, y, std::move(items)), m != nullptr});
+    } else if (name == "component") { // the Inspector's Add Component list (EditorModel): grouped, searchable
+      it = {{"컴포넌트 추가…", [e, x, y] { if (e->model) e->model->OpenAddComponentMenu(x, y); }, selected}};
     } else if (name == "build") {
       it = {{"빌드", [e] { RunBuild(e, false); }}, {"검사만", [e] { RunBuild(e, true); }}};
     } else if (name == "window") {

@@ -2,7 +2,7 @@
 // batches). Included by Engine.cpp after uidesigner.inl.
 
 // BDG_MENUBAR_TEST=1 (UI review B2): the menu bar with real clicks. Every menu opens a list; Save shows its shortcut;
-// GameObject > 3D 도형 > Cube adds a cube (one undo step, selected); Edit > 실행 취소 takes it away; Window > 패널 열기
+// GameObject > 3D 도형 > 큐브 adds a cube (one undo step, selected); Edit > 실행 취소 takes it away; Window > 패널 열기
 // > Console shows the Console; Component > 컴포넌트 추가… > AudioSource adds it to the selection.
 namespace menubartest {
 std::string open = "-", keys = "-", create = "-", undo = "-", panel = "-", component = "-";
@@ -68,7 +68,7 @@ void InjectMenuBarTest(bdg_engine* e, int frame, float scale) {
     clickWidget("menu.gameobject");
   }
   if (frame == 32) pick("3D 도형 ▸");
-  if (frame == 34) pick("Cube");
+  if (frame == 34) pick("큐브");
   if (frame == 36) {
     bdg::SceneObject* o = m->scene.Find(m->Selected());
     bdg::Component* mr = o ? o->Find("MeshRenderer") : nullptr;
@@ -92,13 +92,13 @@ void InjectMenuBarTest(bdg_engine* e, int frame, float scale) {
     m->Select("mbobj");
   }
   if (frame == 47) clickWidget("menu.component"); // the selection is in place when the menu is made
-  if (frame == 49) pick("컴포넌트 추가… ▸");
+  if (frame == 49) pick("컴포넌트 추가…");
   if (frame == 50) { // the list is searchable: type to narrow it, as a user would
     bdg::InputEvent t{T::Text};
-    t.text = "AudioS";
+    t.text = "Audio S";
     e->window.InjectEvent(t);
   }
-  if (frame == 52) pick("AudioSource");
+  if (frame == 52) pick("Audio Source");
   if (frame == 54) {
     bdg::SceneObject* o = m->scene.Find("mbobj");
     component = o && o->Find("AudioSource") ? "1" : "0";
