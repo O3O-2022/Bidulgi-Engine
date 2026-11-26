@@ -384,6 +384,10 @@ jobs:
           $newproj = "$env:RUNNER_TEMP/bdg-newproj"; Remove-Item -Recurse -Force $newproj -ErrorAction SilentlyContinue; New-Item -ItemType Directory $newproj | Out-Null
           $log = Invoke-Editor 'Release' @{ BDG_EMPTYWS_TEST = '1'; BDG_DIALOG_ANSWER = $newproj } 22
           if ($log -notmatch 'emptyws test: empty=1 tabs=1 back=1 project=1') { $errors += 'empty workspace test failed' }
+          # UI review B10: top toolbar - icon buttons 28x24 with tooltips naming their keys, badges 24 high, the speed list
+          # (a real click sets 2x), pause lights / unlights on real clicks, Korean texts
+          $log = Invoke-Editor 'Release' @{ BDG_TOPBAR_TEST = '1' } 14
+          if ($log -notmatch 'topbar test: tips=1 size=1 badge=1 korean=1 speed=1 pause=1') { $errors += 'top toolbar test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

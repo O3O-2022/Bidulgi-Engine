@@ -538,12 +538,10 @@ void InjectPlayTest(bdg_engine* e, int frame) {
     v[9] = std::format("{}", e->play.Frames() == frames0 + 1 && std::abs(e->play.Time() - time0 - bdg::PlayMode::kStepSeconds) < 1e-9 &&
                                      e->play.Paused() ? 1 : 0);
     SetPlayPaused(e, false);
-    if (bdg::Widget* f = e->editor->Find("tool.timescale"); f && f->onCommit) {
-      f->text2 = "9"; // clamped to 4x
-      f->onCommit(*f);
-      v[10] = std::format("{}", e->play.TimeScale() == 4.f && f->text2 == "4" ? 1 : 0);
-      f->text2 = "1";
-      f->onCommit(*f);
+    if (bdg::Widget* f = e->editor->Find("tool.timescale")) {
+      SetTimeScale(e, 9); // clamped to 4x
+      v[10] = std::format("{}", e->play.TimeScale() == 4.f && f->text == "4×" ? 1 : 0);
+      SetTimeScale(e, 1);
     }
   }
   if (frame == 8) {

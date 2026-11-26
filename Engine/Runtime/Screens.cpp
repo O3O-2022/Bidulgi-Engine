@@ -67,6 +67,27 @@ void PushFrameTime(float ms) {
 }
 
 namespace {
+// Icon buttons of the top toolbar (UI review U11): drawn as shapes, since the font has no pause / step / chevron
+// glyphs. 28 x 24 (size-icon-button); w.primary = lit (paused); w.text names it for screen readers.
+void DrawToolIcon(Widget& w, UIContext& ui) {
+  const Theme& t = ui.Tokens();
+  Batch2D& b = ui.Batch();
+  const Color fill = w.primary ? t.C("accent") : w.hovered ? t.C("line-strong") : t.C("raise");
+  b.Rect(w.x, w.y, w.w, w.h, w.pressed ? Alpha(fill, 0.8f) : fill, t.N("radius-md", 4), 1, w.primary ? t.C("accent") : w.hovered ? t.C("fg-faint") : t.C("line-strong"));
+  const Color fg = w.primary ? t.C("on-accent") : t.C("fg");
+  const float cx = w.x + w.w * 0.5f, cy = w.y + w.h * 0.5f;
+  if (w.id == "tool.pause") {
+    b.Rect(cx - 5, cy - 6, 3.5f, 12, fg, 1);
+    b.Rect(cx + 1.5f, cy - 6, 3.5f, 12, fg, 1);
+  } else if (w.id == "tool.step") {
+    b.Triangle(cx - 6, cy - 6, 8, 12, fg);
+    b.Rect(cx + 3, cy - 6, 3, 12, fg, 1);
+  } else { // tool.playopts: a chevron pointing down
+    const float tri[4][2] = {{cx - 5, cy - 2.5f}, {cx + 5, cy - 2.5f}, {cx, cy + 3.5f}, {cx, cy + 3.5f}};
+    b.Quad(tri, fg);
+  }
+}
+
 // Brand mark in the menu bar: amber rounded square with a "B" (the logo's beak colour).
 void DrawBrandMark(Widget& w, UIContext& ui) {
   const Theme& t = ui.Tokens();
@@ -188,19 +209,25 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto& wsTabs = ws.Add(MakeTabs("ws.tabs", {"Level", "Graph", "Animation", "UI Designer", "Scripting"}, 0));
   wsTabs.variant = 1;
   ws.Add(Spacer());
-  ws.Add(MakeButton("tool.play", "▶  Play", true));
-  ws.Add(MakeButton("tool.playopts", "▾")).id = "tool.playopts"; // multiplayer Play options (round 7): net mode, players, network
-  ws.Add(MakeButton("tool.pause", "||"));
-  ws.Add(MakeButton("tool.step", "▶|"));
-  auto& speed = ws.Add(MakeField("tool.timescale", "속도", "1")); // game time scale (3-6b)
-  speed.slider = true;
-  speed.sliderMin = 0.1;
-  speed.sliderMax = 4;
-  speed.width = Length::Px(150);
+  ws.Add(MakeButton("tool.play", "▶  플레이", true)); // tooltips with the current keys: Engine.cpp
+  // icon buttons (UI review U11): multiplayer Play options (round 7), pause, one frame
+  for (auto [id, name] : {std::pair{"tool.playopts", "플레이 옵션"}, std::pair{"tool.pause", "일시정지"}, std::pair{"tool.step", "한 프레임 진행"}}) {
+    auto& icon = ws.Add(MakeCustom(id, DrawToolIcon));
+    icon.text = name;
+    icon.width = Length::Px(28);
+    icon.height = Length::Px(24);
+  }
+  auto& speed = ws.Add(MakeButton("tool.timescale", "1×")); // game time scale (3-6b): a click lists 0.1× .. 4× (U22)
+  speed.width = Length::Px(56);
+  speed.tooltip = "게임 속도 (플레이 중 시간 배율)";
   ws.Add(Spacer());
-  ws.Add(MakeBadge("보통")).id = "tool.quality"; // quality tier; a click steps through the project's tiers (3-5)
-  ws.Add(MakeBadge("Windows")).id = "tool.platform"; // target platform of the budget bars; a click steps (3-7)
-  ws.Add(MakeButton("tool.build", "Build"));
+  for (auto [id, text, tip] : {std::tuple{"tool.quality", "보통", "품질 단계 (누르면 다음 단계)"}, std::tuple{"tool.platform", "Windows", "예산 막대의 대상 플랫폼 (누르면 다음)"}}) {
+    auto& badge = ws.Add(MakeBadge(text)); // quality tier (3-5) / budget platform (3-7); a click steps
+    badge.id = id;
+    badge.height = Length::Px(24); // a click target of 24 px (U19)
+    badge.tooltip = tip;
+  }
+  ws.Add(MakeButton("tool.build", "빌드")).tooltip = "게임을 빌드합니다 (결과는 Console)";
 
   // Main area: docked panels (drag splitters to resize, drag tabs to move; layout saved per user).
   auto state = std::make_shared<DockState>();
