@@ -951,6 +951,7 @@ void RebuildShortcutList(bdg_engine* e) {
 void TogglePlay(bdg_engine* e); // play mode (3-6), below
 void SetPlayPaused(bdg_engine* e, bool paused);
 void StepPlay(bdg_engine* e);
+void SetToolbarTips(bdg_engine* e); // tooltips with the preset's keys, below
 
 void UsePreset(bdg_engine* e, const char* preset) {
   e->shortcuts.ApplyPreset(preset);
@@ -958,6 +959,7 @@ void UsePreset(bdg_engine* e, const char* preset) {
   bdg::LogInfo("shortcuts: preset {} saved to {}", preset, e->shortcutsPath);
   if (bdg::Widget* b = e->editor->Find("shortcut.banner")) b->hidden = true;
   RebuildShortcutList(e);
+  SetToolbarTips(e);
 }
 
 namespace {
@@ -1331,6 +1333,26 @@ void SetPlayPaused(bdg_engine* e, bool paused) {
   bdg::LogInfo("play: {}", paused ? "paused" : "resumed");
 }
 
+// The game speed (clamped by PlayMode), shown on the toolbar as "1×".
+void SetTimeScale(bdg_engine* e, float scale) {
+  e->play.SetTimeScale(scale);
+  if (bdg::Widget* b = e->editor->Find("tool.timescale")) b->text = std::format("{:g}×", std::round(e->play.TimeScale() * 100) / 100);
+}
+
+// Tooltips of the toolbar's play controls, with the keys of the current preset (UI review U11).
+void SetToolbarTips(bdg_engine* e) {
+  auto tip = [e](const char* id, const char* text, const char* action) {
+    if (bdg::Widget* w = e->editor->Find(id)) {
+      const std::string keys = action ? e->shortcuts.KeysOf(action) : std::string();
+      w->tooltip = keys.empty() ? std::string(text) : std::format("{} ({})", text, keys);
+    }
+  };
+  tip("tool.play", "플레이 / 정지", "play.toggle");
+  tip("tool.playopts", "플레이 옵션: 넷 모드 · 플레이어 수 · 네트워크", nullptr);
+  tip("tool.pause", "일시정지", "play.pause");
+  tip("tool.step", "한 프레임 진행", "play.step");
+}
+
 void StepPlay(bdg_engine* e) {
   if (!e->play.Playing()) return;
   e->play.Step();
@@ -1364,7 +1386,7 @@ void TogglePlay(bdg_engine* e) {
       banner->hidden = false;
     }
   }
-  if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  Stop" : "▶  Play";
+  if (bdg::Widget* b = e->editor->Find("tool.play")) b->text = m->playing ? "■  정지" : "▶  플레이";
   bdg::LogInfo("play: {}", m->playing ? "on" : "off");
 }
 
@@ -1624,14 +1646,13 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
         b->onClick = [e](bdg::Widget& w) { bdg::PlaySession::Instance().OpenMenu(*e->editor, w); };
       if (bdg::Widget* b = e->editor->Find("tool.pause")) b->onClick = [e](bdg::Widget&) { SetPlayPaused(e, !e->play.Paused()); };
       if (bdg::Widget* b = e->editor->Find("tool.step")) b->onClick = [e](bdg::Widget&) { StepPlay(e); };
-      if (bdg::Widget* f = e->editor->Find("tool.timescale")) {
-        auto apply = [e](bdg::Widget& w) {
-          e->play.SetTimeScale((float)std::atof(w.text2.c_str()));
-          w.text2 = std::format("{:g}", std::round(e->play.TimeScale() * 100) / 100);
+      if (bdg::Widget* b = e->editor->Find("tool.timescale")) // a list of speeds, the current one checked (U22)
+        b->onClick = [e](bdg::Widget& w) {
+          std::vector<bdg::UIContext::MenuItem> items;
+          for (float v : {0.1f, 0.25f, 0.5f, 1.f, 2.f, 4.f})
+            items.push_back({std::format("{:g}×", v), [e, v] { SetTimeScale(e, v); }, true, std::abs(e->play.TimeScale() - v) < 1e-4f});
+          e->editor->OpenMenu(w.x, w.y + w.h + 2, std::move(items));
         };
-        f->onChange = apply;
-        f->onCommit = apply;
-      }
       if (bdg::Widget* badge = e->editor->Find("tool.platform")) { // target platform for the budget bars (3-7)
         badge->text = bdg::PlatformName(e->sceneView->budgetPlatform);
         badge->onClick = [e](bdg::Widget& w) {
@@ -1758,6 +1779,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     if (const char* sel = std::getenv("BDG_SELECT")) model->Select(sel); // screenshots of one object's Inspector
     SetupShortcuts(e);
     SetupMenuBar(e); // the menu bar (UI review B2)
+    SetToolbarTips(e); // the play controls' tooltips name their keys (B10)
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { // keep the work
       model->Autosave();
       if (model->Dirty()) model->WriteBackup(); // offered back on the next start

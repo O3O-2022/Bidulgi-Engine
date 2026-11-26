@@ -178,3 +178,83 @@ void ReportEmptyWsTest(bdg_engine*) {
   bdg::LogInfo("emptyws test: empty={} tabs={} back={} project={}", empty, tabs, back, project);
 }
 BDG_EDITOR_TEST("BDG_EMPTYWS_TEST", InjectEmptyWsTest, ReportEmptyWsTest)
+
+// BDG_TOPBAR_TEST=1 (UI review B10): the top toolbar. Icon buttons (play options, pause, one frame) are 28 x 24 with
+// tooltips that name their keys; the badges are 24 high; the speed is a "1×" button whose list (a real click) sets
+// 2×; pause lights and unlights on real clicks; the texts are Korean (U12).
+namespace topbartest {
+std::string tips = "-", size = "-", badge = "-", korean = "-", speed = "-", pause = "-";
+}
+void InjectTopBarTest(bdg_engine* e, int frame, float scale) {
+  using namespace topbartest;
+  using T = bdg::InputEvent::Type;
+  if (!e->editor) return;
+  auto click = [&](float x, float y) {
+    e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+    e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+    e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+  };
+  auto clickWidget = [&](const char* id) {
+    if (bdg::Widget* w = e->editor->Find(id)) click(w->x + w->w * 0.5f, w->y + w->h * 0.5f);
+    else bdg::LogError("topbar test: no {}", id);
+  };
+  auto find = [&](const char* id) { return e->editor->Find(id); };
+  if (frame == 3) {
+    bdg::Widget* pw = find("tool.pause");
+    const std::string keys = e->shortcuts.KeysOf("play.pause");
+    bool ok = pw && !keys.empty() && pw->tooltip.find(keys) != std::string::npos;
+    for (const char* id : {"tool.playopts", "tool.step", "tool.play", "tool.timescale", "tool.quality", "tool.platform", "tool.build"})
+      if (bdg::Widget* w = find(id); !w || w->tooltip.empty()) {
+        ok = false;
+        bdg::LogError("topbar test: no tooltip on {}", id);
+      }
+    tips = ok ? "1" : std::format("0(pause tip '{}' keys '{}')", pw ? pw->tooltip : "", keys);
+    ok = true;
+    for (const char* id : {"tool.playopts", "tool.pause", "tool.step"})
+      if (bdg::Widget* w = find(id); !w || std::abs(w->w - 28) > 0.5f || std::abs(w->h - 24) > 0.5f) ok = false;
+    size = ok ? "1" : "0";
+    bdg::Widget* q = find("tool.quality");
+    bdg::Widget* pf = find("tool.platform");
+    badge = q && pf && q->h >= 24 && pf->h >= 24 ? "1" : std::format("0({} {})", q ? q->h : 0, pf ? pf->h : 0);
+    bdg::Widget* play = find("tool.play");
+    bdg::Widget* build = find("tool.build");
+    korean = play && build && play->text == "▶  플레이" && build->text == "빌드" ? "1" : "0";
+    clickWidget("tool.timescale");
+  }
+  if (frame == 5) {
+    const auto& items = e->editor->Menu();
+    bool one = false;
+    for (const auto& it : items) one |= it.label == "1×" && it.checked;
+    if (items.size() != 6 || !one) speed = std::format("0(items {} checked {})", items.size(), one);
+    if (std::getenv("BDG_TOPBAR_DUMP")) { // a picture with the speed list open
+      int32_t w = 0, h = 0;
+      e->window.GetDrawableSize(w, h);
+      std::vector<uint8_t> px;
+      e->rhi.ReadPixels(w, h, px);
+      bdg::WritePNG(std::getenv("BDG_TOPBAR_DUMP"), w, h, px.data(), true);
+    }
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == "2×" && e->editor->MenuItemRect(k, x, y, w, h)) click(x + w * 0.5f, y + h * 0.5f);
+  }
+  if (frame == 7) {
+    bdg::Widget* b = find("tool.timescale");
+    if (speed == "-") speed = e->play.TimeScale() == 2.f && b && b->text == "2×" ? "1" : std::format("0({} '{}')", e->play.TimeScale(), b ? b->text : "");
+    SetTimeScale(e, 1);
+    clickWidget("tool.pause");
+  }
+  if (frame == 9) {
+    bdg::Widget* b = find("tool.pause");
+    pause = b && b->primary && e->play.Paused() ? "" : "0(on)";
+    clickWidget("tool.pause");
+  }
+  if (frame == 11) {
+    bdg::Widget* b = find("tool.pause");
+    if (pause.empty()) pause = b && !b->primary && !e->play.Paused() ? "1" : "0(off)";
+  }
+}
+void ReportTopBarTest(bdg_engine*) {
+  using namespace topbartest;
+  bdg::LogInfo("topbar test: tips={} size={} badge={} korean={} speed={} pause={}", tips, size, badge, korean, speed, pause);
+}
+BDG_EDITOR_TEST("BDG_TOPBAR_TEST", InjectTopBarTest, ReportTopBarTest)
