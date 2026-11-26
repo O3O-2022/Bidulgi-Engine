@@ -5,7 +5,7 @@
 
 ```
 bdg — 비둘기 엔진 명령줄 (에디터와 같은 명령 버스)
-  new <dir> [--template basic3d|empty|fps|platformer2d|thirdperson] [--name 게임 이름]   (fps, platformer2d, thirdperson = 바로 할 수 있는 게임 템플릿)
+  new <dir> [--template basic3d|empty|fps|platformer2d|thirdperson|arena] [--name 게임 이름]   (fps, platformer2d, thirdperson, arena = 바로 할 수 있는 게임 템플릿; arena = 멀티플레이)
   view [scene] | outline [scene] | query <pattern> [-f pos,Health.hp] | schema [Type]
   set <target> path=value ... [--dry-run] | add <id> [--name N] [--parent P] [--pos x,y,z] [--comp Type]
   del <id>... | addcomp <id> <Type> | rmcomp <id> <Type>

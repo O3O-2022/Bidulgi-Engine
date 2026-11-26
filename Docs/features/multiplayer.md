@@ -25,6 +25,10 @@ public class Player : Behaviour {
 
 4. 에디터 **Play 옆 ▾**: Net Mode(Standalone / Listen Server / Client), Players(1~4), Network(Off / LAN / Internet / Bad). Play하면 나머지 플레이어가 게임 창(프로세스)으로 열리고("Client 1" …), Stop이 모두 닫습니다.
 
+## 아레나 템플릿
+
+`bdg new <dir> --template arena`: 2~4명이 링 위에서 서로 밀어 떨어뜨리는 게임(떨어뜨리면 1점). 서버가 밀기·떨어짐·점수를 정하고([Server] `Push`, `[Replicated] score`), 각자 자기 캐릭터는 바로 움직입니다(예측). 처음 화면의 **로비**(방 만들기 / 참가 버튼 → `Net.Host` / `Net.Join`), 왼쪽 위 **점수판**, 오른쪽 위 **네트워크 통계**(핑·손실·kbit/s, `Net.Stats`), 서버가 세는 `[Replicated] round`. 빌드한 게임을 `--server`로 띄우면 창 없는 전용 서버.
+
 ## 넷 모드
 
 | 모드 | 어떻게 |
@@ -64,7 +68,8 @@ public class Player : Behaviour {
 
 - 단위 테스트(`Tests/NetTests.cpp`, `NetWorldTests.cpp`): 루프백 전송(손실 속 순서, 지연, 끊김, 시간 초과), 비트·양자화·변경분·보간·예측, 한 프로세스 안 서버 + 클라이언트 2(손실 10 %: 생성, 동기화, 복제 필드, 예측, 치트 잘림, 늦은 참가, relevancy, 생성·삭제, RPC 세 종류와 거절, 다른 콘텐츠 거절, 떠난 플레이어 정리).
 - `BDG_NET_TEST`(에디터 + 플레이어 프로세스 2, CI): `net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1`.
+- CI 아레나: `bdg new --template arena` → `bdg build` → 빌드한 게임을 전용 서버(`--server`) + 클라이언트 2(`--connect`, 손실 5 %)로 실행: 둘 다 들어오고 서버의 라운드 시간이 복제되고, 나가면 정리.
 
 ## 남은 것
 
-로비 UI·통계 표시·아레나 템플릿·빌드한 전용 서버 CI(M-7), LAN 찾기, 클라이언트 물리(지금은 서버 값이 덮음), 관심 영역 그리드, 대역폭 우선순위, 여러 서버 이전, 음성.
+LAN 찾기(방 목록), 로비의 IP 입력 칸(글자 입력 위젯이 생기면), 클라이언트 물리(지금은 서버 값이 덮음 — 물리 캐릭터의 예측은 다음), 입력 기반 예측(지금은 이동량 기반), 관심 영역 그리드, 대역폭 우선순위·압축, 서버 이전·재접속, 음성, Lua·Graph 이름.

@@ -1,0 +1,5 @@
+{
+  "name": "arena",
+  "title": "멀티플레이 아레나 / Multiplayer arena",
+  "description": "2-4 players push each other off a ring (server-authoritative): replicated scores, lobby (host / join), network stats, dedicated server build"
+}
