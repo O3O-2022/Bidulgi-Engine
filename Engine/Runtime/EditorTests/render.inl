@@ -540,14 +540,19 @@ void InjectRefSceneTest(bdg_engine* e, int frame, float scale) {
     for (size_t i = 0; i + 3 < s.px.size(); i += 4) n += s.px[i] < 140 && s.px[i + 1] > 170 && s.px[i + 2] > 190;
     return n;
   };
+  if (frame == 13) sv->PressToolbar("show", *m); // the toolbar's Show menu (round 7; it was a Wire pill)
   if (frame == 14) {
     wireBefore = cyan(grab());
-    float x, y;
-    if (sv->ChipCenter("wire", x, y)) {
-      e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
-      e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
-      e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
-    }
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == "Wireframe" && e->editor->MenuItemRect(k, x, y, w, h)) {
+        x += w * 0.5f;
+        y += h * 0.5f;
+        e->window.InjectEvent({T::MouseMove, x * scale, y * scale});
+        e->window.InjectEvent({T::MouseDown, x * scale, y * scale, 1});
+        e->window.InjectEvent({T::MouseUp, x * scale, y * scale, 1});
+      }
   }
   static size_t undo0;
   if (frame == 16) {

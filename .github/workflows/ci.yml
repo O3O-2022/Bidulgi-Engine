@@ -352,6 +352,10 @@ jobs:
           $log = Invoke-Editor 'Release' @{ BDG_SNAP_TEST = '1' } 26
           if ($log -notmatch 'snap test: grid=1 vertex=1 surface=1 align=1 distribute=1 measure=1') { $errors += 'snap / align / measure test failed' }
           if ($log -notmatch 'measure: 3\.0\d\d m') { $errors += 'ruler result not logged' }
+          # Scene view toolbar (Unreal-like): Move / Rotate / Scale icons, grid value -> gizmo step, Ctrl frees a drag,
+          # rotation snap 30, wheel while flying and the speed popup, values kept in the file, tooltips, one row at zoom 1 / 1.5 / 2
+          $log = Invoke-Editor 'Release' @{ BDG_TOOLBAR_TEST = '1'; BDG_TOOLBAR = "$env:RUNNER_TEMP/bdg-toolbar.json" } 46
+          if ($log -notmatch 'toolbar test: modes=1 grid=1 ctrl=1 rotate=1 wheel=1 popup=1 persist=1 tips=1 rows=1,1,1') { $errors += 'scene view toolbar test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

@@ -14,11 +14,15 @@ namespace bdg {
 struct SnapSettings {
   float move = 1.f;     // metres
   float rotate = 15.f;  // degrees
-  float scale = 0.1f;   // factor step
-  bool always = false;  // snap without Ctrl (Ctrl then turns it off)
+  float scale = 0.25f;  // factor step
+  bool always = false;  // grid snap on: moves snap without Ctrl (Ctrl then turns it off for the drag)
+  bool rotateOn = false, scaleOn = false; // the same for rotations and scaling (Scene view toolbar, Unreal-like)
+  bool surface = false; // moves rest on the surface under the mouse without Ctrl+Shift
 };
-// The grid steps the scene view's chip cycles through (metres); 0 = only while Ctrl is held.
-constexpr float kSnapSteps[] = {0.f, 0.1f, 0.25f, 0.5f, 1.f, 2.f};
+// The values the Scene view toolbar offers (Unreal's lists): grid (m), rotation (degrees), scale steps.
+constexpr float kSnapSteps[] = {0.01f, 0.05f, 0.1f, 0.25f, 0.5f, 1.f, 5.f, 10.f};
+constexpr float kRotateSnapSteps[] = {5.f, 10.f, 15.f, 30.f, 45.f, 90.f};
+constexpr float kScaleSnapSteps[] = {0.0625f, 0.125f, 0.25f, 0.5f, 1.f};
 
 float SnapValue(float v, float step); // nearest multiple (step <= 0: unchanged)
 // A move of `start` by `move` with the world axes in `axes` (1 = moved) put on the grid: the result's coordinates
