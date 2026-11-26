@@ -370,6 +370,11 @@
 | `scroll` | vec2 | `0,0` |
 | `image` | string | — |
 | `cornerRadius` | float | `8` |
+| `slice` | float | `0` |
+| `layout` | UILayout | `None` |
+| `spacing` | float | `8` |
+| `padding` | float | `0` |
+| `cellSize` | vec2 | `100,100` |
 | `visible` | bool | `true` |
 | `interactable` | bool | `true` |
 
