@@ -356,6 +356,10 @@ jobs:
           # rotation snap 30, wheel while flying and the speed popup, values kept in the file, tooltips, one row at zoom 1 / 1.5 / 2
           $log = Invoke-Editor 'Release' @{ BDG_TOOLBAR_TEST = '1'; BDG_TOOLBAR = "$env:RUNNER_TEMP/bdg-toolbar.json" } 46
           if ($log -notmatch 'toolbar test: modes=1 grid=1 ctrl=1 rotate=1 wheel=1 popup=1 persist=1 tips=1 rows=1,1,1') { $errors += 'scene view toolbar test failed' }
+          # UI designer (7-3): the UI Designer tab shows the canvas on a device screen; real drags move, resize, snap (guide);
+          # the anchor picker keeps the on-screen rect, Ctrl+Z undoes it in one step, phone portrait keeps anchored layout
+          $log = Invoke-Editor 'Release' @{ BDG_UIDESIGNER_TEST = '1' } 28
+          if ($log -notmatch 'uidesigner test: tab=1 select=1 move=1 resize=1 snap=1 anchor=1 undo=1 resolution=1') { $errors += 'UI designer test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

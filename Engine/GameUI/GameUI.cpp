@@ -24,6 +24,7 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
   struct Canvas { std::vector<Item> items; int order; size_t index; };
   std::vector<Canvas> canvases;
   // children of a canvas (or of an element), placed inside `parent`
+  std::string canvasId, parentId;
   auto place = [&](auto&& self, const SceneObject& o, const Rect& parent, float s, std::vector<Item>& out) -> void {
     for (const std::string& id : o.children) {
       SceneObject* c = scene.Find(id);
@@ -44,7 +45,7 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
         r.x = parent.x + ax * parent.w + e->position.x * s - ax * r.w;
         r.y = parent.y + ay * parent.h + e->position.y * s - ay * r.h;
       }
-      out.push_back({c->id, e, r, s, 0});
+      out.push_back({c->id, e, r, s, 0, o.id, canvasId, parent});
       self(self, *c, r, s, out);
     }
   };
@@ -59,6 +60,7 @@ void GameUI::Layout(Scene& scene, const Rect& view) {
       const float sx = view.w / std::max(cv->referenceSize.x, 1.f), sy = view.h / std::max(cv->referenceSize.y, 1.f);
       const float m = std::clamp(cv->matchHeight, 0.f, 1.f), s = sx + (sy - sx) * m;
       Canvas c{{}, cv->order, canvases.size()};
+      canvasId = o->id;
       place(place, *o, view, s, c.items);
       canvases.push_back(std::move(c));
       continue; // a canvas inside a canvas is not supported: its children belong to it
@@ -174,6 +176,13 @@ void GameUI::Shutdown(RHI& rhi) {
   for (auto& [path, t] : images_)
     if (t.Valid()) rhi.DestroyTexture(t);
   images_.clear();
+}
+
+std::vector<GameUI::Placed> GameUI::Placement() const {
+  std::vector<Placed> out;
+  out.reserve(layout_.size());
+  for (const Item& i : layout_) out.push_back({i.object, i.parent, i.canvas, i.r, i.parentRect, i.scale});
+  return out;
 }
 
 bool GameUI::ElementRect(const std::string& objectId, Rect& out) const {
