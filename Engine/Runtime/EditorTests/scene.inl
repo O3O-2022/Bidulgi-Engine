@@ -368,6 +368,7 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
     return sv->ObjectCenter(*m, id, c, r) && sv->ProjectUI(c, x, y);
   };
   static float cx, cy, yaw0, dist0;
+  static decltype(sv->camera) beforeFly;
   static glm::vec3 pivot0, pos0;
   if (frame == 2) { // the Crystal (g8) must be on screen and drawn (not the background colour)
     sv->frameEaseSeconds = 0; // F and fly react at once here: checked frames run back to back (tiny dt)
@@ -432,6 +433,7 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 12) {
     v[6] = std::format("{}", glm::distance(sv->camera.pivot, pivot0) > 0.05f ? 1 : 0);
     pos0 = sv->camera.Position();
+    beforeFly = sv->camera;
     ev(T::MouseDown, cx, cy, 3); // right button held + W: fly forward
     key(T::KeyDown, bdg::Key::W);
   }
@@ -442,8 +444,13 @@ void InjectSceneViewTest(bdg_engine* e, int frame, float scale) {
   if (frame == 18) {
     glm::vec3 moved = sv->camera.Position() - pos0;
     v[7] = std::format("{}", glm::length(moved) > 0.001f && glm::dot(glm::normalize(moved), sv->camera.Forward()) > 0.99f ? 1 : 0);
-    float x = 0, y = 0; // empty sky: the top-left area of the view
+    // The fly distance is speed x real time: on slow software GL (CI, ~300 ms frames) the 4 held frames carry the
+    // camera into the Crystal, which then covers the "sky". Only the direction is checked above, so the next steps
+    // start again from the camera before the fly, the same on every machine.
+    sv->camera = beforeFly;
+    float x = 0, y = 0; // empty sky: the top centre of the view
     if (bdg::Widget* s = e->editor->Find("scene")) { x = s->x + s->w * 0.5f; y = s->y + 40; }
+    if (const std::string under = sv->Pick(*m, x, y); !under.empty()) bdg::LogError("sceneview test: the sky point {:.0f},{:.0f} is on {}", x, y, under);
     ev(T::MouseMove, x, y);
     ev(T::MouseDown, x, y, 1);
     ev(T::MouseUp, x, y, 1);
