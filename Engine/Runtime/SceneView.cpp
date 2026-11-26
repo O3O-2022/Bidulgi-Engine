@@ -1830,14 +1830,14 @@ void SceneView::DrawGame(Widget& w, UIContext& ui, double playTime) {
   if (!gameCamera_ || !gameRT_.Valid()) {
     b.Rect(w.x, w.y, w.w, w.h, t.C("ground"));
     const char* msg = "Game view: the scene has no Camera";
-    ui.Text(w.x + (w.w - ui.Measure(12, msg)) * 0.5f, w.y + w.h * 0.5f - 12, 12, t.C("fg-faint"), msg);
+    ui.Text(w.x + (w.w - ui.Measure(t.FontSize("label", 12), msg)) * 0.5f, w.y + w.h * 0.5f - 12, t.FontSize("label", 12), t.C("fg-faint"), msg);
     return;
   }
   b.Image(w.x, w.y, w.w, w.h, rhi_->RenderTargetColor(gameRT_), 0, 1, 1, 0);
   const std::string badge = playTime >= 0 ? std::format("▶ Playing  {:.1f} s", playTime) : std::string("Game view (press Play)");
-  const float bw = ui.Measure(11, badge) + 18;
-  b.Rect(w.x + 10, w.y + 8, bw, 22, WithAlpha(playTime >= 0 ? t.C("accent") : t.C("win"), 0.85f), 11, 1, t.C("line"));
-  ui.Text(w.x + 19, w.y + 12, 11, playTime >= 0 ? Color{1, 1, 1, 1} : t.C("fg-dim"), badge);
+  const float bw = ui.Measure(t.FontSize("overlay", 11), badge) + 18;
+  b.Rect(w.x + 10, w.y + 8, bw, 22, WithAlpha(playTime >= 0 ? t.C("accent") : t.C("win"), 0.85f), t.N("radius-pill", 12), 1, t.C("line"));
+  ui.Text(w.x + 19, w.y + 12, t.FontSize("overlay", 11), playTime >= 0 ? t.C("on-accent") : t.C("fg-dim"), badge);
 }
 
 void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
@@ -1856,20 +1856,20 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     float x, y;
     if (iconSize <= 0 || !ProjectUI(ic.pos, x, y)) continue;
     bool sel = model && std::find(model->Selection().begin(), model->Selection().end(), ic.id) != model->Selection().end();
-    Color ring = sel ? Color{1.f, 0.58f, 0.12f, 1} : WithAlpha(t.C("line-strong"), 0.9f);
+    Color ring = sel ? t.C("accent") : WithAlpha(t.C("line-strong"), 0.9f);
     b.Rect(x - ir, y - ir, isz, isz, WithAlpha(t.C("win"), 0.82f), ir, sel ? 2.f : 1.f, ring);
     if (ui.Icon(ic.icon, x - ir * 0.78f, y - ir * 0.78f, ir * 1.56f, ic.tint)) continue;
     if (ic.kind == 0) { // sun: disc and rays
-      b.Rect(x - 4, y - 4, 8, 8, {1.f, 0.85f, 0.35f, 1}, 4);
+      b.Rect(x - 4, y - 4, 8, 8, t.C("gizmo-hot"), t.N("radius-md", 4));
       for (int k = 0; k < 8; ++k) {
         float a = k * 0.785398f;
-        b.Line(x + std::cos(a) * 6, y + std::sin(a) * 6, x + std::cos(a) * 8.5f, y + std::sin(a) * 8.5f, 1.4f, {1.f, 0.85f, 0.35f, 1});
+        b.Line(x + std::cos(a) * 6, y + std::sin(a) * 6, x + std::cos(a) * 8.5f, y + std::sin(a) * 8.5f, 1.4f, t.C("gizmo-hot"));
       }
     } else if (ic.kind == 1) { // light bulb
-      b.Rect(x - 5, y - 6, 10, 10, {1.f, 0.78f, 0.45f, 1}, 5);
-      b.Rect(x - 3, y + 4, 6, 3, t.C("fg-dim"), 1);
+      b.Rect(x - 5, y - 6, 10, 10, t.C("gizmo-hot"), t.N("radius-lg", 5));
+      b.Rect(x - 3, y + 4, 6, 3, t.C("fg-dim"), t.N("radius-xs", 2));
     } else { // camera body and lens
-      b.Rect(x - 7, y - 4, 10, 8, t.C("fg"), 2);
+      b.Rect(x - 7, y - 4, 10, 8, t.C("fg"), t.N("radius-xs", 2));
       b.Triangle(x + 2, y - 4, 6, 8, t.C("fg"));
     }
   }
@@ -1889,9 +1889,9 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     float bx2 = w.x + 10, by2 = rowY + (several && alignOpen_ ? 54 : 28);
     for (int s = 0; s < 4; ++s) {
       static const char* labels[] = {"+ Box", "+ Stairs", "+ Ramp", "+ Cylinder"};
-      const float cw = ui.Measure(11, labels[s]) + 16;
-      b.Rect(bx2, by2, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("accent"));
-      ui.Text(bx2 + 8, by2 + 3, 11, t.C("fg"), labels[s]);
+      const float cw = ui.Measure(t.FontSize("overlay", 11), labels[s]) + 16;
+      b.Rect(bx2, by2, cw, 20, WithAlpha(t.C("win"), 0.85f), t.N("radius-pill", 12), 1, t.C("accent"));
+      ui.Text(bx2 + 8, by2 + 3, t.FontSize("overlay", 11), t.C("fg"), labels[s]);
       chips_.push_back({std::format("bo.{}", s), bx2, by2, cw, 20});
       bx2 += cw + 4;
     }
@@ -1899,8 +1899,8 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
       float hx, hy;
       if (!ProjectUI(fh.center, hx, hy)) continue;
       const bool hot = (drag_ == Drag::Face && face_.face == fh.face) || (drag_ != Drag::Face && hotFace_ == fh.face);
-      const Color col = hot ? Color{1.f, 0.85f, 0.2f, 1} : fh.face / 2 == 0 ? t.C("axis-x") : fh.face / 2 == 1 ? t.C("axis-y") : t.C("axis-z");
-      b.Rect(hx - 6, hy - 6, 12, 12, col, 2, 1.5f, {0, 0, 0, 0.6f});
+      const Color col = hot ? t.C("gizmo-hot") : fh.face / 2 == 0 ? t.C("axis-x") : fh.face / 2 == 1 ? t.C("axis-y") : t.C("axis-z");
+      b.Rect(hx - 6, hy - 6, 12, 12, col, t.N("radius-xs", 2), 1.5f, {0, 0, 0, 0.6f});
     }
   }
   if (several && alignOpen_) { // second row: align / distribute per axis
@@ -1908,25 +1908,25 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     for (const char* axis : {"x", "y", "z"})
       for (const char* m : {"min", "mid", "max", "dist"}) {
         const std::string name = std::format("al.{}.{}", axis, m), text = std::format("{} {}", (char)std::toupper(axis[0]), m);
-        const float cw = ui.Measure(11, text) + 14;
-        b.Rect(ax2, rowY + 28, cw, 20, WithAlpha(t.C("win"), 0.85f), 10, 1, t.C("line"));
-        ui.Text(ax2 + 7, rowY + 31, 11, t.C("fg"), text);
+        const float cw = ui.Measure(t.FontSize("overlay", 11), text) + 14;
+        b.Rect(ax2, rowY + 28, cw, 20, WithAlpha(t.C("win"), 0.85f), t.N("radius-pill", 12), 1, t.C("line"));
+        ui.Text(ax2 + 7, rowY + 31, t.FontSize("overlay", 11), t.C("fg"), text);
         chips_.push_back({name, ax2, rowY + 28, cw, 20});
         ax2 += cw + (m[0] == 'd' ? 12 : 4);
       }
   }
   { // snap target (vertex / surface) and the ruler
     float sx, sy;
-    if (hasSnapTarget_ && ProjectUI(snapTarget_, sx, sy)) b.Rect(sx - 5, sy - 5, 10, 10, {0, 0, 0, 0}, 2, 2.f, {1.f, 0.85f, 0.2f, 1});
+    if (hasSnapTarget_ && ProjectUI(snapTarget_, sx, sy)) b.Rect(sx - 5, sy - 5, 10, 10, {0, 0, 0, 0}, t.N("radius-xs", 2), 2.f, t.C("gizmo-hot"));
     float ax3, ay3, bx3, by3;
     if (hasMeasure_ && ProjectUI(measure_.a, ax3, ay3) && ProjectUI(measure_.b, bx3, by3)) {
-      b.Line(ax3, ay3, bx3, by3, 2.f, {1.f, 0.85f, 0.2f, 1});
-      for (auto [px3, py3] : {std::pair{ax3, ay3}, std::pair{bx3, by3}}) b.Rect(px3 - 4, py3 - 4, 8, 8, {1.f, 0.85f, 0.2f, 1}, 4);
+      b.Line(ax3, ay3, bx3, by3, 2.f, t.C("gizmo-hot"));
+      for (auto [px3, py3] : {std::pair{ax3, ay3}, std::pair{bx3, by3}}) b.Rect(px3 - 4, py3 - 4, 8, 8, t.C("gizmo-hot"), t.N("radius-md", 4));
       const glm::vec3 d = measure_.Delta();
       const std::string label = std::format("{:.2f} m  ·  x {:.2f}  y {:.2f}  z {:.2f}", measure_.Length(), d.x, d.y, d.z);
-      const float lw = ui.Measure(11, label) + 16;
-      b.Rect((ax3 + bx3) * 0.5f - lw * 0.5f, (ay3 + by3) * 0.5f - 26, lw, 20, WithAlpha(t.C("win"), 0.9f), 6, 1, {1.f, 0.85f, 0.2f, 1});
-      ui.Text((ax3 + bx3) * 0.5f - lw * 0.5f + 8, (ay3 + by3) * 0.5f - 23, 11, t.C("fg"), label);
+      const float lw = ui.Measure(t.FontSize("overlay", 11), label) + 16;
+      b.Rect((ax3 + bx3) * 0.5f - lw * 0.5f, (ay3 + by3) * 0.5f - 26, lw, 20, WithAlpha(t.C("win"), 0.9f), t.N("radius-lg", 5), 1, t.C("gizmo-hot"));
+      ui.Text((ax3 + bx3) * 0.5f - lw * 0.5f + 8, (ay3 + by3) * 0.5f - 23, t.FontSize("overlay", 11), t.C("fg"), label);
     }
   }
   if (bounds) // world-space boxes of every drawn mesh
@@ -1938,7 +1938,7 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
       for (int k = 0; k < 8 && ok; ++k) ok = ProjectUI(c[k], sx[k], sy[k]);
       if (!ok) continue;
       bool sel = model && std::find(model->Selection().begin(), model->Selection().end(), info_[i].owner) != model->Selection().end();
-      Color col = sel ? Color{1.f, 0.58f, 0.12f, 0.95f} : Color{1.f, 0.9f, 0.3f, 0.55f};
+      Color col = sel ? WithAlpha(t.C("accent"), 0.95f) : WithAlpha(t.C("gizmo-hot"), 0.55f);
       for (int k = 0; k < 8; ++k)
         for (int bit : {1, 2, 4})
           if (!(k & bit)) b.Line(sx[k], sy[k], sx[k | bit], sy[k | bit], 1.f, col);
@@ -1954,38 +1954,38 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     for (const RenderStats::Pass& p : st.passes) { lines.push_back(std::format("{:<14} {:6.3f} ms", p.name, p.ms)); total += p.ms; }
     lines.push_back(st.passes.empty() ? std::string("GPU timings: waiting for the GPU") : std::format("{:<14} {:6.3f} ms", "GPU total", total));
     float pw = 0;
-    for (const std::string& l : lines) pw = std::max(pw, ui.Measure(11, l, true));
+    for (const std::string& l : lines) pw = std::max(pw, ui.Measure(t.FontSize("overlay", 11), l, true));
     float bx = w.x + 10, by = rowY + 30;
-    b.Rect(bx, by, pw + 20, lines.size() * 16.f + 12, WithAlpha(t.C("win"), 0.88f), 6, 1, t.C("line"));
-    for (size_t i = 0; i < lines.size(); ++i) ui.Text(bx + 10, by + 6 + i * 16.f, 11, t.C("fg"), lines[i], true);
+    b.Rect(bx, by, pw + 20, lines.size() * 16.f + 12, WithAlpha(t.C("win"), 0.88f), t.N("radius-lg", 5), 1, t.C("line"));
+    for (size_t i = 0; i < lines.size(); ++i) ui.Text(bx + 10, by + 6 + i * 16.f, t.FontSize("overlay", 11), t.C("fg"), lines[i], true);
   }
   if (budgetPanel) { // platform budget bars (3-7), bottom-left above the axis widget
     const std::vector<BudgetBar> bars = BudgetBars();
     const float pw = 330, rowH = 20, ph = 30 + bars.size() * rowH + (culprits_.empty() ? 0 : 26);
     const float bx = w.x + 10, by = w.y + w.h - 78 - ph;
-    b.Rect(bx, by, pw, ph, WithAlpha(t.C("win"), 0.9f), 6, 1, t.C("line"));
-    ui.Text(bx + 10, by + 7, 11, t.C("fg"), std::format("{} · {} 예산", PlatformName(budgetPlatform), TierLabel(quality.tier)));
+    b.Rect(bx, by, pw, ph, WithAlpha(t.C("win"), 0.9f), t.N("radius-lg", 5), 1, t.C("line"));
+    ui.Text(bx + 10, by + 7, t.FontSize("overlay", 11), t.C("fg"), std::format("{} · {} 예산", PlatformName(budgetPlatform), TierLabel(quality.tier)));
     for (size_t i = 0; i < bars.size(); ++i) {
       const BudgetBar& bar = bars[i];
       const float y = by + 28 + i * rowH;
-      ui.Text(bx + 10, y, 11, t.C("fg-dim"), bar.label);
+      ui.Text(bx + 10, y, t.FontSize("overlay", 11), t.C("fg-dim"), bar.label);
       const float barX = bx + 60, barW = 130;
-      b.Rect(barX, y + 3, barW, 9, t.C("sunk"), 4);
+      b.Rect(barX, y + 3, barW, 9, t.C("sunk"), t.N("radius-md", 4));
       const Color fill = bar.level == 2 ? t.C("warn") : bar.level == 1 ? WithAlpha(t.C("warn"), 0.65f) : t.C("ok");
-      b.Rect(barX, y + 3, barW * std::min(bar.fraction, 1.f), 9, fill, 4);
-      ui.Text(barX + barW + 8, y, 11, bar.level == 2 ? t.C("warn") : t.C("fg"), bar.text + (bar.level == 2 ? "  ⚠" : ""));
+      b.Rect(barX, y + 3, barW * std::min(bar.fraction, 1.f), 9, fill, t.N("radius-md", 4));
+      ui.Text(barX + barW + 8, y, t.FontSize("overlay", 11), bar.level == 2 ? t.C("warn") : t.C("fg"), bar.text + (bar.level == 2 ? "  ⚠" : ""));
     }
     if (!culprits_.empty()) { // the heaviest objects: a click selects one
       float cx = bx + 10;
       const float cy = by + 28 + bars.size() * rowH + 2;
-      ui.Text(cx, cy + 3, 10, t.C("fg-faint"), "무거운 것");
-      cx += ui.Measure(10, "무거운 것") + 8;
+      ui.Text(cx, cy + 3, t.FontSize("badge", 10), t.C("fg-faint"), "무거운 것");
+      cx += ui.Measure(t.FontSize("badge", 10), "무거운 것") + 8;
       for (const Culprit& c : culprits_) {
         const std::string label = std::format("{} {}", c.name, FormatCount(c.triangles));
-        const float cw = ui.Measure(10, label) + 14;
+        const float cw = ui.Measure(t.FontSize("badge", 10), label) + 14;
         if (cx + cw > bx + pw - 6) break;
-        b.Rect(cx, cy, cw, 18, WithAlpha(t.C("raise"), 0.95f), 9, 1, t.C("line"));
-        ui.Text(cx + 7, cy + 3, 10, t.C("fg"), label);
+        b.Rect(cx, cy, cw, 18, WithAlpha(t.C("raise"), 0.95f), t.N("radius-pill", 12), 1, t.C("line"));
+        ui.Text(cx + 7, cy + 3, t.FontSize("badge", 10), t.C("fg"), label);
         chips_.push_back({"bud.sel." + c.id, cx, cy, cw, 18});
         cx += cw + 4;
       }
@@ -1993,15 +1993,15 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   }
   if (noteFrames_ > 0) { // the bookmark just jumped to
     --noteFrames_;
-    float nw = ui.Measure(13, bookmarkNote_) + 24;
+    float nw = ui.Measure(t.FontSize("control", 12.5f), bookmarkNote_) + 24;
     b.Rect(w.x + (w.w - nw) * 0.5f, w.y + 44, nw, 28, WithAlpha(t.C("win"), 0.9f), 14, 1, t.C("accent"));
-    ui.Text(w.x + (w.w - nw) * 0.5f + 12, w.y + 49, 13, t.C("fg"), bookmarkNote_);
+    ui.Text(w.x + (w.w - nw) * 0.5f + 12, w.y + 49, t.FontSize("control", 12.5f), t.C("fg"), bookmarkNote_);
   }
   std::string stats = std::format("Draw {}  ·  Tris {}  ·  {:.2f} ms", r_->DrawsLastFrame(), r_->TrianglesLastFrame(), renderMs_);
-  float sw = ui.Measure(11, stats) + 18;
+  float sw = ui.Measure(t.FontSize("overlay", 11), stats) + 18;
   const float sy = rowY + 28; // under the toolbar, at the right
-  b.Rect(w.x + w.w - sw - 10, sy, sw, 22, WithAlpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-  ui.Text(w.x + w.w - sw - 1, sy + 4, 11, t.C("fg-dim"), stats);
+  b.Rect(w.x + w.w - sw - 10, sy, sw, 22, WithAlpha(t.C("win"), 0.85f), t.N("radius-pill", 12), 1, t.C("line"));
+  ui.Text(w.x + w.w - sw - 1, sy + 4, t.FontSize("overlay", 11), t.C("fg-dim"), stats);
   // Axis widget (bottom-left): world axes turned by the view.
   float ax = w.x + 36, ay = w.y + w.h - 36;
   b.Rect(ax - 26, ay - 26, 52, 52, WithAlpha(t.C("win"), 0.6f), 26);
@@ -2015,17 +2015,17 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
     glm::vec3 s = glm::vec3(view * glm::vec4(a.d, 0));
     float ex = ax + s.x * 18, ey = ay - s.y * 18;
     b.Line(ax, ay, ex, ey, 2, t.C(a.token));
-    ui.Text(ex + (s.x >= 0 ? 2 : -9), ey - 7, 10, t.C(a.token), a.name);
+    ui.Text(ex + (s.x >= 0 ? 2 : -9), ey - 7, t.FontSize("badge", 10), t.C(a.token), a.name);
   }
   // Heat map legend (view modes, round 7): the colour stops and what they mean, bottom-left above the axes.
   if (const DebugLegend lg = DebugViewLegend(debugView); !lg.colors.empty()) {
     const float stopW = 34, lx = w.x + 12, ly = w.y + w.h - 100, lw = stopW * (float)lg.colors.size() + 16;
-    b.Rect(lx, ly - 22, lw, 54, WithAlpha(t.C("win"), 0.85f), 6);
-    ui.Text(lx + 8, ly - 18, 11, t.C("fg"), lg.title);
+    b.Rect(lx, ly - 22, lw, 54, WithAlpha(t.C("win"), 0.85f), t.N("radius-lg", 5));
+    ui.Text(lx + 8, ly - 18, t.FontSize("overlay", 11), t.C("fg"), lg.title);
     for (size_t i = 0; i < lg.colors.size(); ++i) {
       const float x = lx + 8 + stopW * (float)i;
-      b.Rect(x, ly, stopW - 2, 10, lg.colors[i], 2);
-      if (i < lg.labels.size()) ui.Text(x + 1, ly + 13, 10, t.C("fg-dim"), lg.labels[i]);
+      b.Rect(x, ly, stopW - 2, 10, lg.colors[i], t.N("radius-xs", 2));
+      if (i < lg.labels.size()) ui.Text(x + 1, ly + 13, t.FontSize("badge", 10), t.C("fg-dim"), lg.labels[i]);
     }
     legendRect_ = {lx, ly - 22, lw, 54};
   } else {
@@ -2034,9 +2034,9 @@ void SceneView::Draw(Widget& w, UIContext& ui, const EditorModel* model) {
   // Controls hint (bottom-right, only while the pointer is over the view).
   if (hover_) {
     const char* hint = "Alt+드래그 궤도 · 휠 확대 · 가운데 드래그 이동 · 우클릭+WASD 비행 · F 맞추기";
-    float hw = ui.Measure(11, hint) + 16;
-    b.Rect(w.x + w.w - hw - 10, w.y + w.h - 30, hw, 22, WithAlpha(t.C("win"), 0.8f), 6);
-    ui.Text(w.x + w.w - hw - 2, w.y + w.h - 26, 11, t.C("fg-dim"), hint);
+    float hw = ui.Measure(t.FontSize("overlay", 11), hint) + 16;
+    b.Rect(w.x + w.w - hw - 10, w.y + w.h - 30, hw, 22, WithAlpha(t.C("win"), 0.8f), t.N("radius-lg", 5));
+    ui.Text(w.x + w.w - hw - 2, w.y + w.h - 26, t.FontSize("overlay", 11), t.C("fg-dim"), hint);
   }
   b.PopClip();
   SaveToolbarStateIfChanged();
