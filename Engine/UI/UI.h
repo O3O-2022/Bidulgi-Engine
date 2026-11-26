@@ -53,6 +53,7 @@ struct Widget {
   Axis axis = Axis::Column;
   Align crossAlign = Align::Stretch;
   float gap = 0, padL = 0, padT = 0, padR = 0, padB = 0;
+  bool wrap = false; // Box row: children that do not fit go on to the next line (button rows in narrow panels, U7)
   Length width, height;
 
   std::vector<std::unique_ptr<Widget>> children;
@@ -222,6 +223,8 @@ public:
   bool Icon(const std::string& name, float x, float y, float size, Color tint = {1, 1, 1, 1});
   bool HasIcon(const std::string& name) const;
   float Measure(float size, const std::string& s, bool mono = false) const;
+  // s cut at a whole character with "…" so it measures at most `room` (unchanged when it fits; U7)
+  std::string FitText(float size, const std::string& s, float room, bool mono = false) const;
   float MeasureSpaced(float size, const std::string& s, float letterSpacingEm) const; // + CSS letter-spacing per character
   float NormalLineHeight(float size) const;
 
@@ -241,6 +244,7 @@ private:
   void FieldPushUndo(Widget& f);
   size_t FieldHit(const Widget& f, float mouseX) const;
   void FieldInputBox(const Widget& f, float& x, float& y, float& w, float& h) const;
+  bool FieldStacked(const Widget& f) const; // a narrow vector field: numbers on a line under the label (U7)
 
   // Docking (UI/Dock.cpp).
   void ArrangeDock(Widget& w);

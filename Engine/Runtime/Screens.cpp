@@ -207,13 +207,18 @@ std::unique_ptr<Widget> BuildEditorScreen() {
     badge.height = Length::Px(24); // a click target of 24 px (U19)
     badge.tooltip = tip;
   }
-  ws.Add(MakeButton("tool.build", "빌드")).tooltip = "게임을 빌드합니다 (결과는 Console)";
+  ws.Add(MakeButton("tool.build", "빌드")).tooltip = "게임을 빌드합니다 (결과는 Build Log)";
+  auto& more = ws.Add(MakeButton("tool.more", "»")); // a narrow window: what did not fit (Engine.cpp FitNarrow, U7)
+  more.tooltip = "더 보기";
+  more.hidden = true;
 
   // Main area: docked panels (drag splitters to resize, drag tabs to move; layout saved per user).
   auto state = std::make_shared<DockState>();
   state->titles = {{"hierarchy", "Hierarchy"}, {"scene", "Scene"}, {"game", "Game"}, {"project", "Project"},
                    {"console", "Console"}, {"buildlog", "Build Log"}, {"profiler", "Profiler"}, {"history", "History"},
                    {"inspector", "Inspector"}, {"settings", "Project Settings"}};
+  // narrowest each may get (UI review U7); a window too narrow for all stacks the Hierarchy (Engine.cpp FitNarrow)
+  state->minWidth = {{"hierarchy", 180.f}, {"inspector", 280.f}, {"settings", 280.f}, {"scene", 320.f}, {"game", 320.f}};
   int hierLeaf = state->AddLeaf({"hierarchy"});
   int sceneLeaf = state->AddLeaf({"scene", "game"});
   int bottomLeaf = state->AddLeaf({"project", "console", "buildlog", "profiler", "history"});

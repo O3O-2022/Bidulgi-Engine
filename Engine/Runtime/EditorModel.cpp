@@ -850,6 +850,7 @@ void EditorModel::Rebuild() {
         auto& pr = inspector_->Add(MakeBox(Axis::Row, 6));
         pr.padL = 10; pr.padR = 10; pr.padB = 4;
         pr.crossAlign = Align::Center;
+        pr.wrap = true; // U7
         auto& label = pr.Add(MakeLabel("프리팹  " + (path.empty() ? canonical : path) + (root != o->id ? "  (" + scene.Find(root)->name + ")" : "")));
         label.variant = 1;
         label.width = Length::Fill();
@@ -1050,6 +1051,7 @@ void EditorModel::Rebuild() {
       // Component tools: copy / paste values, save / apply the type's preset (no menus in the UI yet)
       auto& tools = card.Add(MakeBox(Axis::Row, 4));
       tools.padL = 12; tools.padT = 2; tools.padB = 4;
+      tools.wrap = true; // a narrow Inspector: the buttons go on to a second line (U7)
       std::string type = t.name;
       tools.Add(MakeButton("cc." + type, "값 복사")).onClick = [this, type](Widget&) { CopyComponent(type); };
       auto& paste = tools.Add(MakeButton("cp." + type, "값 붙여넣기"));
@@ -1069,6 +1071,7 @@ void EditorModel::Rebuild() {
     }
     auto& addRow2 = inspector_->Add(MakeBox(Axis::Row, 6));
     addRow2.padL = 8; addRow2.padT = 6;
+    addRow2.wrap = true; // U7
     addRow2.crossAlign = Align::Center;
     auto& addComp = addRow2.Add(MakeButton("insp.add", "+  컴포넌트 추가"));
     addComp.tooltip = "컴포넌트 추가: 목록에서 고르거나 이름을 입력";

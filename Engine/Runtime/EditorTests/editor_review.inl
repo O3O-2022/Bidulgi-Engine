@@ -584,3 +584,97 @@ void ReportConsoleTest(bdg_engine*) {
   bdg::LogInfo("console test: lines={} filter={} search={} open={} copy={} scroll={} build={}", lines, filter, search, open, copy, scroll, build);
 }
 BDG_EDITOR_TEST("BDG_CONSOLE_TEST", InjectConsoleTest, ReportConsoleTest)
+
+// BDG_NARROW_TEST=1 (UI review B9 / U7), two ways:
+//   - a narrow window (under 1000 units, e.g. BDG_UI_SCALE=2.5): the Hierarchy is stacked with the Inspector (the
+//     three columns cannot keep their minimum widths), the top toolbar fits (speed, badges and Build in "»", whose
+//     list has 빌드 — a real click), the scene title fits, vector fields put their numbers under the label;
+//   - a wide window (scale 1): the splits are pushed to their ends and the panels keep their minimum widths, the
+//     Hierarchy rows are under 220 (type column dropped, names cut with "…"), the Inspector's vector fields stack and
+//     its button rows wrap onto a second line.
+namespace narrowtest {
+std::string mode = "-", a = "-", b = "-", c = "-", d = "-", e2 = "-";
+}
+void InjectNarrowTest(bdg_engine* e, int frame, float scale) {
+  using namespace narrowtest;
+  using T = bdg::InputEvent::Type;
+  if (!e->editor || !e->model) return;
+  bdg::UIContext& ui = *e->editor;
+  bdg::Widget* dw = ui.Find("dock");
+  if (!dw || !dw->dock) return;
+  bdg::DockState& dock = *dw->dock;
+  float lw = 0;
+  if (bdg::Widget* root = ui.Root()) lw = root->w;
+  std::function<void(bdg::Widget&, const std::function<void(bdg::Widget&)>&)> walk = [&](bdg::Widget& w, const std::function<void(bdg::Widget&)>& f) {
+    if (w.hidden) return;
+    f(w);
+    for (auto& ch : w.children) walk(*ch, f);
+  };
+  auto stackedVector = [&] { // a Transform vector field on two lines
+    bool found = false;
+    if (bdg::Widget* insp = ui.Find("inspector"))
+      walk(*insp, [&](bdg::Widget& w) { found |= w.kind == bdg::WidgetKind::Field && w.axes > 0 && w.h > 40; });
+    return found;
+  };
+  if (frame == 2) {
+    e->model->Select("g6"); // the Player: a Transform and component cards in the Inspector
+    mode = lw < 1000 ? "narrow" : "wide";
+    if (mode == "wide") { // push the splits: Hierarchy and Inspector to their minimum widths
+      bdg::DockNode& root = dock.nodes[(size_t)dock.root];
+      root.ratio = 0;
+      if (root.b >= 0) dock.nodes[(size_t)root.b].ratio = 1;
+    }
+  }
+  if (frame == 5 && mode == "narrow") {
+    a = dock.FindLeaf("hierarchy") == dock.FindLeaf("inspector") ? "1" : "0"; // stacked
+    bool fits = true;
+    for (const char* id : {"ws.tabs", "tool.play", "tool.pause", "tool.more"})
+      if (bdg::Widget* w = ui.Find(id); !w || w->hidden || w->x + w->w > lw + 0.5f) {
+        fits = false;
+        bdg::LogError("narrow test: {} {}", id, w ? std::format("x {} w {} lw {}", w->x, w->w, lw) : "missing");
+      }
+    for (const char* id : {"tool.build", "tool.quality", "tool.platform", "tool.timescale"})
+      if (bdg::Widget* w = ui.Find(id); w && !w->hidden) fits = false;
+    b = fits ? "1" : "0"; // toolbar
+    bdg::Widget* title = ui.Find("title.scene");
+    c = title && title->x + ui.Measure(title->fontSize > 0 ? title->fontSize : 12, title->text) <= lw + 0.5f ? "1" : "0"; // title
+    d = stackedVector() ? "1" : "0";
+    if (bdg::Widget* more = ui.Find("tool.more")) {
+      e->window.InjectEvent({T::MouseMove, (more->x + more->w * 0.5f) * scale, (more->y + more->h * 0.5f) * scale});
+      e->window.InjectEvent({T::MouseDown, (more->x + more->w * 0.5f) * scale, (more->y + more->h * 0.5f) * scale, 1});
+      e->window.InjectEvent({T::MouseUp, (more->x + more->w * 0.5f) * scale, (more->y + more->h * 0.5f) * scale, 1});
+    }
+  }
+  if (frame == 7 && mode == "narrow") {
+    bool build = false;
+    for (const auto& it : ui.Menu()) build |= it.label == "빌드";
+    e2 = build ? "1" : "0"; // the "»" list
+    ui.CloseMenu();
+  }
+  if (frame == 5 && mode == "wide") {
+    bdg::Widget* hier = ui.Find("hierarchy");
+    bdg::Widget* insp = ui.Find("inspector");
+    const bool kept = hier && insp && hier->w >= 177 && insp->w >= 277 /* the group minus its 1-unit borders */ && hier->w < 220;
+    float rowW = 1e9f;
+    if (hier) walk(*hier, [&](bdg::Widget& w) { if (w.kind == bdg::WidgetKind::ListRow) rowW = std::min(rowW, w.w); });
+    const std::string cut = ui.FitText(12.5f, "Main Camera", 40);
+    a = kept && rowW < 220 && cut.ends_with("…") && ui.Measure(12.5f, cut) <= 40 ? "1"
+        : std::format("0(hier {} insp {} row {} cut '{}')", hier ? hier->w : 0, insp ? insp->w : 0, rowW, cut);
+    b = stackedVector() ? "1" : "0";
+    bool wrapped = false; // a wrapping button row on two lines
+    if (insp)
+      walk(*insp, [&](bdg::Widget& w) {
+        if (!w.wrap || w.children.size() < 2) return;
+        const float y0 = w.children.front()->y;
+        for (auto& ch : w.children)
+          if (!ch->hidden && ch->y > y0 + 4) wrapped = true;
+      });
+    c = wrapped ? "1" : "0";
+  }
+}
+void ReportNarrowTest(bdg_engine*) {
+  using namespace narrowtest;
+  if (mode == "narrow") bdg::LogInfo("narrow test: mode=narrow stacked={} toolbar={} title={} vector={} more={}", a, b, c, d, e2);
+  else bdg::LogInfo("narrow test: mode=wide rows={} vector={} wrap={}", a, b, c);
+}
+BDG_EDITOR_TEST("BDG_NARROW_TEST", InjectNarrowTest, ReportNarrowTest)

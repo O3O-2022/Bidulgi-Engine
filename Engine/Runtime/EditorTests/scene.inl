@@ -52,6 +52,8 @@ void InjectCommandTest(bdg_engine* e, int frame, float scale) {
   if (frame == 2) type("f.Transform.position", "3, 4, 5");
   if (frame == 4) { e->cmdTestValues[0] = position(); key(bdg::Key::Z, true); }
   if (frame == 6) { e->cmdTestValues[1] = position(); key(bdg::Key::Y, true); }
+  if (frame == 7) // a narrow Inspector (B9: stacked vectors) may have it below the fold
+    if (bdg::Widget* f = e->editor->Find("f.Health.maxHealth")) e->editor->ScrollIntoView(*f);
   if (frame == 8) { e->cmdTestValues[2] = position(); type("f.Health.maxHealth", "250"); }
   if (frame == 12) { // History panel: click the first step (only the position edit stays applied)
     if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("history");

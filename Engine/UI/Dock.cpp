@@ -233,6 +233,19 @@ std::unique_ptr<Widget> MakeDock(std::string id, std::shared_ptr<DockState> stat
   return w;
 }
 
+float DockState::MinWidth(int n) const {
+  if (n < 0 || n >= (int)nodes.size() || !nodes[n].alive) return 0;
+  const DockNode& node = nodes[n];
+  if (!node.split) {
+    float m = kMinPane;
+    for (const std::string& t : node.tabs)
+      if (auto it = minWidth.find(t); it != minWidth.end()) m = std::max(m, it->second);
+    return m;
+  }
+  const float a = MinWidth(node.a), b = MinWidth(node.b);
+  return node.axis == Axis::Row ? a + b + kGap : std::max(a, b);
+}
+
 // ---- Layout / drawing / input (UIContext members) -------------------------------------------
 namespace {
 void LayoutNode(DockState& d, int n, DockRect r) {
@@ -242,6 +255,11 @@ void LayoutNode(DockState& d, int n, DockRect r) {
   bool row = node.axis == Axis::Row;
   float avail = std::max(0.f, (row ? r.w : r.h) - DockState::kGap);
   float sa = std::round(avail * node.ratio);
+  if (row) { // each side keeps its panels' minimum widths when both fit; else they share by those minimums (U7)
+    const float ma = d.MinWidth(node.a), mb = d.MinWidth(node.b);
+    if (ma + mb <= avail) sa = std::clamp(sa, ma, avail - mb);
+    else if (ma + mb > 0) sa = std::round(avail * ma / (ma + mb));
+  }
   DockRect ra = r, rb = r;
   if (row) { ra.w = sa; rb.x = r.x + sa + DockState::kGap; rb.w = avail - sa; }
   else { ra.h = sa; rb.y = r.y + sa + DockState::kGap; rb.h = avail - sa; }

@@ -33,6 +33,10 @@ struct DockState {
   std::unordered_map<std::string, DockRect> tabRects;  // computed each layout
   std::unordered_map<std::string, DockRect> bodyRects; // visible content area of each shown panel
   std::string layoutPath;                              // changes are saved here ("" = not saved)
+  // Narrowest a panel may get (UI units, by panel id; others kMinPane). Side-by-side panes keep these while the
+  // dock is wide enough (the saved ratio is kept for when it is again); MinWidth(root) = what the whole needs.
+  std::unordered_map<std::string, float> minWidth;
+  float MinWidth(int node) const;
 
   // Interaction state (mouse coordinates in UI units).
   int dragSplit = -1, hoverSplit = -1;
