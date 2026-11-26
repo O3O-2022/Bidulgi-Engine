@@ -589,6 +589,30 @@ jobs:
           Remove-Item -Recurse -Force '.cache', 'Bidulgi.log' -ErrorAction SilentlyContinue
           & $bdg shot Nope 2>$null | Out-Null
           if ($LASTEXITCODE -ne 1) { $errors += 'bdg shot did not fail on a missing scene' }
+          # AI-4 `bdg mcp`: an MCP client's first messages on stdin (initialize, tools/list, scene_view, set with dry_run,
+          # shot) get one JSON-RPC reply line each; the dry run saves nothing; the picture comes back as a PNG image block
+          $mcpIn = Join-Path $env:RUNNER_TEMP 'mcp-in.txt'
+          $mcpOut = Join-Path $env:RUNNER_TEMP 'mcp-out.txt'
+          @(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}'
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"scene_view","arguments":{}}}'
+            '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"set","arguments":{"target":"sun","values":{"Light.intensity":9},"dry_run":true}}}'
+            '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"shot","arguments":{"camera":"30,-20,8"}}}'
+          ) -join "`n" | Set-Content -NoNewline -Encoding ascii $mcpIn
+          $p = Start-Process $bdg -ArgumentList 'mcp', '--project', '.' -NoNewWindow -PassThru -Wait -RedirectStandardInput $mcpIn -RedirectStandardOutput $mcpOut
+          $replies = @{}
+          foreach ($line in (Get-Content $mcpOut -Encoding utf8)) { $r = $line | ConvertFrom-Json; $replies[[int]$r.id] = $r }
+          $png = $replies[5].result.content | Where-Object { $_.type -eq 'image' } | Select-Object -First 1
+          $pngOk = $png -and $png.mimeType -eq 'image/png' -and [Convert]::FromBase64String($png.data)[1] -eq 0x50
+          if ($p.ExitCode -ne 0 -or $replies.Count -ne 5 -or $replies[1].result.protocolVersion -ne '2025-06-18' -or $replies[2].result.tools.Count -lt 15 -or
+              $replies[3].result.isError -or ($replies[3].result.structuredContent.output -join "`n") -notmatch 'sun\s+Light' -or
+              $replies[4].result.isError -or ($replies[4].result.structuredContent.output -join "`n") -notmatch '"intensity":9' -or -not $pngOk) {
+            $errors += "bdg mcp failed (exit $($p.ExitCode)): $((Get-Content $mcpOut -Encoding utf8 -Raw) -replace '"data":"[^"]{200,}"', '"data":"..."')"
+          }
+          if (((& $bdg view) -join "`n") -notmatch 'intensity=5') { $errors += 'bdg mcp: set with dry_run changed the scene' }
+          Remove-Item -Recurse -Force '.cache', 'Bidulgi.log', $mcpIn, $mcpOut -ErrorAction SilentlyContinue
           Pop-Location
 
           # 4-1 C# scripting: the editor hosts .NET; C# calls Health.Damage, reads Ratio, writes fields (undoable, source script)

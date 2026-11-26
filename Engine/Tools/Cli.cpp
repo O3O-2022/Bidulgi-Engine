@@ -1,4 +1,5 @@
 #include "Tools/Cli.h"
+#include "Tools/Mcp.h"
 #include <bdg/bdg_api.h>
 #include <cstdio>
 #include "Assets/AssetDatabase.h"
@@ -782,6 +783,39 @@ int CmdShot(Ctx& c) {
   return 0;
 }
 
+// One scripted editor check (BDG_*_TEST) in the project: the editor runs it with --frames and the result lines
+// ("... test: a=1 b=1", probe lines, errors) are printed. Exit 0 when the editor ended well and a result line came.
+int CmdCheck(Ctx& c) {
+  if (c.pos.empty() || c.pos[0].rfind("BDG_", 0) != 0 || !c.pos[0].ends_with("_TEST")) {
+    c.err += "사용법: bdg check <BDG_..._TEST> [--frames N] [--env 이름=값]...\n";
+    return 2;
+  }
+  const fs::path root = ProjectRoot(c);
+  const fs::path editor = SelfDir() / "BidulgiEditor.exe";
+  std::error_code ec;
+  if (!fs::exists(editor, ec)) { c.err += std::format("오류: 에디터를 찾지 못함: {} (bdg.exe 옆)\n", Utf8(editor)); return 1; }
+  std::vector<std::pair<std::string, std::string>> env{{c.pos[0], "1"}, {"BDG_HIDDEN", "1"}};
+  if (auto it = c.opt.find("env"); it != c.opt.end())
+    for (const std::string& kv : it->second)
+      if (const size_t eq = kv.find('='); eq != std::string::npos && eq > 0) env.push_back({kv.substr(0, eq), kv.substr(eq + 1)});
+  const fs::path log = root / "Bidulgi.log";
+  fs::remove(log, ec);
+  const std::string frames = c.Opt("frames", "120");
+  const int code = RunWithEnv(editor, {"--frames", frames}, root, env, 900);
+  std::ifstream in(log, std::ios::binary);
+  std::string line;
+  bool result = false;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const bool isResult = line.find(" test: ") != std::string::npos;
+    if (isResult || line.find("probe: ") != std::string::npos || line.rfind("[error]", 0) == 0) c.out += line + "\n";
+    result = result || isResult;
+  }
+  if (code != 0) { c.err += std::format("오류: 에디터가 코드 {}로 끝남 (로그: {})\n", code, Utf8(log)); return 1; }
+  if (!result) { c.err += std::format("오류: {}의 결과 줄이 없음 → --frames를 늘리거나 필요한 환경 변수를 --env로 (로그: {})\n", c.pos[0], Utf8(log)); return 1; }
+  return 0;
+}
+
 const char* kHelp =
     "bdg — 비둘기 엔진 명령줄 (에디터와 같은 명령 버스)\n"
     "  new <dir> [--template basic3d|empty|fps|platformer2d|thirdperson|arena] [--name 게임 이름]   (fps, platformer2d, thirdperson, arena = 바로 할 수 있는 게임 템플릿; arena = 멀티플레이)\n"
@@ -793,6 +827,8 @@ const char* kHelp =
     "  table import <csv> [out] | export <table.jsonl> [out] | check <file>  (데이터 테이블)\n"
     "  build [--check] [--out <dir>] [--config Debug|Development|Shipping] [--zip] [--scripts a.dll;b.dll]  (게임 빌드)\n"
     "  nodes [filter] | call <target> <Component.Function | Component.Get x | Component.Set x> [인자...]\n"
+    "  check <BDG_..._TEST> [--frames N] [--env 이름=값]...  (에디터 자동 검사 하나, 결과 줄 출력)\n"
+    "  mcp [--project <dir>]  (MCP 서버: AI 에이전트가 stdio로 붙음 — Docs/features/mcp.md)\n"
     "  shot [scene] [--bookmarks] [--camera yaw,pitch,dist[,x,y,z]] [--quality 최소|낮음|보통|높음|최고] [--out <dir>] [--frames N]  (장면 사진, 파일 경로 출력)\n"
     "공통: --project <dir> --scene <이름 또는 경로> --json (결과·오류를 JSON 한 개로)\n";
 
@@ -893,6 +929,7 @@ static int Dispatch(Ctx& c, const std::string& cmd) {
   if (cmd == "table") return CmdTable(c);
   if (cmd == "build") return CmdBuild(c);
   if (cmd == "shot") return CmdShot(c);
+  if (cmd == "check") return CmdCheck(c);
   err += std::format("오류: 모르는 명령 '{}'\n", cmd);
   out += kHelp;
   return 2;
@@ -911,6 +948,7 @@ extern "C" int bdg_cli_main(int argc, const char* const* argv) {
   }
   std::vector<std::string> args;
   for (int i = 1; i < argc; ++i) args.emplace_back(argv[i] ? argv[i] : "");
+  if (!args.empty() && args[0] == "mcp") return bdg::RunMcp(args, std::filesystem::current_path()); // stdout = protocol only
   std::string out, err;
   const int code = bdg::RunCli(args, out, err, std::filesystem::current_path());
   if (!out.empty()) std::fwrite(out.data(), 1, out.size(), stdout);
