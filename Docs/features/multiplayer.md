@@ -40,7 +40,7 @@ public class Player : Behaviour {
 
 플레이어 exe 옵션: `--server`, `--listen`, `--connect host[:port]`, `--port`, `--name`, `--title`(창 제목), `--log`(로그 파일), `--scene`(시작 장면 대신), `--sim-latency` / `--sim-jitter`(ms), `--sim-loss`(%).
 
-자동 종료(테스트·CI·정해진 시간의 경기): `--quit-after 초`는 **접속한 뒤부터**(클라이언트) / `--expect-players N`명이 모인 뒤부터(서버) / 시작부터(네트워크 없음) 셉니다. 느린 PC(소프트웨어 OpenGL은 시작에 몇 초)가 경기를 일찍 끝내지 않게 하려는 것입니다. `--quit-file 경로`는 그 파일이 생기면 인사하고 나감, `--timeout 초`는 시작부터의 최대 시간(무슨 일이 있어도).
+자동 종료(테스트·CI·정해진 시간의 경기): `--quit-after 초`는 **접속한 뒤부터**(클라이언트) / `--expect-players N`명이 모인 뒤부터(서버) / 시작부터(네트워크 없음) 셉니다. 느린 PC(소프트웨어 OpenGL은 시작에 몇 초)가 경기를 일찍 끝내지 않게 하려는 것입니다. `--quit-file 경로`는 그 파일이 생기면 인사하고 나감, `--timeout 초`는 시작부터의 최대 시간(무슨 일이 있어도). `--net-timeout 초`(기본 5): 상대가 이만큼 답이 없으면 끊김으로 봄 — 느린 기계의 테스트에서 길게(에디터 Play 옵션 `timeoutMs`도 같은 값을 클라이언트에 넘김).
 
 ## 복제 (어떻게 맞추나)
 
