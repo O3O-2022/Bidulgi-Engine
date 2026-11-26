@@ -284,7 +284,7 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
     if (n == "gz.move" || n == "gz.rotate" || n == "gz.scale" || n == "space" || n == "surf" || n == "snap" || n == "rsnap" || n == "ssnap") return kIconW;
     const std::string label = ToolbarLabel(n, compact);
     const bool dropdown = n != "gi" && n != "align" && n != "more";
-    return ui.Measure(11, label) + 16 + (dropdown ? 10.f : 0.f) + (n == "speed" ? 16.f : 0.f);
+    return ui.Measure(t.FontSize("overlay", 11), label) + 16 + (dropdown ? 10.f : 0.f) + (n == "speed" ? 16.f : 0.f);
   };
   const float x0 = w.x + 10, x1 = w.x + w.w - 10;
   auto total = [&](const std::vector<std::string>& l, const std::vector<std::string>& r, bool compact, bool more) {
@@ -325,16 +325,16 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
     const bool on = ToolbarOn(n);
     const bool warn = n == "show" && BudgetOver();
     const bool bake = n == "gi" && lightmapItems_ > 0 && lightmapKey_ != bakedLightmapKey_;
-    b.Rect(x, rowY, cw, kRowH, warn ? WithAlpha(t.C("warn"), 0.9f) : on || bake ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), 11, 1,
+    b.Rect(x, rowY, cw, kRowH, warn ? WithAlpha(t.C("warn"), 0.9f) : on || bake ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.85f), t.N("radius-pill", 12), 1,
            t.C("line"));
-    const Color fg = on || warn || bake ? Color{1, 1, 1, 1} : t.C("fg-dim");
+    const Color fg = on || warn || bake ? t.C("on-accent") : t.C("fg-dim");
     float tx = x + 8;
     if (n == "speed") { // a little camera, then the level
-      b.Rect(x + 7, rowY + 7, 8, 8, fg, 2);
+      b.Rect(x + 7, rowY + 7, 8, 8, fg, t.N("radius-xs", 2));
       b.Triangle(x + 15, rowY + 7, 5, 8, fg);
       tx += 16;
     }
-    ui.Text(tx, rowY + 4, 11, fg, ToolbarLabel(n, compact));
+    ui.Text(tx, rowY + 4, t.FontSize("overlay", 11), fg, ToolbarLabel(n, compact));
     if (n != "gi" && n != "align" && n != "more") { // a chevron: opens a list
       const float cx = x + cw - 10, cy = rowY + 11;
       const float tri[4][2] = {{cx - 3, cy - 1.5f}, {cx + 3, cy - 1.5f}, {cx, cy + 2.5f}, {cx, cy + 2.5f}};
@@ -344,19 +344,19 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
   };
   auto drawIcon = [&](const std::string& n, float x, int segment) { // segment: 0 alone, 1 first, 2 middle, 3 last
     const bool on = ToolbarOn(n);
-    const float r = segment == 0 ? 11.f : 4.f;
+    const float r = segment == 0 ? t.N("radius-pill", 12) : t.N("radius-md", 4);
     b.Rect(x, rowY, kIconW, kRowH, on ? WithAlpha(t.C("accent"), 0.9f) : WithAlpha(t.C("win"), 0.85f), r, 1, t.C("line"));
-    const Color fg = on ? Color{1, 1, 1, 1} : t.C("fg");
+    const Color fg = on ? t.C("on-accent") : t.C("fg");
     const float cx = x + kIconW * 0.5f, cy = rowY + kRowH * 0.5f;
     const std::string icon = n == "gz.move" ? "tool-move" : n == "gz.rotate" ? "tool-rotate" : n == "gz.scale" ? "tool-scale" : n == "snap" ? "tool-snap" : "";
     if (!icon.empty() && ui.HasIcon(icon)) ui.Icon(icon, cx - 7.5f, cy - 7.5f, 15);
     else if (n == "space") { // world: a globe; local: a cube
       if (!localSpace) {
-        b.Rect(cx - 6, cy - 6, 12, 12, {0, 0, 0, 0}, 6, 1.3f, fg);
+        b.Rect(cx - 6, cy - 6, 12, 12, {0, 0, 0, 0}, t.N("radius-lg", 5), 1.3f, fg);
         b.Line(cx - 6, cy, cx + 6, cy, 1.2f, fg);
-        b.Rect(cx - 2.5f, cy - 6, 5, 12, {0, 0, 0, 0}, 2.5f, 1.1f, fg);
+        b.Rect(cx - 2.5f, cy - 6, 5, 12, {0, 0, 0, 0}, 2.5f, 1.1f, fg); // a capsule
       } else {
-        b.Rect(cx - 6, cy - 3, 9, 9, {0, 0, 0, 0}, 1, 1.3f, fg);
+        b.Rect(cx - 6, cy - 3, 9, 9, {0, 0, 0, 0}, t.N("radius-xs", 2), 1.3f, fg);
         b.Line(cx - 6, cy - 3, cx - 3, cy - 6, 1.2f, fg);
         b.Line(cx + 3, cy - 3, cx + 6, cy - 6, 1.2f, fg);
         b.Line(cx - 3, cy - 6, cx + 6, cy - 6, 1.2f, fg);
@@ -364,14 +364,14 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
       }
     } else if (n == "surf") { // a box resting on a surface
       b.Line(cx - 7, cy + 5, cx + 7, cy + 5, 1.6f, fg);
-      b.Rect(cx - 3.5f, cy - 4, 7, 7, fg, 1);
+      b.Rect(cx - 3.5f, cy - 4, 7, 7, fg, t.N("radius-xs", 2));
     } else if (n == "rsnap") { // an angle
       b.Line(cx - 6, cy + 5, cx + 6, cy + 5, 1.4f, fg);
       b.Line(cx - 6, cy + 5, cx + 4, cy - 6, 1.4f, fg);
       b.Line(cx + 1, cy + 5, cx + 0.5f, cy + 0.5f, 1.2f, fg);
     } else if (n == "ssnap") { // two nested squares
-      b.Rect(cx - 6, cy - 6, 12, 12, {0, 0, 0, 0}, 1, 1.2f, fg);
-      b.Rect(cx - 6, cy + 0, 6, 6, fg, 1);
+      b.Rect(cx - 6, cy - 6, 12, 12, {0, 0, 0, 0}, t.N("radius-xs", 2), 1.2f, fg);
+      b.Rect(cx - 6, cy + 0, 6, 6, fg, t.N("radius-xs", 2));
     } else if (n == "snap") { // a grid
       for (int k = -1; k <= 1; ++k) {
         b.Line(cx + k * 4.f, cy - 6, cx + k * 4.f, cy + 6, 1.f, fg);
@@ -414,23 +414,23 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
     else {
       const float pw = 8 * 22 + 20, ph = 78, ppx = std::max(x0, sc->x + sc->w - pw), ppy = rowY + kRowH + 4;
       speedPopupRect_ = {ppx, ppy, pw, ph};
-      b.Rect(ppx, ppy, pw, ph, WithAlpha(t.C("win"), 0.97f), 8, 1, t.C("line"));
-      ui.Text(ppx + 10, ppy + 6, 11, t.C("fg"), std::format("카메라 속도  {:.2g} m/s", flySpeed_));
+      b.Rect(ppx, ppy, pw, ph, WithAlpha(t.C("win"), 0.97f), t.N("radius-window", 8), 1, t.C("line"));
+      ui.Text(ppx + 10, ppy + 6, t.FontSize("overlay", 11), t.C("fg"), std::format("카메라 속도  {:.2g} m/s", flySpeed_));
       for (int k = 1; k <= 8; ++k) {
         const float cx = ppx + 10 + (k - 1) * 22;
         const bool on = k <= speedLevel;
-        b.Rect(cx, ppy + 24, 20, 16, on ? WithAlpha(t.C("accent"), k == speedLevel ? 1.f : 0.5f) : WithAlpha(t.C("sunk"), 0.9f), 3);
-        ui.Text(cx + 6, ppy + 25, 11, on ? Color{1, 1, 1, 1} : t.C("fg-dim"), std::format("{}", k));
+        b.Rect(cx, ppy + 24, 20, 16, on ? WithAlpha(t.C("accent"), k == speedLevel ? 1.f : 0.5f) : WithAlpha(t.C("sunk"), 0.9f), t.N("radius-sm", 3));
+        ui.Text(cx + 6, ppy + 25, t.FontSize("overlay", 11), on ? t.C("on-accent") : t.C("fg-dim"), std::format("{}", k));
         chips_.push_back({std::format("sp.l{}", k), cx, ppy + 24, 20, 16, true});
       }
-      ui.Text(ppx + 10, ppy + 52, 11, t.C("fg-dim"), "배율");
+      ui.Text(ppx + 10, ppy + 52, t.FontSize("overlay", 11), t.C("fg-dim"), "배율");
       const float bx = ppx + 50;
-      b.Rect(bx, ppy + 49, 22, 20, WithAlpha(t.C("sunk"), 0.9f), 4);
-      ui.Text(bx + 8, ppy + 51, 12, t.C("fg"), "−");
+      b.Rect(bx, ppy + 49, 22, 20, WithAlpha(t.C("sunk"), 0.9f), t.N("radius-md", 4));
+      ui.Text(bx + 8, ppy + 51, t.FontSize("label", 12), t.C("fg"), "−");
       chips_.push_back({"sp.minus", bx, ppy + 49, 22, 20, true});
-      ui.Text(bx + 30, ppy + 51, 12, t.C("fg"), std::format("×{}", Num(speedScalar)));
-      b.Rect(bx + 80, ppy + 49, 22, 20, WithAlpha(t.C("sunk"), 0.9f), 4);
-      ui.Text(bx + 87, ppy + 51, 12, t.C("fg"), "+");
+      ui.Text(bx + 30, ppy + 51, t.FontSize("label", 12), t.C("fg"), std::format("×{}", Num(speedScalar)));
+      b.Rect(bx + 80, ppy + 49, 22, 20, WithAlpha(t.C("sunk"), 0.9f), t.N("radius-md", 4));
+      ui.Text(bx + 87, ppy + 51, t.FontSize("label", 12), t.C("fg"), "+");
       chips_.push_back({"sp.plus", bx + 80, ppy + 49, 22, 20, true});
     }
   }
@@ -439,9 +439,9 @@ void SceneView::DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Wid
     const std::string tip = ToolbarTooltip(tipName_);
     for (const Chip& c : chips_)
       if (c.name == tipName_ && !tip.empty()) {
-        const float tw = ui.Measure(11, tip) + 16, tx = std::clamp(c.x, x0, std::max(x0, x1 - tw));
-        b.Rect(tx, c.y + c.h + 4, tw, 20, WithAlpha(t.C("win"), 0.96f), 5, 1, t.C("line"));
-        ui.Text(tx + 8, c.y + c.h + 7, 11, t.C("fg"), tip);
+        const float tw = ui.Measure(t.FontSize("overlay", 11), tip) + 16, tx = std::clamp(c.x, x0, std::max(x0, x1 - tw));
+        b.Rect(tx, c.y + c.h + 4, tw, 20, WithAlpha(t.C("win"), 0.96f), t.N("radius-lg", 5), 1, t.C("line"));
+        ui.Text(tx + 8, c.y + c.h + 7, t.FontSize("overlay", 11), t.C("fg"), tip);
         break;
       }
   }

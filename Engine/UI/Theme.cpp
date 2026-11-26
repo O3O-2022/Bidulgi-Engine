@@ -88,6 +88,7 @@ Color Theme::FromHSV(float h, float s, float v, float a) {
 }
 
 bool Theme::Load(const std::string& path) {
+  missing_.clear(); // asked-for names are checked against this load
   path_ = path;
   yyjson_read_err err{};
   std::string fileText;
@@ -271,16 +272,22 @@ Color Theme::C(std::string_view name) const {
   if (!overrides_.empty())
     if (auto o = overrides_.find(std::string(name)); o != overrides_.end()) return o->second;
   auto it = colors_.find(std::string(name));
-  return it != colors_.end() ? it->second : Color{1, 0, 1, 1};
+  if (it != colors_.end()) return it->second;
+  if (!colors_.empty()) missing_.insert("color:" + std::string(name));
+  return Color{1, 0, 1, 1};
 }
 
 float Theme::N(std::string_view name, float fallback) const {
   auto it = numbers_.find(std::string(name));
-  return it != numbers_.end() ? it->second : fallback;
+  if (it != numbers_.end()) return it->second;
+  if (!numbers_.empty()) missing_.insert("number:" + std::string(name));
+  return fallback;
 }
 
 float Theme::FontSize(std::string_view style, float fallback) const {
   auto it = fontSizes_.find(std::string(style));
-  return it != fontSizes_.end() ? it->second : fallback;
+  if (it != fontSizes_.end()) return it->second;
+  if (!fontSizes_.empty()) missing_.insert("font:" + std::string(style));
+  return fallback;
 }
 }

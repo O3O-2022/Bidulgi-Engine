@@ -1,5 +1,6 @@
 #pragma once
 #include "RHI/RHI.h"
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -27,6 +28,9 @@ public:
   Shadow S(std::string_view name) const; // CSS box-shadow token "x y blur color"; missing -> no shadow
   size_t TokenCount() const { return colors_.size() + numbers_.size() + fontSizes_.size() + shadows_.size(); }
   const std::string& Path() const { return path_; }
+  // Names asked for that tokens.json does not have ("color:x", "number:x", "font:x"), since the last load: a typo
+  // in N() / FontSize() falls back silently, so checks read this (UI review B11).
+  const std::set<std::string>& Missing() const { return missing_; }
 
   // Color tokens in tokens.json order, with their usage notes and tokens.json values.
   const std::vector<std::string>& ColorNames() const { return colorOrder_; }
@@ -60,5 +64,6 @@ private:
   std::unordered_map<std::string, Color> colors_;
   std::unordered_map<std::string, float> numbers_, fontSizes_;
   std::unordered_map<std::string, Shadow> shadows_;
+  mutable std::set<std::string> missing_;
 };
 }
