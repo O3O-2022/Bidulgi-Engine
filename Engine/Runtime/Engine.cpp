@@ -200,6 +200,8 @@ struct bdg_engine {
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
   bdg::UIDesigner uiDesigner;  // the "UI Designer" workspace shows it in the Scene panel (7-3)
   int lastWorkspace = 0;       // ws.tabs index of the last frame
+  float wsBack[4] = {0, 0, 0, 0}; // "레벨로 돌아가기" in an empty workspace (x, y, w, h; UI review U5)
+  float wsMouse[2] = {-1, -1};    // the mouse over the Scene panel, for that button's hover
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bdg::AssetPreviews previews;                // Project thumbnails and the Inspector preview (E-1)
   bool previewsReady = false;
@@ -1157,6 +1159,96 @@ void RunBuild(bdg_engine* e, bool checkOnly) {
   else if (r.ok) bdg::LogInfo("build: {} ({} files)", r.exePath, r.files);
   else bdg::LogError("build: failed — {} error(s)", r.Errors());
 }
+
+// Opens <project>/Assets (asset database, watcher, previews, the Project panel, asset rules), at start (BDG_ASSETS)
+// or later from the Project panel's empty state (UI review U21). Only once: a second project needs a restart.
+bool OpenProject(bdg_engine* e, const std::string& assetsDir) {
+  if (e->assetsOpen) return false;
+  std::string err;
+  e->assetsOpen = e->assets.Open(assetsDir, &err, bdg::PathToU8((bdg::PathU8(assetsDir).parent_path() / ".cache" / "assetdb.jsonl")));
+  if (!e->assetsOpen) {
+    bdg::LogWarn("assets: {}", err);
+    return false;
+  }
+  e->materials.SetAssets(&e->assets);
+  if (e->previewsReady)
+    e->previews.SetAssets(&e->assets, bdg::PathU8(e->assets.Root()).parent_path() / ".cache" / "thumbnails");
+  e->assetWatcher.Start(e->assets.Root(), [](void* p) {
+    auto* eng = static_cast<bdg_engine*>(p);
+    eng->assetsChanged = true;
+    eng->window.Wake();
+  }, e);
+  if (e->model) { // previews (E-1): thumbnails on Project tiles, the Inspector's preview
+    e->model->thumbnailFor = [e](const bdg::AssetRecord& r) { return e->previewsReady ? e->previews.Thumbnail(r) : bdg::TextureHandle{}; };
+    e->model->drawPreview = [e](bdg::Widget& w, bdg::UIContext& ui, const std::string&) { DrawAssetPreview(e, w, ui); };
+    if (bdg::Widget* project = e->editor ? e->editor->Find("project") : nullptr) e->model->AttachProject(*project, &e->assets);
+    // asset rules (2-5d): <project>/ProjectSettings/AssetRules.json
+    e->model->assetRulesPath = bdg::PathToU8(bdg::PathU8(e->assets.Root()).parent_path() / "ProjectSettings" / "AssetRules.json");
+    if (!std::getenv("BDG_PRESETS")) e->model->presetDir = bdg::PathToU8(bdg::PathU8(e->assets.Root()) / "Presets");
+  }
+  bdg::LogInfo("project: opened {}", e->assets.Root());
+  return true;
+}
+
+// The Project panel's empty state (no project): open a project folder, or make one in an empty folder (U21).
+void SetupProjectButtons(bdg_engine* e) {
+  if (bdg::Widget* b = e->editor->Find("project.open"))
+    b->onClick = [e](bdg::Widget&) {
+      e->window.OpenFolderDialog([e](const std::string& folder) {
+        const std::filesystem::path dir = bdg::PathU8(folder);
+        std::error_code ec;
+        const std::filesystem::path assets = std::filesystem::is_directory(dir / "Assets", ec) ? dir / "Assets" : dir;
+        if (assets.filename() != "Assets") {
+          bdg::LogWarn("project: {} has no Assets folder; pick the project folder, or make one with 새 프로젝트…", folder);
+          return;
+        }
+        OpenProject(e, bdg::PathToU8(assets));
+      });
+    };
+  if (bdg::Widget* b = e->editor->Find("project.new"))
+    b->onClick = [e](bdg::Widget&) {
+      e->window.OpenFolderDialog([e](const std::string& folder) {
+        const std::filesystem::path dir = bdg::PathU8(folder);
+        std::error_code ec;
+        for (const char* sub : {"Assets", "Assets/Scripts", "Assets/Materials", "Scenes", "ProjectSettings"})
+          std::filesystem::create_directories(dir / sub, ec);
+        if (ec) {
+          bdg::LogWarn("project: cannot make folders in {}: {}", folder, ec.message());
+          return;
+        }
+        if (OpenProject(e, bdg::PathToU8(dir / "Assets"))) bdg::LogInfo("project: new project in {}", folder);
+      });
+    };
+}
+
+// Graph, Animation and Scripting have no editor yet: the Scene panel says so instead of showing the level (U5).
+int Workspace(bdg_engine* e) {
+  const bdg::Widget* ws = e->editor ? e->editor->Find("ws.tabs") : nullptr;
+  return ws ? ws->selectedIndex : 0;
+}
+bool WorkspaceEmpty(bdg_engine* e) {
+  const int ws = Workspace(e);
+  return ws == 1 || ws == 2 || ws == 4;
+}
+void DrawWorkspaceEmpty(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
+  static const char* const titles[] = {"", "그래프 편집기는 준비 중입니다", "애니메이션 편집기는 준비 중입니다", "", "스크립팅 작업 공간은 준비 중입니다"};
+  static const char* const hints[] = {"", "지금은 C# 스크립트로 같은 일을 할 수 있습니다",
+                                      "지금은 Animator 컴포넌트에서 클립과 블렌드를 정합니다", "",
+                                      "지금은 C# 스크립트를 만들어 외부 편집기에서 고칩니다"};
+  const int ws = std::clamp(Workspace(e), 0, 4);
+  const bdg::Theme& t = ui.Tokens();
+  bdg::Batch2D& b = ui.Batch();
+  b.Rect(w.x, w.y, w.w, w.h, t.C("ground"));
+  const float fsTitle = t.FontSize("section-title", 16), fs = t.FontSize("label", 12), cy = w.y + w.h * 0.5f;
+  ui.Text(w.x + (w.w - ui.Measure(fsTitle, titles[ws])) * 0.5f, cy - 52, fsTitle, t.C("fg"), titles[ws]);
+  ui.Text(w.x + (w.w - ui.Measure(fs, hints[ws])) * 0.5f, cy - 22, fs, t.C("fg-dim"), hints[ws]);
+  const char* label = "레벨로 돌아가기";
+  const float bw = ui.Measure(fs, label) + 28, bh = t.N("size-control", 28), bx = w.x + (w.w - bw) * 0.5f, by = cy + 6;
+  const bool hot = e->wsMouse[0] >= bx && e->wsMouse[1] >= by && e->wsMouse[0] < bx + bw && e->wsMouse[1] < by + bh;
+  b.Rect(bx, by, bw, bh, t.C("accent"), t.N("radius-md", 4), hot ? 1.5f : 1, hot ? t.C("fg") : t.C("accent"));
+  ui.Text(bx + 14, by + (bh - fs) * 0.5f - 1, fs, t.C("on-accent"), label);
+  e->wsBack[0] = bx, e->wsBack[1] = by, e->wsBack[2] = bw, e->wsBack[3] = bh;
+}
 } // namespace
 
 void SetupMenuBar(bdg_engine* e) {
@@ -1585,7 +1677,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
       }
       if (bdg::Widget* scene = e->editor->Find("scene")) { // a .prefab dragged from the Project panel: an instance there (6-1)
         scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) {
-          if (UIDesignerActive(e) && e->model) {
+          if (WorkspaceEmpty(e)) {
+            DrawWorkspaceEmpty(e, w, ui);
+          } else if (UIDesignerActive(e) && e->model) {
             const std::string assets = e->assetsOpen ? e->assets.Root() : bdg::PathToU8((std::filesystem::current_path() / "Assets"));
             e->uiDesigner.Draw(w, ui, *e->model, e->hasFont ? &e->font : nullptr, e->rhi, assets);
           } else {
@@ -1782,32 +1876,9 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     }
   }
   mark("scene");
-  if (const char* assetsDir = std::getenv("BDG_ASSETS")) { // asset database + watcher (wakes the idle editor)
-    std::string err;
-    e->assetsOpen = e->assets.Open(assetsDir, &err, bdg::PathToU8((std::filesystem::path(assetsDir).parent_path() / ".cache" / "assetdb.jsonl")));
-    if (!e->assetsOpen) bdg::LogWarn("assets: {}", err);
-    else {
-      e->materials.SetAssets(&e->assets);
-      if (e->previewsReady)
-        e->previews.SetAssets(&e->assets, std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / ".cache" / "thumbnails");
-      e->assetWatcher.Start(e->assets.Root(), [](void* p) {
-        auto* eng = static_cast<bdg_engine*>(p);
-        eng->assetsChanged = true;
-        eng->window.Wake();
-      }, e);
-    }
-  } else {
-    bdg::LogInfo("assets: no project folder (set BDG_ASSETS; the project hub comes in 1.0)");
-  }
-  if (e->model && e->assetsOpen) { // previews (E-1): thumbnails on Project tiles, the Inspector's preview
-    e->model->thumbnailFor = [e](const bdg::AssetRecord& r) { return e->previewsReady ? e->previews.Thumbnail(r) : bdg::TextureHandle{}; };
-    e->model->drawPreview = [e](bdg::Widget& w, bdg::UIContext& ui, const std::string&) { DrawAssetPreview(e, w, ui); };
-  }
-  if (e->model && e->assetsOpen)
-    if (bdg::Widget* project = e->editor->Find("project")) e->model->AttachProject(*project, &e->assets);
-  if (e->model && e->assetsOpen) // asset rules (2-5d): <project>/ProjectSettings/AssetRules.json
-    e->model->assetRulesPath = (std::filesystem::path(std::u8string((const char8_t*)e->assets.Root().c_str())).parent_path() / "ProjectSettings" /
-                                "AssetRules.json").string();
+  if (const char* assetsDir = std::getenv("BDG_ASSETS")) OpenProject(e, assetsDir); // asset database + watcher
+  else bdg::LogInfo("assets: no project folder (set BDG_ASSETS, or Project > 프로젝트 열기…)");
+  SetupProjectButtons(e);
   if (e->model) { // component presets: BDG_PRESETS, else <assets>/Presets, else ./Presets
     const char* p = std::getenv("BDG_PRESETS");
     e->model->presetDir = p ? p : e->assetsOpen ? bdg::PathToU8((std::filesystem::path(e->assets.Root()) / "Presets"))
@@ -2200,12 +2271,25 @@ bdg_result bdg_engine_run(bdg_engine* e) {
         }
         bdg::Widget* focused = ui.Focused();
         if (&ui == e->editor.get()) { // entering the UI designer shows the Scene panel, where it draws (7-3)
-          const int wsNow = UIDesignerActive(e) ? 3 : 0;
-          if (wsNow == 3 && e->lastWorkspace != 3)
+          const int wsNow = Workspace(e);
+          if (wsNow != 0 && wsNow != e->lastWorkspace)
             if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
           e->lastWorkspace = wsNow;
         }
-        if (sceneWidget && UIDesignerActive(e))
+        if (sceneWidget && WorkspaceEmpty(e)) { // only the "레벨로 돌아가기" button is live (U5)
+          const float* r = e->wsBack;
+          std::erase_if(events, [&](const bdg::InputEvent& ev) {
+            const bool inPanel = ev.x >= sceneWidget->x && ev.y >= sceneWidget->y && ev.x < sceneWidget->x + sceneWidget->w && ev.y < sceneWidget->y + sceneWidget->h;
+            if (ev.type == bdg::InputEvent::Type::MouseMove) {
+              e->wsMouse[0] = inPanel ? ev.x : -1;
+              e->wsMouse[1] = inPanel ? ev.y : -1;
+            }
+            if (!inPanel || (ev.type != bdg::InputEvent::Type::MouseDown && ev.type != bdg::InputEvent::Type::MouseUp)) return false;
+            if (ev.type == bdg::InputEvent::Type::MouseUp && ev.x >= r[0] && ev.y >= r[1] && ev.x < r[0] + r[2] && ev.y < r[1] + r[3])
+              if (bdg::Widget* tabs = e->editor->Find("ws.tabs")) tabs->selectedIndex = 0;
+            return true;
+          });
+        } else if (sceneWidget && UIDesignerActive(e))
           e->uiDesigner.HandleEvents(events, *sceneWidget, *e->model, ui);
         else if (sceneWidget)
           e->sceneView->HandleEvents(events, *sceneWidget, *e->model, dt, focused && focused->kind == bdg::WidgetKind::Field);
@@ -2238,7 +2322,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       ui.Layout(lw, lh);
       if (e->board && &ui == e->editor.get())
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);
-      if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2 && !UIDesignerActive(e))
+      if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2 && !UIDesignerActive(e) && !WorkspaceEmpty(e))
         e->sceneView->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, *sceneWidget, scale);
       if (bdg::Widget* game = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("game") : nullptr;
           game && !game->hidden && game->w >= 2 && game->h >= 2)
