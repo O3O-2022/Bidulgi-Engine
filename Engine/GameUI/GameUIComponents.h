@@ -3,7 +3,10 @@
 // in the built player. An object with a UICanvas holds child objects with a UIElement each (text, image, panel,
 // button, progress bar); the object's name is the element's name for scripts (C# UI.Text("score")). Elements are
 // placed in the canvas's reference size and scaled with the screen (Unity's Canvas Scaler); a child element is placed
-// inside its parent element. The designer (.ui assets, Docs/features/ui-widgets.md) comes later.
+// inside its parent element. The UI designer (Runtime/UIDesigner) edits them in the "UI Designer" workspace.
+// Controls (round 7): Toggle (value 0 / 1, a click flips it), Slider (value 0..1, dragged), InputField (text typed
+// after a click; placeholder while empty), ScrollView (clips its children; the wheel scrolls them), Dropdown
+// (options "A|B|C", value = the chosen index; a click opens the list).
 #include "Core/Reflection.h"
 #include <string>
 
@@ -12,7 +15,7 @@ namespace bdg {
 BENUM()
 enum class UIAnchor { TopLeft, Top, TopRight, Left, Center, Right, BottomLeft, Bottom, BottomRight, Stretch };
 BENUM()
-enum class UIKind { Panel, Text, Image, Button, ProgressBar };
+enum class UIKind { Panel, Text, Image, Button, ProgressBar, Toggle, Slider, InputField, ScrollView, Dropdown };
 BENUM()
 enum class UITextAlign { Left, Center, Right };
 
@@ -40,13 +43,17 @@ public:
   BPROPERTY(Edit) Color textColor{1, 1, 1, 1};
   BPROPERTY(Edit, Tooltip = "Panel / button / bar background; an image's tint") Color color{0, 0, 0, 0};
   BPROPERTY(Edit, Tooltip = "Progress bar fill") Color fillColor{0.35f, 0.8f, 0.4f, 1};
-  BPROPERTY(Edit, Range = "0,1", Tooltip = "Progress bar fill (0..1)") float value = 1.f;
+  BPROPERTY(Edit, Tooltip = "Progress bar fill and slider position (0..1), toggle on (1) / off (0), dropdown choice (0, 1, ...)") float value = 1.f;
+  BPROPERTY(Edit, Tooltip = "Input field: shown dimmed while the text is empty") std::string placeholder;
+  BPROPERTY(Edit, Tooltip = "Dropdown: the choices, separated by |") std::string options;
+  BPROPERTY(Edit, Tooltip = "Scroll view: how far its content is scrolled (reference pixels, +y down)") Vec2 scroll;
   BPROPERTY(Edit, Tooltip = "Image file (Assets-relative): PNG, JPG") std::string image;
   BPROPERTY(Edit, Range = "0,200") float cornerRadius = 8.f;
   BPROPERTY(Edit) bool visible = true;
   BPROPERTY(Edit, Tooltip = "Buttons react to the mouse") bool interactable = true;
   BPROPERTY(ReadOnly, Tooltip = "Times this button was clicked while playing (scripts read it)") int32_t clicks = 0;
   bool hovered = false, pressed = false; // not saved: the button's state this frame
+  bool focused = false, open = false;    // not saved: input field has the keyboard, dropdown list is open
 };
 
 } // namespace bdg

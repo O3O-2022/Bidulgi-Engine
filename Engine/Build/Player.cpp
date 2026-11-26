@@ -382,8 +382,10 @@ extern "C" int bdg_player_main(int argc, const char* const* argv) {
     if (img.Valid()) batch.Image(0, 0, (float)w, (float)h, img, 0, 1, 1, 0);
     { // the game's UI over it (7-3)
       const bdg::GameUI::Rect r{0, 0, (float)w, (float)h};
-      const bdg::InputSystem& in = bdg::InputSystem::Instance();
-      if (in.gameFocused) gameUi.Input(model.scene, r, in.MousePosition().x, in.MousePosition().y, in.MouseButton(1));
+      bdg::InputSystem& in = bdg::InputSystem::Instance();
+      const bdg::InputSystem::UIKeys keys = in.TakeUIKeys(); // typed text, Backspace, Enter, wheel
+      if (in.gameFocused)
+        gameUi.Input(model.scene, r, {in.MousePosition().x, in.MousePosition().y, in.MouseButton(1), keys.wheel, keys.text, keys.backspaces, keys.enter});
       gameUi.Draw(model.scene, batch, haveFont ? &font : nullptr, rhi, r, U(content / "Assets"));
     }
     batch.End();

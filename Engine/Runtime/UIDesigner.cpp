@@ -14,7 +14,7 @@
 
 namespace bdg {
 namespace {
-constexpr float kBarH = 32, kMargin = 28, kHandle = 7, kSnap = 6;
+constexpr float kBarH = 32, kMargin = 28, kHandle = 7, kSnap = 6, kPaletteW = 112;
 const char* kAnchorNames[] = {"TopLeft", "Top", "TopRight", "Left", "Center", "Right", "BottomLeft", "Bottom", "BottomRight", "Stretch"};
 Color WithAlpha(Color c, float a) { return {c.r, c.g, c.b, a}; }
 bool Inside(const GameUI::Rect& r, float x, float y) { return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h; }
@@ -36,6 +36,88 @@ const std::vector<UIDesigner::Preset>& UIDesigner::Presets() {
                                         {"21:9 · 2560×1080", 2560, 1080},          {"4:3 · 1600×1200", 1600, 1200},
                                         {"Phone portrait · 1080×1920", 1080, 1920}, {"Phone landscape · 2340×1080", 2340, 1080}};
   return p;
+}
+
+const std::vector<std::string>& UIDesigner::PaletteKinds() {
+  static const std::vector<std::string> k = {"Panel", "Text", "Image", "Button", "ProgressBar", "Toggle", "Slider", "InputField", "ScrollView", "Dropdown"};
+  return k;
+}
+
+std::string UIDesigner::AddElement(EditorModel& model, const std::string& kind, float x, float y) {
+  struct Look { const char* kind; float w, h; const char* extra; };
+  static const Look looks[] = {
+      {"Panel", 400, 300, R"(,"color":[0.15,0.17,0.22,0.9])"},
+      {"Text", 320, 60, R"(,"text":"Text")"},
+      {"Image", 200, 200, R"(,"color":[1,1,1,1])"},
+      {"Button", 280, 72, R"(,"text":"Button")"},
+      {"ProgressBar", 400, 36, R"(,"value":0.6)"},
+      {"Toggle", 260, 48, R"(,"text":"Toggle","value":1)"},
+      {"Slider", 400, 40, R"(,"value":0.5)"},
+      {"InputField", 400, 64, R"(,"text":"","placeholder":"Enter text...","align":"Left")"},
+      {"ScrollView", 500, 400, R"(,"color":[0.1,0.11,0.14,0.85])"},
+      {"Dropdown", 320, 64, R"(,"options":"Option A|Option B|Option C","value":0)"}};
+  const Look* look = nullptr;
+  for (const Look& l : looks)
+    if (kind == l.kind) look = &l;
+  if (!look) return "";
+  auto unique = [&](const std::string& base) {
+    std::string id = base;
+    for (int n = 2; model.scene.Find(id); ++n) id = std::format("{}{}", base, n);
+    return id;
+  };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    const bool ok = model.bus.Execute(c, &err);
+    if (!ok) LogWarn("ui designer: {} {}: {}", name, target, err);
+    return ok;
+  };
+  // where it goes: the panel / scroll view under the point, else the canvas there, else the first canvas, else a new one
+  std::string parent;
+  GameUI::Rect parentRect = screen_;
+  float s = screen_.w / std::max((float)Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)].w, 1.f);
+  for (const GameUI::Placed& p : placed_) {
+    SceneObject* o = model.scene.Find(p.object);
+    Component* c = o ? o->Find("UIElement") : nullptr;
+    const UIElement* e = c ? static_cast<const UIElement*>(c->data) : nullptr;
+    if (e && (e->kind == UIKind::Panel || e->kind == UIKind::ScrollView) && Inside(p.r, x, y)) {
+      parent = p.object;
+      parentRect = p.r;
+      s = p.scale;
+    }
+  }
+  model.bus.BeginGroup(std::string("Add UI ") + kind, "ui");
+  if (parent.empty()) {
+    for (const GameUI::Placed& p : placed_)
+      if (!p.canvas.empty()) {
+        parent = p.canvas;
+        s = p.scale;
+        break;
+      }
+    if (parent.empty())
+      for (const std::string& root : model.scene.Roots())
+        if (SceneObject* o = model.scene.Find(root); o && o->Find("UICanvas")) parent = root;
+    if (parent.empty()) { // no canvas yet: one at this preset's size
+      const Preset& p = Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)];
+      parent = unique("canvas");
+      run("add", "", std::format(R"({{"id":"{}","name":"Canvas"}})", parent));
+      run("addcomp", parent, std::format(R"({{"type":"UICanvas","value":{{"referenceSize":[{},{}]}}}})", p.w, p.h));
+      s = screen_.w / (float)p.w;
+    }
+    parentRect = screen_;
+  }
+  const std::string id = unique(std::string("ui_") + kind);
+  const float w = look->w, h = look->h;
+  const float px = (x - parentRect.x) / s - w * 0.5f, py = (y - parentRect.y) / s - h * 0.5f; // top-left anchor
+  run("add", "", std::format(R"({{"id":"{}","name":"{}","parent":"{}"}})", id, kind, parent));
+  run("addcomp", id, std::format(R"({{"type":"UIElement","value":{{"kind":"{}","anchor":"TopLeft","position":[{},{}],"size":[{},{}]{}}}}})", kind,
+                                 Num(px), Num(py), Num(w), Num(h), look->extra));
+  model.bus.EndGroup();
+  model.Select(id);
+  return id;
 }
 
 const GameUI::Placed* UIDesigner::Find(const std::string& id) const {
@@ -63,11 +145,11 @@ bool UIDesigner::ControlCenter(const std::string& name, float& x, float& y) cons
 void UIDesigner::Layout(const Widget& view, EditorModel& model) {
   view_ = {view.x, view.y, view.w, view.h};
   const Preset& p = Presets()[(size_t)std::clamp(preset, 0, (int)Presets().size() - 1)];
-  const float aw = std::max(view.w - 2 * kMargin, 10.f), ah = std::max(view.h - kBarH - 2 * kMargin, 10.f);
+  const float aw = std::max(view.w - kPaletteW - 2 * kMargin, 10.f), ah = std::max(view.h - kBarH - 2 * kMargin, 10.f);
   const float fit = std::min(aw / (float)p.w, ah / (float)p.h), s = fit * zoom;
   screen_.w = p.w * s;
   screen_.h = p.h * s;
-  screen_.x = view.x + (view.w - screen_.w) * 0.5f + panX;
+  screen_.x = view.x + kPaletteW + (view.w - kPaletteW - screen_.w) * 0.5f + panX;
   screen_.y = view.y + kBarH + (view.h - kBarH - screen_.h) * 0.5f + panY;
   game_.Layout(model.scene, screen_);
   placed_ = game_.Placement();
@@ -238,6 +320,16 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
     const bool over = Inside(V, e.x, e.y);
     if (ui.MenuOpen() && mouse && drag_ == Drag::None) { ++i; continue; } // an open list owns the mouse
     if (mouse && !over && drag_ == Drag::None) { ++i; continue; }
+    if (preview && over && drag_ == Drag::None) { // the running UI gets the wheel and the keyboard
+      if (e.type == T::Wheel && Inside(screen_, e.x, e.y)) { previewKeys_.wheel += e.wheel; events.erase(events.begin() + (std::ptrdiff_t)i); continue; }
+      if (e.type == T::Text) { previewKeys_.text += e.text; events.erase(events.begin() + (std::ptrdiff_t)i); continue; }
+      if (e.type == T::KeyDown && (e.key == Key::Backspace || e.key == Key::Enter)) {
+        if (e.key == Key::Backspace) ++previewKeys_.backspaces;
+        else previewKeys_.enter = true;
+        events.erase(events.begin() + (std::ptrdiff_t)i);
+        continue;
+      }
+    }
     if (!mouse && !(over || Inside(V, mouseX_, mouseY_))) { ++i; continue; }
     bool used = mouse;
     switch (e.type) {
@@ -294,6 +386,7 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
           if (e.x >= c.x && e.y >= c.y && e.x < c.x + c.w && e.y < c.y + c.h) hit = &c;
         if (hit) {
           const std::string n = hit->name;
+          if (n.starts_with("pal.")) { drag_ = Drag::Place; placeKind_ = n.substr(4); break; } // dragged onto the screen
           if (n == "preset") OpenPresetMenu(hit->x, hit->y + hit->h + 3);
           else if (n == "zoom") OpenZoomMenu(hit->x, hit->y + hit->h + 3);
           else if (n == "preview") preview = !preview;
@@ -313,9 +406,9 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
             model.bus.BeginGroup("Resize UI element", "ui");
           }
         if (drag_ != Drag::None) break;
-        const GameUI::Placed* top = nullptr; // the topmost element under the pointer
+        const GameUI::Placed* top = nullptr; // the topmost element under the pointer (scroll views cut their content)
         for (const GameUI::Placed& p : placed_)
-          if (Inside(p.r, e.x, e.y)) top = &p;
+          if (Inside(p.r, e.x, e.y) && (!p.clipped || Inside(p.clip, e.x, e.y))) top = &p;
         if (!top) {
           if (Inside(screen_, e.x, e.y) || over) model.SetSelection({});
           break;
@@ -354,6 +447,12 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
       }
       case T::MouseUp:
         mouseDown_ = false;
+        if (drag_ == Drag::Place) { // dropped on the screen: there; a click on the palette item: the screen's middle
+          const bool moved = std::fabs(e.x - downX_) + std::fabs(e.y - downY_) > 4;
+          if (!moved) AddElement(model, placeKind_, screen_.x + screen_.w * 0.5f, screen_.y + screen_.h * 0.5f);
+          else if (Inside(screen_, e.x, e.y)) AddElement(model, placeKind_, e.x, e.y);
+          placeKind_.clear();
+        }
         if (drag_ == Drag::Move || drag_ == Drag::Resize) model.bus.EndGroup();
         used = drag_ != Drag::None || over;
         drag_ = Drag::None;
@@ -394,6 +493,9 @@ void UIDesigner::HandleEvents(std::vector<InputEvent>& events, const Widget& vie
       default:
         used = false;
     }
+    // preview: every press / release / move reaches the running UI as it happens (two in one frame still click)
+    if (preview && drag_ == Drag::None && (e.type == T::MouseDown || e.type == T::MouseUp || e.type == T::MouseMove) && previewWas_)
+      game_.Input(model.scene, screen_, GameUI::Pointer{mouseX_, mouseY_, mouseDown_});
     if (used) events.erase(events.begin() + (std::ptrdiff_t)i);
     else ++i;
   }
@@ -413,14 +515,32 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
   // the device screen and the game's UI on it
   b.Rect(screen_.x - 1, screen_.y - 1, screen_.w + 2, screen_.h + 2, {0, 0, 0, 0}, 0, 1, t.C("line"));
   b.Rect(screen_.x, screen_.y, screen_.w, screen_.h, Color{0.11f, 0.12f, 0.15f, 1});
-  if (preview) { // hover / press as in the game; clicks are not counted into the scene (no Play)
-    std::vector<int32_t> clicks;
-    for (const GameUI::Placed& p : placed_)
-      if (UIElement* e = ElementOf(model, p.object)) clicks.push_back(e->clicks);
-    game_.Input(model.scene, screen_, mouseX_, mouseY_, mouseDown_);
-    size_t k = 0;
-    for (const GameUI::Placed& p : placed_)
-      if (UIElement* e = ElementOf(model, p.object); e && k < clicks.size()) e->clicks = clicks[k++];
+  if (preview != previewWas_) { // entering the preview keeps the values it may change; leaving puts them back
+    if (preview) {
+      kept_.clear();
+      for (const GameUI::Placed& pl : placed_)
+        if (UIElement* e = ElementOf(model, pl.object)) kept_.push_back({pl.object, e->value, e->text, e->scroll, e->clicks});
+    } else {
+      for (const Kept& k : kept_)
+        if (UIElement* e = ElementOf(model, k.id)) {
+          e->value = k.value;
+          e->text = k.text;
+          e->scroll = k.scroll;
+          e->clicks = k.clicks;
+          e->focused = e->open = false;
+        }
+      kept_.clear();
+      game_.ResetInput(); // no focus or open list left over
+    }
+    previewWas_ = preview;
+  }
+  if (preview) { // the UI runs as in the game: hover, press, toggles, sliders, typing, scrolling, dropdowns
+    GameUI::Pointer ptr = previewKeys_;
+    ptr.x = mouseX_;
+    ptr.y = mouseY_;
+    ptr.down = mouseDown_;
+    game_.Input(model.scene, screen_, ptr);
+    previewKeys_ = {};
   } else {
     for (const GameUI::Placed& p : placed_)
       if (UIElement* e = ElementOf(model, p.object)) e->hovered = e->pressed = false;
@@ -432,8 +552,11 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
     ui.Text(screen_.x + (screen_.w - ui.Measure(13, msg)) * 0.5f, screen_.y + screen_.h * 0.5f - 8, 13, t.C("fg-dim"), msg);
   }
   if (!preview) {
-    for (const GameUI::Placed& p : placed_) // every element's outline, faint
+    for (const GameUI::Placed& p : placed_) { // every element's outline, faint (cut by scroll views as drawn)
+      if (p.clipped) b.PushClip(p.clip.x, p.clip.y, p.clip.w, p.clip.h);
       b.Rect(p.r.x, p.r.y, p.r.w, p.r.h, {0, 0, 0, 0}, 0, 1, Color{1, 1, 1, 0.18f});
+      if (p.clipped) b.PopClip();
+    }
     for (const std::string& id : selected_) {
       const GameUI::Placed* p = Find(id);
       if (!p) continue;
@@ -466,7 +589,21 @@ void UIDesigner::Draw(Widget& w, UIContext& ui, EditorModel& model, Font* font, 
   }
   // toolbar: preset, zoom, preview, anchor, align
   controls_.clear();
-  float x = w.x + 10;
+  { // palette: the element kinds, dragged (or clicked) onto the screen
+    float py = w.y + kBarH + 6;
+    ui.Text(w.x + 12, py, 11, t.C("fg-dim"), "Palette");
+    py += 20;
+    for (const std::string& k : PaletteKinds()) {
+      const bool hot = drag_ == Drag::Place && placeKind_ == k;
+      b.Rect(w.x + 8, py, kPaletteW - 16, 24, hot ? WithAlpha(t.C("accent"), 0.85f) : WithAlpha(t.C("win"), 0.9f), 6, 1, t.C("line"));
+      ui.Text(w.x + 16, py + 5, 11, hot ? Color{1, 1, 1, 1} : t.C("fg"), k);
+      controls_.push_back({"pal." + k, w.x + 8, py, kPaletteW - 16, 24});
+      py += 28;
+    }
+    if (drag_ == Drag::Place && Inside(screen_, mouseX_, mouseY_)) // where it will land
+      b.Rect(mouseX_ - 40, mouseY_ - 16, 80, 32, WithAlpha(t.C("accent"), 0.35f), 4, 1.5f, t.C("accent"));
+  }
+  float x = w.x + 10 + kPaletteW;
   const float y = w.y + 6;
   auto chip = [&](const std::string& name, const std::string& label, bool on, bool menu) {
     const float cw = ui.Measure(11, label) + 18 + (menu ? 10.f : 0.f);

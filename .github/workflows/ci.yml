@@ -358,8 +358,9 @@ jobs:
           if ($log -notmatch 'toolbar test: modes=1 grid=1 ctrl=1 rotate=1 wheel=1 popup=1 persist=1 tips=1 rows=1,1,1') { $errors += 'scene view toolbar test failed' }
           # UI designer (7-3): the UI Designer tab shows the canvas on a device screen; real drags move, resize, snap (guide);
           # the anchor picker keeps the on-screen rect, Ctrl+Z undoes it in one step, phone portrait keeps anchored layout
-          $log = Invoke-Editor 'Release' @{ BDG_UIDESIGNER_TEST = '1' } 28
-          if ($log -notmatch 'uidesigner test: tab=1 select=1 move=1 resize=1 snap=1 anchor=1 undo=1 resolution=1') { $errors += 'UI designer test failed' }
+          # ... and the palette (a dragged Slider, a clicked Toggle; one undo step) and Preview (a click flips the toggle, put back after)
+          $log = Invoke-Editor 'Release' @{ BDG_UIDESIGNER_TEST = '1' } 43
+          if ($log -notmatch 'uidesigner test: tab=1 select=1 move=1 resize=1 snap=1 anchor=1 undo=1 resolution=1 palette=1 preview=1') { $errors += 'UI designer test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking
