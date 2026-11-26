@@ -1293,15 +1293,18 @@ BDG_EDITOR_TEST("BDG_FOLIAGE_TEST", InjectFoliageTest, nullptr)
 // small project): the editor plays as a Listen Server through the Play options (2 players, 10 % loss): one client
 // process joins, a second one joins late; the C# NetProbe checks spawns, the owner's predicted moves reaching the
 // server, a [Replicated] field with OnRep on the clients, [Server] / [Client] / [Multicast] calls, the late joiner
-// getting the world, and the first client's leaving cleaning up its player everywhere. Time-based (about 12 s); the
-// editor quits when done. Run with --frames 3000 (a ceiling).
+// getting the world, and the first client's leaving cleaning up its player everywhere. Every stage waits for what it
+// needs (a join, a move, the late joiner's world, the goodbye) with a generous time limit, so slow machines (software
+// OpenGL: clients take seconds to start) pass the same way; client 1 leaves when the check writes its --quit-file.
+// The editor quits when done. Run with --frames 6000 (a ceiling).
 void InjectNetTest(bdg_engine* e, int frame, float) {
   bdg::EditorModel* m = e->model.get();
   if (!m) return;
   namespace fs = std::filesystem;
   using clock = std::chrono::steady_clock;
   static std::vector<std::string> lines; // the editor's (server's) own log
-  static clock::time_point started, joined1, joined2;
+  static clock::time_point started, joined1, launched2, joined2, leaveAt;
+  static std::string quitFile, c2log;
   static int stage = 0;
   static float p1x0 = 0, p1x1 = 0;
   static std::string dir, p1;
@@ -1349,31 +1352,45 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     ps.options.port = 0;
     ps.options.lossPercent = 10;
     ps.options.projectDir = dir;
-    ps.options.extraArgs = {"--quit-after", "9"}; // the first client leaves by itself (a polite goodbye)
+    quitFile = (fs::path(dir) / ".cache" / "net" / "leave-client1").string();
+    fs::remove(fs::path(quitFile), ec);
+    ps.options.extraArgs = {"--quit-file", quitFile}; // the first client leaves when told (a polite goodbye)
   }
   if (frame == 3) {
     TogglePlay(e); // the editor hosts; the Play options start "Client 1"
     started = clock::now();
     stage = 1;
   }
-  if (stage == 1 && (byName("Player 1").size() || seconds(started) > 20)) { // client 1 is in
+  auto client2Has = [&](const char* s) { // read again every 10 frames (small file)
+    if (frame % 10 == 0) bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 2.log").string(), c2log);
+    return c2log.find(s) != std::string::npos;
+  };
+  if (stage == 1 && (byName("Player 1").size() || seconds(started) > 120)) { // client 1 is in
     p1 = byName("Player 1");
     p1x0 = x(p1);
     joined1 = clock::now();
     stage = 2;
   }
-  if (stage == 2 && seconds(joined1) > 3) { // a late joiner (stays until Stop)
+  if (stage == 2 && seconds(joined1) > 1 && (x(p1) > p1x0 + 1.5f || seconds(joined1) > 30)) { // its moves arrive; now a late joiner
     p1x1 = x(p1);
-    ps.options.extraArgs.clear();
+    ps.options.extraArgs.clear(); // client 2 stays until Stop
     ps.LaunchClient("Client 2");
+    launched2 = clock::now();
     stage = 3;
   }
-  if (stage == 3 && (byName("Player 2").size() || seconds(joined1) > 25)) {
-    joined2 = clock::now();
+  if (stage == 3 && ((byName("Player 2").size() && client2Has("net probe: start player Player 1")) || seconds(launched2) > 120)) {
+    joined2 = clock::now(); // client 2 is in and has the world: client 1 may go
+    std::ofstream(fs::path(quitFile), std::ios::binary) << "leave";
+    leaveAt = clock::now();
     stage = 4;
   }
-  if (stage == 4 && ((!ps.Running(0) && seconds(joined2) > 2) || seconds(joined2) > 25)) { // client 1 has left; let it settle
-    stage = 5;
+  auto onreps2 = [&] { // [Replicated] updates the late joiner has seen
+    int n = 0;
+    for (size_t at = c2log.find("net probe: onrep score="); at != std::string::npos; at = c2log.find("net probe: onrep score=", at + 1)) ++n;
+    return n;
+  };
+  if (stage == 4 && ((!ps.Running(0) && !m->scene.Find(p1) && client2Has("net probe: gone Player 1") && onreps2() >= 2) || seconds(leaveAt) > 60)) {
+    stage = 5; // client 1 has left, the server and client 2 cleaned up
   }
   if (stage == 5) {
     const bool p1Gone = !m->scene.Find(p1);
@@ -1382,6 +1399,8 @@ void InjectNetTest(bdg_engine* e, int frame, float) {
     std::string c1, c2;
     bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 1.log").string(), c1);
     bdg::ReadTextU8((fs::path(dir) / ".cache" / "net" / "Client 2.log").string(), c2);
+    std::error_code rmErr;
+    fs::remove(fs::path(quitFile), rmErr);
     auto has = [&](const std::string& s) { return std::any_of(lines.begin(), lines.end(), [&](const std::string& l) { return l.find(s) != std::string::npos; }); };
     auto count = [](const std::string& text, const std::string& s) {
       int n = 0;
@@ -1482,3 +1501,110 @@ void InjectMcpLiveTest(bdg_engine* e, int frame, float) {
   e->quitNow = true;
 }
 BDG_EDITOR_TEST("BDG_MCP_LIVE_TEST", InjectMcpLiveTest, nullptr)
+
+// Scripted check of UI review B1 (BDG_CREATE_TEST=1, --frames 40): making objects and adding components with real
+// clicks. The Hierarchy "+" opens the make menu, "큐브" adds a Cube (selected, one undo step); a right-click on its row
+// -> "자식 만들기…" -> "점광" adds a Point Light under it; the Inspector's "+ Add Component" opens the list, typing
+// "rigid" narrows it and Enter adds a Rigidbody; a right-click on the Hierarchy's empty space -> "UI 텍스트" adds a
+// Text under a new Canvas (one undo step takes both away); Ctrl+Shift+N adds an empty GameObject at the top level.
+namespace createtest {
+std::string plus = "-", child = "-", addcomp = "-", uiText = "-", shortcut = "-", undo = "-", hints = "-";
+std::string cube, light;
+size_t roots0 = 0;
+}
+void InjectCreateTest(bdg_engine* e, int frame, float scale) {
+  using namespace createtest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  auto at = [&](T type, float x, float y, int button) { e->window.InjectEvent({type, x * scale, y * scale, button}); };
+  auto clickAt = [&](float x, float y, int button = 1) { at(T::MouseMove, x, y, 0); at(T::MouseDown, x, y, button); at(T::MouseUp, x, y, button); };
+  auto clickWidget = [&](const std::string& id, int button = 1) {
+    bdg::Widget* w = ui.Find(id);
+    if (!w || w->hidden || w->w <= 0) { bdg::LogError("create test: {} is not on screen", id); return; }
+    clickAt(w->x + w->w * 0.5f, w->y + w->h * 0.5f, button);
+  };
+  auto clickItem = [&](const std::string& label) { // a real click on the open menu's item
+    const auto& items = ui.Menu();
+    for (size_t i = 0; i < items.size(); ++i)
+      if (items[i].label == label) {
+        float x, y, w, h;
+        if (ui.MenuItemRect(i, x, y, w, h)) { clickAt(x + w * 0.5f, y + h * 0.5f); return; }
+      }
+    bdg::LogError("create test: no menu item {} (menu open: {})", label, ui.MenuOpen() ? 1 : 0);
+  };
+  auto byName = [&](const std::string& name, const std::string& parent) {
+    const std::vector<std::string>& ids = parent.empty() ? m->scene.Roots() : m->scene.Find(parent)->children;
+    for (const std::string& id : ids)
+      if (m->scene.Find(id)->name == name) return id;
+    return std::string();
+  };
+  if (frame == 3) { roots0 = m->scene.Roots().size(); m->SetSelection({}); }
+  if (frame == 5) clickWidget("h.create");
+  if (frame == 7) {
+    if (!ui.MenuOpen()) bdg::LogError("create test: + did not open a menu");
+    clickItem("큐브");
+  }
+  if (frame == 9) {
+    cube = m->Selected();
+    bdg::SceneObject* o = m->scene.Find(cube);
+    bdg::Component* c = o ? o->Find("MeshRenderer") : nullptr;
+    std::string mesh;
+    if (c) bdg::Registry::Get(c->data, *c->type, "mesh", mesh);
+    plus = o && o->name == "Cube" && mesh == "\"Cube\"" && m->scene.Roots().size() == roots0 + 1 ? "1" : "0(" + mesh + ")";
+    clickWidget("h." + cube, 3); // right-click: the row's menu
+  }
+  if (frame == 11) {
+    bool dup = false, del = false; // the menu shows the keys next to the actions
+    for (const auto& it : ui.Menu()) { dup = dup || (it.label == "복제" && it.keys == "Ctrl+D"); del = del || (it.label == "삭제" && it.keys == "Delete"); }
+    hints = dup && del ? "1" : "0";
+    clickItem("자식 만들기…");
+  }
+  if (frame == 13) clickItem("점광");
+  if (frame == 15) {
+    light = byName("Point Light", cube);
+    bdg::SceneObject* o = m->scene.Find(light);
+    child = o && o->Find("Light") && m->Selected() == light ? "1" : "0";
+    clickWidget("insp.add");
+  }
+  if (frame == 17) {
+    bdg::InputEvent t{T::Text};
+    t.text = "rigid";
+    e->window.InjectEvent(t);
+  }
+  if (frame == 19) {
+    bdg::InputEvent k{T::KeyDown};
+    k.key = bdg::Key::Enter;
+    e->window.InjectEvent(k);
+  }
+  if (frame == 21) {
+    bdg::SceneObject* o = m->scene.Find(light);
+    addcomp = o && o->Find("Rigidbody") && !ui.MenuOpen() ? "1" : "0";
+    if (bdg::Widget* h = ui.Find("hierarchy")) clickAt(h->x + h->w * 0.5f, h->y + h->h - 20, 3); // the empty space below the rows
+  }
+  if (frame == 23) clickItem("UI 텍스트");
+  if (frame == 25) {
+    const std::string text = m->Selected();
+    bdg::SceneObject* o = m->scene.Find(text);
+    bdg::SceneObject* p = o && !o->parent.empty() ? m->scene.Find(o->parent) : nullptr;
+    uiText = o && o->Find("UIElement") && p && p->Find("UICanvas") ? "1" : "0";
+    bdg::InputEvent k{T::KeyDown}; // Ctrl+Shift+N: an empty object at the top level
+    k.key = bdg::Key::N;
+    k.ctrl = k.shift = true;
+    e->window.InjectEvent(k);
+  }
+  if (frame == 27) {
+    bdg::SceneObject* o = m->scene.Find(m->Selected());
+    shortcut = o && o->name == "GameObject" && o->parent.empty() && o->components.size() == 1 ? "1" : "0";
+    std::string err; // undo: the GameObject, then the Text and its new Canvas together, then the Rigidbody
+    const size_t roots = m->scene.Roots().size();
+    bool ok = m->bus.Undo(&err) && m->scene.Roots().size() == roots - 1;
+    ok = ok && m->bus.Undo(&err) && m->scene.Roots().size() == roots - 2 && byName("Canvas", "").empty();
+    ok = ok && m->bus.Undo(&err) && m->scene.Find(light) && !m->scene.Find(light)->Find("Rigidbody");
+    undo = ok ? "1" : "0(" + err + ")";
+    bdg::LogInfo("create test: plus={} child={} hints={} addcomp={} ui={} shortcut={} undo={}", plus, child, hints, addcomp, uiText, shortcut, undo);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_CREATE_TEST", InjectCreateTest, nullptr)

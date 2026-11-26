@@ -1013,6 +1013,8 @@ void SetupShortcuts(bdg_engine* e) {
   s.Register("edit.redo", "Redo", [m] { std::string err; if (!m->bus.Redo(&err)) bdg::LogInfo("redo: {}", err); });
   s.Register("edit.duplicate", "Duplicate", [m] { m->Duplicate(); });
   s.Register("edit.delete", "Delete", [m] { m->DeleteSelected(); });
+  s.Register("edit.createEmpty", "Create Empty", [m] { m->CreateObject("empty"); }); // UI review B1 (lane B)
+  m->shortcuts = &s; // keys shown in the Hierarchy / Add Component menus
   s.Register("edit.rename", "Rename", [e] {
     if (bdg::Widget* f = e->editor->Find("insp.name")) {
       e->editor->Focus(f);

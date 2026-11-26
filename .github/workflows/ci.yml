@@ -164,9 +164,10 @@ jobs:
           Remove-Item Env:BDG_SHORTCUTS, Env:BDG_LAYOUT
 
           # 11) Accessibility (queue 1-6): a UI Automation client reads the focused button; Ctrl+F6 moves to the next panel
+          #     (its first control: the Hierarchy's "+" button, UI review B1)
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_A11Y_TEST = '1' } 8
-          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.scene') { $errors += 'accessibility test failed' }
+          if ($log -notmatch 'a11y test: focused_name=Add Component control=Button children=(\d+) next_panel=h\.create') { $errors += 'accessibility test failed' }
           elseif ([int]$Matches[1] -lt 10) { $errors += "accessibility tree too small ($($Matches[1]) elements)" }
           Remove-Item Env:BDG_LAYOUT
 
@@ -209,6 +210,12 @@ jobs:
           $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
           $log = Invoke-Editor 'Release' @{ BDG_MULTI_TEST = '1'; BDG_PRESETS = "$PWD/ci-presets" } 24
           if ($log -notmatch 'multi test: common=Transform,MeshRenderer mixed=1 same=1 shared="M_Shared","M_Shared" undo_steps=1 restored="M_Gold","M_Knight" pasted=321 preset=321') { $errors += 'multi-object editing test failed' }
+          Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
+          # UI review B1: Hierarchy "+" -> Cube, row right-click -> child Point Light (menu shows the keys), "+ Add
+          # Component" -> type "rigid" -> Enter, empty-space right-click -> UI Text under a new Canvas, Ctrl+Shift+N, undo
+          $env:BDG_LAYOUT = "$PWD/ci-layout-none.jsonl"
+          $log = Invoke-Editor 'Release' @{ BDG_CREATE_TEST = '1' } 40
+          if ($log -notmatch 'create test: plus=1 child=1 hints=1 addcomp=1 ui=1 shortcut=1 undo=1') { $errors += 'create objects / Add Component test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 17) Project panel (queue 2-5): real asset folder, C++ .h/.cpp shown as one class item, renamed together
@@ -671,7 +678,7 @@ jobs:
           $nt = Join-Path $env:RUNNER_TEMP 'bdg-net'
           Remove-Item -Recurse -Force $nt -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $nt | Out-Null
-          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 3000
+          $log = Invoke-Editor 'Release' @{ BDG_NET_TEST = '1'; BDG_NET_DIR = $nt; BDG_HIDDEN = '1' } 6000
           if ($log -notmatch 'net test: spawn=1 sync=1 onrep=1 rpc=1 late=1 left=1') {
             $errors += 'multiplayer test failed'
             Get-ChildItem "$nt/.cache/net/*.log" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_ -Raw -Encoding utf8 | Write-Host }
@@ -849,7 +856,8 @@ jobs:
 
           # Round 7 multiplayer arena template: bdg new --template arena -> bdg build -> the built game as a dedicated server
           # (--server, no window) and two clients (--connect, 5 % loss): both join, get their players, and the server's
-          # replicated round clock reaches them
+          # replicated round clock reaches them. The quit clocks start at the join (clients) and when both players are in
+          # (server: --expect-players), so slow software-GL starts cannot end the match early; --timeout is the hard limit
           $ar = Join-Path $env:RUNNER_TEMP 'bdg-arena'
           Remove-Item -Recurse -Force $ar -ErrorAction SilentlyContinue
           & "$env:GITHUB_WORKSPACE/build/Release/bdg.exe" new $ar --template arena --name 'Arena Test' | Out-String | Write-Host
@@ -861,11 +869,11 @@ jobs:
           Copy-Item "$env:GITHUB_WORKSPACE/mesa/x64/*.dll" "$ar/Builds/Windows-Development/" -Force # software OpenGL next to the built game (no GPU on the runner)
           $aexe = "$ar/Builds/Windows-Development/Arena Test.exe"
           $env:BDG_PLAYER_CACHE = Join-Path $env:RUNNER_TEMP 'bdg-arena-cache'; $env:BDG_PLAYER_QUIET = '1'; $env:BDG_HIDDEN = '1'; $env:BDG_AUDIO_NULL = '1'
-          $srv = Start-Process $aexe -ArgumentList '--server', '--port', 47811, '--quit-after', 20, '--log', "$ar/server.log" -PassThru
+          $srv = Start-Process $aexe -ArgumentList '--server', '--port', 47811, '--expect-players', 2, '--quit-after', 8, '--timeout', 170, '--log', "$ar/server.log" -PassThru
           Start-Sleep -Seconds 3
-          $c1 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Ann', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client1.log" -PassThru
-          $c2 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Bo', '--sim-loss', 5, '--quit-after', 12, '--log', "$ar/client2.log" -PassThru
-          $srv, $c1, $c2 | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
+          $c1 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Ann', '--sim-loss', 5, '--quit-after', 8, '--timeout', 160, '--log', "$ar/client1.log" -PassThru
+          $c2 = Start-Process $aexe -ArgumentList '--connect', '127.0.0.1:47811', '--name', 'Bo', '--sim-loss', 5, '--quit-after', 8, '--timeout', 160, '--log', "$ar/client2.log" -PassThru
+          $srv, $c1, $c2 | Wait-Process -Timeout 200 -ErrorAction SilentlyContinue
           $srv, $c1, $c2 | Where-Object { -not $_.HasExited } | Stop-Process -Force
           Remove-Item Env:BDG_PLAYER_CACHE, Env:BDG_PLAYER_QUIET, Env:BDG_HIDDEN, Env:BDG_AUDIO_NULL
           $slog = Get-Content "$ar/server.log" -Raw -Encoding utf8

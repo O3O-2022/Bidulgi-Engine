@@ -2,6 +2,7 @@
 // Editor data side: the open scene, the command bus, the selection, and the Hierarchy / Inspector panels
 // built from them by reflection. Panels never write the scene directly: a committed field becomes a "set"
 // command; Ctrl+Z / Ctrl+Y undo and redo through the bus. (Temporary home until the editor module exists.)
+#include "UI/Shortcuts.h"
 #include "Assets/AssetRefs.h"
 #include "Assets/AssetImport.h"
 #include "Scene/DefaultScene.h"
@@ -129,6 +130,21 @@ public:
   void SelectProjectItem(const std::string& path) { projectSelected_ = path; needProject_ = true; }
   bool DeleteWarningShown() const { return !deleteWarning_.empty(); }
   std::string scenePath, sceneName = "Main";
+
+  // Making objects and adding components (UI review B1: U2, U3). CreateObject adds one object of a kind (one undo
+  // step, selected): "empty", "cube" / "sphere" / "plane" / "cylinder" / "cone", "light.directional" / "light.point" /
+  // "light.spot", "camera", "postvolume", "reflectionprobe", "audio", "particles", "canvas", "ui.text", "ui.button".
+  // parent "" = the top level; UI kinds go under the parent's canvas, else the first canvas, else a new one.
+  struct CreateKind { const char* key; const char* label; const char* group; };
+  static const std::vector<CreateKind>& CreateKinds();
+  std::string CreateObject(const std::string& kind, const std::string& parent = {});
+  // The Add Component list for the selection: every reflected component, grouped (UI review B1).
+  static std::string ComponentGroup(const std::string& type);
+  bool AddComponentToSelection(const std::string& type); // to every selected object that lacks it, one undo step
+  void OpenCreateMenu(float x, float y, const std::string& parent);
+  void OpenAddComponentMenu(float x, float y);
+  void OpenHierarchyMenu(const std::string& id, float x, float y); // a row's right-click menu
+  const Shortcuts* shortcuts = nullptr; // for the keys shown in menus (set by the editor)
 
   // Text shown in an Inspector field <-> JSON value ("0, 1, 0" <-> [0,1,0], Knight.glb <-> "Knight.glb").
   static std::string ToDisplay(const std::string& json, FieldType type);   // also used by the project settings panel
