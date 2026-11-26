@@ -56,7 +56,7 @@ void ProjectSettingsPanel::Build(Widget& parent, UIContext& ui, ProjectSettings&
   badge.id = "ps.dirty";
   badge.hidden = true;
   head.Add(MakeBox(Axis::Row)).width = Length::Fill();
-  auto& saveBtn = head.Add(MakeButton("ps.save", "저장", true));
+  auto& saveBtn = head.Add(MakeButton("ps.save", "저장")); // primary (accent) only while unsaved: Refresh
   saveBtn.tooltip = "ProjectSettings/Project.json에 저장 (기본값과 다른 값만)";
   saveBtn.onClick = [save](Widget&) { if (save) save(); };
   // UI review B8 (U17): a search box: the rows whose name, key or help matches stay, their cards open
@@ -148,6 +148,11 @@ void ProjectSettingsPanel::Filter(Widget& parent, const std::string& query) {
 
 void ProjectSettingsPanel::Refresh(UIContext& ui, const ProjectSettings& s, bool dirty) {
   if (Widget* b = ui.Find("ps.dirty")) b->hidden = !dirty;
+  if (Widget* b = ui.Find("ps.save")) { // one primary button per screen: Save only when there is something to save
+    b->primary = dirty;
+    b->disabled = !dirty;
+    b->tooltip = dirty ? "ProjectSettings/Project.json에 저장 (기본값과 다른 값만)" : "바뀐 것이 없습니다";
+  }
   Widget* box = ui.Find("ps.issues");
   if (!box) return;
   const std::vector<std::string> issues = ValidateProjectSettings(s);

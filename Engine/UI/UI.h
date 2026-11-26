@@ -44,6 +44,7 @@ struct Widget {
   bool bold = false;                  // Label: weight 600+ (drawn with the regular face for now)
   std::function<void(Widget&, UIContext&)> onDraw; // Custom: draws inside its rect (viewports, previews)
   bool primary = false, selected = false, focusable = false;
+  bool disabled = false;              // greyed: no click, no keyboard, not in the Tab order (hover still shows its tooltip: why)
   bool collapsed = false;             // Card: body hidden, header still shown
   bool hidden = false;                // not laid out, drawn or hit (e.g. unselected dock tab)
   float scrollY = 0;                  // dock panel content: scrolled distance (wheel, ScrollIntoView)
@@ -170,6 +171,13 @@ public:
   bool DialogButtonRect(size_t i, float& x, float& y, float& w, float& h) const; // test hook
   bool DialogItemRect(size_t i, float& x, float& y, float& w, float& h) const;   // checkbox row i (test hook)
   bool ModalOpen() const { return DialogOpen() || MenuOpen(); } // panels outside the UI tree should leave input alone
+  // State colours (UI review B6), one place for drawing and checks: a button's fill and text, a toggle's track, the
+  // filled part of a range field (accent only while it is dragged or focused: the accent marks what is active).
+  Color ButtonFill(const Widget& w) const;
+  Color ButtonText(const Widget& w) const;
+  Color ToggleTrack(bool on) const;
+  Color SliderFill(const Widget& w) const;
+  bool FocusRingShown(const Widget& w) const { return focused_ == &w && !w.disabled; }
   // Byte ranges of the numbers in "x, y, z" (spaces trimmed); empty when the text has another shape.
   static std::vector<std::pair<size_t, size_t>> FieldParts(const std::string& v, int count);
   bool AxisBox(const Widget& f, int k, float& x, float& w) const; // a vector field's box k (UI units)

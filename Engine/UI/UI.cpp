@@ -231,19 +231,19 @@ void UIContext::DrawChoice(Widget& w) {
   if (style == 2) { // toggle switch: pill track + knob, then the state in words
     const float tw = 30, th = 16, tx = ix, tyy = iy + (ih - th) * 0.5f;
     const bool on = cur == 1, mixed = cur < 0;
-    b.Rect(tx, tyy, tw, th, on ? t.C("accent") : t.C("sunk"), th * 0.5f, 1, on || focus ? t.C("accent") : t.C("line-input"));
+    b.Rect(tx, tyy, tw, th, ToggleTrack(on), th * 0.5f, 1, on ? t.C("fg-faint") : t.C("line-input"));
     const float knob = th - 4, kx = mixed ? tx + (tw - knob) * 0.5f : on ? tx + tw - knob - 2 : tx + 2;
-    b.Rect(kx, tyy + 2, knob, knob, on ? t.C("on-accent") : t.C("fg-dim"), knob * 0.5f);
+    b.Rect(kx, tyy + 2, knob, knob, on ? t.C("fg") : t.C("fg-dim"), knob * 0.5f);
     Text(tx + tw + 8, ty, fs, on ? t.C("fg") : t.C("fg-faint"), mixed ? "—" : on ? "켜짐" : "꺼짐");
     return;
   }
   if (style == 1) { // segmented: one button per option, the current one filled
-    b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line-input"));
+    b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, t.C("line-input"));
     for (int k = 0; k < (int)w.items.size(); ++k) {
       float sx, sw;
       ChoiceSegment(w, k, sx, sw);
       const bool sel = k == cur;
-      if (sel) b.Rect(sx + 2, iy + 2, sw - 4, ih - 4, t.C("accent-soft"), rsm, 1, t.C("accent"));
+      if (sel) b.Rect(sx + 2, iy + 2, sw - 4, ih - 4, t.C("raise-hover"), rsm, 1, t.C("fg-faint")); // the chosen one: raised, not accent
       else if (k > 0 && k - 1 != cur) b.Rect(sx, iy + 5, 1, ih - 10, t.C("line"));
       const std::string& label = w.items[(size_t)k];
       b.PushClip(sx + 2, iy, sw - 4, ih);
@@ -253,7 +253,7 @@ void UIContext::DrawChoice(Widget& w) {
     return;
   }
   // combo box: value + a down chevron; the list opens below on click / Enter / Space
-  b.Rect(ix, iy, iw, ih, w.hovered ? t.C("raise") : t.C("sunk"), rsm, 1, focus ? t.C("accent") : w.hovered ? t.C("fg-faint") : t.C("line-input"));
+  b.Rect(ix, iy, iw, ih, w.hovered ? t.C("raise") : t.C("sunk"), rsm, 1, w.hovered ? t.C("fg-faint") : t.C("line-input"));
   b.PushClip(ix + 1, iy, iw - 22, ih);
   Text(ix + t.N("space-3", 6), ty, fs, cur < 0 ? t.C("fg-faint") : t.C("fg"), w.text2.empty() ? "—" : w.text2);
   b.PopClip();
@@ -580,16 +580,15 @@ void UIContext::DrawWidget(Widget& w) {
         Text(w.x + (w.w - Measure(fs, w.text)) * 0.5f, w.y + (w.h - fs) * 0.5f - 1, fs, w.hovered || w.selected ? t.C("fg") : t.C("fg-dim"), w.text);
         break;
       }
-      Color fill = w.primary ? t.C("accent") : t.C("raise");
-      Color border = w.primary ? t.C("accent") : (w.hovered ? t.C("fg-faint") : t.C("line-strong"));
-      if (w.pressed) fill = Alpha(fill, 0.8f);
+      const Color fill = ButtonFill(w);
+      const Color border = w.disabled ? t.C("line") : w.primary ? t.C("accent") : (w.hovered ? t.C("fg-faint") : t.C("line-strong"));
       b.Rect(w.x, w.y, w.w, w.h, fill, rmd, 1, border);
       float tx = w.x + (w.w - Measure(fs, w.text)) * 0.5f;
       if (w.variant == 1) { // status dot before the label
         b.Rect(w.x + 1 + s5, w.y + (w.h - 8) * 0.5f, 8, 8, t.C("ok"), 4);
         tx = w.x + 1 + s5 + 8 + s3;
       }
-      Text(tx, w.y + (w.h - fs) * 0.5f - 1, fs, w.primary ? t.C("on-accent") : t.C("fg"), w.text);
+      Text(tx, w.y + (w.h - fs) * 0.5f - 1, fs, ButtonText(w), w.text);
       break;
     }
     case WidgetKind::Choice: DrawChoice(w); break;
@@ -633,17 +632,16 @@ void UIContext::DrawWidget(Widget& w) {
         }
         break;
       }
-      b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, focus ? t.C("accent") : t.C("line-input"));
+      b.Rect(ix, iy, iw, ih, t.C("sunk"), rsm, 1, t.C("line-input")); // focus: the ring around it
       float tx = ix + s3, ty = iy + (ih - fs) * 0.5f - 1;
       const std::string& v = w.text2;
       b.PushClip(ix + 1, iy, iw - 2, ih); // long values stay inside the box
       if (w.slider && w.sliderMax > w.sliderMin) { // filled part of the range + thumb
         double sv = std::strtod(w.text2.c_str(), nullptr);
         float k = (float)std::clamp((sv - w.sliderMin) / (w.sliderMax - w.sliderMin), 0.0, 1.0);
-        Color fill = t.C("accent");
-        fill.a = 0.22f;
-        b.Rect(ix + 1, iy + 1, (iw - 2) * k, ih - 2, fill, rsm);
-        b.Rect(ix + 1 + (iw - 4) * k, iy + 2, 2, ih - 4, t.C("accent"));
+        const bool active = sliderDrag_ == &w || focus; // the accent only while it is being changed
+        b.Rect(ix + 1, iy + 1, (iw - 2) * k, ih - 2, SliderFill(w), rsm);
+        b.Rect(ix + 1 + (iw - 4) * k, iy + 2, 2, ih - 4, active ? t.C("accent") : t.C("fg-dim"));
       }
       if (focus && w.cursor != w.anchor) { // selection
         size_t a = std::min(w.cursor, w.anchor), z = std::max(w.cursor, w.anchor);
@@ -783,8 +781,11 @@ void UIContext::DrawWidget(Widget& w) {
       break;
     }
   }
-  if (focused_ == &w && w.kind != WidgetKind::Field)
-    b.Rect(w.x - 3, w.y - 3, w.w + 6, w.h + 6, {0, 0, 0, 0}, rmd + 3, 2, t.C("accent")); // focus-visible ring
+  if (FocusRingShown(w)) { // focus-visible ring: 2 px accent, 1 px away (fields and choices: around the input box)
+    float fx = w.x, fy = w.y, fw = w.w, fh = w.h;
+    if (w.kind == WidgetKind::Field || w.kind == WidgetKind::Choice) FieldInputBox(w, fx, fy, fw, fh);
+    b.Rect(fx - 3, fy - 3, fw + 6, fh + 6, {0, 0, 0, 0}, rmd + 3, 2, t.C("accent"));
+  }
   if (w.kind == WidgetKind::Dock) { // each panel's content stays inside its body
     for (auto& c : w.children) {
       if (c->hidden) continue;
@@ -1192,6 +1193,21 @@ void UIContext::FilterMenu() {
   if (menu_.empty()) menu_.push_back({"(맞는 항목 없음)", nullptr, false}); // keeps the popup open while typing
 }
 
+Color UIContext::ButtonFill(const Widget& w) const {
+  const Theme& t = theme_;
+  if (w.disabled) return Alpha(t.C("raise"), 0.5f);
+  if (w.primary) return w.pressed ? Alpha(t.C("accent"), 0.8f) : t.C("accent");
+  return w.pressed ? t.C("raise-press") : w.hovered ? t.C("raise-hover") : t.C("raise");
+}
+Color UIContext::ButtonText(const Widget& w) const {
+  return w.disabled ? theme_.C("fg-faint") : w.primary ? theme_.C("on-accent") : theme_.C("fg");
+}
+Color UIContext::ToggleTrack(bool on) const { return on ? theme_.C("selection") : theme_.C("sunk"); }
+Color UIContext::SliderFill(const Widget& w) const {
+  if (sliderDrag_ == &w || focused_ == &w) return Alpha(theme_.C("accent"), 0.22f);
+  return Alpha(theme_.C("fg-faint"), 0.35f);
+}
+
 void UIContext::DrawMenu() {
   if (menu_.empty()) return;
   const Theme& t = theme_;
@@ -1284,12 +1300,13 @@ Widget* UIContext::ContextHit(Widget& w, float x, float y) {
 
 void UIContext::CollectFocusable(Widget& w, std::vector<Widget*>& out) {
   if (w.hidden) return;
-  if (w.focusable) out.push_back(&w);
+  if (w.focusable && !w.disabled) out.push_back(&w);
   for (auto& c : w.children) CollectFocusable(*c, out);
 }
 
 void UIContext::Activate(Widget& w, float mouseX, float mouseY) {
   (void)mouseY;
+  if (w.disabled) return; // greyed: nothing happens (its tooltip says why)
   if (w.kind == WidgetKind::Card) { w.collapsed = !w.collapsed; return; }
   if (w.kind == WidgetKind::Choice) {
     const int cur = ChoiceIndex(w), n = (int)w.items.size();
@@ -1403,7 +1420,7 @@ void UIContext::HandleEvents(const std::vector<InputEvent>& events) {
         dragging_ = false;
         dropTarget_ = nullptr;
         pressX_ = dragX_ = e.x; pressY_ = dragY_ = e.y;
-        SetFocus((pressed_ && pressed_->focusable) ? pressed_ : nullptr);
+        SetFocus((pressed_ && pressed_->focusable && !pressed_->disabled) ? pressed_ : nullptr);
         if (focused_ && focused_->kind == WidgetKind::Field) focused_->cursor = focused_->anchor = FieldHit(*focused_, e.x);
         if (focused_ && focused_->kind == WidgetKind::Field && focused_->axes > 0) { // a click in a vector box selects that number
           for (const auto& [a, z] : FieldParts(focused_->text2, focused_->axes))
