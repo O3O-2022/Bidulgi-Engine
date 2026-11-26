@@ -1191,7 +1191,7 @@ void EditorModel::OpenCreateMenu(float x, float y, const std::string& parent) {
     group = k.group;
     std::string key = k.key;
     UIContext::MenuItem it{k.label, [this, key, parent] { CreateObject(key, parent); }};
-    if (key == "empty" && shortcuts) it.hint = shortcuts->KeysOf("edit.createEmpty");
+    if (key == "empty" && shortcuts) it.keys = shortcuts->KeysOf("edit.createEmpty");
     items.push_back(std::move(it));
   }
   ui_->OpenMenu(x, y, std::move(items), true);
@@ -1215,7 +1215,7 @@ void EditorModel::OpenAddComponentMenu(float x, float y) {
       for (const std::string& id : selection_)
         if (SceneObject* o = scene.Find(id); o && !o->Find(type)) missing = true;
       UIContext::MenuItem item{Pretty(type), [this, type] { AddComponentToSelection(type); }, missing};
-      if (!missing) item.hint = "있음";
+      if (!missing) item.keys = "있음";
       items.push_back(std::move(item));
     }
   }

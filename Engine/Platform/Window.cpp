@@ -158,7 +158,35 @@ bool Window::PumpEvents(int32_t waitMs) {
     hadEvents_ = true;
     if (!Translate(e, density, events_, relative_ ? relMouse_ : nullptr)) return false;
   }
+  { // files chosen in the file picker: as if dropped
+    std::lock_guard<std::mutex> lock(dialogMutex_);
+    for (std::string& f : dialogFiles_) {
+      InputEvent ev{InputEvent::Type::DropFile, -1, -1};
+      ev.text = std::move(f);
+      events_.push_back(std::move(ev));
+      hadEvents_ = true;
+    }
+    dialogFiles_.clear();
+  }
   return true;
+}
+
+void Window::DialogDone(void* self, const char* const* files, int) {
+  if (!self || !files) return; // cancelled (empty list) or failed (null)
+  Window* w = static_cast<Window*>(self);
+  {
+    std::lock_guard<std::mutex> lock(w->dialogMutex_);
+    for (; *files; ++files) w->dialogFiles_.push_back(*files);
+  }
+  w->Wake();
+}
+
+void Window::OpenFileDialog() {
+  if (hidden_ || !window_) {
+    LogInfo("file dialog: not shown (hidden window)");
+    return;
+  }
+  SDL_ShowOpenFileDialog(&Window::DialogDone, this, window_, nullptr, 0, nullptr, true);
 }
 
 void Window::Wake() {

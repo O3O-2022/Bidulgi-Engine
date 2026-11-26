@@ -23,6 +23,8 @@
 #include "Render3D/Quality.h"
 #include "Assets/TextureCooker.h"
 #include "Core/Utf8Path.h"
+#include "Assets/MaterialFile.h"
+#include "Build/Build.h"
 #include "Project/ProjectSettings.h"
 #include "Runtime/EditorTests/Registry.h"
 #include "Runtime/ProjectSettingsPanel.h"
@@ -1059,6 +1061,224 @@ void SetupShortcuts(bdg_engine* e) {
   RebuildShortcutList(e);
 }
 
+// ---- Menu bar (UI review B2 / U1) ----------------------------------------------------------------------------
+// File, Edit, Assets, GameObject, Component, Build, Window, Help open lists of what the editor can do; an item with
+// a shortcut shows it at the right (from the shortcut table, so a changed binding shows its new keys).
+namespace {
+// A new object of a kind ("empty", "cube", "light.point", "camera", "ui.button", ...) at the Scene view's pivot (UI
+// elements in the first canvas, a canvas made when there is none), under `parent` when given; one undo step,
+// selected. Returns its id ("" = unknown kind).
+std::string CreateObject(bdg_engine* e, const std::string& kind, const std::string& parent = "") {
+  bdg::EditorModel* m = e->model.get();
+  if (!m) return "";
+  struct Kind { const char* id; const char* name; };
+  static const Kind kinds[] = {{"empty", "GameObject"}, {"cube", "Cube"}, {"sphere", "Sphere"}, {"plane", "Plane"}, {"cylinder", "Cylinder"},
+                               {"cone", "Cone"}, {"light.directional", "Directional Light"}, {"light.point", "Point Light"},
+                               {"light.spot", "Spot Light"}, {"camera", "Camera"}, {"ui.canvas", "Canvas"}, {"ui.text", "Text"},
+                               {"ui.button", "Button"}, {"ui.image", "Image"}, {"ui.panel", "Panel"}};
+  const Kind* k = nullptr;
+  for (const Kind& c : kinds)
+    if (kind == c.id) k = &c;
+  if (!k) return "";
+  auto unique = [&](std::string base) {
+    for (char& c : base) c = c == ' ' ? '_' : (char)std::tolower((unsigned char)c);
+    std::string id = base;
+    for (int n = 2; m->scene.Find(id); ++n) id = std::format("{}{}", base, n);
+    return id;
+  };
+  auto run = [&](const char* name, const std::string& target, const std::string& args) {
+    bdg::Command c;
+    c.name = name;
+    c.target = target;
+    c.args = args;
+    std::string err;
+    if (!m->bus.Execute(c, &err)) bdg::LogWarn("create: {} {}: {}", name, target, err);
+  };
+  m->bus.BeginGroup(std::string("Create ") + k->name, "ui");
+  std::string under = parent;
+  const bool ui = kind.starts_with("ui.") && kind != "ui.canvas";
+  if (ui && under.empty()) { // UI elements live under a canvas
+    for (const std::string& r : m->scene.Roots())
+      if (bdg::SceneObject* o = m->scene.Find(r); o && o->Find("UICanvas")) { under = r; break; }
+    if (under.empty()) {
+      under = unique("Canvas");
+      run("add", "", std::format(R"({{"id":"{}","name":"Canvas"}})", under));
+      run("addcomp", under, R"({"type":"UICanvas"})");
+    }
+  }
+  const std::string id = unique(k->name);
+  run("add", "", std::format(R"({{"id":"{}","name":"{}","parent":"{}"}})", id, k->name, under));
+  if (!kind.starts_with("ui.") && e->sceneView && under.empty()) {
+    const glm::vec3 p = e->sceneView->camera.pivot;
+    run("set", id, std::format(R"({{"path":"Transform.position","value":[{},{},{}]}})", p.x, p.y, p.z));
+  }
+  if (kind == "cube" || kind == "sphere" || kind == "plane" || kind == "cylinder" || kind == "cone")
+    run("addcomp", id, std::format(R"({{"type":"MeshRenderer","value":{{"mesh":"{}"}}}})", k->name));
+  else if (kind == "light.directional") {
+    run("set", id, R"({"path":"Transform.rotation","value":[-50,30,0]})");
+    run("addcomp", id, R"({"type":"Light","value":{"type":"Directional"}})");
+  } else if (kind == "light.point") run("addcomp", id, R"({"type":"Light","value":{"type":"Point"}})");
+  else if (kind == "light.spot") run("addcomp", id, R"({"type":"Light","value":{"type":"Spot"}})");
+  else if (kind == "camera") run("addcomp", id, R"({"type":"Camera"})");
+  else if (kind == "ui.canvas") run("addcomp", id, R"({"type":"UICanvas"})");
+  else if (kind == "ui.text") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Text","anchor":"Center","size":[320,60],"text":"Text"}})");
+  else if (kind == "ui.button") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Button","anchor":"Center","size":[280,72],"text":"Button"}})");
+  else if (kind == "ui.image") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Image","anchor":"Center","size":[200,200],"color":[1,1,1,1]}})");
+  else if (kind == "ui.panel") run("addcomp", id, R"({"type":"UIElement","value":{"kind":"Panel","anchor":"Center","size":[400,300],"color":[0.15,0.17,0.22,0.9]}})");
+  m->bus.EndGroup();
+  m->Select(id);
+  bdg::LogInfo("create: {} ({})", id, k->name);
+  return id;
+}
+
+// A new file in the Project panel's current folder (unique name), then selected there.
+void NewAssetFile(bdg_engine* e, const std::string& stem, const std::string& ext, const std::string& content) {
+  if (!e->assetsOpen || !e->model) return;
+  const std::filesystem::path dir = bdg::PathU8(e->assets.Root()) / bdg::PathU8(e->model->ProjectFolder());
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  std::filesystem::path p = dir / bdg::PathU8(stem + ext);
+  for (int n = 2; std::filesystem::exists(p); ++n) p = dir / bdg::PathU8(std::format("{}{}{}", stem, n, ext));
+  if (ext.empty()) std::filesystem::create_directory(p, ec);
+  else {
+    std::ofstream f(p, std::ios::binary);
+    f << content;
+  }
+  const std::string rel = (e->model->ProjectFolder().empty() ? std::string() : e->model->ProjectFolder() + "/") + bdg::PathToU8(p.filename());
+  bdg::LogInfo("assets: new {}", rel);
+  e->model->SelectProjectItem(rel);
+}
+
+void RunBuild(bdg_engine* e, bool checkOnly) {
+  bdg::BuildOptions o;
+  o.project = e->assetsOpen ? bdg::PathToU8(bdg::PathU8(e->assets.Root()).parent_path()) : bdg::PathToU8(std::filesystem::current_path());
+  if (e->model && e->model->Dirty()) e->model->SaveScene(); // the build reads the saved scene
+  const bdg::BuildResult r = checkOnly ? bdg::CheckBuild(o) : bdg::BuildGame(o);
+  for (const bdg::BuildProblem& p : r.problems) (p.error ? bdg::LogError("{}", p.Line()) : bdg::LogWarn("{}", p.Line()));
+  if (checkOnly) bdg::LogInfo("build: check {} — {} error(s), {} warning(s)", r.Errors() ? "failed" : "passed", r.Errors(), r.Warnings());
+  else if (r.ok) bdg::LogInfo("build: {} ({} files)", r.exePath, r.files);
+  else bdg::LogError("build: failed — {} error(s)", r.Errors());
+}
+} // namespace
+
+void SetupMenuBar(bdg_engine* e) {
+  using Item = bdg::UIContext::MenuItem;
+  bdg::UIContext* ui = e->editor.get();
+  auto keys = [e](const char* action) { return e->shortcuts.KeysOf(action); };
+  auto action = [e](const char* name) {
+    return [e, name] {
+      for (const bdg::Shortcuts::Action& a : e->shortcuts.Actions())
+        if (a.name == name && a.run) {
+          std::function<void()> run = a.run; // the action may change the table
+          run();
+          return;
+        }
+    };
+  };
+  auto has = [e](const char* name) {
+    for (const bdg::Shortcuts::Action& a : e->shortcuts.Actions())
+      if (a.name == name) return true;
+    return false;
+  };
+  auto panel = [e](const char* id) {
+    return [e, id] {
+      if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel(id);
+    };
+  };
+  // a submenu opens in place of its parent, at the same spot
+  auto sub = [ui](float x, float y, std::vector<Item> items) { return [ui, x, y, items] { ui->OpenMenu(x, y, items); }; };
+  auto menus = [=](const std::string& name, float x, float y) -> std::vector<Item> {
+    bdg::EditorModel* m = e->model.get();
+    const bool selected = m && !m->Selected().empty();
+    std::vector<Item> it;
+    if (name == "file") {
+      std::vector<Item> scenes;
+      if (m) {
+        const std::filesystem::path dir = e->assetsOpen ? bdg::PathU8(e->assets.Root()).parent_path() / "Scenes" : std::filesystem::current_path() / "Scenes";
+        std::error_code ec;
+        for (const auto& f : std::filesystem::directory_iterator(dir, ec))
+          if (f.path().extension() == ".scene") {
+            const std::string path = bdg::PathToU8(f.path());
+            scenes.push_back({bdg::PathToU8(f.path().stem()), [m, path] { m->OpenScene(path); }});
+          }
+      }
+      if (scenes.empty()) scenes.push_back({"(Scenes 폴더에 장면 없음)", nullptr, false});
+      it = {{"새 장면", action("file.new"), has("file.new"), false, keys("file.new")},
+            {"장면 열기 ▸", sub(x, y, scenes)},
+            {"저장", action("file.save"), true, false, keys("file.save")},
+            {"모두 저장", action("file.saveAll"), true, false, keys("file.saveAll")},
+            {"종료", action("file.quit"), true, false, keys("file.quit")}};
+    } else if (name == "edit") {
+      it = {{"실행 취소", action("edit.undo"), m && m->bus.UndoDepth() > 0, false, keys("edit.undo")},
+            {"다시 실행", action("edit.redo"), true, false, keys("edit.redo")},
+            {"복제", action("edit.duplicate"), selected, false, keys("edit.duplicate")},
+            {"삭제", action("edit.delete"), selected, false, keys("edit.delete")},
+            {"이름 바꾸기", action("edit.rename"), selected, false, keys("edit.rename")},
+            {"Project Settings…", panel("settings")}};
+    } else if (name == "assets") {
+      const bool open = e->assetsOpen;
+      it = {{"가져오기…", [e] { e->window.OpenFileDialog(); }, open},
+            {"새 폴더", [e] { NewAssetFile(e, "New Folder", "", ""); }, open},
+            {"새 C# 스크립트", [e] { NewAssetFile(e, "NewBehaviour", ".cs", "using Bidulgi;\n\npublic class NewBehaviour : Behaviour {\n  void Update() {\n  }\n}\n"); }, open},
+            {"새 머티리얼", [e] { NewAssetFile(e, "NewMaterial", ".material", bdg::SaveMaterial(bdg::MaterialDef{})); }, open}};
+    } else if (name == "gameobject") {
+      auto make = [e](const char* kind) { return [e, kind] { CreateObject(e, kind); }; };
+      it = {{"빈 오브젝트", make("empty"), true, false, has("edit.createEmpty") ? keys("edit.createEmpty") : std::string()},
+            {"3D 도형 ▸", sub(x, y, {{"Cube", make("cube")}, {"Sphere", make("sphere")}, {"Plane", make("plane")}, {"Cylinder", make("cylinder")}, {"Cone", make("cone")}})},
+            {"라이트 ▸", sub(x, y, {{"Directional Light", make("light.directional")}, {"Point Light", make("light.point")}, {"Spot Light", make("light.spot")}})},
+            {"카메라", make("camera")},
+            {"UI ▸", sub(x, y, {{"Canvas", make("ui.canvas")}, {"Text", make("ui.text")}, {"Button", make("ui.button")}, {"Image", make("ui.image")}, {"Panel", make("ui.panel")}})}};
+    } else if (name == "component") {
+      // every component type, searchable, read when the item is picked (the selection then); the ones the
+      // selection has are greyed
+      it = {{"컴포넌트 추가… ▸", [ui, x, y, e] {
+               bdg::EditorModel* em = e->model.get();
+               bdg::SceneObject* o = em ? em->scene.Find(em->Selected()) : nullptr;
+               if (!o) return;
+               std::vector<Item> comps;
+               for (const bdg::TypeInfo* t : bdg::Registry::Instance().Types()) {
+                 if (std::find(t->tags.begin(), t->tags.end(), "Component") == t->tags.end() || t->name == "Transform") continue;
+                 const std::string type = t->name, target = o->id;
+                 comps.push_back({type, [em, type, target] {
+                                    bdg::Command c;
+                                    c.name = "addcomp";
+                                    c.target = target;
+                                    c.args = std::format(R"({{"type":"{}"}})", type);
+                                    std::string err;
+                                    if (!em->bus.Execute(c, &err)) bdg::LogWarn("add component: {}", err);
+                                  }, o->Find(t->name) == nullptr});
+               }
+               std::sort(comps.begin(), comps.end(), [](const Item& l, const Item& r) { return l.label < r.label; });
+               ui->OpenMenu(x, y, comps, true);
+             }, selected}};
+    } else if (name == "build") {
+      it = {{"빌드", [e] { RunBuild(e, false); }}, {"검사만", [e] { RunBuild(e, true); }}};
+    } else if (name == "window") {
+      static const struct { const char* id; const char* label; } panels[] = {
+          {"hierarchy", "Hierarchy"}, {"scene", "Scene"}, {"game", "Game"}, {"inspector", "Inspector"}, {"project", "Project"},
+          {"console", "Console"}, {"buildlog", "Build Log"}, {"profiler", "Profiler"}, {"history", "History"}, {"settings", "Project Settings"}};
+      std::vector<Item> open;
+      for (auto& p : panels) open.push_back({p.label, panel(p.id)});
+      it = {{"패널 열기 ▸", sub(x, y, open)},
+            {"UI 확대", action("view.zoomIn"), true, false, keys("view.zoomIn")},
+            {"UI 축소", action("view.zoomOut"), true, false, keys("view.zoomOut")},
+            {"UI 100%", action("view.zoomReset"), true, false, keys("view.zoomReset")}};
+    } else if (name == "help") {
+      it = {{"갤러리", action("view.gallery"), true, false, keys("view.gallery")},
+            {"문서", [e] { e->window.OpenURL("https://github.com/O3O-2022/Bidulgi-Engine/tree/main/Docs"); }},
+            {"버그 제보", action("help.bug"), true, false, keys("help.bug")}};
+    }
+    return it;
+  };
+  for (const char* name : {"file", "edit", "assets", "gameobject", "component", "build", "window", "help"})
+    if (bdg::Widget* b = e->editor->Find(std::string("menu.") + name))
+      b->onClick = [ui, menus, n = std::string(name)](bdg::Widget& w) {
+        const float x = w.x, y = w.y + w.h + 2;
+        ui->OpenMenu(x, y, menus(n, x, y));
+      };
+  if (bdg::Widget* b = e->editor->Find("tool.build")) b->onClick = [e](bdg::Widget&) { RunBuild(e, false); }; // was a dead button
+}
+
 
 // Scripted gizmo check (BDG_GIZMO_TEST=1, queue 3-3) on the Crystal (g8, at 3, 0.5, 2): real mouse drags on the
 // handles through the scene view, each drag one undo step, Esc cancels, W/E/R switch tools, Ctrl snaps, X local axes.
@@ -1146,6 +1366,7 @@ void TogglePlay(bdg_engine* e) {
 #include "Runtime/EditorTests/animation.inl" // lane A: animation part 2, IK, ragdolls, third-person template
 #include "Runtime/EditorTests/graphics.inl"  // lane A: round 6 graphics (TAA, SSR, volumetric fog, GI Tier 1)
 #include "Runtime/EditorTests/uidesigner.inl" // lane A: the UI designer (7-3)
+#include "Runtime/EditorTests/editor_review.inl" // lane A: UI review fixes (menu bar, ...)
 
 extern "C" {
 
@@ -1522,6 +1743,7 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
     bdg::EditorModel* model = e->model.get();
     if (const char* sel = std::getenv("BDG_SELECT")) model->Select(sel); // screenshots of one object's Inspector
     SetupShortcuts(e);
+    SetupMenuBar(e); // the menu bar (UI review B2)
     bdg::SetGuardFailureHandler([model](const std::string&, const std::string&) { // keep the work
       model->Autosave();
       if (model->Dirty()) model->WriteBackup(); // offered back on the next start

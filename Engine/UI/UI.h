@@ -35,7 +35,7 @@ struct Widget {
   std::vector<std::string> items;     // Tabs / Panel header tabs; Node: pins "in|exec|Exec" / "out|float|Value"
   int selectedIndex = 0, indent = 0;
   // Label: 1 dim, 2 component header (.bdg-comp-head), 3 caption (.bdg-caption)
-  // Tabs: 1 workspace tabs, 2 workspace bar (.bdg-wsbar)   Button: 1 status dot   Node: stripe kind
+  // Tabs: 1 workspace tabs, 2 workspace bar (.bdg-wsbar)   Button: 1 status dot, 2 menu bar (flat)   Node: stripe kind
   // Badge: 0 pill, 1 ok, 2 warn, 3 err; 10 Unity, 11 Unreal, 12 Blender, 13 native (origin badges)
   int variant = 0;
   float fontSize = 0;                 // Label: 0 = body style
@@ -138,9 +138,9 @@ public:
   float ClickX() const { return clickX_; }               // UI units, of the click being handled
   bool OnTreeArrow(const Widget& row, float x) const;    // x is on a tree row's fold arrow (E-2)
   // Popup menu (E-4): drawn above everything at (x, y); a click on an item runs it, a click elsewhere or Esc closes.
-  // hint: drawn dim at the right (a shortcut, "Ctrl+D"). header: a group title row (caption style, not an item;
-  // hidden while a search filter is typed).
-  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; bool checked = false; std::string hint; bool header = false; };
+  // keys: the item's shortcut, shown dimmed at the right ("Ctrl+S"); "" = none. header: a group title row (caption
+  // style, not an item; hidden while a search filter is typed).
+  struct MenuItem { std::string label; std::function<void()> run; bool enabled = true; bool checked = false; std::string keys = {}; bool header = false; };
   // search: a filter box on top (type to narrow the list; Up/Down/Enter pick). Long combo lists use it.
   void OpenMenu(float x, float y, std::vector<MenuItem> items, bool search = false);
   void CloseMenu() { menu_.clear(); menuAll_.clear(); menuFilter_.clear(); }

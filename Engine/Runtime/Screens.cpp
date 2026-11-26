@@ -248,13 +248,19 @@ std::unique_ptr<Widget> BuildEditorScreen() {
   auto root = MakeBox(Axis::Column, 1);
 
   // Menu bar: brand mark + menus + project name
-  auto& menu = root->Add(MakeBox(Axis::Row, 20));
+  auto& menu = root->Add(MakeBox(Axis::Row, 2));
   menu.height = Length::Px(30);
   menu.padL = 10; menu.padR = 12;
   menu.crossAlign = Align::Center;
   auto& mark = menu.Add(MakeCustom("brand", DrawBrandMark));
   mark.width = Length::Px(20); mark.height = Length::Px(28);
-  for (const char* m : {"File", "Edit", "Assets", "GameObject", "Component", "Build", "Window", "Help"}) menu.Add(DimLabel(m));
+  for (const char* m : {"File", "Edit", "Assets", "GameObject", "Component", "Build", "Window", "Help"}) { // lists: Engine.cpp SetupMenuBar
+    std::string id = std::string("menu.") + m;
+    for (char& c : id) c = (char)std::tolower((unsigned char)c);
+    auto& b = menu.Add(MakeButton(id, m));
+    b.variant = 2;
+    b.tooltip = std::string(m) + " 메뉴";
+  }
   menu.Add(Spacer());
   menu.Add(DimLabel("SampleProject  ·  Main.scene", 12)).id = "title.scene"; // " ●" while there are unsaved changes
 

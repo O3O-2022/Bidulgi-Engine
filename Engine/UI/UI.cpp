@@ -575,6 +575,11 @@ void UIContext::DrawWidget(Widget& w) {
     }
     case WidgetKind::Button: {
       float fs = t.FontSize("label", 12);
+      if (w.variant == 2) { // menu bar: flat, the raised fill only on hover / press / open
+        if (w.hovered || w.pressed || w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"), rmd);
+        Text(w.x + (w.w - Measure(fs, w.text)) * 0.5f, w.y + (w.h - fs) * 0.5f - 1, fs, w.hovered || w.selected ? t.C("fg") : t.C("fg-dim"), w.text);
+        break;
+      }
       Color fill = w.primary ? t.C("accent") : t.C("raise");
       Color border = w.primary ? t.C("accent") : (w.hovered ? t.C("fg-faint") : t.C("line-strong"));
       if (w.pressed) fill = Alpha(fill, 0.8f);
@@ -1081,7 +1086,7 @@ void UIContext::OpenMenu(float x, float y, std::vector<MenuItem> items, bool sea
   const float fs = theme_.FontSize("control", 12.5f);
   menuW_ = 160;
   for (const MenuItem& it : menu_)
-    menuW_ = std::max(menuW_, Measure(fs, it.label) + 32 + (it.hint.empty() ? 0.f : Measure(fs, it.hint) + 24));
+    menuW_ = std::max(menuW_, Measure(fs, it.label) + 32 + (it.keys.empty() ? 0.f : Measure(fs, it.keys) + 28));
   // as many rows as fit in the window (at least 4); the rest scroll
   const float room = root_ ? root_->h - 4 - kMenuPad * 2 - (search ? kMenuRow : 0) : 1e9f;
   menuRows_ = std::max(1, std::min((int)menu_.size(), std::max(4, (int)(room / kMenuRow))));
@@ -1177,7 +1182,7 @@ void UIContext::FilterMenu() {
   const std::string f = lower(menuFilter_);
   menu_.clear();
   for (const MenuItem& it : menuAll_)
-    if (f.empty() ? true : !it.header && lower(it.label + " " + it.hint).find(f) != std::string::npos) menu_.push_back(it);
+    if (f.empty() ? true : !it.header && lower(it.label + " " + it.keys).find(f) != std::string::npos) menu_.push_back(it);
   menuHot_ = -1;
   for (size_t i = 0; i < menu_.size() && menuHot_ < 0; ++i)
     if (menu_[i].enabled && !menu_[i].header) menuHot_ = (int)i; // Enter runs the first match
@@ -1207,7 +1212,7 @@ void UIContext::DrawMenu() {
     float x, y, w, rh;
     if (!MenuItemRect(i, x, y, w, rh)) continue; // scrolled out of view
     const MenuItem& it = menu_[i];
-    if (it.header) { // group title: caption style (small, upper case, dim), a line above unless first
+    if (it.header) { // group title: caption style (small, dim), a line above unless first
       if ((int)i > menuTop_) b.Rect(menuX_ + 8, y + 2, menuW_ - 16, 1, t.C("line"));
       const float cs = t.FontSize("caption", 10.5f);
       Text(menuX_ + 12, y + kMenuRow - cs - 6, cs, t.C("fg-dim"), it.label);
@@ -1215,8 +1220,15 @@ void UIContext::DrawMenu() {
     }
     if ((int)i == menuHot_ && it.enabled) b.Rect(menuX_ + 3, y, menuW_ - 6, kMenuRow, t.C("selection"), 4);
     if (it.checked) b.Rect(menuX_ + 6, y + 7, 3, kMenuRow - 14, t.C("accent"), 1.5f); // the current value
-    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !it.enabled ? t.C("fg-faint") : it.checked ? t.C("accent") : t.C("fg"), it.label);
-    if (!it.hint.empty()) Text(menuX_ + menuW_ - 12 - Measure(fs, it.hint), y + (kMenuRow - fs) * 0.5f - 1, fs, t.C("fg-dim"), it.hint);
+    // a label ending in " ▸" opens a submenu: the arrow is drawn at the right (the font has ▶, not ▸)
+    static const std::string kSub = " ▸";
+    const std::string& label = it.label;
+    const bool sub = label.size() > kSub.size() && label.compare(label.size() - kSub.size(), kSub.size(), kSub) == 0;
+    Text(menuX_ + 14, y + (kMenuRow - fs) * 0.5f - 1, fs, !it.enabled ? t.C("fg-faint") : it.checked ? t.C("accent") : t.C("fg"),
+         sub ? label.substr(0, label.size() - kSub.size()) : label);
+    if (sub) Text(menuX_ + menuW_ - 14 - Measure(fs * 0.6f, "▶"), y + (kMenuRow - fs * 0.6f) * 0.5f - 1, fs * 0.6f, it.enabled ? t.C("fg-dim") : t.C("fg-faint"), "▶");
+    if (!it.keys.empty()) // the shortcut at the right
+      Text(menuX_ + menuW_ - 14 - Measure(fs, it.keys), y + (kMenuRow - fs) * 0.5f - 1, fs, it.enabled ? t.C("fg-dim") : t.C("fg-faint"), it.keys);
   }
   if ((int)menu_.size() > menuRows_) { // scroll bar: where the shown rows are in the list
     const float top = menuY_ + kMenuPad + (menuSearch_ ? kMenuRow : 0), span = menuRows_ * kMenuRow;

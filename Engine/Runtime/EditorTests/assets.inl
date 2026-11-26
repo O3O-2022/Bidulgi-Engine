@@ -1557,7 +1557,7 @@ void InjectCreateTest(bdg_engine* e, int frame, float scale) {
   }
   if (frame == 11) {
     bool dup = false, del = false; // the menu shows the keys next to the actions
-    for (const auto& it : ui.Menu()) { dup = dup || (it.label == "복제" && it.hint == "Ctrl+D"); del = del || (it.label == "삭제" && it.hint == "Delete"); }
+    for (const auto& it : ui.Menu()) { dup = dup || (it.label == "복제" && it.keys == "Ctrl+D"); del = del || (it.label == "삭제" && it.keys == "Delete"); }
     hints = dup && del ? "1" : "0";
     clickItem("자식 만들기…");
   }
