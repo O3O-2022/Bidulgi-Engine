@@ -12,6 +12,7 @@
 #include "Render3D/ReferenceBoard.h"
 #include "Render3D/Renderer3D.h"
 #include "Runtime/SceneView.h"
+#include "Runtime/UIDesigner.h"
 #include "Net/PlaySession.h"
 #include "Runtime/AssetPreviews.h"
 #include "Scene/GraphLibrary.h"
@@ -195,6 +196,8 @@ struct bdg_engine {
   bool stressTest = false;
   std::string stressTestValues[10];
   std::unique_ptr<bdg::SceneView> sceneView; // Scene panel in 3D (queue 3-2)
+  bdg::UIDesigner uiDesigner;  // the "UI Designer" workspace shows it in the Scene panel (7-3)
+  int lastWorkspace = 0;       // ws.tabs index of the last frame
   bdg::MaterialLibrary materials;             // project materials and cooked textures (queue 3-1b)
   bdg::AssetPreviews previews;                // Project thumbnails and the Inspector preview (E-1)
   bool previewsReady = false;
@@ -1065,6 +1068,12 @@ void SetupShortcuts(bdg_engine* e) {
 void TogglePlay(bdg_engine* e);
 
 
+// The UI designer (7-3) replaces the 3D view in the Scene panel while the "UI Designer" workspace tab is chosen.
+bool UIDesignerActive(bdg_engine* e) {
+  const bdg::Widget* ws = e->editor ? e->editor->Find("ws.tabs") : nullptr;
+  return ws && ws->selectedIndex == 3;
+}
+
 // In-game UI (7-3) over the Game view: buttons react while playing with the Game view focused.
 bdg::GameUI& GameViewUI() {
   static bdg::GameUI ui;
@@ -1132,6 +1141,7 @@ void TogglePlay(bdg_engine* e) {
 #include "Runtime/EditorTests/scripting.inl"
 #include "Runtime/EditorTests/animation.inl" // lane A: animation part 2, IK, ragdolls, third-person template
 #include "Runtime/EditorTests/graphics.inl"  // lane A: round 6 graphics (TAA, SSR, volumetric fog, GI Tier 1)
+#include "Runtime/EditorTests/uidesigner.inl" // lane A: the UI designer (7-3)
 
 extern "C" {
 
@@ -1351,7 +1361,14 @@ bdg_result bdg_engine_create(const bdg_engine_desc* desc, bdg_engine** out) {
         }
       }
       if (bdg::Widget* scene = e->editor->Find("scene")) { // a .prefab dragged from the Project panel: an instance there (6-1)
-        scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) { e->sceneView->Draw(w, ui, e->model.get()); };
+        scene->onDraw = [e](bdg::Widget& w, bdg::UIContext& ui) {
+          if (UIDesignerActive(e) && e->model) {
+            const std::string assets = e->assetsOpen ? e->assets.Root() : (std::filesystem::current_path() / "Assets").string();
+            e->uiDesigner.Draw(w, ui, *e->model, e->hasFont ? &e->font : nullptr, e->rhi, assets);
+          } else {
+            e->sceneView->Draw(w, ui, e->model.get());
+          }
+        };
         scene->onDrop = [e](bdg::Widget& dropped) {
           if (e->model && dropped.id.starts_with("p.item.") && dropped.id.ends_with(".prefab")) e->sceneView->PlacePrefab(*e->model, dropped.id.substr(7));
         };
@@ -1956,7 +1973,15 @@ bdg_result bdg_engine_run(bdg_engine* e) {
           e->model->SetPlayChanged(std::move(keys));
         }
         bdg::Widget* focused = ui.Focused();
-        if (sceneWidget)
+        if (&ui == e->editor.get()) { // entering the UI designer shows the Scene panel, where it draws (7-3)
+          const int wsNow = UIDesignerActive(e) ? 3 : 0;
+          if (wsNow == 3 && e->lastWorkspace != 3)
+            if (bdg::Widget* dw = e->editor->Find("dock"); dw && dw->dock) dw->dock->SelectPanel("scene");
+          e->lastWorkspace = wsNow;
+        }
+        if (sceneWidget && UIDesignerActive(e))
+          e->uiDesigner.HandleEvents(events, *sceneWidget, *e->model, ui);
+        else if (sceneWidget)
           e->sceneView->HandleEvents(events, *sceneWidget, *e->model, dt, focused && focused->kind == bdg::WidgetKind::Field);
         else
           std::erase_if(events, [](const bdg::InputEvent& ev) { return ev.type == bdg::InputEvent::Type::KeyUp; });
@@ -1987,7 +2012,7 @@ bdg_result bdg_engine_run(bdg_engine* e) {
       ui.Layout(lw, lh);
       if (e->board && &ui == e->editor.get())
         if (bdg::Widget* view = ui.Find("render.view")) RenderReferenceView(e, *view, scale);
-      if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2)
+      if (sceneWidget && !sceneWidget->hidden && sceneWidget->w >= 2 && sceneWidget->h >= 2 && !UIDesignerActive(e))
         e->sceneView->Render(*e->model, e->assetsOpen ? &e->assets : nullptr, *sceneWidget, scale);
       if (bdg::Widget* game = e->sceneView && e->model && &ui == e->editor.get() ? ui.Find("game") : nullptr;
           game && !game->hidden && game->w >= 2 && game->h >= 2)
