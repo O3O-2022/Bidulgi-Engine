@@ -10,7 +10,6 @@
 namespace bdg {
 namespace {
 Color Alpha(Color c, float a) { c.a = a; return c; }
-Color Hex(uint32_t rgb) { return {((rgb >> 16) & 255) / 255.f, ((rgb >> 8) & 255) / 255.f, (rgb & 255) / 255.f, 1.f}; }
 
 std::unique_ptr<Widget> DimLabel(std::string text, float size = 0) {
   auto l = MakeLabel(std::move(text));
@@ -77,11 +76,11 @@ void DrawToolIcon(Widget& w, UIContext& ui) {
   const Color fg = w.primary ? t.C("on-accent") : t.C("fg");
   const float cx = w.x + w.w * 0.5f, cy = w.y + w.h * 0.5f;
   if (w.id == "tool.pause") {
-    b.Rect(cx - 5, cy - 6, 3.5f, 12, fg, 1);
-    b.Rect(cx + 1.5f, cy - 6, 3.5f, 12, fg, 1);
+    b.Rect(cx - 5, cy - 6, 3.5f, 12, fg, t.N("radius-xs", 2));
+    b.Rect(cx + 1.5f, cy - 6, 3.5f, 12, fg, t.N("radius-xs", 2));
   } else if (w.id == "tool.step") {
     b.Triangle(cx - 6, cy - 6, 8, 12, fg);
-    b.Rect(cx + 3, cy - 6, 3, 12, fg, 1);
+    b.Rect(cx + 3, cy - 6, 3, 12, fg, t.N("radius-xs", 2));
   } else { // tool.playopts: a chevron pointing down
     const float tri[4][2] = {{cx - 5, cy - 2.5f}, {cx + 5, cy - 2.5f}, {cx, cy + 3.5f}, {cx, cy + 3.5f}};
     b.Quad(tri, fg);
@@ -115,25 +114,25 @@ void DrawSceneViewV2(Widget& w, UIContext& ui) {
   b.Line(cx, cy, cx + 84, cy, 3, t.C("axis-x"));
   b.Line(cx, cy, cx, cy - 84, 3, t.C("axis-y"));
   b.Line(cx, cy, cx - 50, cy + 44, 3, t.C("axis-z"));
-  b.Rect(cx + 80, cy - 4, 8, 8, t.C("axis-x"), 1);
-  b.Rect(cx - 4, cy - 88, 8, 8, t.C("axis-y"), 1);
+  b.Rect(cx + 80, cy - 4, 8, 8, t.C("axis-x"), t.N("radius-xs", 2));
+  b.Rect(cx - 4, cy - 88, 8, 8, t.C("axis-y"), t.N("radius-xs", 2));
   // Overlay chips (top-left) and stats (top-right)
   float px = w.x + 10;
   for (const char* chip : {"Perspective", "Lit", "Show", "보통"}) {
-    float cw = ui.Measure(11, chip) + 18;
-    b.Rect(px, w.y + 8, cw, 22, Alpha(t.C("win"), 0.85f), 11, 1, t.C("line"));
-    ui.Text(px + 9, w.y + 12, 11, t.C("fg-dim"), chip);
+    float cw = ui.Measure(t.FontSize("overlay", 11), chip) + 18;
+    b.Rect(px, w.y + 8, cw, 22, Alpha(t.C("win"), 0.85f), t.N("radius-pill", 12), 1, t.C("line"));
+    ui.Text(px + 9, w.y + 12, t.FontSize("overlay", 11), t.C("fg-dim"), chip);
     px += cw + 6;
   }
-  ui.Text(w.x + w.w - 150, w.y + 12, 11, t.C("fg-dim"), "Draw 1  ·  Tris 12  ·  1.4 ms");
+  ui.Text(w.x + w.w - 150, w.y + 12, t.FontSize("overlay", 11), t.C("fg-dim"), "Draw 1  ·  Tris 12  ·  1.4 ms");
   // Axis widget (bottom-left)
   float ax = w.x + 36, ay = w.y + w.h - 36;
   b.Rect(ax - 26, ay - 26, 52, 52, Alpha(t.C("win"), 0.6f), 26);
   b.Line(ax, ay, ax + 18, ay, 2, t.C("axis-x"));
   b.Line(ax, ay, ax, ay - 18, 2, t.C("axis-y"));
   b.Line(ax, ay, ax - 12, ay + 10, 2, t.C("axis-z"));
-  ui.Text(ax + 19, ay - 7, 10, t.C("axis-x"), "X");
-  ui.Text(ax - 3, ay - 31, 10, t.C("axis-y"), "Y");
+  ui.Text(ax + 19, ay - 7, t.FontSize("badge", 10), t.C("axis-x"), "X");
+  ui.Text(ax - 3, ay - 31, t.FontSize("badge", 10), t.C("axis-y"), "Y");
 }
 
 // Bottom dock: Console / Build Log / Profiler in one panel (tab index picks the view).
@@ -158,7 +157,7 @@ void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
       Color c = lvl == "error" ? t.C("err") : lvl == "warn" ? t.C("warn") : lvl == "ok" ? t.C("ok") : t.C("fg-faint");
       float y = w.y + 8 + i * 20.f;
       if (lvl == "error") b.Rect(w.x, y - 2, w.w, 20, Alpha(t.C("err"), 0.1f));
-      b.Rect(w.x + 12, y + 5, 6, 6, c, 3);
+      b.Rect(w.x + 12, y + 5, 6, 6, c, t.N("radius-sm", 3));
       ui.Text(w.x + 26, y + 1, body, lvl == "info" ? t.C("fg-dim") : c, lines[i].text, true);
     }
   } else { // Profiler: frame time bars (real values from the engine loop)
@@ -166,7 +165,7 @@ void DrawBottomDock(Widget& w, UIContext& ui, const Widget* panel) {
     for (float v : g_frameTimes) maxMs = std::max(maxMs, v);
     float gx = w.x + 50, gw = w.w - 70, gh = w.h - 40, gy = w.y + 12;
     b.Line(gx, gy + gh * (1 - 16.7f / maxMs), gx + gw, gy + gh * (1 - 16.7f / maxMs), 1, Alpha(t.C("warn"), 0.7f));
-    ui.Text(w.x + 6, gy + gh * (1 - 16.7f / maxMs) - 7, 10, t.C("warn"), "16.7ms");
+    ui.Text(w.x + 6, gy + gh * (1 - 16.7f / maxMs) - 7, t.FontSize("badge", 10), t.C("warn"), "16.7ms");
     float bw = gw / 240.f, avg = 0;
     for (size_t i = 0; i < g_frameTimes.size(); ++i) {
       float v = g_frameTimes[i], hgt = gh * (v / maxMs);

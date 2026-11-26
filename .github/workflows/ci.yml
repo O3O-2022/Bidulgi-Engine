@@ -400,6 +400,10 @@ jobs:
           if ($log -notmatch 'udpolish test: tips=1 chips=1 title=1 align=1 hover=1 context=1 narrow=wide') { $errors += 'UI Designer polish test (wide) failed' }
           $log = Invoke-Editor 'Release' @{ BDG_UDPOLISH_TEST = '1'; BDG_UI_SCALE = '2.5' } 22
           if ($log -notmatch 'udpolish test: tips=1 chips=1 title=1 align=1 hover=1 context=1 narrow=1') { $errors += 'UI Designer polish test (narrow) failed' }
+          # UI review B11: lane A's screens (Scene view, toolbar, gizmo, UI Designer, empty workspace, menus) ask the theme only
+          # for token names tokens.json has (a mistyped size or radius would fall back silently)
+          $log = Invoke-Editor 'Release' @{ BDG_TOKENS_TEST = '1' } 19
+          if ($log -notmatch 'tokens test: missing=0 screens=5') { $errors += 'design token names test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking

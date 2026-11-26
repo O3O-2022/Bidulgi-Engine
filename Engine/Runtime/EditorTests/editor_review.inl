@@ -378,3 +378,65 @@ void ReportUdPolishTest(bdg_engine*) {
   bdg::LogInfo("udpolish test: tips={} chips={} title={} align={} hover={} context={} narrow={}", tips, chips, title, align, hover, context, narrow);
 }
 BDG_EDITOR_TEST("BDG_UDPOLISH_TEST", InjectUdPolishTest, ReportUdPolishTest)
+
+// BDG_TOKENS_TEST=1 (UI review B11): the screens lane A draws from token names (Scene view and its toolbar, gizmo,
+// speed popup, UI Designer with two selected, an empty workspace, menus, the top toolbar) ask the theme only for
+// names tokens.json has: a mistyped size or radius would fall back silently, a colour would turn magenta.
+namespace tokenstest {
+std::string missing = "-", drawn = "-";
+int screens = 0;
+}
+void InjectTokensTest(bdg_engine* e, int frame, float scale) {
+  using namespace tokenstest;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::Widget* ws = e->editor->Find("ws.tabs");
+  auto clickWidget = [&](const char* id) {
+    using T = bdg::InputEvent::Type;
+    if (bdg::Widget* w = e->editor->Find(id)) {
+      const float x = (w->x + w->w * 0.5f) * scale, y = (w->y + w->h * 0.5f) * scale;
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  };
+  if (frame == 2) { // Level: a selected object (gizmo), the camera speed popup
+    if (!m->scene.Roots().empty()) m->Select(m->scene.Roots().back());
+    if (e->sceneView) e->sceneView->PressToolbar("speed", *m);
+  }
+  if (frame == 4) ++screens;
+  if (frame == 5 && ws) ws->selectedIndex = 3; // UI Designer, two elements
+  if (frame == 7) {
+    const bdg::GameUI::Rect s = e->uiDesigner.Screen();
+    e->uiDesigner.AddElement(*m, "Button", s.x + s.w * 0.3f, s.y + s.h * 0.3f);
+    e->uiDesigner.AddElement(*m, "Toggle", s.x + s.w * 0.6f, s.y + s.h * 0.6f);
+  }
+  if (frame == 8) m->SetSelection(m->Selection().empty() ? std::vector<std::string>{} : std::vector<std::string>{m->Selection().back()});
+  if (frame == 10) {
+    ++screens;
+    if (ws) ws->selectedIndex = 1; // an empty workspace
+  }
+  if (frame == 12) {
+    ++screens;
+    if (ws) ws->selectedIndex = 0;
+    clickWidget("tool.timescale"); // a menu
+  }
+  if (frame == 14) {
+    ++screens;
+    e->editor->CloseMenu();
+    clickWidget("menu.gameobject");
+  }
+  if (frame == 16) {
+    ++screens;
+    e->editor->CloseMenu();
+    std::string list;
+    for (const std::string& n : e->theme.Missing()) list += (list.empty() ? "" : " ") + n;
+    missing = list.empty() ? "0" : list;
+    drawn = std::format("{}", screens);
+  }
+}
+void ReportTokensTest(bdg_engine*) {
+  using namespace tokenstest;
+  bdg::LogInfo("tokens test: missing={} screens={}", missing, drawn);
+}
+BDG_EDITOR_TEST("BDG_TOKENS_TEST", InjectTokensTest, ReportTokensTest)

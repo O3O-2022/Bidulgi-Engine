@@ -290,14 +290,14 @@ GizmoDelta GizmoDrag::Update(const glm::vec2& mouse, bool snap, const SnapSettin
 void DrawGizmo(Batch2D& b, const Theme& t, GizmoMode mode, const GizmoFrame& f, const GizmoView& v, GizmoHandle hot) {
   glm::vec2 o;
   if (!v.Project(f.origin, o)) return;
-  const Color hotColor{1.f, 0.85f, 0.2f, 1};
+  const Color hotColor = t.C("gizmo-hot"); // the handle under the mouse
   const Color base[3] = {t.C("axis-x"), t.C("axis-y"), t.C("axis-z")};
   const GizmoHandle axisHandles[3] = {GizmoHandle::X, GizmoHandle::Y, GizmoHandle::Z};
   auto colorOf = [&](int i) { return hot == axisHandles[i] ? hotColor : base[i]; };
   if (mode == GizmoMode::Rotate) {
     glm::vec3 toCam = glm::normalize(v.camera.position - f.origin);
     float r = ViewRingPixels(f, v);
-    Color viewColor = hot == GizmoHandle::View ? hotColor : Color{0.85f, 0.87f, 0.9f, 0.8f};
+    Color viewColor = hot == GizmoHandle::View ? hotColor : Color{t.C("fg").r, t.C("fg").g, t.C("fg").b, 0.8f};
     for (int k = 0; k < kRingSegments; ++k) { // outer view ring
       float a0 = 2 * kPi * k / kRingSegments, a1 = 2 * kPi * (k + 1) / kRingSegments;
       b.Line(o.x + std::cos(a0) * r, o.y + std::sin(a0) * r, o.x + std::cos(a1) * r, o.y + std::sin(a1) * r, 1.5f, viewColor);
@@ -346,7 +346,7 @@ void DrawGizmo(Batch2D& b, const Theme& t, GizmoMode mode, const GizmoFrame& f, 
       b.Rect(tip.x - 5, tip.y - 5, 10, 10, c, 1.5f);
     }
   }
-  Color centre = hot == GizmoHandle::Center ? hotColor : Color{0.92f, 0.93f, 0.95f, 0.9f};
+  Color centre = hot == GizmoHandle::Center ? hotColor : Color{t.C("fg").r, t.C("fg").g, t.C("fg").b, 0.9f};
   if (mode == GizmoMode::Scale) b.Rect(o.x - 6, o.y - 6, 12, 12, centre, 2.f);
   else b.Rect(o.x - 5, o.y - 5, 10, 10, centre, 5.f, 1.5f, {0.1f, 0.1f, 0.12f, 0.9f});
 }

@@ -229,6 +229,7 @@ namespace {
 std::unique_ptr<bdg::Widget> BuildRenderReferenceScreen(bdg_engine* e) {
   auto view = bdg::MakeCustom("render.view", [e](bdg::Widget& w, bdg::UIContext& ui) {
     bdg::Batch2D& b = ui.Batch();
+    const bdg::Theme& t = ui.Tokens();
     if (!e->board || !e->viewRT.Valid() || e->viewW <= 0 || e->viewH <= 0) return;
     b.Image(w.x, w.y, w.w, w.h, e->rhi.RenderTargetColor(e->viewRT), 0, 1, 1, 0); // render target rows are bottom-up
     const bdg::Color label{0.92f, 0.93f, 0.95f, 1}, shade{0.05f, 0.06f, 0.07f, 0.72f};
@@ -236,14 +237,14 @@ std::unique_ptr<bdg::Widget> BuildRenderReferenceScreen(bdg_engine* e) {
       float px = 0, py = 0;
       if (!bdg::ProjectToPixel(e->board->camera, e->viewW, e->viewH, l.position, px, py)) continue;
       float x = w.x + px / e->viewW * w.w, y = w.y + (1.f - py / e->viewH) * w.h;
-      float tw = ui.Measure(12, l.text);
-      b.Rect(x - 5, y - 2, tw + 10, 19, shade, 4);
-      ui.Text(x, y, 12, label, l.text);
+      float tw = ui.Measure(t.FontSize("label", 12), l.text);
+      b.Rect(x - 5, y - 2, tw + 10, 19, shade, t.N("radius-md", 4));
+      ui.Text(x, y, t.FontSize("label", 12), label, l.text);
     }
     std::string title = std::format("Render reference (queue 3-0, 3-1 glTF) · forward GGX, sun + sky hemisphere, sRGB output, "
                                     "no tone mapping · {} draws · {}x{} MSAA 4x", e->r3d->DrawsLastFrame(), e->viewW, e->viewH);
-    b.Rect(w.x + 10, w.y + 10, ui.Measure(12, title) + 20, 24, shade, 6);
-    ui.Text(w.x + 20, w.y + 14, 12, label, title);
+    b.Rect(w.x + 10, w.y + 10, ui.Measure(t.FontSize("label", 12), title) + 20, 24, shade, t.N("radius-lg", 5));
+    ui.Text(w.x + 20, w.y + 14, t.FontSize("label", 12), label, title);
   });
   view->width = bdg::Length::Fill();
   view->height = bdg::Length::Fill();
@@ -822,14 +823,14 @@ void DrawThemeRow(bdg::Widget& w, bdg::UIContext& ui) {
   if (w.selected) b.Rect(w.x, w.y, w.w, w.h, t.C("selection"));
   else if (w.hovered) b.Rect(w.x, w.y, w.w, w.h, t.C("raise"));
   const float ss = w.h - 8, sw = ss * 1.6f, sx = w.x + 12, sy = w.y + 4;
-  b.Rect(sx - 1, sy - 1, sw + 2, ss + 2, t.C("line-strong"), 3);
-  b.Rect(sx, sy, sw, ss, t.C(w.text), 2);
+  b.Rect(sx - 1, sy - 1, sw + 2, ss + 2, t.C("line-strong"), t.N("radius-sm", 3));
+  b.Rect(sx, sy, sw, ss, t.C(w.text), t.N("radius-xs", 2));
   const float fs = t.FontSize("control", 12.5f);
   ui.Text(sx + sw + 8, w.y + (w.h - fs) * 0.5f - 1, fs, t.C("fg"), w.text);
   const std::string hex = bdg::Theme::FormatColor(t.C(w.text));
-  const float hx = w.x + w.w - 10 - ui.Measure(11, hex, true);
-  ui.Text(hx, w.y + (w.h - 11) * 0.5f - 1, 11, t.Overridden(w.text) ? t.C("fg") : t.C("fg-faint"), hex, true);
-  if (t.Overridden(w.text)) b.Rect(hx - 10, w.y + w.h * 0.5f - 2.5f, 5, 5, t.C("accent"), 2.5f);
+  const float hx = w.x + w.w - 10 - ui.Measure(t.FontSize("overlay", 11), hex, true);
+  ui.Text(hx, w.y + (w.h - 11) * 0.5f - 1, t.FontSize("overlay", 11), t.Overridden(w.text) ? t.C("fg") : t.C("fg-faint"), hex, true);
+  if (t.Overridden(w.text)) b.Rect(hx - 10, w.y + w.h * 0.5f - 2.5f, 5, 5, t.C("accent"), 2.5f); // a dot
 }
 
 void SaveTheme(bdg_engine* e) {
@@ -1181,7 +1182,7 @@ void DrawWorkspaceEmpty(bdg_engine* e, bdg::Widget& w, bdg::UIContext& ui) {
   ui.Text(w.x + (w.w - ui.Measure(fsTitle, titles[ws])) * 0.5f, cy - 52, fsTitle, t.C("fg"), titles[ws]);
   ui.Text(w.x + (w.w - ui.Measure(fs, hints[ws])) * 0.5f, cy - 22, fs, t.C("fg-dim"), hints[ws]);
   const char* label = "레벨로 돌아가기";
-  const float bw = ui.Measure(fs, label) + 28, bh = t.N("size-control", 28), bx = w.x + (w.w - bw) * 0.5f, by = cy + 6;
+  const float bw = ui.Measure(fs, label) + 28, bh = t.N("size-row", 22) + 6, bx = w.x + (w.w - bw) * 0.5f, by = cy + 6;
   const bool hot = e->wsMouse[0] >= bx && e->wsMouse[1] >= by && e->wsMouse[0] < bx + bw && e->wsMouse[1] < by + bh;
   b.Rect(bx, by, bw, bh, t.C("accent"), t.N("radius-md", 4), hot ? 1.5f : 1, hot ? t.C("fg") : t.C("accent"));
   ui.Text(bx + 14, by + (bh - fs) * 0.5f - 1, fs, t.C("on-accent"), label);
