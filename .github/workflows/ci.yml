@@ -361,6 +361,9 @@ jobs:
           # ... and the palette (a dragged Slider, a clicked Toggle; one undo step) and Preview (a click flips the toggle, put back after)
           $log = Invoke-Editor 'Release' @{ BDG_UIDESIGNER_TEST = '1' } 43
           if ($log -notmatch 'uidesigner test: tab=1 select=1 move=1 resize=1 snap=1 anchor=1 undo=1 resolution=1 palette=1 preview=1') { $errors += 'UI designer test failed' }
+          # C# UI controls: UI.Toggle / Slider / Input / Dropdown / ScrollView read, set, OnChanged once per change, missing = stand-in
+          $log = Invoke-Editor 'Release' @{ BDG_UICSHARP_TEST = '1'; BDG_SCRIPT_ASSEMBLIES = "$PWD/build/Release/Managed/Bidulgi.Samples.dll" } 24
+          if ($log -notmatch 'uicsharp test: ui probe: read=1 set=1 changed=1 missing=1') { $errors += 'C# UI controls test failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking
