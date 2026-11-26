@@ -1,4 +1,4 @@
-// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures, view modes.
+// Scripted editor checks: graphics, round 6 (lane A): TAA, SSR, volumetric fog, realtime GI (Tier 1), DDS textures, view modes, the Scene view toolbar.
 // Included by Engine.cpp after the other EditorTests files. New checks: register with BDG_EDITOR_TEST.
 #include "Core/DDS.h"
 #include "Render3D/DynamicGI.h"
@@ -639,3 +639,163 @@ void ReportViewModeTest(bdg_engine*) {
                ok && keys && menu && groups && legend && results.size() == 20 ? 1 : 0);
 }
 BDG_EDITOR_TEST("BDG_VIEWMODE_TEST", InjectViewModeTest, ReportViewModeTest)
+
+// BDG_TOOLBAR_TEST=1 (BDG_TOOLBAR = a scratch file for the kept values): the Scene view toolbar driven with real
+// clicks. Move / Rotate / Scale icons switch the tool; the grid value list sets the gizmo's step (a move lands on
+// 0.25 m) and Ctrl turns it off for a drag; the rotation snap toggle and 30° turn a rotation onto 30° steps; the
+// mouse wheel while flying steps the camera speed and the speed popup sets it; the values come back from the file
+// (reopening); every control has a tooltip; the toolbar is one row inside the view at UI zoom 1, 1.5 and 2.
+namespace toolbartest {
+std::string modes = "-", grid = "-", ctrl = "-", rotate = "-", wheel = "-", popup = "-", persist = "-", tips = "-", rows = "-";
+float startX = 0;
+}
+void InjectToolbarTest(bdg_engine* e, int frame, float scale) {
+  using namespace toolbartest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  bdg::SceneView* sv = e->sceneView.get();
+  bdg::Widget* sw = e->editor ? e->editor->Find("scene") : nullptr;
+  if (!m || !sv || !sw) return;
+  auto ev = [&](T type, float x, float y, int button = 0, bool ctrlKey = false) {
+    bdg::InputEvent i{type, x * scale, y * scale, button};
+    i.ctrl = ctrlKey;
+    e->window.InjectEvent(i);
+  };
+  auto click = [&](const std::string& name) {
+    float x, y;
+    if (!sv->ChipCenter(name, x, y)) { bdg::LogError("toolbar test: no control {}", name); return false; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    ev(T::MouseUp, x, y, 1);
+    return true;
+  };
+  auto pick = [&](const std::string& label) { // an item of the open menu, by its text
+    const auto& items = e->editor->Menu();
+    float x, y, w, h;
+    for (size_t k = 0; k < items.size(); ++k)
+      if (items[k].label == label && e->editor->MenuItemRect(k, x, y, w, h)) {
+        ev(T::MouseMove, x + w * 0.5f, y + h * 0.5f);
+        ev(T::MouseDown, x + w * 0.5f, y + h * 0.5f, 1);
+        ev(T::MouseUp, x + w * 0.5f, y + h * 0.5f, 1);
+        return true;
+      }
+    bdg::LogError("toolbar test: no menu item {}", label);
+    return false;
+  };
+  auto transform = [&]() -> const bdg::Transform* {
+    bdg::SceneObject* o = m->scene.Find("tbbox");
+    const bdg::Component* c = o ? o->Find("Transform") : nullptr;
+    return c ? static_cast<const bdg::Transform*>(c->data) : nullptr;
+  };
+  auto drag = [&](bdg::GizmoHandle h, float dx, float dy, bool ctrlKey) {
+    float x, y;
+    if (!sv->GizmoPoint(*m, h, x, y)) { bdg::LogError("toolbar test: no gizmo handle"); return; }
+    ev(T::MouseMove, x, y);
+    ev(T::MouseDown, x, y, 1);
+    for (int k = 1; k <= 4; ++k) ev(T::MouseMove, x + dx * k / 4, y + dy * k / 4, 0, ctrlKey);
+    ev(T::MouseUp, x + dx, y + dy, 1, ctrlKey);
+  };
+  if (frame == 2) {
+    m->NewScene(bdg::SceneTemplate::Empty);
+    for (const std::string& id : std::vector<std::string>(m->scene.Roots())) gfxtest::Run(m, "del", id, "{}");
+    gfxtest::Run(m, "add", "", R"({"id":"tbsun","name":"Sun"})");
+    gfxtest::Run(m, "addcomp", "tbsun", R"({"type":"Light","value":{"type":"Directional"}})");
+    gfxtest::Run(m, "add", "", R"({"id":"tbbox","name":"Box"})");
+    gfxtest::Run(m, "set", "tbbox", R"({"path":"Transform.position","value":[0,0.5,0]})");
+    gfxtest::Run(m, "addcomp", "tbbox", R"({"type":"MeshRenderer","value":{"mesh":"Cube"}})");
+    m->Select("tbbox");
+    m->tool = "select";
+    sv->camera.pivot = {0, 0.5f, 0};
+    sv->camera.yaw = 0;
+    sv->camera.pitch = -25;
+    sv->camera.distance = 7;
+    sv->snap = bdg::SnapSettings{};
+    sv->flyEasing = false;
+    sv->SetSpeedScalar(1);
+    sv->SetSpeedLevel(4);
+  }
+  if (frame == 4) click("gz.rotate");
+  if (frame == 6) {
+    modes = m->tool == "rotate" ? "1" : "0(" + m->tool + ")";
+    click("gz.move");
+  }
+  if (frame == 8) {
+    if (m->tool != "move") modes = "0(move)";
+    click("snapv"); // the grid value list
+  }
+  if (frame == 9) pick("0.25 m");
+  if (frame == 11) { // the gizmo's step is the chosen grid now: a drag along X lands on 0.25 m
+    grid = sv->snap.always && sv->snap.move == 0.25f ? "" : "0(not set)";
+    startX = transform() ? transform()->position.x : 0;
+    drag(bdg::GizmoHandle::X, 70, 0, false);
+  }
+  if (frame == 13) {
+    const float x = transform() ? transform()->position.x : 0, r = x / 0.25f;
+    if (grid.empty()) grid = x > startX + 0.1f && std::abs(r - std::round(r)) < 1e-4f ? "1" : std::format("0({:.4f})", x);
+    drag(bdg::GizmoHandle::X, 37, 0, true); // Ctrl: free this time
+  }
+  if (frame == 15) {
+    const float x = transform() ? transform()->position.x : 0, r = x / 0.25f;
+    ctrl = std::abs(r - std::round(r)) > 1e-3f ? "1" : std::format("0({:.4f})", x);
+    click("rsnap"); // rotation snap on
+  }
+  if (frame == 17) click("rsnapv");
+  if (frame == 18) pick("30°");
+  if (frame == 20) click("gz.rotate");
+  if (frame == 22) drag(bdg::GizmoHandle::Y, 110, 40, false); // around Y
+  if (frame == 24) {
+    const float ry = transform() ? transform()->rotation.y : 0, r = ry / 30.f;
+    rotate = sv->snap.rotateOn && sv->snap.rotate == 30.f && std::abs(ry) > 1.f && std::abs(r - std::round(r)) < 1e-2f
+                 ? "1" : std::format("0(on {} step {} y {:.3f})", sv->snap.rotateOn, sv->snap.rotate, ry);
+    // fly (right mouse held) and turn the wheel once: one speed level up
+    const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.6f;
+    ev(T::MouseMove, cx, cy);
+    ev(T::MouseDown, cx, cy, 3);
+    bdg::InputEvent wh{T::Wheel, cx * scale, cy * scale};
+    wh.wheel = 1;
+    e->window.InjectEvent(wh);
+  }
+  if (frame == 26) {
+    wheel = sv->speedLevel == 5 && std::abs(sv->FlySpeed() - bdg::SceneView::SpeedOfLevel(5)) < 1e-3f ? "1" : std::format("0({} {:.2f})", sv->speedLevel, sv->FlySpeed());
+    const float cx = sw->x + sw->w * 0.5f, cy = sw->y + sw->h * 0.6f;
+    ev(T::MouseUp, cx, cy, 3);
+  }
+  if (frame == 28) click("speed");
+  if (frame == 30) {
+    popup = sv->SpeedPopupOpen() ? "" : "0(closed)";
+    click("sp.l2");
+  }
+  if (frame == 32) {
+    if (popup.empty()) popup = sv->speedLevel == 2 ? "1" : std::format("0({})", sv->speedLevel);
+    sv->SaveToolbarStateIfChanged(); // (Draw saves too) then lose the values and read them back: a reopened editor
+    const bdg::SnapSettings kept = sv->snap;
+    sv->snap = bdg::SnapSettings{};
+    sv->SetSpeedLevel(4);
+    const bool loaded = sv->LoadToolbarState();
+    persist = loaded && sv->snap.move == kept.move && sv->snap.always == kept.always && sv->snap.rotate == 30.f && sv->snap.rotateOn &&
+                      sv->speedLevel == 2 ? "1" : std::format("0(loaded {} file {})", loaded, sv->toolbarStatePath);
+    bool all = true;
+    for (const char* n : {"persp", "tier", "view", "show", "tool", "gz.move", "gz.rotate", "gz.scale", "space", "surf", "snap", "snapv",
+                          "rsnap", "rsnapv", "ssnap", "ssnapv", "speed", "more"})
+      all = all && !sv->ToolbarTooltip(n).empty();
+    tips = all && sv->ToolbarTooltip("gz.move").find("(W)") != std::string::npos && sv->ToolbarTooltip("snap").find("Ctrl") != std::string::npos ? "1" : "0";
+    rows.clear();
+  }
+  // one row, inside the view, at UI zoom 1, 1.5 and 2 (on top of the display's scale)
+  static const float zooms[] = {1.f, 1.5f, 2.f};
+  for (int k = 0; k < 3; ++k) {
+    if (frame == 34 + k * 3) e->uiZoom = zooms[k];
+    if (frame == 36 + k * 3) {
+      const bdg::SceneView::ToolbarLayout tl = sv->ToolbarInfo();
+      const bool ok = tl.oneRow && tl.controls > 0 && tl.left >= sw->x - 0.5f && tl.right <= sw->x + sw->w + 0.5f;
+      rows += std::format("{}{}", rows.empty() ? "" : ",", ok ? "1" : std::format("0(rows {} {:.0f}..{:.0f} of {:.0f}..{:.0f})", tl.oneRow, tl.left, tl.right, sw->x, sw->x + sw->w));
+    }
+  }
+  if (frame == 43) e->uiZoom = 1.f;
+}
+void ReportToolbarTest(bdg_engine*) {
+  using namespace toolbartest;
+  bdg::LogInfo("toolbar test: modes={} grid={} ctrl={} rotate={} wheel={} popup={} persist={} tips={} rows={}", modes, grid, ctrl, rotate, wheel, popup,
+               persist, tips, rows);
+}
+BDG_EDITOR_TEST("BDG_TOOLBAR_TEST", InjectToolbarTest, ReportToolbarTest)

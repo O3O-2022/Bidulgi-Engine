@@ -14,9 +14,9 @@
 // Greybox (queue 3-3c): the Blockout tool (B) shows chips that add a box, stairs, ramp or cylinder in front of the
 // camera, and handles on the faces of the selected block: dragging one pushes or pulls that face (grid snapping
 // applies, the opposite face stays put, one undo step).
-// Debug tools (queue 3-8): keys 1-9 jump to CameraBookmark views (Ctrl + key stores the current view), Alt + 1-7
-// pick what is shown (Lit, Albedo, Normal, Roughness, Metallic, Depth, Shadow), chips toggle wireframe, bounding
-// boxes and a stats panel with GPU time per render pass.
+// Debug tools (queue 3-8): keys 1-9 jump to CameraBookmark views (Ctrl + key stores the current view), Alt + 2-9
+// pick view modes (Unreal's keys); the toolbar's Show menu toggles wireframe, bounding boxes and a stats panel with
+// GPU time per render pass. Toolbar (round 7): Runtime/SceneViewToolbar.cpp.
 //
 // Meshes: MeshRenderer.mesh names a project asset (.gltf / .glb through the importer) or a built-in shape by its
 // file stem: Plane (1 x 1), Cube, Sphere, Cylinder, Cone (1 m). Anything else shows a placeholder cube.
@@ -63,7 +63,10 @@ public:
   // Takes the events that belong to the view out of `events` (UI units). dt: seconds since the last frame.
   void HandleEvents(std::vector<InputEvent>& events, const Widget& view, EditorModel& model, double dt, bool textFocused);
   // flying (or still gliding to a stop), a note fading, the camera easing onto a framed selection
-  bool Animating() const { return (drag_ == Drag::Fly && !held_.empty()) || glm::length(flyVel_) > 1e-3f || noteFrames_ > 0 || frameT_ < 1.f; }
+  bool Animating() const {
+    return (drag_ == Drag::Fly && !held_.empty()) || glm::length(flyVel_) > 1e-3f || noteFrames_ > 0 || frameT_ < 1.f ||
+           (!tipName_.empty() && tipSeconds_ < 0.6); // a toolbar tooltip about to show
+  }
   void Render(EditorModel& model, const AssetDatabase* assets, const Widget& view, float scale);
   void Draw(Widget& w, UIContext& ui, const EditorModel* model);
 
@@ -71,6 +74,25 @@ public:
   void FrameSmooth(const EditorModel& model);                  // the same, eased over a quarter second (F key, menu)
   float FlySpeed() const { return flySpeed_; }                 // m/s while flying (right mouse + WASD), wheel changes it
   void SetFlySpeed(float s);
+  // Camera speed like Unreal (round 7): a level 1..8 (SpeedOfLevel m/s) times a scalar; the toolbar's speed button
+  // opens both, the wheel while flying steps the level.
+  int speedLevel = 4;
+  float speedScalar = 1.f;
+  static float SpeedOfLevel(int level);
+  void SetSpeedLevel(int level);
+  void SetSpeedScalar(float s);
+  // Toolbar values kept per project (snapping, camera speed, World / Local, Show flags) as JSON at this path
+  // ("" = not kept: automated runs). Saved by Draw when they change.
+  std::string toolbarStatePath;
+  bool LoadToolbarState();
+  void SaveToolbarStateIfChanged();
+  std::string ToolbarStateJson() const;
+  std::string ToolbarTooltip(const std::string& name) const; // a control's hover text (with its shortcut)
+  struct ToolbarLayout { bool oneRow = true, compact = false; float left = -1, right = 0; int controls = 0, hidden = 0; };
+  ToolbarLayout ToolbarInfo() const; // test hook: the last drawn toolbar
+  // Test hook: what a click on a toolbar control does, also when it sits in the "»" menu (menus open there).
+  bool PressToolbar(const std::string& name, EditorModel& model);
+  bool SpeedPopupOpen() const { return speedPopup_; }
   float frameEaseSeconds = 0.25f; // FrameSmooth's ease (0 = jump at once; scripted checks)
   bool flyEasing = true;           // fly speeds up / glides to a stop (false = instant; scripted checks)
   std::string Pick(const EditorModel& model, float x, float y) const; // UI point -> object id ("" = nothing)
@@ -259,11 +281,22 @@ private:
   std::vector<Icon> icons_;
   int gizmoLines_ = 0; // segments of the selected objects' shapes drawn last frame (test hook)
   void DrawSelectionShapes(Batch2D& b, const Theme& t, const EditorModel& model);
-  struct Chip { std::string name; float x, y, w, h; };
+  struct Chip { std::string name; float x, y, w, h; bool toolbar = false; };
   LegendRect legendRect_{0, 0, 0, 0};
   std::vector<Chip> chips_; // clickable chips of the last Draw
   UIContext* ui_ = nullptr;  // set by Draw: chips open their option lists as popup menus
   void OpenChipMenu(const Chip& chip, EditorModel& model);
+  // Toolbar (round 7, Runtime/SceneViewToolbar.cpp)
+  void DrawToolbar(Batch2D& b, const Theme& t, UIContext& ui, const Widget& w, const EditorModel* model, float rowY);
+  bool ToolbarClick(const Chip& hit, EditorModel& model, bool fromMenu = false);
+  bool ToolbarOn(const std::string& name) const;
+  std::string ToolbarLabel(const std::string& name, bool compact) const;
+  std::vector<std::string> overflow_;  // toolbar controls moved into the "»" menu (narrow view)
+  bool speedPopup_ = false, toolbarCompact_ = false;
+  std::string viewPreset_ = "Perspective", savedToolbar_, tipName_;
+  double tipSeconds_ = 0;               // how long the pointer has rested on tipName_
+  const EditorModel* toolModel_ = nullptr;
+  LegendRect speedPopupRect_{0, 0, 0, 0};
   std::string bookmarkNote_; // "2 Lights" after a jump, shown for a moment
   std::vector<ReflectionProbe3D> probes_; // from the scene (GI Tier 0)
   uint64_t probeKey_ = 0;
