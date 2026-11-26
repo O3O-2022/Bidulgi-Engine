@@ -1608,3 +1608,95 @@ void InjectCreateTest(bdg_engine* e, int frame, float scale) {
   }
 }
 BDG_EDITOR_TEST("BDG_CREATE_TEST", InjectCreateTest, nullptr)
+
+// Scripted check of UI review B12 / U12 (BDG_LANG_TEST=1, --frames 30): engine terms stay English, the rest is Korean.
+// The Light's Intensity field and the Light card keep their English names; a real hover shows the Korean name as the
+// tooltip's first line (design-system/project/editor.ko.json); no button in the Inspector, the Project bar or the
+// Project Settings head mixes Korean with English other than an engine term (a component name); "+ 컴포넌트 추가"
+// opens the list, typing the Korean name "강체" finds Rigidbody and Enter adds it.
+#include "UI/EditorNames.h"
+namespace langtest {
+std::string names = "-", tooltip = "-", card = "-", mixed = "-", search = "-", bad;
+}
+void InjectLangTest(bdg_engine* e, int frame, float scale) {
+  using namespace langtest;
+  using T = bdg::InputEvent::Type;
+  bdg::EditorModel* m = e->model.get();
+  if (!m || !e->editor) return;
+  bdg::UIContext& ui = *e->editor;
+  auto center = [&](bdg::Widget* w, float& x, float& y) {
+    if (!w || w->hidden || w->w <= 0) return false;
+    x = (w->x + w->w * 0.5f) * scale;
+    y = (w->y + w->h * 0.5f) * scale;
+    return true;
+  };
+  const std::string light = [&] { // the sample's first Light
+    for (const std::string& r : m->scene.Roots())
+      if (bdg::SceneObject* o = m->scene.Find(r); o && o->Find("Light")) return r;
+    return std::string();
+  }();
+  if (frame == 2) m->Select(light);
+  if (frame == 5) {
+    bdg::Widget* f = ui.Find("f.Light.intensity");
+    bdg::Widget* c = ui.Find("c.Light");
+    names = f && f->text == "Intensity" && c && c->text == "Light" ? "1" : "0";
+    float x, y;
+    if (center(f, x, y)) e->window.InjectEvent({T::MouseMove, x, y}); // a real hover
+  }
+  if (frame == 8) {
+    bdg::Widget* f = ui.Find("f.Light.intensity");
+    const std::string first = f ? f->tooltip.substr(0, f->tooltip.find('\n')) : std::string(); // the tooltip's first line
+    tooltip = f && f->hovered && first == "강도" ? "1" : std::format("0(hovered {} '{}')", f && f->hovered ? 1 : 0, first);
+    bdg::Widget* c = ui.Find("c.Light");
+    card = c && c->tooltip == "라이트" ? "1" : "0";
+    // buttons: Korean, or English engine terms, never both in one label (a component name may sit in a Korean label)
+    std::vector<std::string> terms;
+    for (const bdg::TypeInfo* t : bdg::Registry::Instance().Types()) terms.push_back(t->name);
+    auto hangul = [](const std::string& s) { // U+AC00..U+D7A3 in UTF-8: EA B0 80 .. ED 9E A3
+      for (size_t i = 0; i + 2 < s.size(); ++i)
+        if ((unsigned char)s[i] >= 0xEA && (unsigned char)s[i] <= 0xED && ((unsigned char)s[i + 1] & 0xC0) == 0x80) return true;
+      return false;
+    };
+    auto latinWords = [&](std::string s) { // English words left after removing engine terms
+      for (const std::string& t : terms)
+        for (size_t at = s.find(t); at != std::string::npos; at = s.find(t)) s.erase(at, t.size());
+      int letters = 0;
+      for (char ch : s) letters += std::isalpha((unsigned char)ch) ? 1 : 0;
+      return letters >= 2;
+    };
+    std::function<void(bdg::Widget&)> walk = [&](bdg::Widget& w) {
+      if (w.hidden) return;
+      if (w.kind == bdg::WidgetKind::Button && hangul(w.text) && latinWords(w.text)) bad += (bad.empty() ? "" : " | ") + w.text;
+      for (auto& ch : w.children) walk(*ch);
+    };
+    for (const char* panel : {"inspector", "project", "settings"})
+      if (bdg::Widget* p = ui.Find(panel)) walk(*p);
+    mixed = bad.empty() ? "1" : "0(" + bad + ")";
+    float x, y;
+    if (center(ui.Find("insp.add"), x, y)) {
+      e->window.InjectEvent({T::MouseMove, x, y});
+      e->window.InjectEvent({T::MouseDown, x, y, 1});
+      e->window.InjectEvent({T::MouseUp, x, y, 1});
+    }
+  }
+  if (frame == 10) {
+    bdg::InputEvent t{T::Text};
+    t.text = "강체";
+    e->window.InjectEvent(t);
+  }
+  if (frame == 12) {
+    const auto& items = ui.Menu();
+    const bool first = !items.empty() && items[0].label == "Rigidbody";
+    bdg::InputEvent k{T::KeyDown};
+    k.key = bdg::Key::Enter;
+    e->window.InjectEvent(k);
+    search = first ? "1" : "0(" + (items.empty() ? std::string("no menu") : items[0].label) + ")";
+  }
+  if (frame == 14) {
+    bdg::SceneObject* o = m->scene.Find(light);
+    if (search == "1") search = o && o->Find("Rigidbody") ? "1" : "0(not added)";
+    bdg::LogInfo("lang test: names={} tooltip={} card={} mixed={} search={}", names, tooltip, card, mixed, search);
+    e->quitNow = true;
+  }
+}
+BDG_EDITOR_TEST("BDG_LANG_TEST", InjectLangTest, nullptr)
