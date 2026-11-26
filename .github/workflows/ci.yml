@@ -394,6 +394,12 @@ jobs:
           # (a real click sets 2x), pause lights / unlights on real clicks, Korean texts
           $log = Invoke-Editor 'Release' @{ BDG_TOPBAR_TEST = '1' } 14
           if ($log -notmatch 'topbar test: tips=1 size=1 badge=1 korean=1 speed=1 pause=1') { $errors += 'top toolbar test failed' }
+          # UI review B14: UI Designer toolbar and palette - tooltips, 24-high chips, the "UI 화면" tab, align by real clicks,
+          # hover, right-click menu (맨 뒤로); wide at scale 1 (112 palette), narrow at 2.5 (36 icon palette that scrolls)
+          $log = Invoke-Editor 'Release' @{ BDG_UDPOLISH_TEST = '1'; BDG_UI_SCALE = '1' } 22
+          if ($log -notmatch 'udpolish test: tips=1 chips=1 title=1 align=1 hover=1 context=1 narrow=wide') { $errors += 'UI Designer polish test (wide) failed' }
+          $log = Invoke-Editor 'Release' @{ BDG_UDPOLISH_TEST = '1'; BDG_UI_SCALE = '2.5' } 22
+          if ($log -notmatch 'udpolish test: tips=1 chips=1 title=1 align=1 hover=1 context=1 narrow=1') { $errors += 'UI Designer polish test (narrow) failed' }
           Remove-Item Env:BDG_LAYOUT -ErrorAction SilentlyContinue
 
           # 3-3c greybox: Blockout tool, add chips, face push / pull on the grid, Esc, undo, all shapes, picking
